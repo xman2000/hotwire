@@ -287,6 +287,12 @@ again immediately.
 Manual restarts are exempt from the guard and do not feed it. An admin asking
 for a restart means it.
 
+**Amended 2026-09-05.** Local wall-clock time is only honest if the plugin says
+which clock. Every time it prints now carries its zone and DST state, computed
+for the moment being displayed rather than for now, and any line showing a next
+occurrence says when a clock change falls between now and then. The guard
+handles the ambiguity; this makes it visible.
+
 ## ADR-0014 — The plugin has no compile-time dependency on Assembly-CSharp
 
 **Date:** 2026-09-04 · **Status:** ACCEPTED, then **partially superseded by

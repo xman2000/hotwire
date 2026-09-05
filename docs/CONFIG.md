@@ -262,6 +262,27 @@ Things worth knowing:
 - **Time and numbers are stepped with buttons**, not typed. Fewer ways to end
   up with something that will not parse. Click as fast as you like — the panel
   is built so redrawing never drops the cursor.
+- **Time steps by 5, 15, 60 and 360 minutes**, so any hour is at most four
+  clicks away.
+- **A one-off date has day, month and year steppers**, and shows the weekday it
+  lands on. Month steps move whole months and clamp the day, so stepping a
+  month on from 31 January gives 28 February rather than 3 March.
+
+### Times, zones and DST
+
+Every time this plugin prints carries the zone it means and whether daylight
+saving is in effect — `Thu 02 Oct 2026 20:00 Central Daylight Time (UTC-05:00,
+DST)`. That is not decoration. Schedules are local wall-clock time (ADR-0013),
+so `05:00` is a different absolute moment either side of a clock change, and
+"next Sunday at 05:00" is ambiguous without it.
+
+The zone shown is computed **for the moment being displayed**, not for now: a
+date in November reads as standard time while today is still daylight time.
+When a clock change falls between now and the next occurrence, the line says
+so — in the panel, in `hotwire list`, and in `hotwire status`.
+
+`hotwire check` reports the server's current clock, zone and DST state on one
+line, and says when the zone has no daylight saving at all.
 
 The panel is a convenience and never the only way in. Everything it does,
 `hotwire add`, `set`, `remove`, `enable` and `disable` also do — which is what

@@ -13,7 +13,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Hotwire", "xman2000", "0.4.1")]
+    [Info("Hotwire", "xman2000", "0.5.0")]
     [Description("Scheduled restarts and updates. Announces, counts down, writes a flag, quits.")]
     internal class Hotwire : CovalencePlugin
     {
@@ -804,6 +804,52 @@ namespace Oxide.Plugins
             return null;
         }
 
+        // Every time this plugin prints gets its zone and DST state attached.
+        // The schedule is local wall-clock (ADR-0013), so "05:00" means a
+        // different absolute moment either side of a DST change -- and an admin
+        // reading "next Sunday 05:00" deserves to know which 05:00 that is.
+        //
+        // Computed for the moment being displayed, not for now: a date in
+        // November can be standard time while today is still daylight time.
+        private static string ZoneSuffix(DateTime when)
+        {
+            try
+            {
+                var tz = TimeZoneInfo.Local;
+                var dst = tz.IsDaylightSavingTime(when);
+                var offset = tz.GetUtcOffset(when);
+                var sign = offset < TimeSpan.Zero ? "-" : "+";
+                var abs = offset.Duration();
+                var name = dst ? tz.DaylightName : tz.StandardName;
+                if (string.IsNullOrWhiteSpace(name)) name = tz.Id;
+                return $"{name} (UTC{sign}{abs.Hours:00}:{abs.Minutes:00}{(dst ? ", DST" : "")})";
+            }
+            catch
+            {
+                // Some Mono builds have thin zone data. Saying nothing beats
+                // saying something wrong about what time it is.
+                return "server local time";
+            }
+        }
+
+        private static string Stamp(DateTime when)
+        {
+            return when.ToString("ddd dd MMM yyyy HH:mm", CultureInfo.InvariantCulture) + " " + ZoneSuffix(when);
+        }
+
+        private static string ShortStamp(DateTime when)
+        {
+            return when.ToString("ddd dd MMM HH:mm", CultureInfo.InvariantCulture) + " " + ZoneSuffix(when);
+        }
+
+        // True when a DST transition falls between the two moments, which is
+        // exactly when a wall-clock schedule surprises somebody.
+        private static bool OffsetChangesBetween(DateTime a, DateTime b)
+        {
+            try { return TimeZoneInfo.Local.GetUtcOffset(a) != TimeZoneInfo.Local.GetUtcOffset(b); }
+            catch { return false; }
+        }
+
         private static string Describe(ScheduleEntry e)
         {
             var kind = e.IsValidate ? "validate" : e.IsUpdate ? "update" : "restart";
@@ -1564,7 +1610,8 @@ namespace Oxide.Plugins
                 var detail = problem != null
                     ? "BROKEN: " + problem
                     : next != null
-                        ? "next " + next.Value.ToString("ddd dd MMM HH:mm", CultureInfo.InvariantCulture)
+                        ? "next " + ShortStamp(next.Value) +
+                          (OffsetChangesBetween(DateTime.Now, next.Value) ? "  (clocks change before then)" : "")
                         : entry.Enabled ? "no next occurrence" : "disabled";
 
                 Label(ui, MenuContent + ".row" + i, 0.02, 0.45, 0.62, 0.98, Describe(entry), 13, ColText, TextAnchor.MiddleLeft);
@@ -1614,12 +1661,19 @@ namespace Oxide.Plugins
             // Time -- stepped by buttons rather than typed. An input field is
             // one more unverified Cui component and one more way to end up
             // with "5:0" in a field that must parse.
-            Label(ui, MenuContent, 0.04, y, 0.24, y + h, "Time", 13, ColMuted, TextAnchor.MiddleLeft);
-            Button(ui, MenuContent, 0.25, y, 0.32, y + h, "-1h", $"{prefix} time {target} -60", ColButton);
-            Button(ui, MenuContent, 0.33, y, 0.40, y + h, "-5m", $"{prefix} time {target} -5", ColButton);
-            Label(ui, MenuContent, 0.41, y, 0.55, y + h, entry.Time, 16, ColText, TextAnchor.MiddleCenter);
-            Button(ui, MenuContent, 0.56, y, 0.63, y + h, "+5m", $"{prefix} time {target} 5", ColButton);
-            Button(ui, MenuContent, 0.64, y, 0.71, y + h, "+1h", $"{prefix} time {target} 60", ColButton);
+            // Coarse and fine steps in one row, so any hour is at most four
+            // clicks away instead of twelve.
+            Label(ui, MenuContent, 0.04, y, 0.20, y + h, "Time", 13, ColMuted, TextAnchor.MiddleLeft);
+            Button(ui, MenuContent, 0.21, y, 0.27, y + h, "-6h", $"{prefix} time {target} -360", ColButton);
+            Button(ui, MenuContent, 0.275, y, 0.335, y + h, "-1h", $"{prefix} time {target} -60", ColButton);
+            Button(ui, MenuContent, 0.34, y, 0.40, y + h, "-15", $"{prefix} time {target} -15", ColButton);
+            Button(ui, MenuContent, 0.405, y, 0.465, y + h, "-5", $"{prefix} time {target} -5", ColButton);
+            Label(ui, MenuContent, 0.47, y, 0.60, y + h, entry.Time, 17, ColText, TextAnchor.MiddleCenter);
+            Button(ui, MenuContent, 0.605, y, 0.665, y + h, "+5", $"{prefix} time {target} 5", ColButton);
+            Button(ui, MenuContent, 0.67, y, 0.73, y + h, "+15", $"{prefix} time {target} 15", ColButton);
+            Button(ui, MenuContent, 0.735, y, 0.795, y + h, "+1h", $"{prefix} time {target} 60", ColButton);
+            Button(ui, MenuContent, 0.80, y, 0.86, y + h, "+6h", $"{prefix} time {target} 360", ColButton);
+            Label(ui, MenuContent, 0.87, y, 0.98, y + h, ZoneSuffix(DateTime.Now), 10, ColMuted, TextAnchor.MiddleLeft);
 
             y -= h + gap;
             Label(ui, MenuContent, 0.04, y, 0.24, y + h, "Repeat", 13, ColMuted, TextAnchor.MiddleLeft);
@@ -1667,11 +1721,13 @@ namespace Oxide.Plugins
             if (mode == RepeatMonthlyDay)
             {
                 Label(ui, MenuContent, 0.04, y, 0.24, y + h, "Day of month", 13, ColMuted, TextAnchor.MiddleLeft);
-                Button(ui, MenuContent, 0.25, y, 0.32, y + h, "-", $"{prefix} dom {target} -1", ColButton);
-                Label(ui, MenuContent, 0.33, y, 0.47, y + h, entry.DayOfMonth.ToString(), 16, ColText, TextAnchor.MiddleCenter);
-                Button(ui, MenuContent, 0.48, y, 0.55, y + h, "+", $"{prefix} dom {target} 1", ColButton);
+                Button(ui, MenuContent, 0.25, y, 0.31, y + h, "-7", $"{prefix} dom {target} -7", ColButton);
+                Button(ui, MenuContent, 0.315, y, 0.375, y + h, "-1", $"{prefix} dom {target} -1", ColButton);
+                Label(ui, MenuContent, 0.38, y, 0.47, y + h, entry.DayOfMonth.ToString(), 17, ColText, TextAnchor.MiddleCenter);
+                Button(ui, MenuContent, 0.475, y, 0.535, y + h, "+1", $"{prefix} dom {target} 1", ColButton);
+                Button(ui, MenuContent, 0.54, y, 0.60, y + h, "+7", $"{prefix} dom {target} 7", ColButton);
                 if (entry.DayOfMonth > 28)
-                    Label(ui, MenuContent, 0.57, y, 0.98, y + h,
+                    Label(ui, MenuContent, 0.62, y, 0.98, y + h,
                           "Skipped in months this short.", 11, "0.85 0.65 0.40 1.00", TextAnchor.MiddleLeft);
                 y -= h + gap;
             }
@@ -1679,10 +1735,12 @@ namespace Oxide.Plugins
             if (mode == RepeatEveryNDays)
             {
                 Label(ui, MenuContent, 0.04, y, 0.24, y + h, "Every", 13, ColMuted, TextAnchor.MiddleLeft);
-                Button(ui, MenuContent, 0.25, y, 0.32, y + h, "-", $"{prefix} interval {target} -1", ColButton);
-                Label(ui, MenuContent, 0.33, y, 0.47, y + h, entry.IntervalDays + " days", 15, ColText, TextAnchor.MiddleCenter);
-                Button(ui, MenuContent, 0.48, y, 0.55, y + h, "+", $"{prefix} interval {target} 1", ColButton);
-                Label(ui, MenuContent, 0.57, y, 0.98, y + h,
+                Button(ui, MenuContent, 0.25, y, 0.31, y + h, "-7", $"{prefix} interval {target} -7", ColButton);
+                Button(ui, MenuContent, 0.315, y, 0.375, y + h, "-1", $"{prefix} interval {target} -1", ColButton);
+                Label(ui, MenuContent, 0.38, y, 0.50, y + h, entry.IntervalDays + " days", 15, ColText, TextAnchor.MiddleCenter);
+                Button(ui, MenuContent, 0.505, y, 0.565, y + h, "+1", $"{prefix} interval {target} 1", ColButton);
+                Button(ui, MenuContent, 0.57, y, 0.63, y + h, "+7", $"{prefix} interval {target} 7", ColButton);
+                Label(ui, MenuContent, 0.65, y, 0.98, y + h,
                       "counting from " + (string.IsNullOrWhiteSpace(entry.AnchorDate) ? "today" : entry.AnchorDate),
                       11, ColMuted, TextAnchor.MiddleLeft);
                 y -= h + gap;
@@ -1690,14 +1748,31 @@ namespace Oxide.Plugins
 
             if (mode == RepeatOnce)
             {
-                Label(ui, MenuContent, 0.04, y, 0.24, y + h, "Date", 13, ColMuted, TextAnchor.MiddleLeft);
-                Button(ui, MenuContent, 0.25, y, 0.32, y + h, "-1m", $"{prefix} date {target} -30", ColButton);
-                Button(ui, MenuContent, 0.33, y, 0.40, y + h, "-1d", $"{prefix} date {target} -1", ColButton);
-                Label(ui, MenuContent, 0.41, y, 0.55, y + h,
-                      string.IsNullOrWhiteSpace(entry.Date) ? "(unset)" : entry.Date, 14, ColText, TextAnchor.MiddleCenter);
-                Button(ui, MenuContent, 0.56, y, 0.63, y + h, "+1d", $"{prefix} date {target} 1", ColButton);
-                Button(ui, MenuContent, 0.64, y, 0.71, y + h, "+1m", $"{prefix} date {target} 30", ColButton);
+                // Three steppers, not a day counter. The old +1m button added
+                // thirty days, so stepping "a month" from the 31st landed on
+                // the 2nd -- a label that lied. Month steps now move months,
+                // and the day clamps to whatever the target month actually has.
+                var picked = ParseDate(entry.Date) ?? DateTime.Now.Date.AddDays(1);
+
+                Label(ui, MenuContent, 0.04, y, 0.20, y + h, "Date", 13, ColMuted, TextAnchor.MiddleLeft);
+
+                Button(ui, MenuContent, 0.21, y, 0.26, y + h, "<", $"{prefix} dateday {target} -1", ColButton);
+                Label(ui, MenuContent, 0.265, y, 0.335, y + h, picked.Day.ToString("00"), 16, ColText, TextAnchor.MiddleCenter);
+                Button(ui, MenuContent, 0.34, y, 0.39, y + h, ">", $"{prefix} dateday {target} 1", ColButton);
+
+                Button(ui, MenuContent, 0.42, y, 0.47, y + h, "<", $"{prefix} datemonth {target} -1", ColButton);
+                Label(ui, MenuContent, 0.475, y, 0.595, y + h,
+                      picked.ToString("MMMM", CultureInfo.InvariantCulture), 15, ColText, TextAnchor.MiddleCenter);
+                Button(ui, MenuContent, 0.60, y, 0.65, y + h, ">", $"{prefix} datemonth {target} 1", ColButton);
+
+                Button(ui, MenuContent, 0.68, y, 0.73, y + h, "<", $"{prefix} dateyear {target} -1", ColButton);
+                Label(ui, MenuContent, 0.735, y, 0.825, y + h, picked.Year.ToString(), 15, ColText, TextAnchor.MiddleCenter);
+                Button(ui, MenuContent, 0.83, y, 0.88, y + h, ">", $"{prefix} dateyear {target} 1", ColButton);
+
                 y -= h + gap;
+                Label(ui, MenuContent, 0.21, y + gap * 0.5, 0.98, y + h,
+                      picked.ToString("dddd d MMMM yyyy", CultureInfo.InvariantCulture), 12, ColMuted, TextAnchor.MiddleLeft);
+                y -= gap;
             }
 
             if (entry is UpdateEntry)
@@ -1719,12 +1794,23 @@ namespace Oxide.Plugins
             // what the rule actually resolves to.
             var problem = ValidationError(entry);
             var next = problem == null ? NextOccurrence(entry, DateTime.Now) : null;
-            var summary = problem != null
-                ? "This entry is not valid: " + problem
-                : next != null
-                    ? Describe(entry) + "  ->  next " +
-                      next.Value.ToString("dddd dd MMMM yyyy, HH:mm", CultureInfo.InvariantCulture)
-                    : Describe(entry) + "  ->  no occurrence in the next year";
+            string summary;
+            if (problem != null)
+            {
+                summary = "This entry is not valid: " + problem;
+            }
+            else if (next == null)
+            {
+                summary = Describe(entry) + "   ->   no occurrence in the next year";
+            }
+            else
+            {
+                summary = Describe(entry) + "   ->   next " +
+                          next.Value.ToString("dddd d MMMM yyyy, HH:mm", CultureInfo.InvariantCulture) +
+                          " " + ZoneSuffix(next.Value);
+                if (OffsetChangesBetween(DateTime.Now, next.Value))
+                    summary += "   (the clocks change before then)";
+            }
 
             ui.Add(new CuiPanel
             {
@@ -1938,12 +2024,33 @@ namespace Oxide.Plugins
                     break;
                 }
 
-                case "date":
+                case "dateday":
+                case "datemonth":
+                case "dateyear":
                 {
                     int delta;
                     if (args.Length < 4 || !int.TryParse(args[3], out delta)) return;
-                    var current = ParseDate(entry.Date) ?? DateTime.Now.Date;
-                    var moved = current.AddDays(delta);
+                    var current = ParseDate(entry.Date) ?? DateTime.Now.Date.AddDays(1);
+
+                    DateTime moved;
+                    if (action == "dateday")
+                    {
+                        moved = current.AddDays(delta);
+                    }
+                    else
+                    {
+                        // Move the month or the year, then clamp the day to
+                        // what that month actually has. 31 January stepped a
+                        // month forward is 28 February, not 3 March.
+                        var shifted = action == "datemonth"
+                            ? current.AddMonths(delta)
+                            : current.AddYears(delta);
+                        var days = DateTime.DaysInMonth(shifted.Year, shifted.Month);
+                        moved = new DateTime(shifted.Year, shifted.Month, Math.Min(current.Day, days));
+                    }
+
+                    // A one-off in the past would never fire and would sit
+                    // there looking scheduled.
                     if (moved < DateTime.Now.Date) moved = DateTime.Now.Date;
                     entry.Date = moved.ToString("yyyy-MM-dd");
                     break;
@@ -2044,7 +2151,7 @@ namespace Oxide.Plugins
 
             if (best == null) return null;
             var kind = best.IsValidate ? "validate" : best.IsUpdate ? "update" : "restart";
-            return $"{kind} at {bestTarget:ddd yyyy-MM-dd HH:mm} ({DescribeRecurrence(best)})";
+            return $"{kind} {DescribeRecurrence(best)} -- next {Stamp(bestTarget)}";
         }
 
         // Answers the questions you would otherwise have to spend a real
@@ -2136,6 +2243,14 @@ namespace Oxide.Plugins
                 }
             }
 
+            lines.Add($"  clock        : {Stamp(DateTime.Now)}");
+            try
+            {
+                if (!TimeZoneInfo.Local.SupportsDaylightSavingTime)
+                    lines.Add("                 this zone has no DST, so the guard below rarely matters");
+            }
+            catch { /* reported as "server local time" above */ }
+
             var enabled = AllEntries().Count(e => e.Enabled);
             var total = _config.Restarts.Count + _config.Updates.Count;
             lines.Add($"  schedule     : {enabled} enabled of {total}");
@@ -2195,7 +2310,12 @@ namespace Oxide.Plugins
 
             var row = $"{list} {index}: {Describe(e)} [{state}]";
             if (problem != null) return row + $" -- BROKEN: {problem}";
-            if (next != null) row += $" -- next {next.Value:ddd yyyy-MM-dd HH:mm}";
+            if (next != null)
+            {
+                row += $" -- next {Stamp(next.Value)}";
+                if (OffsetChangesBetween(DateTime.Now, next.Value))
+                    row += " (a DST change falls before then)";
+            }
             return row;
         }
 
