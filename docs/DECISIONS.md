@@ -61,7 +61,8 @@ whole native-restart interop feature is dropped.
 
 ## ADR-0006 — The admin menu is a CUI panel, with a chat fallback
 
-**Date:** 2026-09-04 · **Status:** ACCEPTED
+**Date:** 2026-09-04 · **Status:** ACCEPTED — implemented in v0.4.0, after the
+chat commands could do everything it does. See ADR-0016 for where it lives.
 
 The user asked specifically for an in-game surface to add, edit, delete and
 view scheduled restarts and updates.
@@ -288,7 +289,10 @@ for a restart means it.
 
 ## ADR-0014 — The plugin has no compile-time dependency on Assembly-CSharp
 
-**Date:** 2026-09-04 · **Status:** ACCEPTED
+**Date:** 2026-09-04 · **Status:** ACCEPTED, then **partially superseded by
+ADR-0016** on 2026-09-05. It still holds for everything that schedules,
+announces or shuts down. The admin menu breaks it, deliberately and in one
+isolated region.
 
 This started as a way to handle the four unverified API calls and turned into
 the most load-bearing decision in the plugin, so it gets its own ADR.
@@ -362,3 +366,51 @@ asks one predicate whether each date matches. Slower than per-mode arithmetic
 and much harder to get wrong: one predicate covers all six modes, a month
 without a 31st simply never matches, and there is no month- or year-boundary
 arithmetic to misplace.
+
+## ADR-0016 — The admin menu lives in Hotwire.cs, and knowingly breaks ADR-0014
+
+**Date:** 2026-09-05 · **Status:** ACCEPTED — partially supersedes ADR-0014
+
+Rust's UI has no Covalence route. `CuiHelper.AddUi` takes a `BasePlayer`, and
+building a panel means naming `BasePlayer`, `CuiElementContainer`, `CuiPanel`,
+`CuiButton` and `CuiLabel`. So a menu cannot be written without reintroducing
+the compile-time Facepunch dependency ADR-0014 removed.
+
+Alternatives: a companion `HotwireMenu.cs` plugin talking to Hotwire through a
+plugin API, which would keep the scheduler free of Facepunch types entirely and
+let the menu fail to compile without consequence.
+
+Chosen: **the menu lives in `Hotwire.cs`.** The trade, stated honestly rather
+than argued one way:
+
+- *Against:* if a Rust update breaks the CUI surface, the whole plugin stops
+  compiling, and scheduled restarts stop with it. That risk is real — two
+  plugins on the reference server are dead right now from a `StringView`/`Span`
+  change, waiting on their authors — though `BasePlayer` and `CuiHelper` are
+  among the most stable things in the game and rarely move.
+- *For:* splitting adds a cross-plugin `Call()` surface, and those fail
+  **silently** when they fail. That is not theoretical either: this project has
+  already been bitten by a silent typed-argument mismatch in a plugin API. It
+  also means two files to install and keep in version step.
+
+What makes the risk survivable is ADR-0006's condition, which is already met:
+**every single thing the menu does, the chat commands do.** If this region ever
+stops compiling, the fix is to delete it. The schedule remains fully editable
+from chat and console, and no data lives only in the panel.
+
+Containment, so that deletion stays a real option:
+- All of it in one `#region Admin menu`, with no CUI type used anywhere else.
+- One root element name, destroyed before every redraw, on close, on
+  disconnect, and on unload.
+- `BasePlayer` re-fetched at each use and never held across a frame (rule 4).
+- A draw failure is caught, logged, and closes the menu rather than escaping.
+
+Two implementation choices worth recording:
+
+- **No draft state.** Each click edits the entry and saves immediately, then
+  redraws. Fewer moving parts than save/cancel, and an edit cannot be lost by
+  disconnecting mid-change. New entries start disabled, so a half-configured
+  one cannot fire, and a change that invalidates a live entry disables it.
+- **No input fields.** Time, day-of-month, interval and date are stepped with
+  buttons. `CuiInputFieldComponent` is one more unverified component and one
+  more way to end up with `5:0` in a field that has to parse.

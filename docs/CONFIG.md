@@ -228,6 +228,7 @@ All under `hotwire` (alias `hw`), in chat or on the server console.
 |---|---|---|
 | `hotwire status` | `hotwire.status` | What is counting down, or what is next |
 | `hotwire check` | `hotwire.status` | Diagnose the install without restarting anything |
+| `hotwire menu` | `hotwire.status` to open, `hotwire.edit` to change | The in-game panel |
 | `hotwire list` | `hotwire.status` | Every entry with its index |
 | `hotwire now [update\|validate] [seconds]` | `hotwire.restart` | Start a countdown now |
 | `hotwire cancel` | `hotwire.cancel` | Cancel the running countdown |
@@ -237,6 +238,33 @@ All under `hotwire` (alias `hw`), in chat or on the server console.
 
 Indexes come from `hotwire list` and are per-list, so `restart 0` and
 `update 0` are different entries.
+
+### `hotwire menu`
+
+An in-game panel over the same schedule. It opens on `hotwire menu`, lists
+every entry with what it resolves to next, and lets you add, edit, toggle and
+delete without leaving the game.
+
+The edit view shows only the fields the chosen repeat mode uses, and carries a
+summary line saying what the rule actually means — *"update the first Thursday
+of the month at 20:00 -> next Thursday 02 October 2026, 20:00"*. That line is
+the point of the panel: an ordinal schedule is hard to be confident about until
+something tells you the date it lands on.
+
+Things worth knowing:
+
+- **Every click saves immediately.** There is no save or cancel button, so an
+  edit cannot be lost by disconnecting halfway through.
+- **New entries start disabled**, so a half-configured one cannot fire. Turn it
+  on when the summary line says what you meant.
+- **A change that makes an enabled entry invalid disables it** and says so,
+  rather than leaving it to fail at three in the morning.
+- **Time and numbers are stepped with buttons**, not typed. Fewer ways to end
+  up with something that will not parse.
+
+The panel is a convenience and never the only way in. Everything it does,
+`hotwire add`, `set`, `remove`, `enable` and `disable` also do — which is what
+lets the panel be deleted outright if a Rust update ever breaks it (ADR-0016).
 
 ### `hotwire check`
 

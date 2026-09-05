@@ -161,8 +161,15 @@ fill them in from memory.
 - [ ] **`launcher/hotwire.bat` is still unrun.** The flag *contract* is proven,
       but against the reference server's own launcher, not against the one in
       this repository. Those are different claims and the second is untested.
-- [ ] **The admin menu (ADR-0006).** Deliberately last. The chat commands it
-      is meant to wrap now exist, which was the precondition.
+- [x] ~~**The admin menu (ADR-0006).**~~ **Built in v0.4.0**, after the chat
+      commands could do everything it does. Lives in `Hotwire.cs` and
+      knowingly breaks ADR-0014 — see ADR-0016.
+- [ ] **The menu has never been opened.** Written blind against the CUI API.
+      Unverified in particular: that a `CuiButton` command routes to a
+      Covalence-registered command (`hotwire.ui`) rather than needing a
+      Facepunch console command; that `CuiHelper.AddUi(BasePlayer,
+      CuiElementContainer)` is the current overload; and that the layout is
+      readable at the anchors chosen. Expect at least one round of fixes.
 - [ ] Event-aware deferral — do not restart on top of a live event. Blocked:
       the reference server's event plugin exposes no `[HookMethod]` and no
       public API, so there is currently nothing to ask. The options are to

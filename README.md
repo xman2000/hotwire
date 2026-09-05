@@ -58,11 +58,19 @@ the entry was an update, it writes the flag first. It never spawns a process
 or shells out; it writes a file and quits, and the launcher does the rest.
 
 ```
-hotwire status                     what is next, or what is counting down
-hotwire now [update|validate] [s]  start a countdown now
-hotwire cancel                     stop the one that is running
-hotwire add restart 05:00 Daily    edit the schedule from in game
+hotwire status                        what is next, or what is counting down
+hotwire menu                          the in-game panel
+hotwire now [update|validate] [s]     start a countdown now
+hotwire cancel                        stop the one that is running
+hotwire add update 20:00 first Thursday   Rust force wipe day
+hotwire add restart 05:00 every 2 days
+hotwire set restart 0 time 06:00
 ```
+
+Schedules can say daily, certain weekdays, **the first Thursday of the
+month**, a date each month, every N days, or once on a date. Ordinal weekdays
+exist because Rust force wipes on the first Thursday, and that is the update
+most admins actually want.
 
 Every schedule entry ships **disabled**. A restarter that starts restarting
 the moment you install it is a restarter that catches you out. See

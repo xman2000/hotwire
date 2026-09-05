@@ -8,10 +8,12 @@ using Newtonsoft.Json.Linq;
 using Oxide.Core;
 using Oxide.Core.Libraries.Covalence;
 using Oxide.Core.Plugins;
+using Oxide.Game.Rust.Cui;
+using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Hotwire", "xman2000", "0.3.0")]
+    [Info("Hotwire", "xman2000", "0.4.0")]
     [Description("Scheduled restarts and updates. Announces, counts down, writes a flag, quits.")]
     internal class Hotwire : CovalencePlugin
     {
@@ -350,6 +352,7 @@ namespace Oxide.Plugins
             permission.RegisterPermission(PermEdit, this);
 
             AddCovalenceCommand(new[] { "hotwire", "hw" }, nameof(CmdHotwire));
+            AddCovalenceCommand("hotwire.ui", nameof(CmdMenuAction));
 
             try
             {
@@ -399,6 +402,8 @@ namespace Oxide.Plugins
             _scanTimer?.Destroy();
             _countdownTimer?.Destroy();
             _frameworkTimer?.Destroy();
+
+            CloseAllMenus();
 
             // Belt and braces: removes every bar this plugin ever created,
             // whatever state we think we are in. A bar left on someone's
@@ -1350,6 +1355,597 @@ namespace Oxide.Plugins
 
         #endregion
 
+        #region Admin menu
+
+        // The only part of this plugin that touches Facepunch types. Rust's UI
+        // has no Covalence route -- CuiHelper.AddUi takes a BasePlayer -- so
+        // building a panel means naming BasePlayer and the Cui* classes, which
+        // reverses part of ADR-0014 (see ADR-0016).
+        //
+        // Everything the menu does, the chat commands already do. That is
+        // ADR-0006's condition and it is load-bearing here: if this region
+        // stops compiling after a Rust update, the fix is to delete it, and
+        // the schedule is still fully editable.
+        //
+        // Lifecycle rules, because CUI lifecycle is where these plugins go
+        // wrong: one root element name, destroyed before every redraw,
+        // destroyed on close, on disconnect and on unload; the BasePlayer is
+        // re-fetched at each use and never held across a frame.
+
+        private const string MenuRoot = "hotwire.menu";
+
+        private class MenuState
+        {
+            public string List = "";
+            public int Index = -1;                 // -1 means the list view
+            public bool Editing => Index >= 0;
+        }
+
+        private readonly Dictionary<string, MenuState> _menus = new Dictionary<string, MenuState>();
+
+        // Colours are space-separated floats, not hex, and they must be
+        // formatted with the invariant culture: on a server whose locale uses a
+        // comma decimal separator, "0.35" becomes "0,35" and the whole panel
+        // renders wrong. Same reason Anchor() exists below.
+        private const string ColBackground = "0.10 0.10 0.11 0.96";
+        private const string ColHeader = "0.16 0.16 0.18 1.00";
+        private const string ColRow = "0.18 0.18 0.20 0.90";
+        private const string ColButton = "0.28 0.28 0.31 1.00";
+        private const string ColOn = "0.33 0.56 0.33 1.00";
+        private const string ColOff = "0.42 0.22 0.22 1.00";
+        private const string ColDanger = "0.58 0.24 0.20 1.00";
+        private const string ColText = "0.90 0.90 0.90 1.00";
+        private const string ColMuted = "0.62 0.62 0.65 1.00";
+
+        private static string Anchor(double x, double y)
+        {
+            return x.ToString("0.####", CultureInfo.InvariantCulture) + " " +
+                   y.ToString("0.####", CultureInfo.InvariantCulture);
+        }
+
+        private static BasePlayer ToBasePlayer(IPlayer player)
+        {
+            // Rule 4: fetched fresh every time, never stored. Rust destroys
+            // entities constantly and a menu can outlive the player it is on.
+            var basePlayer = player == null ? null : player.Object as BasePlayer;
+            if (basePlayer == null || basePlayer.IsDestroyed) return null;
+            return basePlayer;
+        }
+
+        private void CmdMenu(IPlayer player)
+        {
+            if (!Allowed(player, PermStatus)) return;
+            if (player.IsServer) { Reply(player, "MenuNeedsPlayer"); return; }
+            if (ToBasePlayer(player) == null) { Reply(player, "MenuNeedsPlayer"); return; }
+
+            _menus[player.Id] = new MenuState();
+            DrawMenu(player);
+        }
+
+        private void CloseMenu(IPlayer player)
+        {
+            _menus.Remove(player.Id);
+            var basePlayer = ToBasePlayer(player);
+            if (basePlayer == null) return;
+            try { CuiHelper.DestroyUi(basePlayer, MenuRoot); }
+            catch (Exception ex) { PrintWarning($"Could not close the menu: {ex.Message}"); }
+        }
+
+        private void OnUserDisconnected(IPlayer player)
+        {
+            if (player == null) return;
+            _menus.Remove(player.Id);
+            // No DestroyUi: they are gone, and the panel goes with them.
+        }
+
+        private void CloseAllMenus()
+        {
+            foreach (var id in _menus.Keys.ToArray())
+            {
+                var player = players.FindPlayerById(id);
+                if (player != null && player.IsConnected)
+                {
+                    var basePlayer = ToBasePlayer(player);
+                    if (basePlayer != null)
+                    {
+                        try { CuiHelper.DestroyUi(basePlayer, MenuRoot); }
+                        catch { /* going away regardless */ }
+                    }
+                }
+            }
+            _menus.Clear();
+        }
+
+        private void DrawMenu(IPlayer player)
+        {
+            var basePlayer = ToBasePlayer(player);
+            if (basePlayer == null) { _menus.Remove(player.Id); return; }
+
+            MenuState state;
+            if (!_menus.TryGetValue(player.Id, out state)) return;
+
+            try
+            {
+                CuiHelper.DestroyUi(basePlayer, MenuRoot);
+
+                var ui = new CuiElementContainer();
+                ui.Add(new CuiPanel
+                {
+                    Image = { Color = ColBackground },
+                    RectTransform = { AnchorMin = Anchor(0.22, 0.12), AnchorMax = Anchor(0.78, 0.88) },
+                    CursorEnabled = true
+                }, "Overlay", MenuRoot);
+
+                ui.Add(new CuiPanel
+                {
+                    Image = { Color = ColHeader },
+                    RectTransform = { AnchorMin = Anchor(0, 0.92), AnchorMax = Anchor(1, 1) }
+                }, MenuRoot, MenuRoot + ".header");
+
+                Label(ui, MenuRoot + ".header", 0.02, 0, 0.8, 1,
+                      state.Editing ? "Hotwire  /  editing " + state.List + " " + state.Index
+                                    : "Hotwire  /  schedule",
+                      15, ColText, TextAnchor.MiddleLeft);
+
+                Button(ui, MenuRoot + ".header", 0.93, 0.15, 0.98, 0.85, "X", "hotwire.ui close", ColDanger);
+
+                if (state.Editing) DrawEdit(ui, player, state);
+                else DrawList(ui, player);
+
+                CuiHelper.AddUi(basePlayer, ui);
+            }
+            catch (Exception ex)
+            {
+                // A broken panel must never be able to take the schedule with
+                // it. Close it, say so, and leave the chat commands standing.
+                PrintError($"The menu failed to draw: {ex.Message}. Use the chat commands instead.");
+                _menus.Remove(player.Id);
+            }
+        }
+
+        private void DrawList(CuiElementContainer ui, IPlayer player)
+        {
+            const double top = 0.88, height = 0.075, gap = 0.013;
+            var rows = new List<KeyValuePair<string, int>>();
+            for (var i = 0; i < _config.Restarts.Count; i++) rows.Add(new KeyValuePair<string, int>("restart", i));
+            for (var i = 0; i < _config.Updates.Count; i++) rows.Add(new KeyValuePair<string, int>("update", i));
+
+            if (rows.Count == 0)
+                Label(ui, MenuRoot, 0.04, 0.75, 0.96, 0.85,
+                      "Nothing scheduled. Add a restart or an update below.", 14, ColMuted, TextAnchor.MiddleLeft);
+
+            var shown = Math.Min(rows.Count, 9);
+            for (var i = 0; i < shown; i++)
+            {
+                var listName = rows[i].Key;
+                var index = rows[i].Value;
+                var entry = listName == "restart" ? _config.Restarts[index] : (ScheduleEntry)_config.Updates[index];
+
+                var y1 = top - i * (height + gap);
+                var y0 = y1 - height;
+
+                ui.Add(new CuiPanel
+                {
+                    Image = { Color = ColRow },
+                    RectTransform = { AnchorMin = Anchor(0.02, y0), AnchorMax = Anchor(0.98, y1) }
+                }, MenuRoot, MenuRoot + ".row" + i);
+
+                var problem = ValidationError(entry);
+                var next = entry.Enabled && problem == null ? NextOccurrence(entry, DateTime.Now) : null;
+                var detail = problem != null
+                    ? "BROKEN: " + problem
+                    : next != null
+                        ? "next " + next.Value.ToString("ddd dd MMM HH:mm", CultureInfo.InvariantCulture)
+                        : entry.Enabled ? "no next occurrence" : "disabled";
+
+                Label(ui, MenuRoot + ".row" + i, 0.02, 0.45, 0.62, 0.98, Describe(entry), 13, ColText, TextAnchor.MiddleLeft);
+                Label(ui, MenuRoot + ".row" + i, 0.02, 0.05, 0.62, 0.5, detail, 11,
+                      problem != null ? "0.85 0.45 0.40 1.00" : ColMuted, TextAnchor.MiddleLeft);
+
+                Button(ui, MenuRoot + ".row" + i, 0.63, 0.15, 0.75, 0.85,
+                       entry.Enabled ? "ON" : "OFF",
+                       $"hotwire.ui toggle {listName} {index}",
+                       entry.Enabled ? ColOn : ColOff);
+                Button(ui, MenuRoot + ".row" + i, 0.76, 0.15, 0.87, 0.85,
+                       "Edit", $"hotwire.ui edit {listName} {index}", ColButton);
+                Button(ui, MenuRoot + ".row" + i, 0.88, 0.15, 0.98, 0.85,
+                       "Delete", $"hotwire.ui delete {listName} {index}", ColDanger);
+            }
+
+            if (rows.Count > shown)
+                Label(ui, MenuRoot, 0.04, 0.11, 0.96, 0.16,
+                      $"...and {rows.Count - shown} more. Use \"hotwire list\" to see them all.",
+                      11, ColMuted, TextAnchor.MiddleLeft);
+
+            Button(ui, MenuRoot, 0.02, 0.02, 0.26, 0.09, "+ Restart", "hotwire.ui add restart", ColButton);
+            Button(ui, MenuRoot, 0.27, 0.02, 0.51, 0.09, "+ Update", "hotwire.ui add update", ColButton);
+            Label(ui, MenuRoot, 0.54, 0.02, 0.98, 0.09,
+                  "New entries start disabled. Turn one ON when it is right.",
+                  11, ColMuted, TextAnchor.MiddleRight);
+        }
+
+        private void DrawEdit(CuiElementContainer ui, IPlayer player, MenuState state)
+        {
+            var list = ListFor(state.List);
+            if (list == null || state.Index < 0 || state.Index >= list.Count)
+            {
+                state.Index = -1;
+                DrawList(ui, player);
+                return;
+            }
+
+            var entry = list[state.Index];
+            var mode = Normalise(entry.Repeat);
+            var prefix = $"hotwire.ui";
+            var target = $"{state.List} {state.Index}";
+
+            double y = 0.80;
+            const double h = 0.075, gap = 0.02;
+
+            // Time -- stepped by buttons rather than typed. An input field is
+            // one more unverified Cui component and one more way to end up
+            // with "5:0" in a field that must parse.
+            Label(ui, MenuRoot, 0.04, y, 0.24, y + h, "Time", 13, ColMuted, TextAnchor.MiddleLeft);
+            Button(ui, MenuRoot, 0.25, y, 0.32, y + h, "-1h", $"{prefix} time {target} -60", ColButton);
+            Button(ui, MenuRoot, 0.33, y, 0.40, y + h, "-5m", $"{prefix} time {target} -5", ColButton);
+            Label(ui, MenuRoot, 0.41, y, 0.55, y + h, entry.Time, 16, ColText, TextAnchor.MiddleCenter);
+            Button(ui, MenuRoot, 0.56, y, 0.63, y + h, "+5m", $"{prefix} time {target} 5", ColButton);
+            Button(ui, MenuRoot, 0.64, y, 0.71, y + h, "+1h", $"{prefix} time {target} 60", ColButton);
+
+            y -= h + gap;
+            Label(ui, MenuRoot, 0.04, y, 0.24, y + h, "Repeat", 13, ColMuted, TextAnchor.MiddleLeft);
+            Button(ui, MenuRoot, 0.25, y, 0.32, y + h, "<", $"{prefix} repeat {target} -1", ColButton);
+            Label(ui, MenuRoot, 0.33, y, 0.63, y + h, RepeatLabel(mode), 14, ColText, TextAnchor.MiddleCenter);
+            Button(ui, MenuRoot, 0.64, y, 0.71, y + h, ">", $"{prefix} repeat {target} 1", ColButton);
+
+            y -= h + gap;
+
+            if (mode == RepeatWeekly || mode == RepeatMonthlyWeekday)
+            {
+                var selected = ParsedDays(entry);
+                var order = new[]
+                {
+                    DayOfWeek.Monday, DayOfWeek.Tuesday, DayOfWeek.Wednesday, DayOfWeek.Thursday,
+                    DayOfWeek.Friday, DayOfWeek.Saturday, DayOfWeek.Sunday
+                };
+                Label(ui, MenuRoot, 0.04, y, 0.24, y + h,
+                      mode == RepeatWeekly ? "Days" : "Weekday", 13, ColMuted, TextAnchor.MiddleLeft);
+                for (var i = 0; i < order.Length; i++)
+                {
+                    var x0 = 0.25 + i * 0.098;
+                    Button(ui, MenuRoot, x0, y, x0 + 0.09, y + h,
+                           order[i].ToString().Substring(0, 3),
+                           $"{prefix} day {target} {order[i]}",
+                           selected.Contains(order[i]) ? ColOn : ColButton);
+                }
+                y -= h + gap;
+            }
+
+            if (mode == RepeatMonthlyWeekday)
+            {
+                Label(ui, MenuRoot, 0.04, y, 0.24, y + h, "Which", 13, ColMuted, TextAnchor.MiddleLeft);
+                for (var i = 0; i < Ordinals.Length; i++)
+                {
+                    var x0 = 0.25 + i * 0.138;
+                    Button(ui, MenuRoot, x0, y, x0 + 0.13, y + h, Ordinals[i],
+                           $"{prefix} ordinal {target} {Ordinals[i]}",
+                           string.Equals(Ordinals[i], entry.Ordinal, StringComparison.OrdinalIgnoreCase)
+                               ? ColOn : ColButton);
+                }
+                y -= h + gap;
+            }
+
+            if (mode == RepeatMonthlyDay)
+            {
+                Label(ui, MenuRoot, 0.04, y, 0.24, y + h, "Day of month", 13, ColMuted, TextAnchor.MiddleLeft);
+                Button(ui, MenuRoot, 0.25, y, 0.32, y + h, "-", $"{prefix} dom {target} -1", ColButton);
+                Label(ui, MenuRoot, 0.33, y, 0.47, y + h, entry.DayOfMonth.ToString(), 16, ColText, TextAnchor.MiddleCenter);
+                Button(ui, MenuRoot, 0.48, y, 0.55, y + h, "+", $"{prefix} dom {target} 1", ColButton);
+                if (entry.DayOfMonth > 28)
+                    Label(ui, MenuRoot, 0.57, y, 0.98, y + h,
+                          "Skipped in months this short.", 11, "0.85 0.65 0.40 1.00", TextAnchor.MiddleLeft);
+                y -= h + gap;
+            }
+
+            if (mode == RepeatEveryNDays)
+            {
+                Label(ui, MenuRoot, 0.04, y, 0.24, y + h, "Every", 13, ColMuted, TextAnchor.MiddleLeft);
+                Button(ui, MenuRoot, 0.25, y, 0.32, y + h, "-", $"{prefix} interval {target} -1", ColButton);
+                Label(ui, MenuRoot, 0.33, y, 0.47, y + h, entry.IntervalDays + " days", 15, ColText, TextAnchor.MiddleCenter);
+                Button(ui, MenuRoot, 0.48, y, 0.55, y + h, "+", $"{prefix} interval {target} 1", ColButton);
+                Label(ui, MenuRoot, 0.57, y, 0.98, y + h,
+                      "counting from " + (string.IsNullOrWhiteSpace(entry.AnchorDate) ? "today" : entry.AnchorDate),
+                      11, ColMuted, TextAnchor.MiddleLeft);
+                y -= h + gap;
+            }
+
+            if (mode == RepeatOnce)
+            {
+                Label(ui, MenuRoot, 0.04, y, 0.24, y + h, "Date", 13, ColMuted, TextAnchor.MiddleLeft);
+                Button(ui, MenuRoot, 0.25, y, 0.32, y + h, "-1m", $"{prefix} date {target} -30", ColButton);
+                Button(ui, MenuRoot, 0.33, y, 0.40, y + h, "-1d", $"{prefix} date {target} -1", ColButton);
+                Label(ui, MenuRoot, 0.41, y, 0.55, y + h,
+                      string.IsNullOrWhiteSpace(entry.Date) ? "(unset)" : entry.Date, 14, ColText, TextAnchor.MiddleCenter);
+                Button(ui, MenuRoot, 0.56, y, 0.63, y + h, "+1d", $"{prefix} date {target} 1", ColButton);
+                Button(ui, MenuRoot, 0.64, y, 0.71, y + h, "+1m", $"{prefix} date {target} 30", ColButton);
+                y -= h + gap;
+            }
+
+            if (entry is UpdateEntry)
+            {
+                var update = (UpdateEntry)entry;
+                Label(ui, MenuRoot, 0.04, y, 0.24, y + h, "Validate", 13, ColMuted, TextAnchor.MiddleLeft);
+                Button(ui, MenuRoot, 0.25, y, 0.40, y + h, update.Validate ? "ON" : "OFF",
+                       $"{prefix} validate {target}", update.Validate ? ColOn : ColButton);
+                Label(ui, MenuRoot, 0.42, y, 0.98, y + h,
+                      "Re-checksums the whole install. Slow.", 11, ColMuted, TextAnchor.MiddleLeft);
+                y -= h + gap;
+            }
+
+            Label(ui, MenuRoot, 0.04, y, 0.24, y + h, "Enabled", 13, ColMuted, TextAnchor.MiddleLeft);
+            Button(ui, MenuRoot, 0.25, y, 0.40, y + h, entry.Enabled ? "ON" : "OFF",
+                   $"{prefix} toggle {target}", entry.Enabled ? ColOn : ColOff);
+
+            // The whole reason an ordinal schedule is comprehensible: it says
+            // what the rule actually resolves to.
+            var problem = ValidationError(entry);
+            var next = problem == null ? NextOccurrence(entry, DateTime.Now) : null;
+            var summary = problem != null
+                ? "This entry is not valid: " + problem
+                : next != null
+                    ? Describe(entry) + "  ->  next " +
+                      next.Value.ToString("dddd dd MMMM yyyy, HH:mm", CultureInfo.InvariantCulture)
+                    : Describe(entry) + "  ->  no occurrence in the next year";
+
+            ui.Add(new CuiPanel
+            {
+                Image = { Color = ColRow },
+                RectTransform = { AnchorMin = Anchor(0.02, 0.11), AnchorMax = Anchor(0.98, 0.20) }
+            }, MenuRoot, MenuRoot + ".summary");
+            Label(ui, MenuRoot + ".summary", 0.02, 0, 0.98, 1, summary, 13,
+                  problem != null ? "0.85 0.45 0.40 1.00" : ColText, TextAnchor.MiddleLeft);
+
+            Button(ui, MenuRoot, 0.02, 0.02, 0.20, 0.09, "< Back", "hotwire.ui list", ColButton);
+            Button(ui, MenuRoot, 0.80, 0.02, 0.98, 0.09, "Delete",
+                   $"{prefix} delete {target}", ColDanger);
+        }
+
+        private static string RepeatLabel(string mode)
+        {
+            switch (mode)
+            {
+                case RepeatDaily: return "Every day";
+                case RepeatWeekly: return "Certain weekdays";
+                case RepeatMonthlyWeekday: return "Nth weekday of the month";
+                case RepeatMonthlyDay: return "A date each month";
+                case RepeatEveryNDays: return "Every N days";
+                case RepeatOnce: return "Once, on a date";
+                default: return mode;
+            }
+        }
+
+        private static void Label(CuiElementContainer ui, string parent, double x0, double y0, double x1,
+                                  double y1, string text, int size, string colour, TextAnchor align)
+        {
+            ui.Add(new CuiLabel
+            {
+                Text = { Text = text ?? "", FontSize = size, Color = colour, Align = align },
+                RectTransform = { AnchorMin = Anchor(x0, y0), AnchorMax = Anchor(x1, y1) }
+            }, parent);
+        }
+
+        private static void Button(CuiElementContainer ui, string parent, double x0, double y0, double x1,
+                                   double y1, string text, string command, string colour)
+        {
+            ui.Add(new CuiButton
+            {
+                Button = { Command = command, Color = colour },
+                RectTransform = { AnchorMin = Anchor(x0, y0), AnchorMax = Anchor(x1, y1) },
+                Text = { Text = text, FontSize = 12, Color = ColText, Align = TextAnchor.MiddleCenter }
+            }, parent);
+        }
+
+        // Every button in the panel comes back through here. The menu holds no
+        // draft state: each click edits the entry and saves, then redraws. That
+        // is fewer moving parts than a save/cancel model, and it cannot lose an
+        // edit when someone disconnects mid-change. New entries start disabled,
+        // so a half-configured one cannot fire.
+        private void CmdMenuAction(IPlayer player, string command, string[] args)
+        {
+            if (player == null || player.IsServer) return;
+            if (args.Length == 0) return;
+
+            var action = args[0].ToLowerInvariant();
+
+            if (action == "close") { CloseMenu(player); return; }
+
+            if (!_menus.ContainsKey(player.Id)) return;
+
+            if (action == "list")
+            {
+                _menus[player.Id].Index = -1;
+                DrawMenu(player);
+                return;
+            }
+
+            if (action == "add")
+            {
+                if (!Allowed(player, PermEdit)) return;
+                if (args.Length < 2) return;
+                var which = args[1].ToLowerInvariant();
+                if (which == "restart")
+                {
+                    _config.Restarts.Add(new ScheduleEntry { Enabled = false });
+                    _menus[player.Id].List = "restart";
+                    _menus[player.Id].Index = _config.Restarts.Count - 1;
+                }
+                else
+                {
+                    _config.Updates.Add(new UpdateEntry { Enabled = false });
+                    _menus[player.Id].List = "update";
+                    _menus[player.Id].Index = _config.Updates.Count - 1;
+                }
+                SaveConfig();
+                DrawMenu(player);
+                return;
+            }
+
+            if (args.Length < 3) return;
+            var listName = args[1].ToLowerInvariant();
+            var list = ListFor(listName);
+            int index;
+            if (list == null || !int.TryParse(args[2], out index) || index < 0 || index >= list.Count) return;
+
+            if (action == "edit")
+            {
+                _menus[player.Id].List = listName;
+                _menus[player.Id].Index = index;
+                DrawMenu(player);
+                return;
+            }
+
+            if (!Allowed(player, PermEdit)) return;
+            var entry = list[index];
+
+            switch (action)
+            {
+                case "toggle":
+                    if (!entry.Enabled)
+                    {
+                        var problem = ValidationError(entry);
+                        if (problem != null)
+                        {
+                            Reply(player, "Raw", "Cannot enable: " + problem);
+                            return;
+                        }
+                    }
+                    entry.Enabled = !entry.Enabled;
+                    break;
+
+                case "delete":
+                    Puts($"{player.Name} deleted {listName} {index} ({Describe(entry)}) from the menu.");
+                    list.RemoveAt(index);
+                    _menus[player.Id].Index = -1;
+                    break;
+
+                case "time":
+                {
+                    int delta;
+                    if (args.Length < 4 || !int.TryParse(args[3], out delta)) return;
+                    var current = ParseTime(entry.Time) ?? TimeSpan.Zero;
+                    var minutes = ((int)current.TotalMinutes + delta) % (24 * 60);
+                    if (minutes < 0) minutes += 24 * 60;
+                    entry.Time = $"{minutes / 60:00}:{minutes % 60:00}";
+                    break;
+                }
+
+                case "repeat":
+                {
+                    int step;
+                    if (args.Length < 4 || !int.TryParse(args[3], out step)) return;
+                    var at = Array.IndexOf(RepeatModes, Normalise(entry.Repeat));
+                    if (at < 0) at = 0;
+                    at = (at + step + RepeatModes.Length) % RepeatModes.Length;
+                    entry.Repeat = RepeatModes[at];
+
+                    // Give the new mode something usable rather than leaving it
+                    // invalid and making the admin hunt for what is missing.
+                    if ((entry.Repeat == RepeatWeekly || entry.Repeat == RepeatMonthlyWeekday) &&
+                        ParsedDays(entry).Count == 0)
+                        entry.Days = new List<string> { DateTime.Now.DayOfWeek.ToString() };
+                    if (entry.Repeat == RepeatMonthlyWeekday && ParsedDays(entry).Count > 1)
+                        entry.Days = new List<string> { entry.Days[0] };
+                    if (entry.Repeat == RepeatEveryNDays && ParseDate(entry.AnchorDate) == null)
+                        entry.AnchorDate = DateTime.Now.ToString("yyyy-MM-dd");
+                    if (entry.Repeat == RepeatOnce && ParseDate(entry.Date) == null)
+                        entry.Date = DateTime.Now.AddDays(1).ToString("yyyy-MM-dd");
+                    break;
+                }
+
+                case "day":
+                {
+                    if (args.Length < 4) return;
+                    var day = ParseDay(args[3]);
+                    if (day == null) return;
+                    var name = day.Value.ToString();
+                    if (entry.Days == null) entry.Days = new List<string>();
+
+                    if (Normalise(entry.Repeat) == RepeatMonthlyWeekday)
+                    {
+                        // An ordinal applies to exactly one weekday. "The first
+                        // Monday and Thursday" is two rules, not one.
+                        entry.Days = new List<string> { name };
+                    }
+                    else if (ParsedDays(entry).Contains(day.Value))
+                    {
+                        entry.Days = entry.Days.Where(d => ParseDay(d) != day.Value).ToList();
+                    }
+                    else
+                    {
+                        entry.Days.Add(name);
+                    }
+                    break;
+                }
+
+                case "ordinal":
+                    if (args.Length < 4) return;
+                    foreach (var o in Ordinals)
+                        if (string.Equals(o, args[3], StringComparison.OrdinalIgnoreCase)) entry.Ordinal = o;
+                    break;
+
+                case "dom":
+                {
+                    int delta;
+                    if (args.Length < 4 || !int.TryParse(args[3], out delta)) return;
+                    entry.DayOfMonth = Math.Max(1, Math.Min(31, entry.DayOfMonth + delta));
+                    break;
+                }
+
+                case "interval":
+                {
+                    int delta;
+                    if (args.Length < 4 || !int.TryParse(args[3], out delta)) return;
+                    entry.IntervalDays = Math.Max(1, Math.Min(365, entry.IntervalDays + delta));
+                    break;
+                }
+
+                case "date":
+                {
+                    int delta;
+                    if (args.Length < 4 || !int.TryParse(args[3], out delta)) return;
+                    var current = ParseDate(entry.Date) ?? DateTime.Now.Date;
+                    var moved = current.AddDays(delta);
+                    if (moved < DateTime.Now.Date) moved = DateTime.Now.Date;
+                    entry.Date = moved.ToString("yyyy-MM-dd");
+                    break;
+                }
+
+                case "validate":
+                {
+                    var update = entry as UpdateEntry;
+                    if (update == null) return;
+                    update.Validate = !update.Validate;
+                    break;
+                }
+
+                default:
+                    return;
+            }
+
+            // Anything that made a live entry invalid switches it off rather
+            // than being left to fail at three in the morning.
+            if (entry.Enabled && ValidationError(entry) != null)
+            {
+                entry.Enabled = false;
+                Reply(player, "Raw", "That change made the entry invalid, so it has been disabled.");
+            }
+
+            SaveConfig();
+            DrawMenu(player);
+        }
+
+        #endregion
+
         #region Commands
 
         // ADR-0006: these are written first and must do everything an admin
@@ -1363,6 +1959,7 @@ namespace Oxide.Plugins
             switch (sub)
             {
                 case "status": CmdStatus(player); return;
+                case "menu": CmdMenu(player); return;
                 case "check": CmdCheck(player); return;
                 case "list": CmdList(player); return;
                 case "now": CmdNow(player, args); return;
@@ -1879,7 +2476,8 @@ namespace Oxide.Plugins
                 ["Disabled"] = "Disabled {0} {1}.",
 
                 ["ValidateNotOnRestart"] = "Only an update entry can validate. Remove it and add it as an update.",
-                ["Usage"] = "hotwire status | check | list | now [update|validate] [seconds] | cancel | " +
+                ["MenuNeedsPlayer"] = "The menu only opens in game. Use the chat commands from the console.",
+                ["Usage"] = "hotwire status | menu | check | list | now [update|validate] [seconds] | cancel | " +
                             "add <restart|update|validate> <HH:mm> [pattern] | set <restart|update> <index> " +
                             "<time|pattern|validate> <value> | remove <restart|update> <index> | " +
                             "enable|disable <restart|update> <index>",
