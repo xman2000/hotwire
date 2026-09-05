@@ -41,6 +41,13 @@ fill them in from memory.
       Facepunch's own list of admin-facing convars and tier 2 becomes data
       rather than judgement. Assumed to exist; unverified. Check it before
       curating anything by hand. See ADR-0009.
+- [ ] **Confirm `call`ed scripts inherit `EnableDelayedExpansion`** from the
+      parent's `setlocal`. ADR-0010 depends on it and it is unverified. One
+      minute to test: a child doing `set "X=!ARGS!"` either sees the value or
+      sees the literal `!ARGS!`.
+- [ ] **Re-run the ADR-0010 count once `convars.py` works.** The layout choice
+      was made against n=1 (23 convars). If `ShowInAdminUI` returns ~40
+      weighted to gameplay, split `conf/common.bat` by topic.
 - [ ] **Where does tier 3 live** — generated `docs/CONVARS.md`, generated
       `launcher/options-full.bat`, or inline? Inline is not recommended.
       See ADR-0008.

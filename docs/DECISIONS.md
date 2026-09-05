@@ -137,3 +137,48 @@ Two real sources, in order:
    **n = 1**: evidence, not a survey. Say so in the docs.
 
 Status stays PROPOSED until source 1 is checked.
+
+## ADR-0010 — Config file layout: by tier, not by topic (for now)
+
+**Date:** 2026-09-04 · **Status:** PROPOSED — revisit once `convars.py` runs
+
+Batch supports this cleanly: `call "%~dp0conf\network.bat"` runs in the same
+environment, so `set` in the child persists in the parent. Rules: the child
+must not use `setlocal`, `%~dp0` carries a trailing backslash, `exit /b`
+returns while bare `exit` kills the window, and the parent's
+`EnableDelayedExpansion` is inherited — *assumed, verify on first run*, because
+the whole per-line `!ARGS!` model depends on it.
+
+An earlier draft recommended **tier 1 inline in `hotwire.bat`, topics split
+into `conf/`**. Counting the reference server's 23 live convars against that
+layout shows why it does not work:
+
+| conf/ file | tier 1 | tier 2 |
+|---|---|---|
+| network | 3 | **0** |
+| world | 4 | **0** |
+| listing | 2 | 3 |
+| admin | 1 | 1 |
+| logs | 0 | 4 |
+| gameplay | 0 | 5 |
+
+Tier 1 and the topic split cut across each other. Every network and world
+convar is tier 1, so pulling tier 1 inline leaves two empty files and one
+holding a single line. The two schemes are not composable at this size.
+
+Chosen: **split by tier.** `hotwire.bat` holds logic plus 10 boilerplate
+options; `conf/common.bat` holds tier 2 (13 confirmed, target 20-30);
+tier 3 is generated. Two files a human edits, and 30 options is 60 readable
+lines — the topic split solves a problem that does not exist yet.
+
+Revisit when `convars.py` has run. If `ShowInAdminUI` yields ~40 admin-facing
+convars weighted toward gameplay tuning, `conf/common.bat` gets unwieldy and
+splitting *it* by topic — not the whole launcher — becomes right. The trigger
+is roughly **gameplay passing 15 options**.
+
+Distribution note supporting this: of the 23 in use, **17 are `server.*`**.
+The tail is 3 convars across 3 classes, one each (`decay`, `rideablehorse`,
+`hackablelockedcrate`). A heavy head and a long thin tail is the shape to
+design for: tier 2 is mostly one class, tier 3 is where the many one-off
+classes live — and it is generated and grouped by class automatically, so it
+never needs hand-splitting at all.
