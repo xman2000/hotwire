@@ -91,3 +91,38 @@ wrong, and reading more community pages cannot settle which.
 That is the case for ADR-0008 in one line: **community documentation disagrees
 about defaults, and the assembly does not.** Generate defaults; never copy
 them from a page, including this one.
+
+## Field finding: query ports and the Steam client range
+
+The reference server had used `server.queryport 27015` for years, copied from
+a guide, alongside years of intermittent invisibility in the server browser.
+
+**27015 is inside the Steam client's own port range** — Steam uses UDP
+27000-27015 for game client traffic and 27015-27030 for matchmaking and HLTV.
+On a machine that runs both the dedicated server and the Steam client, the
+client can take the port; the server then stops answering A2S queries and
+vanishes from the browser until something releases it. Intermittent, hard to
+attribute, survives every reinstall.
+
+27015 is Source-engine convention and a great deal of Rust documentation
+copies it. **Rust is not Source.** Its own derivation is `1 + max(server.port,
+rcon.port)`, which lands on 28017 for a standard layout and is safely outside
+Steam's range. The launcher now ships 28017 and says why.
+
+Diagnostic worth keeping: an A2S query from outside the network settles
+visibility in seconds, where testing from inside cannot — many routers do not
+hairpin, so a perfectly visible server looks dead from your own LAN.
+
+```python
+sock.sendto(b"\xFF\xFF\xFF\xFF\x54Source Engine Query\x00", (ip, queryport))
+```
+
+A reply beginning `\xFF\xFF\xFF\xFFI` carries the hostname, map and player
+count. Anything else, including silence, means the browser cannot see it
+either.
+
+**Second cause found in the same session:** every forward pointed at a fixed
+LAN address with no evidence of a DHCP reservation. If that lease ever moves,
+*all* forwards break at once and the server disappears completely rather than
+intermittently. Any launcher documentation that tells people to forward ports
+should tell them to reserve the address in the same breath.

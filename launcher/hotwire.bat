@@ -269,8 +269,16 @@ REM ---------------------------------------------------------------------
 REM server.port -- game traffic, UDP.  [default: 28015]
 set "ARGS=!ARGS! +server.port 28015"
 
-REM server.queryport -- Steam server browser, UDP.  [default: 28017 -- VERIFY]
-set "ARGS=!ARGS! +server.queryport 27015"
+REM server.queryport -- Steam server browser, UDP. Not a fixed default:
+REM Rust derives it as 1 + the greater of server.port and rcon.port when it
+REM is not set, so the layout above gives 28017.
+REM
+REM AVOID 27015 AND THE 27000-27030 RANGE. That is the Steam CLIENT port
+REM range. If the machine running the server also runs Steam, the client
+REM can take the port, the server stops answering browser queries, and it
+REM goes invisible until something releases it. Guides that tell you to use
+REM 27015 are copying Source-engine convention; Rust is not Source.
+set "ARGS=!ARGS! +server.queryport 28017"
 
 REM rcon.port -- remote console, TCP.  [default: 28016]
 set "ARGS=!ARGS! +rcon.port 28016"
