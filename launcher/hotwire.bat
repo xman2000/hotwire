@@ -124,7 +124,7 @@ set "HOOK_BEFORE="
 set "HOOK_AFTER="
 
 set "LOGFILE=%ROOT%\logs\server_log.txt"
-set "STAMP=%ROOT%\logs\last_update.txt"
+set "UPDATE_STAMP=%ROOT%\logs\last_update.txt"
 
 
 REM ======================================================================
@@ -199,7 +199,7 @@ if "%DO_UPDATE%"=="1" goto :updatedecided
 if "%MAX_DAYS_WITHOUT_UPDATE%"=="0" goto :updatedecided
 
 set "DAYS_SINCE_UPDATE=9999"
-if exist "%STAMP%" for /f %%d in ('powershell -NoProfile -Command "[int]((Get-Date) - (Get-Item '%STAMP%').LastWriteTime).TotalDays"') do set "DAYS_SINCE_UPDATE=%%d"
+if exist "%UPDATE_STAMP%" for /f %%d in ('powershell -NoProfile -Command "[int]((Get-Date) - (Get-Item '%UPDATE_STAMP%').LastWriteTime).TotalDays"') do set "DAYS_SINCE_UPDATE=%%d"
 
 if !DAYS_SINCE_UPDATE! GEQ %MAX_DAYS_WITHOUT_UPDATE% (
     set "DO_UPDATE=1"
@@ -257,7 +257,7 @@ if exist "%ROOT%\VALIDATE.flag" del "%ROOT%\VALIDATE.flag"
 
 REM  What the backstop reads. Its timestamp is the whole point; the text
 REM  inside is only there so a person can read it too.
-echo Last update: %date% %time%> "%STAMP%"
+echo Last update: %date% %time%> "%UPDATE_STAMP%"
 
 if defined HOOK_AFTER call %HOOK_AFTER%
 
@@ -739,8 +739,8 @@ REM ======================================================================
 REM Rotate the log. -logfile TRUNCATES on every start, so without this a
 REM restart destroys the log of whatever went wrong before it.
 if exist "%LOGFILE%" (
-    for /f %%i in ('powershell -NoProfile -Command "Get-Date -Format yyyyMMdd-HHmmss"') do set "STAMP=%%i"
-    move /y "%LOGFILE%" "%ROOT%\logs\server_log_!STAMP!.txt" >nul
+    for /f %%i in ('powershell -NoProfile -Command "Get-Date -Format yyyyMMdd-HHmmss"') do set "LOGSTAMP=%%i"
+    move /y "%LOGFILE%" "%ROOT%\logs\server_log_!LOGSTAMP!.txt" >nul
     powershell -NoProfile -Command "Get-ChildItem '%ROOT%\logs\server_log_*.txt' | Sort-Object LastWriteTime -Descending | Select-Object -Skip %LOG_KEEP% | Remove-Item -Force" 2>nul
 )
 
