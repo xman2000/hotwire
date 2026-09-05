@@ -190,152 +190,527 @@ REM =====================================================================
 REM =====================================================================
 REM  4. SERVER OPTIONS
 REM
-REM  One option per line. REM a line to disable it.
-REM  A starting set. Run tools\convars.py for the complete list.
+REM  One option per line. REM a line to disable it; an option you do not set
+REM  uses the game's default, which is printed beside every one below.
+REM
+REM  Every name and every default here was read out of a real
+REM  Assembly-CSharp.dll, not from documentation and not from memory. Run
+REM  tools/convars.py --check on this file after a Rust update and it will
+REM  tell you which of them have moved.
+REM
+REM  This is a curated list, not the whole console surface. The assembly holds
+REM  about 1600 convars; most are diagnostic and runtime tuning that nobody
+REM  sets at launch, and burying these hundred among them would make the file
+REM  unreadable. tools/convars.py --all prints the rest when you need it.
 REM =====================================================================
 
 set "ARGS="
 
 REM ---------------------------------------------------------------------
-REM  4.1 PROCESS
+REM  4.0  PROCESS
 REM ---------------------------------------------------------------------
 
-REM Run headless with no window and no renderer. Required on a server.
+REM  Run headless with no window and no renderer. Required on a server.
 set "ARGS=!ARGS! -batchmode -nographics"
 
 REM ---------------------------------------------------------------------
-REM  4.2 IDENTITY AND WORLD
+REM  4.1  IDENTITY AND THE MAP
 REM
-REM  WARNING: server.identity names the folder under server\ holding the
-REM  map save, blueprints, bans and player data. Changing it creates a
-REM  brand new server and orphans the old one. Never edit it mid-wipe.
-REM  Changing level, seed or worldsize also generates a new map.
+REM  WARNING: identity names the folder under server\ holding the map, blueprints,
+REM  bans and player data. Changing it creates a brand new server and orphans the
+REM  old one. Changing level, seed or worldsize generates a new map.
 REM ---------------------------------------------------------------------
 
-REM server.identity -- save folder name. Keep it short, no spaces.  [default: unknown]
-set "ARGS=!ARGS! +server.identity "my_server""
+REM  server.identity -- Save folder name. Short, no spaces.
+REM  [string, default "my_server_identity"]
+set "ARGS=!ARGS! +server.identity my_server"
 
-REM server.level -- map type. "Procedural Map", "Barren", "HapisIsland",
-REM "CraggyIsland", "SavasIsland_koth".  [default: "Procedural Map"]
+REM  server.level -- Procedural Map, Barren, HapisIsland, CraggyIsland, SavasIsland_koth.
+REM  [string, default "Procedural Map"]
 set "ARGS=!ARGS! +server.level "Procedural Map""
 
-REM server.seed -- procedural map seed. Any integer. Same seed + same
-REM worldsize = same map.  [default: random]
+REM  server.seed -- Procedural seed. Same seed and worldsize give the same map.
+REM  [int, default 1337]
 set "ARGS=!ARGS! +server.seed 1234567"
 
-REM server.worldsize -- map size in metres. 1000-6000. Bigger costs RAM
-REM and startup time superlinearly.  [default: 4000]
+REM  server.worldsize -- Map size in metres, 1000-6000. Costs RAM and boot time superlinearly.
+REM  [int, default 4500]
 set "ARGS=!ARGS! +server.worldsize 4000"
 
-REM server.levelurl -- custom map URL. Set this INSTEAD of level/seed/
-REM worldsize, not as well as.  [default: empty]
-REM set "ARGS=!ARGS! +server.levelurl "https://example.com/map.map""
+REM  server.levelurl -- Custom map URL. Set INSTEAD of level, seed and worldsize.
+REM  [string, default ""]
+REM set "ARGS=!ARGS! +server.levelurl VALUE"
 
 REM ---------------------------------------------------------------------
-REM  4.3 NETWORK
+REM  4.2  NETWORK
 REM
-REM  All three need forwarding at the router. queryport is what the
-REM  server browser uses -- get it wrong and the server runs fine and is
-REM  invisible, which is a miserable thing to debug.
+REM  All of these need forwarding at the router. Get queryport wrong and the server
+REM  runs perfectly while being invisible in the browser, which is miserable to
+REM  debug.
 REM ---------------------------------------------------------------------
 
-REM server.port -- game traffic, UDP.  [default: 28015]
+REM  server.port -- Game traffic, UDP.
+REM  [int, default 28015]
 set "ARGS=!ARGS! +server.port 28015"
 
-REM server.queryport -- Steam server browser, UDP. Not a fixed default:
-REM Rust derives it as 1 + the greater of server.port and rcon.port when it
-REM is not set, so the layout above gives 28017.
-REM
-REM AVOID 27015 AND THE 27000-27030 RANGE. That is the Steam CLIENT port
-REM range. If the machine running the server also runs Steam, the client
-REM can take the port, the server stops answering browser queries, and it
-REM goes invisible until something releases it. Guides that tell you to use
-REM 27015 are copying Source-engine convention; Rust is not Source.
+REM  server.queryport -- Server browser, UDP. 0 derives it as 1 + max(server.port, rcon.port).
+REM  AVOID 27015 and the 27000-27030 range: that is the Steam CLIENT range,
+REM  and if this machine also runs Steam the client can take the port and the
+REM  server goes invisible until something releases it.
+REM  [int, default 0]
 set "ARGS=!ARGS! +server.queryport 28017"
 
-REM rcon.port -- remote console, TCP.  [default: 28016]
+REM  rcon.port -- Remote console, TCP.
+REM  [int, default 0]
 set "ARGS=!ARGS! +rcon.port 28016"
 
-REM app.port -- Rust+ companion app, TCP. Rust derives it as
-REM server.port + 68 when unset, so 28015 gives 28083. Needs its own
-REM port forward, which is the usual reason Rust+ "does not work".
-REM set "ARGS=!ARGS! +app.port 28083"
+REM  server.ip -- Bind address. Leave unset unless multi-homed.
+REM  [string, default ""]
+REM set "ARGS=!ARGS! +server.ip VALUE"
 
-REM server.ip -- bind address. Leave unset unless multi-homed.
-REM set "ARGS=!ARGS! +server.ip 0.0.0.0"
-
-REM ---------------------------------------------------------------------
-REM  4.4 BROWSER LISTING
-REM
-REM  What players see before they join. \n makes a line break in the
-REM  description. A literal percent must be doubled: 20%% not 20%.
-REM ---------------------------------------------------------------------
-
-REM server.hostname -- name in the browser. This is your advert.
-set "ARGS=!ARGS! +server.hostname "My Rust Server | Monthly | NA""
-
-REM server.description -- long text on the join screen.
-set "ARGS=!ARGS! +server.description "What makes this server different.\nSecond line.""
-
-REM server.tags -- browser filter tags, comma separated, no spaces.
-set "ARGS=!ARGS! +server.tags "monthly,modded,NA""
-
-REM server.headerimage -- 512x256 banner. Direct image URL.
-REM set "ARGS=!ARGS! +server.headerimage "https://example.com/banner.png""
-
-REM server.url -- website shown on the join screen.
-REM set "ARGS=!ARGS! +server.url "https://example.com""
-
-REM server.maxplayers -- slots.  [default: unknown]
+REM  server.maxplayers -- Slots.
+REM  [int, default 500]
 set "ARGS=!ARGS! +server.maxplayers 50"
 
+REM  server.playertimeout -- Seconds before a silent client is dropped.
+REM  [int, default 60]
+REM set "ARGS=!ARGS! +server.playertimeout VALUE"
+
+REM  server.rejoin_delay -- Seconds a kicked player must wait before rejoining.
+REM  [int, default 300]
+REM set "ARGS=!ARGS! +server.rejoin_delay VALUE"
+
 REM ---------------------------------------------------------------------
-REM  4.5 ADMIN AND RCON
+REM  4.3  BROWSER LISTING
 REM
-REM  RCON is remote code execution on this machine. Treat the password
-REM  like a root password: long, unique, and never in this file.
+REM  What players see before they join. A literal percent must be doubled.
 REM ---------------------------------------------------------------------
 
-REM rcon.password -- from secrets.bat. Never a literal here.
-set "ARGS=!ARGS! +rcon.password "!RCON_PASSWORD!""
+REM  server.hostname -- Name in the browser. This is your advert.
+REM  [string, default "My Untitled Rust Server"]
+set "ARGS=!ARGS! +server.hostname "My Rust Server | Monthly | NA""
 
-REM rcon.web -- 1 = WebSocket RCON (what modern tools expect).
+REM  server.description -- Long text on the join screen. Use backslash-n for a line break.
+REM  [string, default "No server description has been provided."]
+set "ARGS=!ARGS! +server.description "What makes this server different.""
+
+REM  server.tags -- Browser filter tags, comma separated, no spaces.
+REM  [property, default UNKNOWN]
+set "ARGS=!ARGS! +server.tags "monthly,modded,NA""
+
+REM  server.headerimage -- 512x256 banner. Direct image URL.
+REM  [string, default ""]
+REM set "ARGS=!ARGS! +server.headerimage VALUE"
+
+REM  server.logoimage -- Server logo. Direct image URL.
+REM  [string, default ""]
+REM set "ARGS=!ARGS! +server.logoimage VALUE"
+
+REM  server.url -- Website shown on the join screen.
+REM  [string, default ""]
+REM set "ARGS=!ARGS! +server.url VALUE"
+
+REM  server.censorplayerlist -- Hide the player list from the browser.
+REM  [bool, default true]
+REM set "ARGS=!ARGS! +server.censorplayerlist VALUE"
+
+REM ---------------------------------------------------------------------
+REM  4.4  ADMIN AND RCON
+REM
+REM  RCON is remote code execution on this machine. Treat the password like a root
+REM  password: long, unique, and never in this file.
+REM ---------------------------------------------------------------------
+
+REM  rcon.password -- From secrets.bat. Never a literal here. Command-line only:
+REM  it is not a convar, so tools that audit convars will not see it.
+REM  [?, default UNKNOWN]
+set "ARGS=!ARGS! +rcon.password !RCON_PASSWORD!"
+
+REM  rcon.web -- 1 = WebSocket RCON, which is what modern tools expect.
+REM  [bool, default true]
 set "ARGS=!ARGS! +rcon.web 1"
 
+REM  rcon.ip -- Bind address for RCON.
+REM  [string, default ""]
+REM set "ARGS=!ARGS! +rcon.ip VALUE"
+
+REM  rcon.maxconnections -- Simultaneous RCON connections allowed.
+REM  [int, default 500]
+REM set "ARGS=!ARGS! +rcon.maxconnections VALUE"
+
+REM  server.printReportsToConsole -- Player reports appear in the console.
+REM  [bool, default false]
+set "ARGS=!ARGS! +server.printReportsToConsole true"
+
 REM ---------------------------------------------------------------------
-REM  4.6 SAVES AND LOGGING
+REM  4.5  SAVES AND LOGS
+REM
+REM  saveinterval is how much progress a hard kill throws away, which is why the
+REM  plugin shuts down with quit rather than being killed.
 REM ---------------------------------------------------------------------
 
-REM server.saveinterval -- seconds between world saves. This is how much
-REM progress a hard kill throws away, so shut down cleanly.  [default: 600 -- VERIFY]
+REM  server.saveinterval -- Seconds between world saves.
+REM  [int, default 600]
 set "ARGS=!ARGS! +server.saveinterval 300"
 
-REM server.combatlog / chatlog -- keep the logs admins need.
-set "ARGS=!ARGS! +server.combatlog true"
-set "ARGS=!ARGS! +server.chatlog true"
+REM  server.saveBackupCount -- Rolling save backups kept.
+REM  [int, default 2]
+REM set "ARGS=!ARGS! +server.saveBackupCount VALUE"
 
-REM server.printReportsToConsole -- player reports in the console.
-set "ARGS=!ARGS! +server.printReportsToConsole"
+REM  server.saveframebudget -- Milliseconds per frame spent saving. Higher is faster, hitchier.
+REM  [int, default 5]
+REM set "ARGS=!ARGS! +server.saveframebudget VALUE"
+
+REM  chat.serverlog -- Print chat to the server console and log.
+REM  [bool, default true]
+REM set "ARGS=!ARGS! +chat.serverlog VALUE"
+
+REM  server.combatlogdelay -- Seconds of delay before combat log entries are readable.
+REM  [int, default 10]
+REM set "ARGS=!ARGS! +server.combatlogdelay VALUE"
+
+REM  server.combatlogsize -- Combat log entries kept per player.
+REM  [int, default 30]
+REM set "ARGS=!ARGS! +server.combatlogsize VALUE"
+
+REM  server.netlog -- Log network traffic.
+REM  [property, default UNKNOWN]
+REM set "ARGS=!ARGS! +server.netlog VALUE"
 
 REM ---------------------------------------------------------------------
-REM  4.7 GAMEPLAY  --  a sample. Regenerate for the full list.
+REM  4.6  PVE, PVP AND DAMAGE
 REM ---------------------------------------------------------------------
 
-REM server.globalchat -- 1 = everyone hears everyone.  [default: true]
-set "ARGS=!ARGS! +server.globalchat 1"
+REM  server.pve -- Server-wide PVE. Blunt: most modded servers use a plugin instead.
+REM  [bool, default false]
+REM set "ARGS=!ARGS! +server.pve VALUE"
 
-REM server.itemdespawn -- seconds before dropped items vanish.  [default: unknown]
-REM set "ARGS=!ARGS! +server.itemdespawn 1200"
+REM  server.pvp_ttk_global -- Global time-to-kill multiplier. Higher means players die slower.
+REM  [float, default 1.0]
+REM set "ARGS=!ARGS! +server.pvp_ttk_global VALUE"
 
-REM decay.scale -- decay rate multiplier. 0 disables decay entirely.  [default: 1]
-REM set "ARGS=!ARGS! +decay.scale 0.2"
+REM  server.pvp_ttk_bullet -- Time-to-kill multiplier for bullets only.
+REM  [float, default 1.0]
+REM set "ARGS=!ARGS! +server.pvp_ttk_bullet VALUE"
 
-REM hackablelockedcrate.requiredhackseconds -- codelock crate timer.  [default: 900]
-REM set "ARGS=!ARGS! +hackablelockedcrate.requiredhackseconds 300"
+REM  server.pvp_ttk_melee -- Time-to-kill multiplier for melee only.
+REM  [float, default 1.0]
+REM set "ARGS=!ARGS! +server.pvp_ttk_melee VALUE"
 
-REM rideablehorse.population -- horses per square km.  [default: unknown]
-REM set "ARGS=!ARGS! +rideablehorse.population 3"
+REM  server.bulletdamage -- Bullet damage multiplier.
+REM  [float, default 1.0]
+REM set "ARGS=!ARGS! +server.bulletdamage VALUE"
 
+REM  server.bulletarmor -- Bullet armour multiplier.
+REM  [float, default 1.0]
+REM set "ARGS=!ARGS! +server.bulletarmor VALUE"
+
+REM  server.arrowdamage -- Arrow damage multiplier.
+REM  [float, default 1.0]
+REM set "ARGS=!ARGS! +server.arrowdamage VALUE"
+
+REM  server.bleedingdamage -- Bleed damage multiplier.
+REM  [float, default 1.0]
+REM set "ARGS=!ARGS! +server.bleedingdamage VALUE"
+
+REM  server.radiation -- Radiation on or off.
+REM  [bool, default true]
+REM set "ARGS=!ARGS! +server.radiation VALUE"
+
+REM  server.stability -- Building stability. Off lets people build physically impossible bases.
+REM  [bool, default true]
+REM set "ARGS=!ARGS! +server.stability VALUE"
+
+REM ---------------------------------------------------------------------
+REM  4.7  DEATH, RESPAWN AND WOUNDING
+REM ---------------------------------------------------------------------
+
+REM  server.woundingenabled -- Players go down wounded rather than dying outright.
+REM  [bool, default true]
+REM set "ARGS=!ARGS! +server.woundingenabled VALUE"
+
+REM  server.crawlingenabled -- Wounded players can crawl.
+REM  [bool, default true]
+REM set "ARGS=!ARGS! +server.crawlingenabled VALUE"
+
+REM  server.woundedrecoverchance -- Chance of getting back up unaided.
+REM  [float, default 0.2]
+REM set "ARGS=!ARGS! +server.woundedrecoverchance VALUE"
+
+REM  server.respawnAtDeathPosition -- Respawn where you died. Very not-vanilla.
+REM  [bool, default false]
+REM set "ARGS=!ARGS! +server.respawnAtDeathPosition VALUE"
+
+REM  server.respawnWithLoadout -- Respawn with a kit.
+REM  [bool, default false]
+REM set "ARGS=!ARGS! +server.respawnWithLoadout VALUE"
+
+REM  server.respawnresetrange -- Metres within which a respawn point is reused.
+REM  [float, default 50.0]
+REM set "ARGS=!ARGS! +server.respawnresetrange VALUE"
+
+REM  server.respawnTimeAdditionBed -- Extra seconds on a bed respawn.
+REM  [float, default 0.0]
+REM set "ARGS=!ARGS! +server.respawnTimeAdditionBed VALUE"
+
+REM  server.respawnTimeAdditionBag -- Extra seconds on a sleeping bag respawn.
+REM  [float, default 0.0]
+REM set "ARGS=!ARGS! +server.respawnTimeAdditionBag VALUE"
+
+REM  server.dropitems -- Drop your inventory on death.
+REM  [bool, default true]
+REM set "ARGS=!ARGS! +server.dropitems VALUE"
+
+REM  server.corpses -- Leave a lootable corpse.
+REM  [bool, default true]
+REM set "ARGS=!ARGS! +server.corpses VALUE"
+
+REM ---------------------------------------------------------------------
+REM  4.8  DESPAWN TIMES
+REM
+REM  The most-tuned group on a modded server after rates. All in seconds.
+REM ---------------------------------------------------------------------
+
+REM  server.itemdespawn -- Dropped items.
+REM  [float, default 300.0]
+REM set "ARGS=!ARGS! +server.itemdespawn VALUE"
+
+REM  server.itemdespawn_quick -- Low-value items, which go sooner.
+REM  [float, default 30.0]
+REM set "ARGS=!ARGS! +server.itemdespawn_quick VALUE"
+
+REM  server.itemdespawn_container_scale -- Multiplier for items inside a dropped container.
+REM  [float, default 2.0]
+REM set "ARGS=!ARGS! +server.itemdespawn_container_scale VALUE"
+
+REM  server.corpsedespawn -- Player corpses.
+REM  [float, default 300.0]
+REM set "ARGS=!ARGS! +server.corpsedespawn VALUE"
+
+REM  server.npccorpsedespawn -- NPC corpses.
+REM  [float, default 600.0]
+REM set "ARGS=!ARGS! +server.npccorpsedespawn VALUE"
+
+REM  server.debrisdespawn -- Building debris after a raid.
+REM  [float, default 30.0]
+REM set "ARGS=!ARGS! +server.debrisdespawn VALUE"
+
+REM ---------------------------------------------------------------------
+REM  4.9  DECAY AND UPKEEP
+REM ---------------------------------------------------------------------
+
+REM  decay.scale -- Decay rate multiplier. 0 disables decay entirely.
+REM  [float, default 1.0]
+REM set "ARGS=!ARGS! +decay.scale VALUE"
+
+REM  decay.upkeep -- Upkeep on or off.
+REM  [bool, default true]
+REM set "ARGS=!ARGS! +decay.upkeep VALUE"
+
+REM  decay.upkeep_grief_protection -- Minutes of upkeep grace after a tool cupboard runs dry.
+REM  [float, default 1440.0]
+REM set "ARGS=!ARGS! +decay.upkeep_grief_protection VALUE"
+
+REM  decay.high_wall_upkeep -- Upkeep multiplier for external walls.
+REM  [float, default 0.2]
+REM set "ARGS=!ARGS! +decay.high_wall_upkeep VALUE"
+
+REM ---------------------------------------------------------------------
+REM  4.10  CHAT
+REM ---------------------------------------------------------------------
+
+REM  chat.enabled -- Chat on or off.
+REM  [bool, default true]
+REM set "ARGS=!ARGS! +chat.enabled VALUE"
+
+REM  chat.globalchat -- Everyone hears everyone. This is NOT server.globalchat.
+REM  [bool, default true]
+REM set "ARGS=!ARGS! +chat.globalchat VALUE"
+
+REM  chat.localchat -- Proximity chat.
+REM  [bool, default false]
+REM set "ARGS=!ARGS! +chat.localchat VALUE"
+
+REM  chat.localChatRange -- Metres that proximity chat carries.
+REM  [float, default 100.0]
+REM set "ARGS=!ARGS! +chat.localChatRange VALUE"
+
+REM  chat.historysize -- Messages kept in history.
+REM  [int, default 1000]
+REM set "ARGS=!ARGS! +chat.historysize VALUE"
+
+REM ---------------------------------------------------------------------
+REM  4.11  EVENTS
+REM
+REM  server.events is the master switch. The rest tune individual events.
+REM ---------------------------------------------------------------------
+
+REM  server.events -- Master switch for timed world events.
+REM  [bool, default true]
+REM set "ARGS=!ARGS! +server.events VALUE"
+
+REM  patrolhelicopter.lifetimeMinutes -- How long the patrol helicopter stays before leaving.
+REM  [float, default 30.0]
+REM set "ARGS=!ARGS! +patrolhelicopter.lifetimeMinutes VALUE"
+
+REM  patrolhelicopter.guns -- Number of guns it fires with.
+REM  [int, default 1]
+REM set "ARGS=!ARGS! +patrolhelicopter.guns VALUE"
+
+REM  patrolhelicopter.bulletDamageScale -- Its bullet damage multiplier.
+REM  [float, default 1.0]
+REM set "ARGS=!ARGS! +patrolhelicopter.bulletDamageScale VALUE"
+
+REM  patrolhelicopter.bulletAccuracy -- Its accuracy. Lower is more accurate.
+REM  [float, default 2.0]
+REM set "ARGS=!ARGS! +patrolhelicopter.bulletAccuracy VALUE"
+
+REM  cargoship.event_enabled -- Cargo ship on or off.
+REM  [bool, default true]
+REM set "ARGS=!ARGS! +cargoship.event_enabled VALUE"
+
+REM  cargoship.event_duration_minutes -- How long it stays.
+REM  [float, default 50.0]
+REM set "ARGS=!ARGS! +cargoship.event_duration_minutes VALUE"
+
+REM  cargoship.loot_rounds -- Crate refresh rounds during a visit.
+REM  [int, default 3]
+REM set "ARGS=!ARGS! +cargoship.loot_rounds VALUE"
+
+REM  bradleyapc.KillScientistsOnBradleyDeath -- Scientists die with the tank.
+REM  [bool, default false]
+REM set "ARGS=!ARGS! +bradleyapc.KillScientistsOnBradleyDeath VALUE"
+
+REM  halloween.enabled -- Halloween event.
+REM  [bool, default false]
+REM set "ARGS=!ARGS! +halloween.enabled VALUE"
+
+REM  xmas.enabled -- Christmas event.
+REM  [bool, default false]
+REM set "ARGS=!ARGS! +xmas.enabled VALUE"
+
+REM ---------------------------------------------------------------------
+REM  4.12  SPAWNS AND POPULATIONS
+REM
+REM  Populations are per square kilometre. Rates and densities scale the whole
+REM  spawn system, so small changes go a long way.
+REM ---------------------------------------------------------------------
+
+REM  spawn.max_rate -- Upper bound on spawn rate.
+REM  [float, default 1.0]
+REM set "ARGS=!ARGS! +spawn.max_rate VALUE"
+
+REM  spawn.min_rate -- Lower bound on spawn rate.
+REM  [float, default 0.5]
+REM set "ARGS=!ARGS! +spawn.min_rate VALUE"
+
+REM  spawn.max_density -- Upper bound on spawn density.
+REM  [float, default 1.0]
+REM set "ARGS=!ARGS! +spawn.max_density VALUE"
+
+REM  spawn.min_density -- Lower bound on spawn density.
+REM  [float, default 0.5]
+REM set "ARGS=!ARGS! +spawn.min_density VALUE"
+
+REM  spawn.player_scale -- How much nearby players suppress spawns.
+REM  [float, default 2.0]
+REM set "ARGS=!ARGS! +spawn.player_scale VALUE"
+
+REM  bear.Population -- Bears per square kilometre.
+REM  [float, default 2.0]
+REM set "ARGS=!ARGS! +bear.Population VALUE"
+
+REM  boar.Population -- Boar per square kilometre.
+REM  [float, default 5.0]
+REM set "ARGS=!ARGS! +boar.Population VALUE"
+
+REM  chicken.Population -- Chickens per square kilometre.
+REM  [float, default 3.0]
+REM set "ARGS=!ARGS! +chicken.Population VALUE"
+
+REM  wolf2.Population -- Wolves. The class is Wolf2: Rust replaced the old one.
+REM  [float, default 2.0]
+REM set "ARGS=!ARGS! +wolf2.Population VALUE"
+
+REM  stag.Population -- Stags per square kilometre.
+REM  [float, default 3.0]
+REM set "ARGS=!ARGS! +stag.Population VALUE"
+
+REM  polarbear.Population -- Polar bears per square kilometre.
+REM  [float, default 1.0]
+REM set "ARGS=!ARGS! +polarbear.Population VALUE"
+
+REM  ridablehorse.Population -- Horses. Note the spelling: ridable, one e.
+REM  [float, default 2.0]
+REM set "ARGS=!ARGS! +ridablehorse.Population VALUE"
+
+REM ---------------------------------------------------------------------
+REM  4.13  IDLE, AUTH AND ANTI-CHEAT
+REM ---------------------------------------------------------------------
+
+REM  server.idlekick -- Minutes of idling before a kick. 0 disables.
+REM  [int, default 30]
+REM set "ARGS=!ARGS! +server.idlekick VALUE"
+
+REM  server.idlekickmode -- 0 off, 1 when the server is full, 2 always.
+REM  [int, default 1]
+REM set "ARGS=!ARGS! +server.idlekickmode VALUE"
+
+REM  server.idlekickadmins -- 1 also kicks idle admins.
+REM  [int, default 0]
+REM set "ARGS=!ARGS! +server.idlekickadmins VALUE"
+
+REM  server.authtimeout -- Seconds allowed for a client to authenticate.
+REM  [int, default 60]
+REM set "ARGS=!ARGS! +server.authtimeout VALUE"
+
+REM  server.strictauth_steam -- Reject clients Steam will not vouch for.
+REM  [bool, default false]
+REM set "ARGS=!ARGS! +server.strictauth_steam VALUE"
+
+REM  server.anticheattoken -- EAC anti-cheat token checks.
+REM  [bool, default true]
+REM set "ARGS=!ARGS! +server.anticheattoken VALUE"
+
+REM ---------------------------------------------------------------------
+REM  4.14  RUST+ COMPANION APP
+REM
+REM  Needs its own port forward, which is the usual reason Rust+ does not work.
+REM ---------------------------------------------------------------------
+
+REM  app.port -- Rust+ companion port, TCP. 0 derives it as server.port + 68.
+REM  [int, default UNKNOWN]
+REM set "ARGS=!ARGS! +app.port VALUE"
+
+REM  app.listenip -- Bind address for Rust+.
+REM  [string, default ""]
+REM set "ARGS=!ARGS! +app.listenip VALUE"
+
+REM  app.maxconnections -- Simultaneous Rust+ connections.
+REM  [int, default 500]
+REM set "ARGS=!ARGS! +app.maxconnections VALUE"
+
+REM ---------------------------------------------------------------------
+REM  4.15  PERFORMANCE
+REM
+REM  Leave these alone unless you are chasing a specific measured problem.
+REM ---------------------------------------------------------------------
+
+REM  server.tickrate -- Server tick rate. Raising it costs CPU and rarely helps.
+REM  [int, default 10]
+REM set "ARGS=!ARGS! +server.tickrate VALUE"
+
+REM  server.entityrate -- Entity updates sent per tick.
+REM  [int, default 16]
+REM set "ARGS=!ARGS! +server.entityrate VALUE"
+
+REM  global.maxthreads -- Worker threads Rust may use.
+REM  [int, default 8]
+REM set "ARGS=!ARGS! +global.maxthreads VALUE"
+
+REM  server.netcache -- Cache network payloads. Costs memory, saves CPU.
+REM  [bool, default true]
+REM set "ARGS=!ARGS! +server.netcache VALUE"
 
 REM =====================================================================
 REM  5. LAUNCH

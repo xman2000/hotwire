@@ -229,9 +229,11 @@ def scan_static_constructor(pe, code):
 def read_il_defaults(pe, md):
     values = {}
     complete = incomplete = 0
+    # Every type, not just the ConVar namespace. Convars declared on ordinary
+    # game classes -- cargoship.*, bradleyapc.* -- have their defaults in those
+    # classes' static constructors, and filtering by namespace reported every
+    # one of them as UNKNOWN.
     for td in md.TypeDef.rows:
-        if str(getattr(td, "TypeNamespace", "") or "") != "ConVar":
-            continue
         for method in (getattr(td, "MethodList", None) or []):
             if str(getattr(method.row, "Name", "") or "") != ".cctor":
                 continue

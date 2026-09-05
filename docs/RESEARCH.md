@@ -61,11 +61,18 @@ conventionally passed on the command line rather than set in that file. Their
 low count measures where a setting is written, not how much it matters — a
 wrong `queryport` makes a server invisible in the browser.
 
-**Source A under-represents rate tuning.** `gather.*`, `crafting.*` and
-`heli.enabled` appear only in B, which ships 2x and 5x presets. The reference
-server is PVE and does its loot tuning through plugins instead. A launcher
-aimed at modded servers needs the rate convars that one real PVE server never
-touches. This is the clearest thing the outside sources added.
+**Source A under-represents rate tuning — and B invented some of it.**
+`gather.*`, `crafting.*` and `heli.enabled` appear only in B, which ships 2x
+and 5x presets. That looked like the clearest thing the outside sources added.
+
+**Corrected 2026-09-05 against a real assembly: there is no `gather.*` class in
+vanilla Rust at all**, and no `heli.enabled`. The only gather convar is
+`gamemodesoftcore.gather_rate`. A hosting panel's configuration form is not a
+list of convars — it is a list of things that panel can change, some of which
+it implements itself. Source B was evidence of demand, not of existence.
+
+The lesson generalises: cross-referencing documentation tells you what people
+want to configure. Only the assembly tells you what exists.
 
 ## Scale of tier 3
 
@@ -96,8 +103,8 @@ machine-readable, and `tools/convars.py` should report it as a column.
 ADR-0009 moves to ACCEPTED.
 
 It also gives one real default — `server.hostname` is `"My Untitled Rust
-Server"` — from a source that is the declaration itself rather than prose
-about it.
+Server"` — from a source that is the declaration itself rather than prose about
+it. **Confirmed 2026-09-05** by reading the assembly directly.
 
 ## Why the generator still exists
 

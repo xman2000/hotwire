@@ -148,7 +148,16 @@ Two real sources, in order:
 
 **Resolved 2026-09-04.** `ShowInAdminUI` is real; the declaration form is
 `[ServerVar(ShowInAdminUI = true)] public static string hostname = "My
-Untitled Rust Server";`. `convars.py` should report it as a column.
+Untitled Rust Server";`. `convars.py` reports it as a column.
+
+**Amended 2026-09-05, having read it.** It is real, and it is **not** the
+oracle this ADR claimed. Of the 71 convars it marks, many are live tuning
+knobs — `waterWheelWorkBudgetMs`, `hopperAnimationBudgetMs`,
+`farmChickenLocalAvoidance` — while it does not mark `server.port`,
+`server.seed`, `server.worldsize`, `server.identity` or `server.level`. It
+answers "what does the in-game admin panel expose at runtime", which is a
+different question from "what do you set at launch". It is useful input to
+curation. It is not a substitute for it.
 
 Source 2 was also widened from n=1 to three independent samples. 17 convars
 are named by two or more of them — see `docs/RESEARCH.md` for the list and for

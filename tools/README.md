@@ -40,6 +40,14 @@ initialised in a static constructor: the value is in IL, not metadata. Walking
 those `.cctor` assignments would close most of the gap, and is the obvious next
 step.
 
-**Status: unrun.** Written against the metadata tables `dnfile` exposes —
-`TypeDef`, `Field`, `CustomAttribute`, `Constant` — but never executed against
-a real assembly. Treat its output as unverified until it has been.
+**Status: run, 2026-09-05.** Against a real `Assembly-CSharp.dll` it finds
+**1,623 convars** and reads **1,620 defaults** out of static-constructor IL.
+The remaining 17% are properties, which have a getter rather than a constant
+and so have nothing to read.
+
+On its first working run, checking `launcher/hotwire.bat`, it found that
+`server.combatlog`, `server.chatlog` and `server.globalchat` do not exist —
+the real names are `server.combatlogdelay`, `chat.serverlog` and
+`chat.globalchat` — and that a comment claiming `server.worldsize` defaults to
+4000 was wrong by 500. Three of those had been on a live server's command line
+doing nothing.
