@@ -13,7 +13,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Hotwire", "xman2000", "0.9.5")]
+    [Info("Hotwire", "xman2000", "0.9.6")]
     [Description("Scheduled restarts and updates. Announces, counts down, writes a flag, quits.")]
     internal class Hotwire : CovalencePlugin
     {
@@ -349,6 +349,7 @@ namespace Oxide.Plugins
             {
                 _config = Config.ReadObject<HotwireConfig>();
                 if (_config == null) throw new JsonException("configuration deserialised to null");
+                RepairConfig();
             }
             catch (Exception ex)
             {
@@ -361,6 +362,43 @@ namespace Oxide.Plugins
                 return;
             }
             SaveConfig();
+        }
+
+        // A null in the file is not the same as a missing key. Delete a key and
+        // the field initialiser's default survives; write "Restarts": null and
+        // Newtonsoft faithfully replaces the list with null. Every use then
+        // dereferences it -- and Scan() runs on a ten-second timer, so a single
+        // null would either throw forever or kill the timer, and in both cases
+        // the server never restarts again. That is the one failure the safety
+        // envelope rules out, so it is repaired rather than reported.
+        private void RepairConfig()
+        {
+            var repaired = new List<string>();
+
+            if (_config.Restarts == null) { _config.Restarts = new List<ScheduleEntry>(); repaired.Add("Restarts"); }
+            if (_config.Updates == null) { _config.Updates = new List<UpdateEntry>(); repaired.Add("Updates"); }
+            if (_config.Countdown == null) { _config.Countdown = new CountdownSettings(); repaired.Add("Countdown"); }
+            if (_config.Framework == null) { _config.Framework = new FrameworkSettings(); repaired.Add("Framework update check"); }
+            if (_config.General == null) { _config.General = new GeneralSettings(); repaired.Add("General"); }
+            if (_config.StatusBar == null) { _config.StatusBar = new StatusBarSettings(); repaired.Add("Status bar"); }
+
+            if (_config.Countdown.AnnounceAt == null)
+            {
+                _config.Countdown.AnnounceAt = new List<int>();
+                repaired.Add("Announce when this many seconds remain");
+            }
+
+            // A null entry inside a list -- a stray comma, usually.
+            if (_config.Restarts.RemoveAll(e => e == null) > 0) repaired.Add("an empty entry in Restarts");
+            if (_config.Updates.RemoveAll(e => e == null) > 0) repaired.Add("an empty entry in Updates");
+
+            foreach (var entry in AllEntries())
+                if (entry.Days == null) entry.Days = new List<string>();
+
+            if (repaired.Count > 0)
+                PrintWarning("Repaired empty values in the config: " + string.Join(", ", repaired.ToArray()) +
+                             ". A null there would have stopped the schedule entirely, so defaults were " +
+                             "put back. Check the file is what you meant.");
         }
 
         protected override void SaveConfig() => Config.WriteObject(_config, true);
