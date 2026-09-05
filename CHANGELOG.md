@@ -4,6 +4,33 @@ Versions cover both halves at once. The plugin and the launcher are only
 useful together, so "Hotwire 1.0.0" means the same thing whichever one you are
 holding.
 
+## 1.1.1 — 2026-09-05
+
+**The launcher consumed an update flag even when the update failed**, and reset
+its own backstop clock at the same time. Both lines ran unconditionally at a
+point reachable from the "giving up on steamcmd" path, so:
+
+- A requested update that failed was silently downgraded to a plain restart.
+  The documented contract is one flag, one update; what it implemented was one
+  flag, one attempt.
+- A server that could not reach Steam rewrote its "last updated" stamp on every
+  failed try, so the fourteen-day backstop could never fire — in precisely the
+  situation it exists to catch.
+
+The flag is now deleted and the stamp written only when steamcmd and the
+framework extract both succeeded, and a banner says so when they did not.
+ADR-0022.
+
+Also: the elapsed-days check used `[int]`, which rounds, so 13.6 days tripped
+the 14-day backstop half a day early; it floors now. A failed timestamp call
+during log rotation produced `server_log_.txt` and then overwrote it on every
+later failure; it falls back to a unique name. `secrets.example.bat` now says
+that `!` and `^` cannot appear in an RCON password, because delayed expansion
+eats them and the server would listen on a different password than the one
+written in the file.
+
+Read-verified, not executed.
+
 ## 1.1.0 — 2026-09-05
 
 **Every string a player can see is now a lang key.** Previously the schedule

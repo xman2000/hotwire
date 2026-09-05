@@ -41,8 +41,11 @@ happens when a flag file is present in the server root:
 | `VALIDATE.flag` | the same plus `validate`, which re-checksums everything |
 | neither | straight to launch |
 
-The flag is deleted once acted on, so one flag buys one update. Anything can
-create one — you, a scheduled task, or the plugin:
+The flag is deleted **once the update has actually completed**, so one flag
+buys one update rather than one attempt. If steamcmd exhausts its retries, or
+the framework download fails, the flag is kept and the backstop clock is not
+reset — the console says so in a banner, and the next start tries again.
+Anything can create a flag — you, a scheduled task, or the plugin:
 
 ```powershell
 New-Item -ItemType File C:\rustserver\UPDATE.flag
@@ -53,10 +56,10 @@ never updates does not go stale, it becomes unjoinable, and it usually happens
 on force wipe day. So the default is the safe, slow behavior and the sharp
 behavior is a deliberate choice.
 
-**`hotwire` mode carries a backstop.** If `MAX_DAYS_WITHOUT_UPDATE` (14)
-passes with no update, one happens anyway and says so loudly in the console.
-Fourteen days never fires on a monthly cycle that is working, and it turns "my
-server is dead and I do not know why" into a line of log. A missing stamp file
+**`hotwire` mode carries a backstop.** If `MAX_DAYS_WITHOUT_UPDATE` (14) full
+days pass with no *successful* update, one happens anyway and says so loudly
+in the console. Fourteen days never fires on a monthly cycle that is working,
+and it turns "my server is dead and I do not know why" into a line of log. A missing stamp file
 counts as forever, so a fresh install updates on its first start rather than
 waiting a fortnight to discover it is out of date. Set it to `0` to disable.
 
@@ -94,7 +97,9 @@ file.
    server install.
 2. Rename `secrets.example.bat` to `secrets.bat` and put your RCON password in
    it. **Change it from the example** — RCON is remote code execution on that
-   machine, and the launcher does not check the value.
+   machine, and the launcher does not check the value. Avoid `!` and `^` in it:
+   the launcher runs under delayed expansion, which eats both, and the server
+   would end up listening on a password that is not the one in the file.
 3. Open `hotwire.bat`, set `ROOT` and `STEAMCMD` at the top, then work down the
    options.
 4. Run it.

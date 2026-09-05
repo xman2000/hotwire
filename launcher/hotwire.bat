@@ -2,7 +2,7 @@
 setlocal EnableDelayedExpansion
 
 REM ==[ H O T W I R E ]===================================================
-REM  Version 1.1.0   2026-09-05
+REM  Version 1.1.1   2026-09-05
 REM  Built by xman2000 and Claude.  MIT License.
 REM
 REM  The launcher. Starts a Rust dedicated server, relaunches it when it
@@ -213,7 +213,9 @@ if "%DO_UPDATE%"=="1" goto :updatedecided
 if "%MAX_DAYS_WITHOUT_UPDATE%"=="0" goto :updatedecided
 
 set "DAYS_SINCE_UPDATE=9999"
-if exist "%UPDATE_STAMP%" for /f %%d in ('powershell -NoProfile -Command "[int]((Get-Date) - (Get-Item '%UPDATE_STAMP%').LastWriteTime).TotalDays"') do set "DAYS_SINCE_UPDATE=%%d"
+REM  Floor, not [int]: [int] rounds, so 13.6 days would trip a 14-day
+REM  backstop half a day early.
+if exist "%UPDATE_STAMP%" for /f %%d in ('powershell -NoProfile -Command "[math]::Floor(((Get-Date) - (Get-Item '%UPDATE_STAMP%').LastWriteTime).TotalDays)"') do set "DAYS_SINCE_UPDATE=%%d"
 
 if !DAYS_SINCE_UPDATE! GEQ %MAX_DAYS_WITHOUT_UPDATE% (
     set "DO_UPDATE=1"
@@ -235,6 +237,7 @@ if "%DO_UPDATE%"=="0" (
 )
 
 set /a STEAM_TRIES=0
+set "STEAM_OK=0"
 
 :steamupdate
 set /a STEAM_TRIES+=1
@@ -243,35 +246,66 @@ if "%DO_VALIDATE%"=="1" (
 ) else (
     "%STEAMCMD%" +force_install_dir "%ROOT%" +login anonymous +app_update %APPID% +quit
 )
-if not errorlevel 1 goto framework
+if errorlevel 1 goto steamfailed
+set "STEAM_OK=1"
+goto framework
 
+:steamfailed
 echo [%date% %time%] steamcmd error (attempt !STEAM_TRIES! of %MAX_STEAM_TRIES%).
-if !STEAM_TRIES! GEQ %MAX_STEAM_TRIES% (
-    echo [%date% %time%] Giving up on steamcmd. Launching what we have.
-    goto framework
-)
+if !STEAM_TRIES! GEQ %MAX_STEAM_TRIES% goto steamgaveup
 timeout /t 60 /nobreak >nul
 goto steamupdate
+
+:steamgaveup
+echo [%date% %time%] Giving up on steamcmd. Launching what we have.
 
 :framework
 REM  Oxide/uMod. Comment this whole block out for a vanilla server.
 REM  -f makes curl fail on an HTTP error instead of saving the error page,
 REM  which would otherwise be force-extracted over a working install.
+set "FRAMEWORK_OK=0"
 curl -fSL -A "Mozilla/5.0" "https://umod.org/games/rust/download" --output "%ROOT%\OxideMod.zip"
 if errorlevel 1 (
     echo [%date% %time%] Framework download failed. Keeping the install.
 ) else (
     powershell -NoProfile -Command "Expand-Archive -Force '%ROOT%\OxideMod.zip' '%ROOT%'"
-    if errorlevel 1 echo [%date% %time%] Framework extract failed.
+    if errorlevel 1 (
+        echo [%date% %time%] Framework extract failed.
+    ) else (
+        set "FRAMEWORK_OK=1"
+    )
 )
 if exist "%ROOT%\OxideMod.zip" del "%ROOT%\OxideMod.zip"
 
-if exist "%ROOT%\UPDATE.flag"   del "%ROOT%\UPDATE.flag"
-if exist "%ROOT%\VALIDATE.flag" del "%ROOT%\VALIDATE.flag"
+REM  The flag is consumed and the backstop clock reset ONLY when the
+REM  update actually happened.
+REM
+REM  Both used to run unconditionally, and both are reachable after
+REM  steamcmd has given up. That turned "one flag, one update" into "one
+REM  flag, one attempt": a failed update ate the flag and said nothing,
+REM  and the next restart was a plain restart. Worse, a server that could
+REM  not reach Steam reset its own backstop clock on every failed try, so
+REM  the one thing written to catch a server drifting out of date was the
+REM  one thing that could never fire.
+set "UPDATE_OK=0"
+if "!STEAM_OK!"=="1" if "!FRAMEWORK_OK!"=="1" set "UPDATE_OK=1"
 
-REM  What the backstop reads. Its timestamp is the whole point; the text
-REM  inside is only there so a person can read it too.
-echo Last update: %date% %time%> "%UPDATE_STAMP%"
+REM  UPDATE_STAMP is what the backstop reads. Its timestamp is the whole
+REM  point; the text inside is only there so a person can read it too.
+REM  No REM inside the block below -- a stray parenthesis in a comment
+REM  closes the block early, and a stray redirect writes a file.
+if "!UPDATE_OK!"=="1" (
+    if exist "%ROOT%\UPDATE.flag"   del "%ROOT%\UPDATE.flag"
+    if exist "%ROOT%\VALIDATE.flag" del "%ROOT%\VALIDATE.flag"
+    echo Last update: %date% %time%> "%UPDATE_STAMP%"
+) else (
+    echo [%date% %time%] ================================================
+    echo [%date% %time%] The update did NOT complete.
+    echo [%date% %time%] Any UPDATE.flag or VALIDATE.flag is being KEPT,
+    echo [%date% %time%] and the backstop clock has NOT been reset, so
+    echo [%date% %time%] the next start will try again.
+    echo [%date% %time%] ================================================
+)
 
 if defined HOOK_AFTER call %HOOK_AFTER%
 
@@ -753,7 +787,11 @@ REM ======================================================================
 REM Rotate the log. -logfile TRUNCATES on every start, so without this a
 REM restart destroys the log of whatever went wrong before it.
 if exist "%LOGFILE%" (
+    set "LOGSTAMP="
     for /f %%i in ('powershell -NoProfile -Command "Get-Date -Format yyyyMMdd-HHmmss"') do set "LOGSTAMP=%%i"
+    REM  If that call failed the name would be server_log_.txt, and every
+    REM  later failure would overwrite the same file.
+    if not defined LOGSTAMP set "LOGSTAMP=unstamped-!RANDOM!"
     move /y "%LOGFILE%" "%ROOT%\logs\server_log_!LOGSTAMP!.txt" >nul
     powershell -NoProfile -Command "Get-ChildItem '%ROOT%\logs\server_log_*.txt' | Sort-Object LastWriteTime -Descending | Select-Object -Skip %LOG_KEEP% | Remove-Item -Force" 2>nul
 )

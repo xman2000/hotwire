@@ -644,3 +644,43 @@ and not a reason to have waited.
 
 `docs/LAUNCHER.md`, `docs/CONFIG.md` and the rest are GitHub-only and keep the
 repo's normal style — wrapped, tables where a table helps.
+
+## ADR-0022 — Only a completed update consumes the flag or resets the backstop
+
+**Date:** 2026-09-05 · **Status:** ACCEPTED
+
+The launcher deleted `UPDATE.flag` and wrote the backstop stamp
+unconditionally, at a point reachable from the "giving up on steamcmd" path
+and from a failed framework download. Both were found in review, and both
+inverted a documented promise.
+
+**"One flag buys one update" was really "one flag buys one attempt."** An
+operator or the plugin asks for an update, steamcmd fails five times, the flag
+is eaten, one line scrolls past, and the next restart is a plain restart that
+nobody knows was supposed to be an update. Rule 2 says a bug must never leave a
+server unable to restart and never restart one unannounced; this is neither,
+but it is the same category of silent wrong outcome, and the flag is the entire
+interface between the two halves (rule 3). It has to mean what it says.
+
+**The backstop could never fire in the one case it exists for.** A server that
+cannot reach Steam rewrote its own "last updated" stamp on every failed try, so
+the clock measuring how long since a successful update reset every fifteen
+seconds. The backstop is there to catch a server drifting silently out of date
+until it stops being joinable. A server that cannot reach Steam is exactly that
+server.
+
+Chosen: **track success explicitly** — `STEAM_OK` on the steamcmd path,
+`FRAMEWORK_OK` on the extract, and consume the flag and write the stamp only
+when both are set. When they are not, a banner says the update did not happen,
+that the flag is being kept, and that the clock was not reset.
+
+Failing this way means a server that cannot reach Steam retries on every
+restart forever. That is the correct direction: it is loud, it is visible in
+the console every time, and it errs toward updating rather than toward quietly
+believing it is current.
+
+Also fixed here: the elapsed-days check used PowerShell `[int]`, which rounds,
+so 13.6 days tripped a 14-day backstop half a day early. It is `[math]::Floor`
+now, which is what "full days since" meant.
+
+**None of this has been executed.** It is read-verified only.
