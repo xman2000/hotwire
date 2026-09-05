@@ -11,7 +11,7 @@ using Oxide.Core.Plugins;
 
 namespace Oxide.Plugins
 {
-    [Info("Hotwire", "xman2000", "0.1.0")]
+    [Info("Hotwire", "xman2000", "0.1.1")]
     [Description("Scheduled restarts and updates. Announces, counts down, writes a flag, quits.")]
     internal class Hotwire : CovalencePlugin
     {
@@ -45,13 +45,19 @@ namespace Oxide.Plugins
 
         private class HotwireConfig
         {
-            [JsonProperty("Restarts")]
+            // ObjectCreationHandling.Replace on every collection, and it is
+            // not optional. The default is Auto, which REUSES the list the
+            // field initializer already built and ADDS the file's entries to
+            // it. The default entry below is therefore re-appended on every
+            // single load, and a config that starts with two entries has four
+            // after one reload and six after two. That was shipped in 0.1.0.
+            [JsonProperty("Restarts", ObjectCreationHandling = ObjectCreationHandling.Replace)]
             public List<ScheduleEntry> Restarts = new List<ScheduleEntry>
             {
                 new ScheduleEntry { Time = "05:00", Days = "Daily", Enabled = false }
             };
 
-            [JsonProperty("Updates")]
+            [JsonProperty("Updates", ObjectCreationHandling = ObjectCreationHandling.Replace)]
             public List<UpdateEntry> Updates = new List<UpdateEntry>
             {
                 new UpdateEntry { Time = "05:00", Days = "Thursday", Validate = false, Enabled = false }
@@ -111,7 +117,8 @@ namespace Oxide.Plugins
             [JsonProperty("Start the countdown this many seconds before")]
             public int StartSeconds = 600;
 
-            [JsonProperty("Announce when this many seconds remain")]
+            [JsonProperty("Announce when this many seconds remain",
+                ObjectCreationHandling = ObjectCreationHandling.Replace)]
             public List<int> AnnounceAt = new List<int> { 600, 300, 180, 60, 30, 10, 5, 4, 3, 2, 1 };
 
             [JsonProperty("Seconds between the last announcement and the kick")]

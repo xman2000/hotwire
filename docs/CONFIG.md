@@ -7,6 +7,14 @@ restarting the moment it is installed is a restarter that catches you out.
 The config stays hand-editable and always will. Chat commands are a
 convenience over the same file, never the only way in (ADR-0006).
 
+> **Upgrading from 0.1.0?** 0.1.0 duplicated its default schedule entries on
+> every load — a config written with two entries had four after one reload and
+> six after two, all of them disabled copies of the defaults. `AnnounceAt` grew
+> the same way, though a de-duplication at load hid it. 0.1.1 fixes the cause.
+> It does not clean up what 0.1.0 wrote, so delete the surplus entries by hand,
+> or just delete `oxide/config/Hotwire.json` and let it regenerate — nothing is
+> lost if you had not enabled anything yet.
+
 ---
 
 ## Restarts and Updates
