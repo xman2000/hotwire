@@ -119,7 +119,8 @@ launcher's whole point.
 
 ## ADR-0009 — Tier 2 is seeded from evidence, not from intuition
 
-**Date:** 2026-09-04 · **Status:** PROPOSED
+**Date:** 2026-09-04 · **Status:** ACCEPTED — `ShowInAdminUI` confirmed real,
+and cross-source counting done. See `docs/RESEARCH.md`.
 
 "The top 20 settings admins change" is a claim about a population of admins,
 and inventing it would undermine the one thing this project sells: that the
@@ -136,7 +137,15 @@ Two real sources, in order:
    verified working on protocol 2632.287.1. Listed in `HANDOFF.md` §8b.
    **n = 1**: evidence, not a survey. Say so in the docs.
 
-Status stays PROPOSED until source 1 is checked.
+**Resolved 2026-09-04.** `ShowInAdminUI` is real; the declaration form is
+`[ServerVar(ShowInAdminUI = true)] public static string hostname = "My
+Untitled Rust Server";`. `convars.py` should report it as a column.
+
+Source 2 was also widened from n=1 to three independent samples. 17 convars
+are named by two or more of them — see `docs/RESEARCH.md` for the list and for
+two methodological artifacts that would otherwise mislead (ports look
+unimportant because they live on the command line rather than in server.cfg;
+rate tuning is missing from the reference server because it uses plugins).
 
 ## ADR-0010 — Config file layout: by tier, not by topic (for now)
 

@@ -37,10 +37,15 @@ fill them in from memory.
 
 ## The tier-2 question — highest value item open
 
-- [ ] **Does `ServerVar` carry a `ShowInAdminUI` property?** If yes, it is
-      Facepunch's own list of admin-facing convars and tier 2 becomes data
-      rather than judgement. Assumed to exist; unverified. Check it before
-      curating anything by hand. See ADR-0009.
+- [x] ~~**Does `ServerVar` carry a `ShowInAdminUI` property?**~~ **Yes.**
+      Confirmed 2026-09-04, see `docs/RESEARCH.md`. Teach `convars.py` to
+      report it as a column; that is Facepunch's own list of admin-facing
+      convars.
+- [ ] **How many convars actually carry `[ServerVar]`?** Community sources
+      suggest 800-1200 total console entries, but most are `ai.*`, `debug.*`
+      and `antihack.*` runtime surface. The launcher-relevant number is
+      unknown until the generator runs. Do not quote 800-1200 as tier 3's
+      size.
 - [ ] **Confirm `call`ed scripts inherit `EnableDelayedExpansion`** from the
       parent's `setlocal`. ADR-0010 depends on it and it is unverified. One
       minute to test: a child doing `set "X=!ARGS!"` either sees the value or
