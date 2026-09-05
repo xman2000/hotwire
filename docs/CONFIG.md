@@ -342,6 +342,16 @@ All under `hotwire` (alias `hw`), in chat or on the server console.
 Indexes come from `hotwire list` and are per-list, so `restart 0` and
 `update 0` are different entries.
 
+**`hotwire now` with no number lasts as long as a scheduled countdown** — an
+hour, by default, because it uses the same `Start the countdown this many
+seconds before` setting. That is deliberate: a manual restart gets players the
+same warning a scheduled one does. Pass a number when you want it sooner:
+
+```
+hotwire now 60          a minute, plain restart
+hotwire now update 300  five minutes, and update on the way back
+```
+
 A manual `hotwire now` is not subject to the fired-recently guard and does not
 feed it. An admin asking for a restart means it.
 
