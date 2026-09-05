@@ -725,3 +725,46 @@ the server running. Erring the other way would stop a working server over a
 failed clock read, which is the failure this project exists to prevent.
 
 **Not executed.** Read-verified only, like everything else in this file.
+
+## ADR-0024 — The RCON password is read with delayed expansion off, and quoted
+
+**Date:** 2026-09-05 · **Status:** ACCEPTED
+
+Three separate faults on one value, found together.
+
+**The shipped launcher never quoted it.** `+rcon.password !RCON_PASSWORD!`
+passes an unquoted argument, so a password containing a space arrives as two
+arguments and the server listens on the first word. Passwords with spaces are
+good practice; this punished them silently.
+
+**A `!` in the password was eaten before it was ever used.** `secrets.bat` is
+`call`ed from a script running under `EnableDelayedExpansion`, so the
+`set "RCON_PASSWORD=..."` line *inside secrets.bat* is parsed with expansion
+on and loses everything from a `!` onward. The earlier advice — "avoid `!` and
+`^`" — treated a fixable bug as a rule for the user to remember, which is the
+wrong trade for a password.
+
+Chosen: **read the secret with `setlocal DisableDelayedExpansion` around the
+`call`**, then carry the value out through a `for /f` whose block was parsed
+while expansion was still off, which is what makes the `!` survive. Then quote
+it at the point of use, with `!VAR!` rather than `%VAR%`: a percent-expanded
+value is rescanned for `!`, an exclamation-expanded one is not.
+
+`!`, `%`, `^` and spaces are now read exactly as written. A `"` or a leading
+`;` still cannot pass, because `for /f "delims="` uses the first for quoting
+and treats the second as end-of-line. Those two fail **loudly** at startup with
+a message naming the cause, rather than starting the server on a password that
+is not the one in the file. A silent wrong password is the failure worth
+engineering against; a refusal to start with a reason is not.
+
+**The third fault was not ours, and is the reason this was looked at.** The
+copy of the launcher on the reference server had lost a quote —
+`+rcon.password "%PW%"` where four quotes were needed — leaving `ARGS` holding
+an unterminated quote that swallowed every option appended after it, including
+`-logfile`, which quietly disabled log rotation entirely. The repo's copy was
+correct; the server's had diverged outside git and was captured by an automated
+backup commit. Worth recording because it is the failure mode of hand-copying a
+launcher between machines, and because one missing character disabled two
+features without a single error message.
+
+**Not executed.** Read-verified.

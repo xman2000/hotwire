@@ -2,7 +2,7 @@
 setlocal EnableDelayedExpansion
 
 REM ==[ H O T W I R E ]===================================================
-REM  Version 1.1.1   2026-09-05
+REM  Version 1.1.2   2026-09-05
 REM  Built by xman2000 and Claude.  MIT License.
 REM
 REM  The launcher. Starts a Rust dedicated server, relaunches it when it
@@ -171,9 +171,27 @@ if not exist "%SECRETS%" (
     echo Copy secrets.example.bat to secrets.bat and set RCON_PASSWORD.
     pause & exit /b 1
 )
+REM  Read with delayed expansion OFF. A password containing ! is eaten
+REM  at the moment secrets.bat SETS it, not where it is used, because
+REM  the called file is parsed by this same cmd. Turning expansion off
+REM  around the call is the only place that can be fixed; the for loop
+REM  then carries the value back across the scope boundary intact,
+REM  because the block was parsed while expansion was still off.
+setlocal DisableDelayedExpansion
 call "%SECRETS%"
 if not defined RCON_PASSWORD (
+    endlocal
     echo [%date% %time%] secrets.bat did not set RCON_PASSWORD.
+    pause & exit /b 1
+)
+for /f "delims=" %%P in ("%RCON_PASSWORD%") do (
+    endlocal
+    set "RCON_PASSWORD=%%P"
+)
+if not defined RCON_PASSWORD (
+    echo [%date% %time%] The RCON password did not survive being read.
+    echo [%date% %time%] A leading semicolon or a double quote in it will
+    echo [%date% %time%] do that. Change the password; do not quote it.
     pause & exit /b 1
 )
 
@@ -480,8 +498,14 @@ REM     belongs in secrets.bat and nowhere else.
 REM ----------------------------------------------------------------------
 
 REM   rcon.password -- Read from secrets.bat. Never write a literal here.
+REM
+REM   Four quotes, not three. set "VAR=..." takes first quote to last, so
+REM   dropping one leaves ARGS holding an unterminated quote that
+REM   swallows every option appended after it. And !VAR! rather than
+REM   %VAR%: under delayed expansion a percent-expanded value is rescanned
+REM   for !, an exclamation-expanded one is not.
 REM   [?, default UNKNOWN]
-set "ARGS=!ARGS! +rcon.password !RCON_PASSWORD!"
+set "ARGS=!ARGS! +rcon.password "!RCON_PASSWORD!""
 
 REM   rcon.web -- 1 for WebSocket RCON, which is what current tools
 REM     expect.

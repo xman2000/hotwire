@@ -97,9 +97,10 @@ file.
    server install.
 2. Rename `secrets.example.bat` to `secrets.bat` and put your RCON password in
    it. **Change it from the example** — RCON is remote code execution on that
-   machine, and the launcher does not check the value. Avoid `!` and `^` in it:
-   the launcher runs under delayed expansion, which eats both, and the server
-   would end up listening on a password that is not the one in the file.
+   machine, and the launcher does not check the value. `!`, `%`, `^` and
+   spaces are all read exactly as written; a double quote, or a leading
+   semicolon, is refused at startup with a message rather than silently
+   changing the password.
 3. Open `hotwire.bat`, set `ROOT` and `STEAMCMD` at the top, then work down the
    options.
 4. Run it.

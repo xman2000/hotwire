@@ -4,6 +4,21 @@ Versions cover both halves at once. The plugin and the launcher are only
 useful together, so "Hotwire 1.0.0" means the same thing whichever one you are
 holding.
 
+## 1.1.2 — 2026-09-05
+
+**The RCON password was passed unquoted**, so a password containing a space
+became two arguments and the server listened on the first word. It is quoted
+now.
+
+**A `!` in the password was destroyed before it was used.** `secrets.bat` is
+`call`ed under `EnableDelayedExpansion`, so its own `set` line lost everything
+from a `!` onward. The file is read with expansion disabled now and the value
+carried back out intact, so `!`, `%`, `^` and spaces are all read exactly as
+written. A `"` or a leading `;` still cannot pass, and now fails loudly at
+startup with the reason rather than silently changing the password. The
+previous advice to avoid `!` and `^` is withdrawn — it was a bug, not a rule
+for users to remember. ADR-0024.
+
 ## 1.1.1 — 2026-09-05
 
 **The launcher consumed an update flag even when the update failed**, and reset
