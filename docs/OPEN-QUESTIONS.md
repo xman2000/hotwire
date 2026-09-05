@@ -27,15 +27,20 @@ its use site.
 - [ ] **The `https://umod.org/games/rust.json` response shape**, specifically
       `latest_release_version`. Guarded: a changed feed logs a warning and
       schedules nothing.
-- [ ] **The AdvancedStatus call shape.** `SetStatus(userId, id, text, seconds)`
-      and `DeleteStatus(userId, id)` are guesses. This is why
-      `UseStatusPlugin` ships `false` — turn it on only after checking the
-      real API. It disables itself for the session on the first exception.
-      **Now the largest open question in the plugin**, and newly answerable:
-      AdvancedStatus is confirmed installed on the reference server
-      (`hotwire check`, 2026-09-04), so its actual API can be read off the
-      plugin file rather than guessed. Until it is, ADR-0003's countdown
-      surface is written but not usable.
+- [x] ~~**The AdvancedStatus call shape.**~~ **Read from the installed plugin
+      2026-09-04** and written up in `docs/GAME-API.md`. Every part of the
+      original guess was wrong — `SetStatus(userId, id, text, seconds)` versus
+      the real `CreateBar(userId, Dictionary<string,object>)` — which is the
+      case for having shipped it disabled rather than enabled.
+- [ ] **The `TimeStamp` keys.** AdvancedStatus accepts `TimeStamp`,
+      `TimeStampStart` and `TimeStampDestroy` as doubles. If it renders a
+      countdown client-side from those, Hotwire could create the bar once
+      instead of pushing updates, and the bar would survive a laggy tick.
+      Not read, so not used. Worth ten minutes.
+- [ ] **AdvancedStatus's own version drift.** The integration is written
+      against 0.1.26. It is wrapped and self-disabling, so a changed API costs
+      a cosmetic bar rather than a restart, but nothing tells us it changed
+      except the warning in console.
 - [x] ~~**`Interface.Oxide.RootDirectory` is the server root**~~ **Confirmed
       2026-09-04** by `hotwire check` on the reference server: it resolves to
       the install root, `RustDedicated` is present in it, it is writable, and

@@ -7,6 +7,10 @@ restarting the moment it is installed is a restarter that catches you out.
 The config stays hand-editable and always will. Chat commands are a
 convenience over the same file, never the only way in (ADR-0006).
 
+> **Upgrading to 0.2.0?** The `Render the countdown through AdvancedStatus`
+> key under `General` has been replaced by a `Status bar` section. The old key
+> is ignored; the new section is written with defaults on first load.
+>
 > **Upgrading from 0.1.0?** 0.1.0 duplicated its default schedule entries on
 > every load — a config written with two entries had four after one reload and
 > six after two, all of them disabled copies of the defaults. `AnnounceAt` grew
@@ -104,9 +108,35 @@ to.
 - **Refuse to fire the same entry twice** — the DST guard (ADR-0013). Leave it
   at 20 hours unless you genuinely schedule the same entry twice a day, in
   which case set it below the gap between them. `0` disables it.
-- **Render through AdvancedStatus** — off because the call shape is
-  unverified. If you turn it on and it is wrong, it disables itself for the
-  session and falls back to chat; the countdown is unaffected either way.
+The `Render the countdown through AdvancedStatus` key from 0.1.x is gone,
+replaced by the `Status bar` section below.
+
+## Status bar
+
+```json
+"Status bar": {
+  "Enabled": true,
+  "Category": "Hotwire",
+  "Order": 10,
+  "Bar colour, hex (empty = the status plugin's default)": "",
+  "Text colour, hex (empty = default)": "",
+  "Progress colour, hex (empty = default)": ""
+}
+```
+
+Renders the countdown as a status bar through **AdvancedStatus**, which is a
+paid plugin most servers will not have. Without it this section does nothing
+and chat carries the countdown on its own — that is the normal case, not a
+degraded one.
+
+Leave the colours empty unless you have a reason. Empty inherits whatever the
+server owner themed their bars with, and a restart bar that ignores the
+server's theme reads as a bug.
+
+The bar appears when the countdown starts, updates as it runs, is given to
+players who connect mid-countdown, and is removed on cancel, on shutdown and
+on unload. If the status plugin errors, Hotwire logs it once, falls back to
+chat for the rest of the session, and the countdown is unaffected.
 
 ## Commands
 

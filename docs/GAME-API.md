@@ -6,7 +6,58 @@ rule 5 in `CLAUDE.md`. **Only entries read out of a real
 `// VERIFY:` at its use site, and lives in `docs/OPEN-QUESTIONS.md` until it
 has been checked.
 
-## Status: empty, and mostly not needed
+## AdvancedStatus 0.1.26 (IIIaKa)
+
+**Verified:** 2026-09-04, read from the plugin installed on the reference
+server. Not from documentation, and not from memory.
+
+Called through `[PluginReference] Plugin AdvancedStatus` and `Call(...)`.
+
+```
+IsReady()                                              -> true, or null when not ready
+CreateBar(string userIdStr, Dictionary<string,object>)  overloads: ulong, BasePlayer, object
+UpdateContent(string userIdStr, Dictionary<string,object>)
+DeleteBar(ulong userID, string barId, string pluginName)
+DeleteBarForAll(string barId, string pluginName)
+DeleteAllPluginBars(string pluginName)
+BarExists(ulong userID, string barId, string pluginName)
+```
+
+Hotwire uses the **string** user-id overloads, so nothing in the integration
+needs a `BasePlayer` and ADR-0014 still holds.
+
+Parameter keys used, from the bar's own constructor:
+
+| Key | Type | Note |
+|---|---|---|
+| `Plugin` | string | **required** — `CreateBar` returns silently without it |
+| `Id` | string | **required** — same |
+| `Category` | string | defaults to `"Default"` |
+| `Order` | int | defaults to 10 |
+| `Text` | string | |
+| `Progress` | **float** | 0–1 |
+| `Main_Color`, `Text_Color`, `Progress_Color` | string | hex; omit to inherit the server's theme |
+
+**Every key is type-checked and a mismatch is silently ignored.** `Progress`
+is tested with `obj is float`, so a `double` there renders an empty bar and
+logs nothing. `Order`, `Height` and the `*_Size` keys want `int`; the
+`TimeStamp*` keys want `double`. This is the single easiest thing to get
+wrong.
+
+`OnAdvancedStatusLoaded` is the readiness hook. It never appears as a literal
+in the file — it is built as `$"On{AdvancedStatusName}Loaded"` where
+`AdvancedStatusName = "AdvancedStatus"`. Every API method checks `_isReady`
+first, so bars created before it fires are dropped without a word.
+
+**Licensing.** AdvancedStatus is EULA'd and sold through Codefling and
+Lone.Design: it may not be copied, modified or redistributed without the
+author's consent. Calling its API is not copying it, and describing that API
+here is interoperability documentation. No code from it may enter this
+repository — the same rule the project applies to SmoothRestarter. Most
+servers will not have it, which is why the integration is optional and chat
+carries the countdown by itself.
+
+## Rust assembly: nothing read yet
 
 No assembly has been inspected yet — `tools/convars.py` is written and unrun.
 

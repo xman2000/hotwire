@@ -11,7 +11,7 @@ using Oxide.Core.Plugins;
 
 namespace Oxide.Plugins
 {
-    [Info("Hotwire", "xman2000", "0.1.1")]
+    [Info("Hotwire", "xman2000", "0.2.0")]
     [Description("Scheduled restarts and updates. Announces, counts down, writes a flag, quits.")]
     internal class Hotwire : CovalencePlugin
     {
@@ -71,6 +71,9 @@ namespace Oxide.Plugins
 
             [JsonProperty("General")]
             public GeneralSettings General = new GeneralSettings();
+
+            [JsonProperty("Status bar")]
+            public StatusBarSettings StatusBar = new StatusBarSettings();
         }
 
         private class ScheduleEntry
@@ -145,6 +148,34 @@ namespace Oxide.Plugins
             public bool Validate = false;
         }
 
+        // ADR-0003: render the countdown through a status surface players
+        // already read. Verified against AdvancedStatus 0.1.26 by IIIaKa --
+        // see docs/GAME-API.md. Absent that plugin this does nothing at all
+        // and chat carries the countdown, which is the case on most servers.
+        private class StatusBarSettings
+        {
+            [JsonProperty("Enabled")]
+            public bool Enabled = true;
+
+            [JsonProperty("Category")]
+            public string Category = "Hotwire";
+
+            [JsonProperty("Order")]
+            public int Order = 10;
+
+            // Empty means "use the status plugin's own defaults", which is
+            // usually right: the server owner themed those, and a restart bar
+            // that ignores the theme looks like a bug.
+            [JsonProperty("Bar colour, hex (empty = the status plugin's default)")]
+            public string MainColor = "";
+
+            [JsonProperty("Text colour, hex (empty = default)")]
+            public string TextColor = "";
+
+            [JsonProperty("Progress colour, hex (empty = default)")]
+            public string ProgressColor = "";
+        }
+
         private class GeneralSettings
         {
             // Empty means "ask Oxide where the server root is". Set it only
@@ -163,12 +194,6 @@ namespace Oxide.Plugins
             // guard has to be on disk rather than in memory. ADR-0013.
             [JsonProperty("Refuse to fire the same entry twice within this many hours")]
             public double MinimumHoursBetweenSameEntry = 20.0;
-
-            // ADR-0003 says render through a status plugin where one exists.
-            // Default off because the call shape below is UNVERIFIED -- turn
-            // it on once you have checked it against your AdvancedStatus.
-            [JsonProperty("Render the countdown through AdvancedStatus (unverified -- see docs)")]
-            public bool UseStatusPlugin = false;
 
             [JsonProperty("Chat prefix")]
             public string ChatPrefix = "<color=#e0995e>Hotwire</color>: ";
@@ -245,6 +270,8 @@ namespace Oxide.Plugins
 
         [PluginReference] private Plugin AdvancedStatus;
         private bool _statusDisabled;
+        private int _countdownTotal;
+        private string _lastBarText;
 
         private string _knownFrameworkVersion;
 
@@ -310,13 +337,22 @@ namespace Oxide.Plugins
             _countdownTimer?.Destroy();
             _frameworkTimer?.Destroy();
 
+            // Belt and braces: removes every bar this plugin ever created,
+            // whatever state we think we are in. A bar left on someone's
+            // screen after an unload has no way to remove itself.
+            if (AdvancedStatus != null && !_statusDisabled)
+            {
+                try { AdvancedStatus.Call("DeleteAllPluginBars", Name); }
+                catch (Exception ex) { PrintWarning($"Could not clear status bars: {ex.Message}"); }
+            }
+
             if (_countdownActive && !_shuttingDown)
             {
                 // Say so. A countdown that vanishes silently is the "restarts
                 // unannounced" half of the safety envelope in reverse: players
                 // brace for a restart that never comes.
                 Broadcast("Cancelled");
-                ClearStatus();
+                RemoveBars();
                 Puts("Unloaded mid-countdown. The restart was cancelled.");
             }
         }
@@ -503,6 +539,7 @@ namespace Oxide.Plugins
             _announced.Clear();
 
             var remaining = (int)Math.Round((target - DateTime.Now).TotalSeconds);
+            _countdownTotal = Math.Max(1, remaining);
 
             // Everything at or above the time actually remaining has already
             // been said by the line below, or is in the past. Without this the
@@ -511,6 +548,8 @@ namespace Oxide.Plugins
                 if (point >= remaining) _announced.Add(point);
             Puts($"Countdown started: {KindWord()} in {remaining}s (entry {key}).");
             Broadcast("CountdownStart", KindWord(), FormatRemaining(remaining));
+
+            ShowBars();
 
             _countdownTimer?.Destroy();
             _countdownTimer = timer.Every(1f, CountdownTick);
@@ -535,7 +574,7 @@ namespace Oxide.Plugins
                 return;
             }
 
-            UpdateStatus(remaining);
+            UpdateBars(remaining);
 
             foreach (var point in _config.Countdown.AnnounceAt)
             {
@@ -557,7 +596,7 @@ namespace Oxide.Plugins
             _countdownEntry = null;
             _countdownKey = "";
             _announced.Clear();
-            ClearStatus();
+            RemoveBars();
 
             Broadcast("Cancelled");
             Puts($"Countdown cancelled by {by}.");
@@ -568,7 +607,7 @@ namespace Oxide.Plugins
             if (_shuttingDown) return;
             _shuttingDown = true;
             _countdownActive = false;
-            ClearStatus();
+            RemoveBars();
 
             if (!string.IsNullOrEmpty(_countdownKey))
             {
@@ -713,50 +752,179 @@ namespace Oxide.Plugins
 
         #region Status surface
 
-        // ADR-0003 renders the countdown through a status plugin players
-        // already read rather than adding a fifth thing fighting for a screen
-        // corner. VERIFY: the AdvancedStatus call shape below has NOT been
-        // checked against the plugin. That is why it is off by default and
-        // why it disables itself permanently on the first exception -- a
-        // cosmetic feature must never be able to interrupt a countdown.
-        private void UpdateStatus(int remaining)
-        {
-            if (!_config.General.UseStatusPlugin || _statusDisabled) return;
-            if (AdvancedStatus == null) return;
+        // ADR-0003 renders the countdown through a status surface players
+        // already read, rather than adding a fifth thing fighting for a screen
+        // corner.
+        //
+        // Written against AdvancedStatus 0.1.26 by IIIaKa, read out of the
+        // installed plugin -- signatures in docs/GAME-API.md. Everything here
+        // is still wrapped: the plugin is paid and EULA'd, so most servers
+        // will not have it, and a version that changes its API must cost us a
+        // cosmetic bar and never a countdown.
+        private const string BarId = "hotwire_countdown";
 
+        // Fired by AdvancedStatus when it is ready to take bars. Without this
+        // we would create bars during OnServerInitialized that it silently
+        // drops, because every one of its API methods checks _isReady first.
+        private void OnAdvancedStatusLoaded()
+        {
+            if (_countdownActive) ShowBars();
+        }
+
+        private bool StatusAvailable()
+        {
+            if (!_config.StatusBar.Enabled || _statusDisabled) return false;
+            if (AdvancedStatus == null) return false;
             try
             {
-                var text = string.Format(lang.GetMessage("StatusBar", this, null), KindWord(), FormatRemaining(remaining));
-                foreach (var p in players.Connected.ToArray())
+                // IsReady() returns true, or null when it is not ready.
+                return AdvancedStatus.Call("IsReady") is bool ready && ready;
+            }
+            catch (Exception ex)
+            {
+                DisableStatus(ex);
+                return false;
+            }
+        }
+
+        private void DisableStatus(Exception ex)
+        {
+            _statusDisabled = true;
+            PrintWarning($"The status bar failed ({ex.Message}). Falling back to chat for the rest " +
+                         "of this session. The countdown itself is unaffected.");
+        }
+
+        private Dictionary<string, object> BarParameters(int remaining, string text)
+        {
+            var p = new Dictionary<string, object>
+            {
+                // Both required. CreateBar and UpdateContent return without
+                // doing anything if either is missing or is not a string.
+                ["Plugin"] = Name,
+                ["Id"] = BarId,
+                ["Category"] = _config.StatusBar.Category,
+                ["Order"] = _config.StatusBar.Order,
+                ["Text"] = text
+            };
+
+            // Every key is type-checked with `obj is float` / `obj is int` and
+            // a mismatch is silently ignored rather than reported, so the cast
+            // is load-bearing: a double here renders an empty bar and no error.
+            var fraction = _countdownTotal > 0
+                ? (float)Math.Max(0.0, Math.Min(1.0, remaining / (double)_countdownTotal))
+                : 0f;
+            p["Progress"] = fraction;
+
+            AddColour(p, "Main_Color", _config.StatusBar.MainColor);
+            AddColour(p, "Text_Color", _config.StatusBar.TextColor);
+            AddColour(p, "Progress_Color", _config.StatusBar.ProgressColor);
+            return p;
+        }
+
+        private static void AddColour(Dictionary<string, object> p, string key, string value)
+        {
+            if (!string.IsNullOrWhiteSpace(value)) p[key] = value.Trim();
+        }
+
+        private void ShowBars()
+        {
+            if (!StatusAvailable()) return;
+            var remaining = RemainingSeconds();
+            var text = BarText(remaining);
+            _lastBarText = text;
+            try
+            {
+                foreach (var player in players.Connected.ToArray())
                 {
-                    if (p == null || !p.IsConnected) continue;
-                    AdvancedStatus.Call("SetStatus", p.Id, StatusId, text, remaining);
+                    if (player == null || !player.IsConnected) continue;
+                    // Passing the id as a string picks the string overload, so
+                    // nothing here needs a BasePlayer -- ADR-0014 holds.
+                    AdvancedStatus.Call("CreateBar", player.Id, BarParameters(remaining, text));
                 }
             }
             catch (Exception ex)
             {
-                _statusDisabled = true;
-                PrintWarning($"The status-plugin call failed ({ex.Message}). " +
-                             "Falling back to chat for the rest of this session. The countdown is unaffected.");
+                DisableStatus(ex);
             }
         }
 
-        private void ClearStatus()
+        private void ShowBarFor(IPlayer player)
         {
-            if (!_config.General.UseStatusPlugin || _statusDisabled) return;
-            if (AdvancedStatus == null) return;
+            if (!StatusAvailable() || player == null || !player.IsConnected) return;
+            var remaining = RemainingSeconds();
             try
             {
-                foreach (var p in players.Connected.ToArray())
+                AdvancedStatus.Call("CreateBar", player.Id, BarParameters(remaining, BarText(remaining)));
+            }
+            catch (Exception ex)
+            {
+                DisableStatus(ex);
+            }
+        }
+
+        private void UpdateBars(int remaining)
+        {
+            if (!StatusAvailable()) return;
+
+            var text = BarText(remaining);
+
+            // Do not push a bar to every player every second for ten minutes.
+            // The text only changes at minute boundaries, so update when it
+            // does, every five seconds so the progress bar still moves, and
+            // every second inside the last minute where it is being watched.
+            var worthIt = text != _lastBarText || remaining <= 60 || remaining % 5 == 0;
+            if (!worthIt) return;
+            _lastBarText = text;
+
+            try
+            {
+                var parameters = BarParameters(remaining, text);
+                foreach (var player in players.Connected.ToArray())
                 {
-                    if (p == null || !p.IsConnected) continue;
-                    AdvancedStatus.Call("DeleteStatus", p.Id, StatusId);
+                    if (player == null || !player.IsConnected) continue;
+                    AdvancedStatus.Call("UpdateContent", player.Id, parameters);
                 }
             }
-            catch
+            catch (Exception ex)
             {
-                _statusDisabled = true;
+                DisableStatus(ex);
             }
+        }
+
+        private void RemoveBars()
+        {
+            _lastBarText = null;
+            if (AdvancedStatus == null || _statusDisabled) return;
+            try
+            {
+                // One call removes it for everyone, including players who
+                // joined mid-countdown and anyone we never tracked. Strict
+                // lifecycle without a per-player bookkeeping list to get wrong.
+                AdvancedStatus.Call("DeleteBarForAll", BarId, Name);
+            }
+            catch (Exception ex)
+            {
+                // Not worth disabling over: we are on our way out anyway.
+                PrintWarning($"Could not remove the status bar: {ex.Message}");
+            }
+        }
+
+        private string BarText(int remaining)
+        {
+            return string.Format(lang.GetMessage("StatusBar", this, null), KindWord(), FormatRemaining(remaining));
+        }
+
+        private int RemainingSeconds()
+        {
+            return Math.Max(0, (int)Math.Ceiling((_countdownTarget - DateTime.Now).TotalSeconds));
+        }
+
+        // A player who connects mid-countdown gets the bar too. They also get
+        // the next chat announcement, so this is belt and braces rather than
+        // their only warning.
+        private void OnUserConnected(IPlayer player)
+        {
+            if (_countdownActive && !_shuttingDown) ShowBarFor(player);
         }
 
         #endregion
@@ -1017,9 +1185,12 @@ namespace Oxide.Plugins
             lines.Add($"  DST guard    : {_config.General.MinimumHoursBetweenSameEntry}h " +
                       $"({_lastFired.Count} entr{(_lastFired.Count == 1 ? "y" : "ies")} on record)");
 
-            var status = AdvancedStatus == null ? "not installed" : "installed";
-            lines.Add($"  status plugin: {status}, rendering {(_config.General.UseStatusPlugin ? "ON (call shape unverified)" : "off -- chat only")}");
-            if (_statusDisabled) lines.Add("                 disabled for this session after an error");
+            string status;
+            if (AdvancedStatus == null) status = "not installed -- chat only";
+            else if (!_config.StatusBar.Enabled) status = "installed, disabled in config -- chat only";
+            else if (_statusDisabled) status = "installed, DISABLED for this session after an error";
+            else status = StatusAvailable() ? "installed and ready" : "installed, not ready yet";
+            lines.Add($"  status bar   : {status}");
 
             if (_config.Framework.Enabled)
                 lines.Add($"  framework    : checking every {_config.Framework.CheckIntervalMinutes}m, " +
