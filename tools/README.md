@@ -1,30 +1,27 @@
 # tools
 
-Read metadata out of a real `Assembly-CSharp.dll` with pure Python — no .NET
-runtime, no Unity, nothing but the file the server already has.
+`convars.py` reads the `[ServerVar]` convars out of a real
+`Assembly-CSharp.dll` with pure Python — no .NET runtime, no Unity, nothing but
+the file the server already has. It reports each convar's name and, where the
+compiler stored one, its default.
 
-```sh
-python3 -m venv venv && ./venv/bin/pip install dnfile
-./venv/bin/python tools/convars.py <Assembly-CSharp.dll>          # TSV reference
-./venv/bin/python tools/convars.py <Assembly-CSharp.dll> --bat    # launcher lines
+```
+python -m venv venv
+venv\Scripts\pip install dnfile
+venv\Scripts\python tools\convars.py <Assembly-CSharp.dll>          # TSV reference
+venv\Scripts\python tools\convars.py <Assembly-CSharp.dll> --bat    # launcher lines
 ```
 
-`convars.py` enumerates every `[ServerVar]` in the `ConVar` namespace and
-reports its name and, where the compiler stored one, its default.
+**Re-run it after every Rust update.** Convars come and go, and their defaults
+move more often than their names do. A launcher documenting a default that has
+quietly changed is worse than one documenting nothing, because someone reads
+the comment and believes it. The assembly on your server is the only authority.
 
-**Why generate rather than hand-write.** Convars appear, change and disappear
-between Rust builds. A launcher listing options that no longer exist, or
-documenting defaults that have moved, is worse than one listing nothing:
-someone reads the comment and believes it. The assembly on the server is the
-only authority, and it is different after every force wipe. Re-run this then.
+**Defaults come back `UNKNOWN` rather than guessed** when a convar is
+initialised in a static constructor: the value is in IL, not metadata. Walking
+those `.cctor` assignments would close most of the gap, and is the obvious next
+step.
 
-**Defaults are reported as UNKNOWN rather than guessed.** Many convars are
-initialised in a static constructor rather than as a compile-time constant, so
-their value is in IL, not metadata. Teaching `convars.py` to walk those
-`.cctor` assignments would close most of the gap. It is the obvious next
-step, and it is why some defaults are blank today.
-
-**Status: unrun.** This was written against the metadata tables `dnfile`
-exposes — `TypeDef`, `Field`, `CustomAttribute`, `Constant` — but has not been
-executed against a real `Assembly-CSharp.dll`. Until it has, its output is
-unverified.
+**Status: unrun.** Written against the metadata tables `dnfile` exposes —
+`TypeDef`, `Field`, `CustomAttribute`, `Constant` — but never executed against
+a real assembly. Treat its output as unverified until it has been.

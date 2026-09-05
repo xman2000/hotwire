@@ -114,17 +114,24 @@ BRIEF.md                        the full brief
 
 1. Copy `launcher/hotwire.bat` and `launcher/secrets.example.bat` next to your
    server install.
-2. Rename `secrets.example.bat` to `secrets.bat` and set your RCON password.
-   The launcher refuses to start if `secrets.bat` is missing or does not set
-   `RCON_PASSWORD`. It does not inspect the value, so **change the example
-   password** — RCON is remote code execution on the machine running it.
-3. Edit the paths at the top of `hotwire.bat`, then work down the options.
-4. Generate the full option reference for your build:
+2. Rename `secrets.example.bat` to `secrets.bat` and put your RCON password in
+   it. **Change it from the example** — RCON is remote code execution on that
+   machine, and the launcher does not check the value.
+3. Open `hotwire.bat`, set `ROOT` and `STEAMCMD` at the top, then work down the
+   options.
+4. Run it.
 
-   ```sh
-   python3 -m venv venv && ./venv/bin/pip install dnfile
-   ./venv/bin/python tools/convars.py <path>/Assembly-CSharp.dll --bat
-   ```
+The plugin is separate and optional: drop `src/Hotwire.cs` into
+`oxide/plugins/` and it will write the flags on a schedule. See
+`docs/CONFIG.md`.
+
+Optionally, generate the full option reference for your own build:
+
+```
+python -m venv venv
+venv\Scripts\pip install dnfile
+venv\Scripts\python tools\convars.py "<server>\RustDedicated_Data\Managed\Assembly-CSharp.dll" --bat
+```
 
 ## What it does not do
 

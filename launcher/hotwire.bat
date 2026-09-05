@@ -2,70 +2,42 @@
 setlocal EnableDelayedExpansion
 
 REM =====================================================================
-REM  HOTWIRE LAUNCHER  --  a Rust dedicated server start script that
-REM  documents itself.
-REM
-REM  MIT licence. https://github.com/xman2000/hotwire
+REM  HOTWIRE LAUNCHER  --  a Rust server start script you can edit
+REM  without fear.  MIT.  https://github.com/xman2000/hotwire
 REM =====================================================================
 REM
-REM  HOW TO USE THIS FILE
+REM  START HERE
+REM    1. Set ROOT and STEAMCMD below, in section 1.
+REM    2. Copy secrets.example.bat to secrets.bat and put your RCON
+REM       password in it.
+REM    3. Work down section 4 and switch on the options you want.
+REM    4. Run this file. It relaunches the server whenever it exits.
 REM
-REM  Every server option below is TWO lines: a comment describing it and
-REM  its default, then one "set" line that adds it to the command line.
+REM  SWITCHING AN OPTION ON OR OFF
+REM    Every option is one independent line. REM in front turns it off:
 REM
-REM      REM  server.maxplayers -- slots. [default: 500]
+REM      REM  server.maxplayers -- slots.  [default: unknown]
 REM      set "ARGS=!ARGS! +server.maxplayers 50"
 REM
-REM  To turn an option OFF, put REM in front of the set line. To turn it
-REM  ON, take the REM away. That is the whole editing model. Options are
-REM  independent lines, so you can never break the file by disabling one
-REM  -- which is exactly what happens when you comment out a line in the
-REM  middle of a ^-continued command, and why launchers are usually so
-REM  frightening to edit.
+REM    An option you do not set uses the game's default, and no line
+REM    depends on the one above it -- so you cannot break this file by
+REM    switching something off. That is not true of the one-long-command
+REM    launchers this replaces, and it is the whole point.
 REM
-REM  A convar you do not set uses the game's default. Leaving something
-REM  commented out is always safe.
+REM  WRITING A VALUE
+REM    Quote anything containing a space. Double a literal percent sign:
+REM    20%% not 20%. And !ARGS! is deliberate, not a typo for %ARGS%: it
+REM    keeps | & > < ^ safe inside a value, so a hostname like
+REM    My Server | Monthly | NA works here and breaks elsewhere.
 REM
-REM  ---------------------------------------------------------------
-REM  QUOTING -- read this before adding a value with a space or a | in it
+REM  AFTER A RUST UPDATE
+REM    Defaults move more often than names do, so regenerate the option
+REM    reference from YOUR build rather than trusting these comments:
 REM
-REM  Values are added with delayed expansion (!ARGS! not %ARGS%) on
-REM  purpose. Delayed expansion substitutes AFTER cmd has parsed the
-REM  line, so characters that would otherwise be interpreted -- | & > < ^
-REM  -- are safe inside a value. A hostname like
+REM      python tools\convars.py "<server>\RustDedicated_Data\Managed\Assembly-CSharp.dll" --bat
 REM
-REM      My Rust Server | Monthly | NA
-REM
-REM  breaks a launcher written with %ARGS%, and works here.
-REM
-REM  Two rules:
-REM    1. Wrap a value containing spaces in quotes, inside the set:
-REM         set "ARGS=!ARGS! +server.hostname "My Server""
-REM    2. A literal percent sign must be doubled: 20%% not 20%
-REM  ---------------------------------------------------------------
-REM
-REM  KEEPING THIS FILE HONEST
-REM
-REM  Convars appear, change and vanish between Rust builds. Two tools:
-REM
-REM    tools\convars.py           regenerates the annotated option list
-REM                              from YOUR build, with the defaults the
-REM                              compiler actually stored:
-REM
-REM                                python tools\convars.py "%ROOT%\Rust
-REM                                Dedicated_Data\Managed\Assembly-
-REM                                CSharp.dll" --bat
-REM
-REM    tools\Test-Launcher.ps1    NOT BUILT YET. Will report which
-REM                              options in this file no longer exist
-REM                              in the installed build.
-REM
-REM  Regenerate after every Rust update. It is much cheaper than finding
-REM  out from a server that will not boot.
-REM
-REM  Defaults quoted below are marked with the build they came from.
-REM  Where a default is written [default: unknown] it has NOT been
-REM  verified -- generate the reference rather than trusting a guess.
+REM    Where a comment says [default: unknown] it has not been verified.
+REM    That is honest; a wrong default is a trap.
 REM =====================================================================
 
 
@@ -108,11 +80,9 @@ set "LOGFILE=%ROOT%\logs\server_log.txt"
 REM =====================================================================
 REM  2. SECRETS  --  never put a password in this file
 REM =====================================================================
-REM  secrets.bat sets RCON_PASSWORD and is NOT in version control.
-REM  Copy secrets.example.bat to secrets.bat and edit it. The launcher
-REM  refuses to start if secrets.bat is missing or does not set
-REM  RCON_PASSWORD at all. It does NOT check the value, so it will
-REM  happily start a server still using the example password. Change it.
+REM  Copy secrets.example.bat to secrets.bat and set RCON_PASSWORD there.
+REM  secrets.bat is gitignored. This launcher will not start without it --
+REM  but it does not check the value, so change the example password.
 
 set "SECRETS=%~dp0secrets.bat"
 
@@ -138,20 +108,16 @@ REM =====================================================================
 REM =====================================================================
 REM  3. UPDATE OR RESTART?
 REM
-REM  A restart relaunches and nothing else -- no steamcmd, no Oxide. That
-REM  is what makes a daily restart cost minutes instead of tens of
-REM  minutes, and what stops an unattended restart from installing
-REM  whatever mod framework build happens to be current that morning.
-REM
-REM  An update happens only when a flag file says so:
+REM  A restart relaunches and nothing else. An update happens only when a
+REM  flag file says so, and the flag is deleted once acted on -- so one
+REM  flag buys exactly one update.
 REM
 REM    UPDATE.flag     app_update, then the mod framework, then launch
 REM    VALIDATE.flag   the same plus "validate", which re-checksums the
 REM                    whole install. Slow. Weekly, or after a crash.
 REM
-REM  The flag is deleted once acted on, so one flag buys one update.
-REM  Anything can create one -- you, a scheduled task, or a plugin that
-REM  has noticed a new framework release:
+REM  Anything can create one -- you, a scheduled task, or the Hotwire
+REM  plugin when a scheduled update comes due:
 REM
 REM    New-Item -ItemType File C:\rustserver\UPDATE.flag
 REM =====================================================================
@@ -225,8 +191,7 @@ REM =====================================================================
 REM  4. SERVER OPTIONS
 REM
 REM  One option per line. REM a line to disable it.
-REM  Sections below are a starting set. Run tools\convars.py to
-REM  regenerate the complete list for your build with real defaults.
+REM  A starting set. Run tools\convars.py for the complete list.
 REM =====================================================================
 
 set "ARGS="
