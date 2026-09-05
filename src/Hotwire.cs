@@ -13,7 +13,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Hotwire", "xman2000", "0.8.1")]
+    [Info("Hotwire", "xman2000", "0.8.2")]
     [Description("Scheduled restarts and updates. Announces, counts down, writes a flag, quits.")]
     internal class Hotwire : CovalencePlugin
     {
@@ -1168,13 +1168,32 @@ namespace Oxide.Plugins
             return lang.GetMessage(key, this, null);
         }
 
+        // Rounded UP, and that is the whole point.
+        //
+        // An announcement is written once and then sits in chat for a minute
+        // while the bar keeps counting. With truncation, 180s announces "3
+        // minutes" and one second later 179/60 is 2, so the bar reads 2m
+        // beside a chat line still saying 3. Both were doing the same
+        // arithmetic; the arithmetic was wrong for a "time remaining" phrase.
+        //
+        // Rounding up makes "3 minutes" true until it is actually 2 minutes
+        // away, so the chat line and the bar agree for the whole minute the
+        // line is on screen.
+        private static int WholeMinutes(int seconds)
+        {
+            return (seconds + 59) / 60;
+        }
+
         private static string FormatRemaining(int seconds)
         {
             // ADR-0004: plain strings. Upstream ships a regex template
             // mini-language to render this, which is a large surface for
             // "5 minutes left".
-            if (seconds >= 120) return $"{seconds / 60} minutes";
-            if (seconds >= 60) return "1 minute";
+            if (seconds >= 60)
+            {
+                var minutes = WholeMinutes(seconds);
+                return minutes == 1 ? "1 minute" : $"{minutes} minutes";
+            }
             if (seconds == 1) return "1 second";
             return $"{seconds} seconds";
         }
@@ -1259,8 +1278,10 @@ namespace Oxide.Plugins
 
         private string CountdownText(int remaining)
         {
+            // Same rounding as the chat announcements, from the same helper,
+            // so the bar and a line already sitting in chat cannot disagree.
             string text;
-            if (remaining >= 60) text = (remaining / 60) + "m";
+            if (remaining >= 60) text = WholeMinutes(remaining) + "m";
             else if (_config.StatusBar.SecondsInFinalMinute) text = remaining + "s";
             else text = "<1m";
 

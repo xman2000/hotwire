@@ -146,6 +146,13 @@ satisfies both. Validate beats update for the same reason.
 Announcements are plain lang strings (ADR-0004) and are editable in
 `oxide/lang/en/Hotwire.json`.
 
+**Remaining time is rounded up, everywhere.** An announcement is written once
+and then sits in chat for a minute while the bar keeps counting, so "3 minutes"
+has to stay true for that minute. Truncating instead made the bar read `2m` one
+second after chat said three minutes — both doing the same arithmetic, and the
+arithmetic being wrong for a phrase about time remaining. The chat text and the
+bar take their minute count from the same helper, so they cannot drift apart.
+
 The remaining time is recomputed from the wall clock every tick rather than
 counted down, so the countdown is immune to timescale, to a stalled frame and
 to timer drift. The restart lands when it said it would; the worst a hitch can
