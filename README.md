@@ -5,9 +5,10 @@ pair: an Oxide plugin and the launcher script it talks to.**
 
 Windows. MIT.
 
-> **Status: early.** Both halves are written and **neither has been run.**
-> The plugin has not been through the Oxide compiler once. See `BRIEF.md` for
-> the full brief and `docs/OPEN-QUESTIONS.md` for what is still unverified.
+> **Status: early.** The plugin compiles and loads; the launcher is drafted.
+> **Neither has been exercised on a live server** — no countdown has run and
+> no flag has been handed to a launcher. See `BRIEF.md` for the full brief and
+> `docs/OPEN-QUESTIONS.md` for what is still unverified.
 
 ---
 

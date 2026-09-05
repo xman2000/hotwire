@@ -32,8 +32,11 @@ its use site.
       `UseStatusPlugin` ships `false` — turn it on only after checking the
       real API. It disables itself for the session on the first exception.
 - [ ] **`Interface.Oxide.RootDirectory` is the server root**, i.e. the
-      directory the launcher looks in for `UPDATE.flag`. If it is not, the
-      config has a `Server root` override and the plugin says so at boot.
+      directory the launcher looks in for `UPDATE.flag`. It returns something
+      non-empty — the boot-time error did not fire on 2026-09-04 — but
+      *where* it points is still unconfirmed, and there is currently no way
+      to find out short of firing a real update. Largest open assumption in
+      the plugin. The config has a `Server root` override.
 - [ ] **The Oxide extension carrying the framework version is named `Rust`.**
       Used only by the framework-update check.
 - [ ] **Oxide's `timer` is real time, not scaled time.** Not depended on:
@@ -119,13 +122,16 @@ fill them in from memory.
       outage into a two-line diff.
 - [x] ~~`src/Hotwire.cs` — the plugin itself.~~ **v0.1.0 written.** Schedule,
       countdown, announcements, kick-then-quit, flag writing, chat commands
-      and the opt-in framework check. **It has never been compiled or run**,
-      which is now the single largest unknown in the repo — see below.
-- [ ] **Compile and run `src/Hotwire.cs`.** It has not been through the Oxide
-      compiler once. The first pass wants: does it compile; does
-      `Interface.Oxide.RootDirectory` point where the launcher looks; does a
-      `hotwire now 30` countdown announce, kick and quit cleanly; does the
-      launcher pick the flag up on the next pass.
+      and the opt-in framework check.
+- [x] ~~**Does it compile?**~~ **Yes.** Oxide.Compiler v1.0.32.0, 2026-09-04,
+      after one fix: `timer.Every()` returns the compiler-injected
+      `Oxide.Plugins.Timer`, not `Oxide.Core.Libraries.Timer.TimerInstance`.
+      It loads, writes its default config, and correctly reports that nothing
+      is scheduled.
+- [ ] **Run it.** Compiling is not running. Still unexercised: whether the
+      flag lands where the launcher looks; whether a countdown announces,
+      kicks and quits cleanly; whether the launcher acts on the flag on its
+      next pass; and every lang string, since none has been seen in chat.
 - [ ] **The admin menu (ADR-0006).** Deliberately last. The chat commands it
       is meant to wrap now exist, which was the precondition.
 - [ ] Event-aware deferral — do not restart on top of a live event. Blocked:
