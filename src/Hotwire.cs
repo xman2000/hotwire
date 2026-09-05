@@ -13,7 +13,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Hotwire", "xman2000", "1.0.0")]
+    [Info("Hotwire", "xman2000", "1.0.1")]
     [Description("Scheduled restarts and updates. Announces, counts down, writes a flag, quits.")]
     internal class Hotwire : CovalencePlugin
     {
@@ -701,6 +701,39 @@ namespace Oxide.Plugins
             return since < hours && since > -hours;
         }
 
+        // An entry's recurrence, parsed once.
+        //
+        // This exists for one reason: NextOccurrence tests up to 367 dates, and
+        // Scan calls it for every enabled entry every ten seconds. Parsing the
+        // entry inside that loop meant a HashSet allocation and a string Trim
+        // per day per entry -- on the order of eighteen hundred short-lived
+        // objects every ten seconds on a five-entry schedule, for a plugin that
+        // is doing nothing at all. Parsed once, it is a handful.
+        private struct Recurrence
+        {
+            public string Mode;
+            public HashSet<DayOfWeek> Days;
+            public string Ordinal;
+            public int DayOfMonth;
+            public int IntervalDays;
+            public DateTime? Anchor;
+            public DateTime? Once;
+        }
+
+        private static Recurrence Parse(ScheduleEntry e)
+        {
+            return new Recurrence
+            {
+                Mode = Normalize(e.Repeat),
+                Days = ParsedDays(e),
+                Ordinal = e.Ordinal,
+                DayOfMonth = e.DayOfMonth,
+                IntervalDays = e.IntervalDays,
+                Anchor = ParseDate(e.AnchorDate),
+                Once = ParseDate(e.Date),
+            };
+        }
+
         // Walks forward a day at a time and asks each date whether it matches.
         // Slower than computing the next date per mode, and far harder to get
         // wrong: one predicate covers all six recurrences, "the 31st" simply
@@ -712,41 +745,42 @@ namespace Oxide.Plugins
             if (time == null) return null;
             if (ValidationError(e) != null) return null;
 
+            var recurrence = Parse(e);
+            var from = now.Date;
+
             for (var i = 0; i <= 366; i++)
             {
-                var date = now.Date.AddDays(i);
-                if (!Matches(e, date)) continue;
+                var date = from.AddDays(i);
+                if (!Matches(recurrence, date)) continue;
                 var candidate = date.Add(time.Value);
                 if (candidate > now) return candidate;
             }
             return null;
         }
 
-        private static bool Matches(ScheduleEntry e, DateTime date)
+        private static bool Matches(Recurrence r, DateTime date)
         {
-            switch (Normalize(e.Repeat))
+            switch (r.Mode)
             {
                 case RepeatDaily:
                     return true;
 
                 case RepeatWeekly:
-                    return ParsedDays(e).Contains(date.DayOfWeek);
+                    return r.Days.Contains(date.DayOfWeek);
 
                 case RepeatMonthlyWeekday:
-                    return ParsedDays(e).Contains(date.DayOfWeek) && OrdinalMatches(date, e.Ordinal);
+                    return r.Days.Contains(date.DayOfWeek) && OrdinalMatches(date, r.Ordinal);
 
                 case RepeatMonthlyDay:
-                    return date.Day == e.DayOfMonth;
+                    return date.Day == r.DayOfMonth;
 
                 case RepeatEveryNDays:
-                    var anchor = ParseDate(e.AnchorDate);
-                    if (anchor == null || e.IntervalDays < 1) return false;
-                    var span = (date - anchor.Value.Date).Days;
-                    return span >= 0 && span % e.IntervalDays == 0;
+                    if (r.Anchor == null || r.IntervalDays < 1) return false;
+                    var span = (date - r.Anchor.Value.Date).Days;
+                    return span >= 0 && span % r.IntervalDays == 0;
 
                 case RepeatOnce:
-                    var once = ParseDate(e.Date);
-                    return once != null && once.Value.Date == date.Date;
+                    return r.Once != null && r.Once.Value.Date == date.Date;
 
                 default:
                     return false;
