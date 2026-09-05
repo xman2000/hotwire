@@ -2,38 +2,53 @@
 setlocal EnableDelayedExpansion
 
 REM =====================================================================
-REM  HOTWIRE LAUNCHER  --  a Rust server start script you can edit
-REM  without fear.  MIT.  https://github.com/xman2000/hotwire
+REM  HOTWIRE LAUNCHER
+REM
+REM  A start script for a Rust dedicated server that is meant to be read.
+REM  Every option sits on its own line with the game's real default beside
+REM  it, and switching one off cannot disturb the others.
+REM
+REM  Built by xman2000 and Claude.  MIT licence.
+REM  https://github.com/xman2000/hotwire
 REM =====================================================================
 REM
 REM  START HERE
-REM    1. Set ROOT and STEAMCMD below, in section 1.
+REM    1. Set ROOT and STEAMCMD in section 1, just below.
 REM    2. Copy secrets.example.bat to secrets.bat and put your RCON
 REM       password in it.
-REM    3. Work down section 4 and switch on the options you want.
-REM    4. Run this file. It relaunches the server whenever it exits.
+REM    3. Fill in section 4. A handful of options are switched on already;
+REM       anything you leave alone keeps the game's default.
+REM    4. Run this file. It starts the server, and starts it again every
+REM       time it exits.
 REM
 REM  SWITCHING AN OPTION ON OR OFF
-REM    Every option is one independent line. REM in front turns it off:
+REM    Put REM in front of a line to switch it off, take it away to switch
+REM    it on. That is the whole editing model.
 REM
-REM      REM  server.maxplayers -- slots.  [default: unknown]
+REM      REM  server.maxplayers -- Slots.
+REM      REM  [int, default 500]
 REM      set "ARGS=!ARGS! +server.maxplayers 50"
 REM
-REM    An option you do not set uses the game's default, and no line
-REM    depends on the one above it -- so you cannot break this file by
-REM    switching something off. That is not true of the one-long-command
-REM    launchers this replaces, and it is the whole point.
+REM    No line depends on the one above it, so you cannot break this file
+REM    by switching something off -- which is not true of the single long
+REM    command most launchers use, where commenting out one line silently
+REM    takes the rest of the launch with it.
 REM
 REM  WRITING A VALUE
-REM    Quote anything containing a space. Double a literal percent sign:
-REM    20%% not 20%. And !ARGS! is deliberate, not a typo for %ARGS%: it
-REM    keeps | & > < ^ safe inside a value, so a hostname like
-REM    My Server | Monthly | NA works here and breaks elsewhere.
+REM    Quote anything containing a space, and double a literal percent
+REM    sign: 20%% rather than 20%.
+REM
+REM    The !ARGS! is deliberate and not a typo for %ARGS%. It defers
+REM    substitution until after cmd has parsed the line, which keeps
+REM    | & > < ^ safe inside a value -- so a hostname like
+REM    My Server | Monthly | NA works here and breaks almost everywhere
+REM    else.
 REM
 REM  THE DEFAULTS IN THIS FILE
-REM    Every option below shows the game's own default, read straight out of
-REM    a real Rust build rather than copied from a guide. If one of them ever
-REM    disagrees with what the game does, believe the game and tell us.
+REM    Every default shown below was read out of a real Rust build rather
+REM    than copied from a guide, so a comment claiming 4000 when the game
+REM    means 4500 should not happen. If one ever disagrees with what the
+REM    game actually does, believe the game and tell us.
 REM =====================================================================
 
 
