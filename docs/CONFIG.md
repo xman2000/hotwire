@@ -257,7 +257,7 @@ to.
   whatever your server calls itself. An empty name drops the prefix entirely;
   an empty color drops the markup.
 
-Sentences are capitalised when they are sent rather than in the lang file, so
+Sentences are capitalized when they are sent rather than in the lang file, so
 correcting one reaches servers that already have a lang file — lang files are
 written once and never rewritten.
 

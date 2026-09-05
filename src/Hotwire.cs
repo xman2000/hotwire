@@ -2978,7 +2978,7 @@ namespace Oxide.Plugins
 
         // Lang files are written once and never rewritten, so correcting a
         // default string does nothing for a server that already has the old
-        // one. Sentences are capitalised here instead, where the fix reaches
+        // one. Sentences are capitalized here instead, where the fix reaches
         // everybody -- and where a translator is free to write lower case and
         // still get a sentence.
         private static string Sentence(string text)
