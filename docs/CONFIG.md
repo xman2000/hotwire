@@ -143,6 +143,13 @@ hotwire add restart 05:00 every 2 days
 hotwire add update  02:00 once 2026-12-24
 ```
 
+**An entry added this way is enabled immediately** — unlike the ones in the
+shipped config, and unlike the menu's `+ Restart` button, which creates a
+disabled entry. The difference is deliberate: you typed the whole rule, so it
+is taken as meant, where the button gives you a blank form to fill in. If you
+want it staged rather than live, add it and then `hotwire disable restart <n>`,
+or build it in the menu.
+
 `hotwire set` edits an entry in place, taking the same words:
 
 ```
