@@ -13,7 +13,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Hotwire", "xman2000", "0.9.1")]
+    [Info("Hotwire", "xman2000", "0.9.2")]
     [Description("Scheduled restarts and updates. Announces, counts down, writes a flag, quits.")]
     internal class Hotwire : CovalencePlugin
     {
@@ -897,6 +897,50 @@ namespace Oxide.Plugins
             return when.ToString("ddd dd MMM yyyy HH:mm", CultureInfo.InvariantCulture) + " " + ZoneSuffix(when);
         }
 
+        // "in 4 minutes", "today at 11:10", "tomorrow at 05:00", "Saturday at
+        // 11:10". The panel is read at a glance, and an absolute date answers a
+        // question nobody asked: "next Saturday 5 September 2026" for something
+        // four minutes away is technically true and actively misleading.
+        private static string Friendly(DateTime when)
+        {
+            var now = DateTime.Now;
+            var span = when - now;
+
+            if (span.TotalSeconds <= 0) return "now";
+            if (span.TotalSeconds < 60) return "in less than a minute";
+            if (span.TotalMinutes < 60)
+            {
+                var minutes = WholeMinutes((int)span.TotalSeconds);
+                return minutes == 1 ? "in 1 minute" : $"in {minutes} minutes";
+            }
+
+            var at = when.ToString("HH:mm", CultureInfo.InvariantCulture);
+            if (when.Date == now.Date) return $"today at {at}";
+            if (when.Date == now.Date.AddDays(1)) return $"tomorrow at {at}";
+            if ((when.Date - now.Date).TotalDays < 7)
+                return $"{when.ToString("dddd", CultureInfo.InvariantCulture)} at {at}";
+            return $"{when.ToString("ddd d MMM", CultureInfo.InvariantCulture)} at {at}";
+        }
+
+        // Just the offset. The full zone name is three lines of wrapped text in
+        // a panel row and the summary line already carries it.
+        private static string ZoneShort(DateTime when)
+        {
+            try
+            {
+                var tz = TimeZoneInfo.Local;
+                var offset = tz.GetUtcOffset(when);
+                var sign = offset < TimeSpan.Zero ? "-" : "+";
+                var abs = offset.Duration();
+                return $"UTC{sign}{abs.Hours:00}:{abs.Minutes:00}" +
+                       (tz.IsDaylightSavingTime(when) ? " DST" : "");
+            }
+            catch
+            {
+                return "local";
+            }
+        }
+
         private static string ShortStamp(DateTime when)
         {
             return when.ToString("ddd dd MMM HH:mm", CultureInfo.InvariantCulture) + " " + ZoneSuffix(when);
@@ -1719,8 +1763,9 @@ namespace Oxide.Plugins
                 }, MenuContent, MenuContent + ".header");
 
                 Label(ui, MenuContent + ".header", 0.02, 0, 0.8, 1,
-                      state.Editing ? "Hotwire  /  editing " + state.List + " " + state.Index
-                                    : "Hotwire  /  schedule",
+                      state.Editing
+                          ? $"Hotwire  /  Editing {state.List} {state.Index}"
+                          : "Hotwire  /  Schedule",
                       15, ColText, TextAnchor.MiddleLeft);
 
                 Button(ui, MenuContent + ".header", 0.93, 0.15, 0.98, 0.85, "X", "hotwire.ui close", ColDanger);
@@ -1797,11 +1842,12 @@ namespace Oxide.Plugins
                 var detail = problem != null
                     ? "BROKEN: " + problem
                     : next != null
-                        ? "next " + ShortStamp(next.Value) +
-                          (OffsetChangesBetween(DateTime.Now, next.Value) ? "  (clocks change before then)" : "")
-                        : entry.Enabled ? "no next occurrence" : "disabled";
+                        ? Friendly(next.Value) +
+                          (OffsetChangesBetween(DateTime.Now, next.Value) ? "   (clocks change before then)" : "")
+                        : entry.Enabled ? "No occurrence in the next year" : "Disabled";
 
-                Label(ui, MenuContent + ".row" + i, 0.02, 0.45, 0.62, 0.98, Describe(entry), 13, ColText, TextAnchor.MiddleLeft);
+                Label(ui, MenuContent + ".row" + i, 0.02, 0.45, 0.62, 0.98,
+                      Sentence(Describe(entry)), 13, ColText, TextAnchor.MiddleLeft);
                 Label(ui, MenuContent + ".row" + i, 0.02, 0.05, 0.62, 0.5, detail, 11,
                       problem != null ? "0.85 0.45 0.40 1.00" : ColMuted, TextAnchor.MiddleLeft);
 
@@ -1860,7 +1906,7 @@ namespace Oxide.Plugins
             Button(ui, MenuContent, 0.67, y, 0.73, y + h, "+15m", $"{prefix} time {target} 15", ColButton);
             Button(ui, MenuContent, 0.735, y, 0.795, y + h, "+1h", $"{prefix} time {target} 60", ColButton);
             Button(ui, MenuContent, 0.80, y, 0.86, y + h, "+6h", $"{prefix} time {target} 360", ColButton);
-            Label(ui, MenuContent, 0.87, y, 0.98, y + h, ZoneSuffix(DateTime.Now), 10, ColMuted, TextAnchor.MiddleLeft);
+            Label(ui, MenuContent, 0.87, y, 0.99, y + h, ZoneShort(DateTime.Now), 11, ColMuted, TextAnchor.MiddleLeft);
 
             y -= h + gap;
             Label(ui, MenuContent, 0.04, y, 0.24, y + h, "Repeat", 13, ColMuted, TextAnchor.MiddleLeft);
@@ -1959,10 +2005,14 @@ namespace Oxide.Plugins
                 Label(ui, MenuContent, 0.735, y, 0.825, y + h, picked.Year.ToString(), 15, ColText, TextAnchor.MiddleCenter);
                 Button(ui, MenuContent, 0.83, y, 0.88, y + h, "+1y", $"{prefix} dateyear {target} 1", ColButton);
 
+                // Its own row. Drawing it into a half-height band left the
+                // next control sitting on top of it, which is how "Saturday"
+                // ended up behind the Enabled button.
                 y -= h + gap;
-                Label(ui, MenuContent, 0.21, y + gap * 0.5, 0.98, y + h,
-                      picked.ToString("dddd d MMMM yyyy", CultureInfo.InvariantCulture), 12, ColMuted, TextAnchor.MiddleLeft);
-                y -= gap;
+                Label(ui, MenuContent, 0.21, y, 0.98, y + h,
+                      picked.ToString("dddd d MMMM yyyy", CultureInfo.InvariantCulture),
+                      12, ColMuted, TextAnchor.MiddleLeft);
+                y -= h + gap;
             }
 
             if (entry is UpdateEntry)
@@ -1984,31 +2034,48 @@ namespace Oxide.Plugins
             // what the rule actually resolves to.
             var problem = ValidationError(entry);
             var next = problem == null ? NextOccurrence(entry, DateTime.Now) : null;
-            string summary;
+            // Two lines. The first is what you want at a glance and is phrased
+            // the way a person would say it; the second is the exact moment,
+            // with its zone, for when that is the question.
+            string headline, detail;
             if (problem != null)
             {
-                summary = "This entry is not valid: " + problem;
+                headline = "This entry is not valid.";
+                detail = problem;
             }
             else if (next == null)
             {
-                summary = Describe(entry) + "   ->   no occurrence in the next year";
+                headline = Sentence(Describe(entry));
+                detail = "It has no occurrence in the next year.";
             }
             else
             {
-                summary = Describe(entry) + "   ->   next " +
-                          next.Value.ToString("dddd d MMMM yyyy, HH:mm", CultureInfo.InvariantCulture) +
-                          " " + ZoneSuffix(next.Value);
+                // "once on 2026-09-05" would repeat the date the line below
+                // already spells out in full, so the headline says what kind of
+                // thing this is and when it next happens, and nothing else.
+                var kind = entry.IsValidate ? "validate and restart"
+                         : entry.IsUpdate ? "update and restart"
+                         : "restart";
+                var recurrence = Normalise(entry.Repeat) == RepeatOnce
+                    ? "once"
+                    : DescribeRecurrence(entry);
+
+                headline = $"{Sentence(kind + " " + recurrence)}. Next: {Friendly(next.Value)}.";
+                detail = next.Value.ToString("dddd d MMMM yyyy, HH:mm", CultureInfo.InvariantCulture) +
+                         "  " + ZoneSuffix(next.Value);
                 if (OffsetChangesBetween(DateTime.Now, next.Value))
-                    summary += "   (the clocks change before then)";
+                    detail += "   (the clocks change before then)";
             }
 
             ui.Add(new CuiPanel
             {
                 Image = { Color = ColRow },
-                RectTransform = { AnchorMin = Anchor(0.02, 0.11), AnchorMax = Anchor(0.98, 0.20) }
+                RectTransform = { AnchorMin = Anchor(0.02, 0.11), AnchorMax = Anchor(0.98, 0.21) }
             }, MenuContent, MenuContent + ".summary");
-            Label(ui, MenuContent + ".summary", 0.02, 0, 0.98, 1, summary, 13,
+            Label(ui, MenuContent + ".summary", 0.02, 0.46, 0.98, 0.96, headline, 14,
                   problem != null ? "0.85 0.45 0.40 1.00" : ColText, TextAnchor.MiddleLeft);
+            Label(ui, MenuContent + ".summary", 0.02, 0.06, 0.98, 0.46, detail, 11,
+                  ColMuted, TextAnchor.MiddleLeft);
 
             Button(ui, MenuContent, 0.02, 0.02, 0.20, 0.09, "< Back", "hotwire.ui list", ColButton);
             Button(ui, MenuContent, 0.80, 0.02, 0.98, 0.09, "Delete",

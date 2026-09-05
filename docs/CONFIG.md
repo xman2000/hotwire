@@ -336,10 +336,20 @@ every entry with what it resolves to next, and lets you add, edit, toggle and
 delete without leaving the game.
 
 The edit view shows only the fields the chosen repeat mode uses, and carries a
-summary line saying what the rule actually means — *"update the first Thursday
-of the month at 20:00 -> next Thursday 02 October 2026, 20:00"*. That line is
-the point of the panel: an ordinal schedule is hard to be confident about until
-something tells you the date it lands on.
+two-line summary of what the rule actually means:
+
+```
+Update and restart the first Thursday of the month. Next: Thu 1 Oct at 20:00.
+   Thursday 1 October 2026, 20:00  Central Daylight Time (UTC-05:00, DST)
+```
+
+That summary is the point of the panel: an ordinal schedule is hard to be
+confident about until something tells you when it lands. The first line is
+phrased the way a person would say it — *in 4 minutes*, *today at 11:10*,
+*tomorrow at 05:00*, *Tuesday at 03:00* — because an absolute date answers a
+question nobody asked. "Next Saturday 5 September 2026" for something four
+minutes away is technically true and actively misleading. The second line is
+the exact moment with its zone, for when that *is* the question.
 
 Things worth knowing:
 
