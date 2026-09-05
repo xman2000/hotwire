@@ -34,9 +34,11 @@ its use site.
 - [ ] **`Interface.Oxide.RootDirectory` is the server root**, i.e. the
       directory the launcher looks in for `UPDATE.flag`. It returns something
       non-empty — the boot-time error did not fire on 2026-09-04 — but
-      *where* it points is still unconfirmed, and there is currently no way
-      to find out short of firing a real update. Largest open assumption in
-      the plugin. The config has a `Server root` override.
+      *where* it points is still unconfirmed. **`hotwire check` now answers
+      this without a restart**: it reports the resolved root, whether
+      `RustDedicated` is in it, whether it is writable, and the exact flag
+      path. Run it and close this. The config has a `Server root` override if
+      the answer is wrong.
 - [ ] **The Oxide extension carrying the framework version is named `Rust`.**
       Used only by the framework-update check.
 - [ ] **Oxide's `timer` is real time, not scaled time.** Not depended on:

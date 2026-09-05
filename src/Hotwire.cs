@@ -854,6 +854,7 @@ namespace Oxide.Plugins
             switch (sub)
             {
                 case "status": CmdStatus(player); return;
+                case "check": CmdCheck(player); return;
                 case "list": CmdList(player); return;
                 case "now": CmdNow(player, args); return;
                 case "cancel": CmdCancel(player); return;
@@ -908,6 +909,125 @@ namespace Oxide.Plugins
             if (best == null) return null;
             var kind = best.IsValidate ? "validate" : best.IsUpdate ? "update" : "restart";
             return $"{kind} at {bestTarget:yyyy-MM-dd HH:mm}";
+        }
+
+        // Answers the questions you would otherwise have to spend a real
+        // restart to answer: where the flag will be written, whether that is
+        // actually the server root, and whether a flag is sitting there
+        // already. Read-only apart from a write probe it cleans up.
+        //
+        // Deliberately not lang strings. This is a diagnostic dump for an
+        // admin console, not something a player ever sees, and twenty
+        // untranslated keys would make the lang file worse for no gain.
+        private void CmdCheck(IPlayer player)
+        {
+            if (!Allowed(player, PermStatus)) return;
+
+            var lines = new List<string> { $"Hotwire {Version} check" };
+
+            var fromConfig = !string.IsNullOrWhiteSpace(_config.General.ServerRoot);
+            var root = ServerRoot();
+
+            if (root == null)
+            {
+                lines.Add("  server root  : CANNOT BE DETERMINED");
+                lines.Add("                 Updates cannot be written. Restarts still work.");
+                lines.Add("                 Set \"Server root\" in the config to fix it.");
+            }
+            else
+            {
+                lines.Add($"  server root  : {root}");
+                lines.Add($"                 (from {(fromConfig ? "the config" : "Oxide")})");
+
+                var exists = Directory.Exists(root);
+                lines.Add($"  exists       : {(exists ? "yes" : "NO -- nothing will be written there")}");
+
+                // The real question. A directory that exists is not
+                // necessarily the directory the launcher watches; one holding
+                // RustDedicated is.
+                var looksRight = false;
+                if (exists)
+                {
+                    try
+                    {
+                        looksRight = File.Exists(Path.Combine(root, "RustDedicated.exe"))
+                                     || File.Exists(Path.Combine(root, "RustDedicated"))
+                                     || Directory.Exists(Path.Combine(root, "RustDedicated_Data"));
+                    }
+                    catch (Exception ex)
+                    {
+                        lines.Add($"  (could not inspect it: {ex.Message})");
+                    }
+                }
+                lines.Add($"  is the root  : {(looksRight ? "yes -- RustDedicated found here" : "UNCONFIRMED -- no RustDedicated here")}");
+                if (exists && !looksRight)
+                    lines.Add("                 This is probably not where your launcher looks.");
+
+                if (exists)
+                {
+                    string writable;
+                    try
+                    {
+                        var probe = Path.Combine(root, ".hotwire_write_probe");
+                        File.WriteAllText(probe, "");
+                        File.Delete(probe);
+                        writable = "yes";
+                    }
+                    catch (Exception ex)
+                    {
+                        writable = $"NO -- {ex.Message}";
+                    }
+                    lines.Add($"  writable     : {writable}");
+                }
+
+                var updatePath = SafeCombine(root, _config.General.UpdateFlag);
+                var validatePath = SafeCombine(root, _config.General.ValidateFlag);
+                lines.Add($"  update flag  : {updatePath ?? "(no file name set)"}");
+                lines.Add($"  validate flag: {validatePath ?? "(no file name set)"}");
+
+                // A flag left lying about means the NEXT restart updates,
+                // whether or not anyone meant it to. Worth shouting about.
+                try
+                {
+                    if (updatePath != null && File.Exists(updatePath))
+                        lines.Add("  !! UPDATE.flag is present RIGHT NOW. The next restart will update.");
+                    if (validatePath != null && File.Exists(validatePath))
+                        lines.Add("  !! VALIDATE.flag is present RIGHT NOW. The next restart will validate.");
+                }
+                catch (Exception ex)
+                {
+                    lines.Add($"  (could not check for existing flags: {ex.Message})");
+                }
+            }
+
+            var enabled = AllEntries().Count(e => e.Enabled);
+            var total = _config.Restarts.Count + _config.Updates.Count;
+            lines.Add($"  schedule     : {enabled} enabled of {total}");
+            var next = DescribeNext();
+            lines.Add($"  next         : {next ?? "nothing scheduled"}");
+            lines.Add($"  countdown    : starts {_config.Countdown.StartSeconds}s before, " +
+                      $"{_config.Countdown.AnnounceAt.Count} announcements");
+            lines.Add($"  DST guard    : {_config.General.MinimumHoursBetweenSameEntry}h " +
+                      $"({_lastFired.Count} entr{(_lastFired.Count == 1 ? "y" : "ies")} on record)");
+
+            var status = AdvancedStatus == null ? "not installed" : "installed";
+            lines.Add($"  status plugin: {status}, rendering {(_config.General.UseStatusPlugin ? "ON (call shape unverified)" : "off -- chat only")}");
+            if (_statusDisabled) lines.Add("                 disabled for this session after an error");
+
+            if (_config.Framework.Enabled)
+                lines.Add($"  framework    : checking every {_config.Framework.CheckIntervalMinutes}m, " +
+                          $"installed {InstalledFrameworkVersion() ?? "unknown"}, would update at {_config.Framework.UpdateAt}");
+            else
+                lines.Add("  framework    : checks off");
+
+            player.Reply(string.Join("\n", lines.ToArray()));
+        }
+
+        private static string SafeCombine(string root, string name)
+        {
+            if (string.IsNullOrWhiteSpace(name)) return null;
+            try { return Path.Combine(root, name); }
+            catch { return null; }
         }
 
         private void CmdList(IPlayer player)
@@ -1140,7 +1260,7 @@ namespace Oxide.Plugins
                 ["Enabled"] = "Enabled {0} {1}.",
                 ["Disabled"] = "Disabled {0} {1}.",
 
-                ["Usage"] = "hotwire status | list | now [update|validate] [seconds] | cancel | " +
+                ["Usage"] = "hotwire status | check | list | now [update|validate] [seconds] | cancel | " +
                             "add <restart|update|validate> <HH:mm> [days] | remove <restart|update> <index> | " +
                             "enable|disable <restart|update> <index>",
                 ["UsageNow"] = "hotwire now [update|validate] [seconds]",

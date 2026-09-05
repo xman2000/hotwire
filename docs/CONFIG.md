@@ -107,6 +107,7 @@ All under `hotwire` (alias `hw`), in chat or on the server console.
 | Command | Permission | Does |
 |---|---|---|
 | `hotwire status` | `hotwire.status` | What is counting down, or what is next |
+| `hotwire check` | `hotwire.status` | Diagnose the install without restarting anything |
 | `hotwire list` | `hotwire.status` | Every entry with its index |
 | `hotwire now [update\|validate] [seconds]` | `hotwire.restart` | Start a countdown now |
 | `hotwire cancel` | `hotwire.cancel` | Cancel the running countdown |
@@ -116,6 +117,26 @@ All under `hotwire` (alias `hw`), in chat or on the server console.
 
 Indexes come from `hotwire list` and are per-list, so `restart 0` and
 `update 0` are different entries.
+
+### `hotwire check`
+
+Answers the questions you would otherwise spend a real restart to answer:
+
+- **Where the flag will be written**, and whether that came from your config
+  or from Oxide.
+- **Whether that directory is actually the server root.** A directory that
+  exists is not necessarily the one your launcher watches; one containing
+  `RustDedicated` is. This is the check worth running first on a new install.
+- **Whether it is writable**, tested by writing and deleting a probe file
+  rather than by inspecting permissions.
+- **Whether a flag is sitting there right now** — which means the next
+  restart will update whether or not anyone meant it to.
+- Schedule counts, what is next, the countdown shape, how many entries the
+  DST guard is holding, whether a status plugin is present, and whether the
+  framework check is on.
+
+It changes nothing except the probe file it cleans up after itself. Run it
+after installing, after moving the server, and after any Oxide update.
 
 A manual `hotwire now` is not subject to the fired-recently guard and does not
 feed it. An admin asking for a restart means it.
