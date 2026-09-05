@@ -86,3 +86,54 @@ the upstream plugin, and the one most able to restart a server at a bad
 moment. With the update/restart split (ADR-0001) it becomes genuinely good:
 detect, schedule, announce, restart *with the update flag*. Ship it off by
 default and document it well.
+
+## ADR-0008 — Three tiers of options, with different truth requirements
+
+**Date:** 2026-09-04 · **Status:** ACCEPTED
+
+Alternatives: one hand-written launcher (unmaintainable, and its comments go
+stale silently); one fully generated launcher (unreadable, and generated prose
+is bad prose).
+
+Chosen: **three tiers.** Boilerplate (~10 options, edit five values and you
+have a server), Common (~20-30, what admins actually change), Reference
+(everything discoverable).
+
+The tiers exist because they have different truth requirements. Tiers 1 and 2
+are stable across years — `server.hostname`, `server.port`, `server.identity`
+and friends do not move — so they can be hand-written, hand-verified, and
+given real explanatory prose. Tier 3 churns with content updates and must be
+generated from the installed assembly.
+
+An earlier draft justified generating everything by claiming convars change
+frequently. That was too broad. What actually churns fastest is **defaults**,
+not names: Facepunch tunes numbers constantly. So the danger a generator
+guards against is not "this convar vanished" but "this comment says the
+default is 600 and it has quietly been 900 for six months". Hence: never write
+a default from memory, and prefer `UNKNOWN` to a guess.
+
+Open sub-decision: whether tier 3 lands in a generated `docs/CONVARS.md`, a
+generated `launcher/options-full.bat`, or inline. Inline is not recommended —
+several hundred commented lines would destroy the readability that is the
+launcher's whole point.
+
+## ADR-0009 — Tier 2 is seeded from evidence, not from intuition
+
+**Date:** 2026-09-04 · **Status:** PROPOSED
+
+"The top 20 settings admins change" is a claim about a population of admins,
+and inventing it would undermine the one thing this project sells: that the
+annotations can be trusted.
+
+Two real sources, in order:
+
+1. **`[ServerVar(ShowInAdminUI = true)]`** — *assumed, unverified, check
+   first.* Rust's in-game admin UI shows a curated subset of convars. If that
+   selection is an attribute property, it is Facepunch's own opinion about
+   which settings admins touch, it is machine-readable, and tier 2 stops being
+   a judgement call. Teach `tools/convars.py` to report it.
+2. **The reference server's live command line** — 23 convars, one real admin,
+   verified working on protocol 2632.287.1. Listed in `HANDOFF.md` §8b.
+   **n = 1**: evidence, not a survey. Say so in the docs.
+
+Status stays PROPOSED until source 1 is checked.

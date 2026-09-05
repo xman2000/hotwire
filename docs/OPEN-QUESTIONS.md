@@ -35,6 +35,16 @@ Several options in `launcher/hotwire.bat` carry `[default: unknown]` or a
 `VERIFY` note. They stay that way until generated from a real assembly. Do not
 fill them in from memory.
 
+## The tier-2 question — highest value item open
+
+- [ ] **Does `ServerVar` carry a `ShowInAdminUI` property?** If yes, it is
+      Facepunch's own list of admin-facing convars and tier 2 becomes data
+      rather than judgement. Assumed to exist; unverified. Check it before
+      curating anything by hand. See ADR-0009.
+- [ ] **Where does tier 3 live** — generated `docs/CONVARS.md`, generated
+      `launcher/options-full.bat`, or inline? Inline is not recommended.
+      See ADR-0008.
+
 ## Undecided design
 
 - [ ] **One schedule list with a type, or two lists?** An update entry is a
