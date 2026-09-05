@@ -5,11 +5,10 @@ pair: an Oxide plugin and the launcher script it talks to.**
 
 Windows. MIT.
 
-> **Status: the plugin works, the launcher is unrun.** The plugin has been
-> proven end to end on a live server — announce, countdown, kick, save, quit,
-> write the flag, and a launcher acting on it — and has a full recurrence
-> model and an in-game panel. `launcher/hotwire.bat` itself has never been
-> executed. See `BRIEF.md` and `docs/OPEN-QUESTIONS.md`.
+> **Version 1.0.0.** Both halves have run on a live server. What has not been
+> exercised is listed plainly in `CHANGELOG.md` under Known limitations, and
+> `docs/OPEN-QUESTIONS.md` keeps everything that is assumed rather than
+> verified.
 
 ---
 
@@ -116,6 +115,7 @@ tools/convars.py                generate the option list from your build
 docs/DECISIONS.md               every design choice, with its reasoning
 docs/RESEARCH.md                the evidence behind the option list
 docs/OPEN-QUESTIONS.md          what is assumed, unverified or undecided
+CHANGELOG.md                    what is in this release, and what is not
 docs/CONFIG.md                  every config field, command and permission
 docs/GAME-API.md                what has been read from a real assembly
 BRIEF.md                        the full brief
