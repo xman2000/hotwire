@@ -95,7 +95,9 @@ default and document it well.
 
 ## ADR-0008 — Three tiers of options, with different truth requirements
 
-**Date:** 2026-09-04 · **Status:** ACCEPTED
+**Date:** 2026-09-04 · **Status:** ACCEPTED, third tier **superseded by
+ADR-0018**. Tiers 1 and 2 stand. Tier 3 is not generated into a file; the list
+is curated and the generator checks it.
 
 Alternatives: one hand-written launcher (unmaintainable, and its comments go
 stale silently); one fully generated launcher (unreadable, and generated prose
@@ -448,3 +450,47 @@ The second half of the fix is that the panel now shows a running countdown at
 all, as a banner with a cancel button. The state was invisible, and an
 interface that hides the most important thing on the screen will keep producing
 this mistake whatever the semantics underneath are.
+
+## ADR-0018 — Tier 3 is a curated list the machine checks, not a generated dump
+
+**Date:** 2026-09-05 · **Status:** ACCEPTED — supersedes ADR-0008's third tier
+and closes its open sub-decision
+
+ADR-0008 said tier 3 should be generated because it is large and moves. That
+was half right and the wrong half was acted on.
+
+A launcher containing every convar in the assembly is **worse** than one
+containing none. Several hundred of them are `ai.*`, `debug.*` and `antihack.*`
+— runtime and diagnostic surface nobody sets at launch — and burying the twenty
+that matter among them destroys the only thing that makes the file good, which
+is that a person can read it. ADR-0008 even said so about inlining, then
+proposed generating the same content into a file next door.
+
+The generator's value was never the list. ADR-0008's own argument was that
+**defaults churn faster than names**, and that the danger is a comment claiming
+a default that has quietly moved. That danger is unchanged by curation.
+
+Chosen: **the option list is curated by hand; the machine checks it.**
+
+- `tools/convars.py` gains `--check <launcher>`, which reads a launcher and
+  reports every convar in it that no longer exists in the installed build, and
+  every comment whose claimed default the build disagrees with. That is the
+  job that mattered, and it turns a Rust update from a mystery outage into a
+  two-line diff.
+- Its default output is curated rather than exhaustive, from two sources that
+  are not opinions of ours: `[ServerVar(ShowInAdminUI = true)]`, which is
+  **Facepunch's own list of the convars worth showing an admin** and ships
+  inside the game; and the seed of names independent configuration sources
+  agree on, gathered in `docs/RESEARCH.md`. `--all` still prints the long tail
+  for searching.
+- The curated names go into the launcher with real prose, the way tiers 1 and
+  2 already do. There is no longer a meaningful line between tier 2 and tier 3
+  — there is one hand-written list, and a checker that keeps it honest.
+
+Consequence: **`tools/Test-Launcher.ps1` is not needed and will not be built.**
+`--check` does its job in the tool that already exists, in Python rather than
+PowerShell, and works wherever the assembly can be copied.
+
+What this does not change: never write a convar or a default from memory. The
+curated list is only as good as its sources, and the checker exists precisely
+because a list nobody verifies rots.

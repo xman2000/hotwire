@@ -70,7 +70,15 @@ its use site.
 - [ ] **`tools/convars.py` has never been run against a real
       `Assembly-CSharp.dll`.** It is written against the metadata tables
       `dnfile` exposes, but that is an argument that it should work, not
-      evidence that it does.
+      evidence that it does. **It is now the block on everything else in the
+      launcher half**: the curated option list (ADR-0018) is waiting on the
+      `ShowInAdminUI` set, which is Facepunch's own answer to which convars an
+      admin touches.
+- [ ] **Does the `ShowInAdminUI` blob read correctly?** The flag is located by
+      scanning the attribute blob for the property name rather than by decoding
+      it, because decoding means skipping the constructor's fixed arguments and
+      `[ServerVar]` is used both with and without them. It is a scan, it is
+      labelled as one, and the first real run will say whether it works.
 - [ ] Defaults assigned in a static constructor come back `UNKNOWN`, because
       they live in IL rather than metadata. Teaching `convars.py` to walk
       `.cctor` assignments in IL would close most of the gap.
@@ -101,9 +109,10 @@ fill them in from memory.
 - [ ] **Re-run the ADR-0010 count once `convars.py` works.** The layout choice
       was made against n=1 (23 convars). If `ShowInAdminUI` returns ~40
       weighted to gameplay, split `conf/common.bat` by topic.
-- [ ] **Where does tier 3 live** — generated `docs/CONVARS.md`, generated
-      `launcher/options-full.bat`, or inline? Inline is not recommended.
-      See ADR-0008.
+- [x] ~~**Where does tier 3 live?**~~ **Nowhere — it is not generated into a
+      file at all.** ADR-0018: the list is curated by hand and the generator
+      checks it. A launcher holding every convar in the assembly is worse than
+      one holding none.
 
 ## Undecided design
 
@@ -174,10 +183,9 @@ command routes to a Covalence-registered command; and
 
 ## Not built yet
 
-- [ ] `tools/Test-Launcher.ps1` — check every `+convar` in a launcher against
-      the installed build and report the ones that no longer exist. Probably
-      the most useful thing in the repo; turns a Rust update from a mystery
-      outage into a two-line diff.
+- [x] ~~`tools/Test-Launcher.ps1`~~ **Not needed.** `convars.py --check`
+      does the job in the tool that already exists, in Python rather than
+      PowerShell (ADR-0018). Written, unrun.
 - [ ] **`launcher/hotwire.bat` has never been executed.** The flag *contract*
       is proven, but against the reference server's own launcher, not against
       the one in this repository. Those are different claims and the second is
