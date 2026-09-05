@@ -1,11 +1,10 @@
 @echo off
 setlocal EnableDelayedExpansion
 
-REM ======================================================================
-REM  HOTWIRE LAUNCHER
+REM ==[ H O T W I R E ]===================================================
 REM
-REM  Start script for a Rust dedicated server. Relaunches the server when
-REM  it exits, and updates it either on every start or on demand.
+REM  The launcher. Starts a Rust dedicated server, relaunches it when it
+REM  exits, and updates it either on every start or on demand.
 REM
 REM  Built by xman2000 and Claude.  MIT licence.
 REM  https://github.com/xman2000/hotwire
@@ -67,8 +66,9 @@ REM
 REM     Double a literal percent sign: write 20%% rather than 20%.
 REM
 REM     !ARGS! is required and is not a typo for %ARGS%. Delayed expansion
-REM     substitutes after cmd parses the line, which keeps | & > < ^ safe
-REM     inside a value.
+REM     substitutes after cmd has parsed the line, so pipes, ampersands,
+REM     redirection arrows and carets already inside ARGS are never seen
+REM     by the parser.
 REM
 REM  DEFAULTS
 REM     The defaults shown in section 4 were read out of a Rust build, not
