@@ -13,7 +13,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Hotwire", "xman2000", "0.9.2")]
+    [Info("Hotwire", "xman2000", "0.9.3")]
     [Description("Scheduled restarts and updates. Announces, counts down, writes a flag, quits.")]
     internal class Hotwire : CovalencePlugin
     {
@@ -1996,10 +1996,15 @@ namespace Oxide.Plugins
                 Label(ui, MenuContent, 0.265, y, 0.335, y + h, picked.Day.ToString("00"), 16, ColText, TextAnchor.MiddleCenter);
                 Button(ui, MenuContent, 0.34, y, 0.39, y + h, "+1d", $"{prefix} dateday {target} 1", ColButton);
 
-                Button(ui, MenuContent, 0.42, y, 0.47, y + h, "-1M", $"{prefix} datemonth {target} -1", ColButton);
+                // "mo", not "M". Capital M for month is a date-format
+                // convention borrowed from strftime, and the only reason it
+                // exists is that lower-case m was already taken by minutes in
+                // a machine-readable string. Nothing on a button should ask
+                // someone to know that.
+                Button(ui, MenuContent, 0.42, y, 0.47, y + h, "-1mo", $"{prefix} datemonth {target} -1", ColButton);
                 Label(ui, MenuContent, 0.475, y, 0.595, y + h,
                       picked.ToString("MMMM", CultureInfo.InvariantCulture), 15, ColText, TextAnchor.MiddleCenter);
-                Button(ui, MenuContent, 0.60, y, 0.65, y + h, "+1M", $"{prefix} datemonth {target} 1", ColButton);
+                Button(ui, MenuContent, 0.60, y, 0.65, y + h, "+1mo", $"{prefix} datemonth {target} 1", ColButton);
 
                 Button(ui, MenuContent, 0.68, y, 0.73, y + h, "-1y", $"{prefix} dateyear {target} -1", ColButton);
                 Label(ui, MenuContent, 0.735, y, 0.825, y + h, picked.Year.ToString(), 15, ColText, TextAnchor.MiddleCenter);
@@ -2030,51 +2035,79 @@ namespace Oxide.Plugins
             Button(ui, MenuContent, 0.25, y, 0.40, y + h, entry.Enabled ? "ON" : "OFF",
                    $"{prefix} toggle {target}", entry.Enabled ? ColOn : ColOff);
 
-            // The whole reason an ordinal schedule is comprehensible: it says
-            // what the rule actually resolves to.
+            // The answer first, in the largest text on the panel, because
+            // "when does this happen" is the only question the edit view is
+            // ever really asked. The rule and the exact moment go underneath
+            // for when they are the question instead.
             var problem = ValidationError(entry);
-            var next = problem == null ? NextOccurrence(entry, DateTime.Now) : null;
-            // Two lines. The first is what you want at a glance and is phrased
-            // the way a person would say it; the second is the exact moment,
-            // with its zone, for when that is the question.
-            string headline, detail;
+
+            // Computed only when the entry would actually run. Showing "next:
+            // tomorrow at 05:00" under a switch reading OFF is the same false
+            // reassurance that let a disabled entry restart a server (ADR-0017).
+            var next = problem == null && entry.Enabled ? NextOccurrence(entry, DateTime.Now) : null;
+
+            var kind = entry.IsValidate ? "validate and restart"
+                     : entry.IsUpdate ? "update and restart"
+                     : "restart";
+            var recurrence = Normalise(entry.Repeat) == RepeatOnce ? "once" : DescribeRecurrence(entry);
+            var rule = Sentence($"{kind} {recurrence}");
+
+            string headline, detail, headlineColour;
             if (problem != null)
             {
-                headline = "This entry is not valid.";
+                headline = "Not valid";
                 detail = problem;
+                headlineColour = "0.85 0.45 0.40 1.00";
+            }
+            else if (!entry.Enabled)
+            {
+                var would = NextOccurrence(entry, DateTime.Now);
+                headline = "Disabled";
+                detail = would == null
+                    ? rule + ". It has no occurrence in the next year."
+                    : $"{rule}. Would run {Friendly(would.Value)}, on " +
+                      would.Value.ToString("dddd d MMMM yyyy 'at' HH:mm", CultureInfo.InvariantCulture) + ".";
+                headlineColour = "0.85 0.65 0.40 1.00";
             }
             else if (next == null)
             {
-                headline = Sentence(Describe(entry));
-                detail = "It has no occurrence in the next year.";
+                headline = "Never runs";
+                detail = rule + ". It has no occurrence in the next year.";
+                headlineColour = "0.85 0.65 0.40 1.00";
             }
             else
             {
-                // "once on 2026-09-05" would repeat the date the line below
-                // already spells out in full, so the headline says what kind of
-                // thing this is and when it next happens, and nothing else.
-                var kind = entry.IsValidate ? "validate and restart"
-                         : entry.IsUpdate ? "update and restart"
-                         : "restart";
-                var recurrence = Normalise(entry.Repeat) == RepeatOnce
-                    ? "once"
-                    : DescribeRecurrence(entry);
-
-                headline = $"{Sentence(kind + " " + recurrence)}. Next: {Friendly(next.Value)}.";
-                detail = next.Value.ToString("dddd d MMMM yyyy, HH:mm", CultureInfo.InvariantCulture) +
-                         "  " + ZoneSuffix(next.Value);
+                headline = Sentence(Friendly(next.Value));
+                detail = $"{rule}. " +
+                         next.Value.ToString("dddd d MMMM yyyy 'at' HH:mm", CultureInfo.InvariantCulture) +
+                         ", " + ZoneSuffix(next.Value) + ".";
                 if (OffsetChangesBetween(DateTime.Now, next.Value))
-                    detail += "   (the clocks change before then)";
+                    detail += "  The clocks change before then.";
+                headlineColour = ColText;
+            }
+
+            // Sits under the fields rather than pinned to the bottom of the
+            // panel, so the form and its result read as one thing instead of
+            // being separated by half a screen of nothing. Floored so it can
+            // never reach the buttons on a form with every row showing.
+            y -= h + gap;
+            var summaryTop = y + h;
+            var summaryBottom = summaryTop - 0.12;
+            if (summaryBottom < 0.12)
+            {
+                summaryBottom = 0.12;
+                summaryTop = 0.24;
             }
 
             ui.Add(new CuiPanel
             {
                 Image = { Color = ColRow },
-                RectTransform = { AnchorMin = Anchor(0.02, 0.11), AnchorMax = Anchor(0.98, 0.21) }
+                RectTransform = { AnchorMin = Anchor(0.02, summaryBottom), AnchorMax = Anchor(0.98, summaryTop) }
             }, MenuContent, MenuContent + ".summary");
-            Label(ui, MenuContent + ".summary", 0.02, 0.46, 0.98, 0.96, headline, 14,
-                  problem != null ? "0.85 0.45 0.40 1.00" : ColText, TextAnchor.MiddleLeft);
-            Label(ui, MenuContent + ".summary", 0.02, 0.06, 0.98, 0.46, detail, 11,
+
+            Label(ui, MenuContent + ".summary", 0.02, 0.44, 0.98, 0.94, headline, 18,
+                  headlineColour, TextAnchor.MiddleLeft);
+            Label(ui, MenuContent + ".summary", 0.02, 0.08, 0.98, 0.44, detail, 11,
                   ColMuted, TextAnchor.MiddleLeft);
 
             Button(ui, MenuContent, 0.02, 0.02, 0.20, 0.09, "< Back", "hotwire.ui list", ColButton);

@@ -336,20 +336,27 @@ every entry with what it resolves to next, and lets you add, edit, toggle and
 delete without leaving the game.
 
 The edit view shows only the fields the chosen repeat mode uses, and carries a
-two-line summary of what the rule actually means:
+summary that leads with the answer:
 
 ```
-Update and restart the first Thursday of the month. Next: Thu 1 Oct at 20:00.
-   Thursday 1 October 2026, 20:00  Central Daylight Time (UTC-05:00, DST)
+Tomorrow at 05:00
+Restart daily. Sunday 6 September 2026 at 05:00, Central Daylight Time (UTC-05:00, DST).
 ```
 
 That summary is the point of the panel: an ordinal schedule is hard to be
-confident about until something tells you when it lands. The first line is
-phrased the way a person would say it — *in 4 minutes*, *today at 11:10*,
-*tomorrow at 05:00*, *Tuesday at 03:00* — because an absolute date answers a
-question nobody asked. "Next Saturday 5 September 2026" for something four
-minutes away is technically true and actively misleading. The second line is
-the exact moment with its zone, for when that *is* the question.
+confident about until something tells you when it lands. "When does this
+happen" is the only question the edit view is really asked, so the answer is
+the largest text on it, phrased the way a person would say it — *in 4
+minutes*, *today at 11:10*, *tomorrow at 05:00*, *Tuesday at 03:00*. An
+absolute date answers a question nobody asked: "next Saturday 5 September
+2026" for something four minutes away is technically true and actively
+misleading. The rule and the exact moment go underneath, for when *they* are
+the question.
+
+**A disabled entry says `Disabled`, not when it would run.** Showing a next
+occurrence under a switch reading OFF is the same false reassurance that once
+let a disabled entry restart a server (ADR-0017). The line underneath still
+says when it *would* run, which is what you want while setting one up.
 
 Things worth knowing:
 
@@ -371,7 +378,11 @@ Things worth knowing:
   is built so redrawing never drops the cursor.
 - **Time steps by 5, 15, 60 and 360 minutes**, so any hour is at most four
   clicks away. Every stepper button carries its unit — `-15m`, `+1h`, `+7d`,
-  `-1M`, `+1y` — because a button reading `-15` does not say of what.
+  `-1mo`, `+1y` — because a button reading `-15` does not say of what. The
+  units are all lower case, including `mo` for months: capital `M` is a
+  date-format convention that exists only because lower-case `m` was already
+  taken by minutes in a machine-readable string, and nothing on a button
+  should ask someone to know that.
 - **A one-off date has day, month and year steppers**, and shows the weekday it
   lands on. Month steps move whole months and clamp the day, so stepping a
   month on from 31 January gives 28 February rather than 3 March.
