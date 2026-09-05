@@ -1,8 +1,9 @@
 # Brief — Hotwire
 
-**Status:** early. The launcher is drafted and unrun; the plugin is not
-written. Read this before writing code, then `docs/DECISIONS.md` for the
-choices already made and `docs/OPEN-QUESTIONS.md` for what is still unproven.
+**Status:** early. The plugin is written and the launcher is drafted, and
+**neither has ever been run.** Read this before writing code, then
+`docs/DECISIONS.md` for the choices already made and `docs/OPEN-QUESTIONS.md`
+for what is still unproven.
 
 There is a longer internal brief, `HANDOFF.md`, which is deliberately not in
 this repository: it describes one specific production server in enough detail
@@ -17,7 +18,7 @@ Scheduled restarts and updates for a Rust dedicated server, as a matched pair:
 
 | | |
 |---|---|
-| `src/Hotwire.cs` | Oxide plugin. Holds the schedule, announces, counts down, decides, quits. **Not written yet.** |
+| `src/Hotwire.cs` | Oxide plugin. Holds the schedule, announces, counts down, decides, quits. **v0.1.0 written, never compiled or run.** |
 | `launcher/hotwire.bat` | Windows launcher. Restarts the server, and updates it only when told. **Drafted, never executed.** |
 
 They ship together because neither is much use alone. The plugin can shut a
@@ -114,6 +115,11 @@ Two mechanics make the launcher editable, and both are load-bearing:
 
 ## 5. What is left to do, in order
 
+0. **Compile and run the plugin.** It has not been through the Oxide compiler
+   once, which makes it the largest unknown in the repo. The first pass wants:
+   does it compile; does the flag land where the launcher looks; does
+   `hotwire now 30` announce, kick and quit cleanly; does the launcher act on
+   the flag on its next pass.
 1. **Run `tools/convars.py` against a real `Assembly-CSharp.dll`.** It has
    never been executed. Everything downstream — real defaults, tier 3, the
    ADR-0010 recount — is blocked on it.
@@ -128,10 +134,14 @@ Two mechanics make the launcher editable, and both are load-bearing:
    against the installed build and report the ones that no longer exist. It
    turns a Rust update from a mystery outage into a two-line diff, and it is
    probably the most useful thing in the repo.
-7. **Then** the plugin. Verify the assumed API calls in
-   `docs/OPEN-QUESTIONS.md` first, then schedule and announcements. The
-   shutdown itself is one line. Build the admin menu last, after chat
-   commands already do everything it will do (ADR-0006).
+7. **The admin menu, last** (ADR-0006). Its precondition is met: the chat
+   commands it wraps already do everything it will do, so a broken panel can
+   never mean a schedule cannot be changed. Read ADR-0006 before starting —
+   CUI lifecycle is the most bug-prone part of Oxide plugin work, and that
+   lesson has already been paid for once elsewhere.
+8. **Event-aware deferral.** Blocked on having anything to ask; see
+   `docs/OPEN-QUESTIONS.md`. Must degrade to "restart on schedule, say nothing
+   about events" on a server with none of the relevant plugins.
 
 ## 6. Do not
 

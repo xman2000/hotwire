@@ -5,9 +5,9 @@ pair: an Oxide plugin and the launcher script it talks to.**
 
 Windows. MIT.
 
-> **Status: early.** The launcher is drafted and the plugin is not written
-> yet. Nothing here has run on a production server. See `BRIEF.md` for the
-> full brief and `docs/OPEN-QUESTIONS.md` for what is still unverified.
+> **Status: early.** Both halves are written and **neither has been run.**
+> The plugin has not been through the Oxide compiler once. See `BRIEF.md` for
+> the full brief and `docs/OPEN-QUESTIONS.md` for what is still unverified.
 
 ---
 
@@ -50,6 +50,23 @@ framework release:
 New-Item -ItemType File C:\rustserver\UPDATE.flag
 ```
 
+**Schedules the restart, and announces it.** The plugin holds the schedule,
+counts down, tells players what is about to happen, kicks them with a reason
+rather than a timeout, and quits — which saves the world on the way out. If
+the entry was an update, it writes the flag first. It never spawns a process
+or shells out; it writes a file and quits, and the launcher does the rest.
+
+```
+hotwire status                     what is next, or what is counting down
+hotwire now [update|validate] [s]  start a countdown now
+hotwire cancel                     stop the one that is running
+hotwire add restart 05:00 Daily    edit the schedule from in game
+```
+
+Every schedule entry ships **disabled**. A restarter that starts restarting
+the moment you install it is a restarter that catches you out. See
+`docs/CONFIG.md`.
+
 **Makes the launcher editable.** Every option is one independent line:
 
 ```bat
@@ -71,12 +88,14 @@ someone will believe it.
 ## Layout
 
 ```
+src/Hotwire.cs                  the plugin
 launcher/hotwire.bat            the launcher
 launcher/secrets.example.bat    copy to secrets.bat; never committed
 tools/convars.py                generate the option list from your build
 docs/DECISIONS.md               every design choice, with its reasoning
 docs/RESEARCH.md                the evidence behind the option list
 docs/OPEN-QUESTIONS.md          what is assumed, unverified or undecided
+docs/CONFIG.md                  every config field, command and permission
 docs/GAME-API.md                what has been read from a real assembly
 BRIEF.md                        the full brief
 ```

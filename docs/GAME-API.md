@@ -6,14 +6,23 @@ rule 5 in `CLAUDE.md`. **Only entries read out of a real
 `// VERIFY:` at its use site, and lives in `docs/OPEN-QUESTIONS.md` until it
 has been checked.
 
-## Status: empty
+## Status: empty, and mostly not needed
 
-No assembly has been inspected yet. `tools/convars.py` is written and unrun,
-and `src/Hotwire.cs` does not exist, so there is nothing verified to record.
+No assembly has been inspected yet — `tools/convars.py` is written and unrun.
 
-Everything Hotwire currently believes about the game API is assumed — the
-shutdown call, the restarting flag, the Covalence kick, and the uMod release
-feed. All four are listed in `docs/OPEN-QUESTIONS.md`.
+More usefully: **`src/Hotwire.cs` does not reference a single Facepunch type.**
+ADR-0014 routes the whole plugin through Covalence and `Oxide.Core`, because a
+wrong guess at a Facepunch signature is a compile error, and a plugin that
+does not compile is a plugin that never restarts the server. So this file
+being empty currently costs the plugin nothing.
+
+What remains assumed is all runtime, all wrapped, and all listed in
+`docs/OPEN-QUESTIONS.md`: the uMod release-feed shape, the AdvancedStatus call
+shape, `Interface.Oxide.RootDirectory` as the server root, and the name of the
+extension carrying the framework version.
+
+This file becomes load-bearing the moment something here needs a game type —
+event-aware deferral is the likely first case.
 
 ## How to add an entry
 

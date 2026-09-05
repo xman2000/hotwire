@@ -80,7 +80,9 @@ means a schedule cannot be changed.
 
 ## ADR-0007 — Restart-on-new-framework-release is opt-in, default off
 
-**Date:** 2026-09-04 · **Status:** ACCEPTED
+**Date:** 2026-09-04 · **Status:** ACCEPTED — implemented in v0.1.0, still
+default off. The release feed's response shape remains unverified, so a
+changed feed logs a warning and schedules nothing.
 
 Detecting a new Oxide release and restarting to pick it up is the best idea in
 the upstream plugin, and the one most able to restart a server at a bad
@@ -229,3 +231,88 @@ Consequences, and one of them is a job still to do:
   `3e54724` and `3f0dc61`. Untracking a file does not remove it from history.
   That must be resolved before the repository is made public — see
   `docs/OPEN-QUESTIONS.md`.
+
+## ADR-0012 — Two schedule lists, not one typed list
+
+**Date:** 2026-09-04 · **Status:** ACCEPTED
+
+Alternatives: a single `Schedule` array where each entry carries a type.
+
+Chosen: **separate `Restarts` and `Updates` lists.** The typed single list is
+the smaller implementation — one code path, one set of commands — but the two
+lists read more obviously at a glance, and "this server never updates
+unattended" becomes a visibly empty list rather than a property you have to
+check on every entry. For a file whose whole value is that a stranger can read
+it and be right about what it does, that legibility is worth the duplication.
+
+The duplication is contained: entries share a base type, the scanner iterates
+both lists through one method, and the edit commands address either list
+through a small view so they cannot silently edit a copy.
+
+One ambiguity the single list would not have had, and the answer:
+**if a restart and an update fall at the same minute, the update wins.** An
+update entry is a restart entry that also writes a flag, so running it
+satisfies both. Validate beats update for the same reason. Documented in
+`docs/CONFIG.md`.
+
+## ADR-0013 — Entries are local wall-clock time, guarded by a persisted last-fired record
+
+**Date:** 2026-09-04 · **Status:** ACCEPTED
+
+`"HH:mm"` plus local date arithmetic misfires across a DST boundary: a 02:30
+entry happens twice in autumn and not at all in spring.
+
+Alternatives: interpret entries as UTC (unambiguous, but the admin who typed
+05:00 gets a restart that walks an hour twice a year relative to their
+players); local time with no guard (simplest, accepts one double restart a
+year).
+
+Chosen: **local wall-clock time, plus a record of when each entry last fired.**
+An entry refuses to fire again within 20 hours, configurable. Local time is
+what an admin means when they type 05:00. The autumn repeat is suppressed by
+the guard; the spring skip is logged and simply waits for the next day.
+
+**The guard has to be on disk, and that is the whole reason it works.** The
+autumn repeat does not arrive in the same process: the first 02:30 restarts
+the server, the launcher brings it back, and the second 02:30 arrives an hour
+later in a fresh process with an empty memory. So the record lives in
+`oxide/data/Hotwire/last_fired.json`, keyed by type, time and days rather than
+by list index, so reordering the config does not reset it.
+
+A negative interval — the clock moved backwards under us, from an NTP
+correction or the DST shift itself — counts as "recently" rather than firing
+again immediately.
+
+Manual restarts are exempt from the guard and do not feed it. An admin asking
+for a restart means it.
+
+## ADR-0014 — The plugin has no compile-time dependency on Assembly-CSharp
+
+**Date:** 2026-09-04 · **Status:** ACCEPTED
+
+This started as a way to handle the four unverified API calls and turned into
+the most load-bearing decision in the plugin, so it gets its own ADR.
+
+Three of the four assumed calls were needed only for shutdown and kicking:
+`ConVar.Global.quit(new ConsoleSystem.Arg(...))`, `ServerMgr.Instance.Restarting`,
+and the Covalence kick. Each is reachable a second way that touches no
+Facepunch type:
+
+| Wanted | Assumed Facepunch call | Used instead |
+|---|---|---|
+| Clean shutdown that saves | `ConVar.Global.quit(new ConsoleSystem.Arg(...))` | `server.Command("quit")` — runs the same console command |
+| "Is a restart already running" | `ServerMgr.Instance.Restarting` | the plugin's own flag |
+| Kick with a reason | — | `IPlayer.Kick(string)`, a Covalence interface |
+
+**The argument is the safety envelope, not tidiness.** A wrong guess at a
+Facepunch signature is a *compile* error. A plugin that does not compile is a
+plugin that never restarts the server — the exact failure the envelope
+forbids — and `try`/`catch` cannot save you from it, because the code never
+runs. Every remaining assumption in the plugin is a *runtime* one, wrapped, so
+being wrong costs one optional feature and not the schedule.
+
+Consequence: three entries in `docs/OPEN-QUESTIONS.md` close by not being
+needed, and the plugin keeps compiling across Rust updates that rename things.
+The cost is that `server.Command` is a string, so a typo is not caught by the
+compiler either — but a typo in a four-letter word in one place is a smaller
+risk than a moving signature in a hot path.
