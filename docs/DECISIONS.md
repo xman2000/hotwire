@@ -605,3 +605,26 @@ list cannot drift out of step with the parser.
 The lang file goes from 30 keys to 153. Lang files are written once and never
 rewritten, so upgrading servers keep their old file and fall back to English
 until they delete it — `docs/CONFIG.md` says so.
+
+## ADR-0021 — The uMod listing is unwrapped and has no tables
+
+**Date:** 2026-09-05 · **Status:** ACCEPTED
+
+`docs/UMOD-PAGE.md` is the text of the plugin's uMod listing. Alone in this
+repo, it is not wrapped at 76 columns and contains no markdown tables. Both
+are deliberate, and both were learned by pasting it and looking at the result.
+
+**The renderer deletes a newline inside a paragraph without putting a space in
+its place.** A wrap between "counts down," and "kicks" arrives as
+`counts down,kicks`. Nine of those shipped in the first draft and every one
+read as a typo in something nobody had mistyped.
+
+**A table's row breaks are newlines inside a block, so they go the same way.**
+The whole table arrives as one run-on paragraph with `|---|---|---|` in the
+middle of it. Escaping the pipes inside the cells does not help, because the
+problem is not the pipes. Anything tabular is a bullet list, and lists,
+headings, fenced code blocks and blank-line paragraph breaks all survive.
+
+So: one line per paragraph, no tables. A well-meant reformat to match the rest
+of the repo breaks the published page, which is why this is written down
+rather than left to look like an oversight.

@@ -1,37 +1,3 @@
-# uMod plugin page
-
-The listing text for `src/Hotwire.cs`, kept here so it stays in step with the
-plugin. Everything below the rule is meant to be pasted into the uMod
-submission form; nothing above it is.
-
-Keep this true when the plugin changes. A listing that disagrees with the
-config the plugin writes is worse than a short one.
-
-**Two formatting rules for the text below the rule, both learned by pasting it
-and watching it break. Do not "tidy" either one away.**
-
-1. **Every paragraph is one long line.** No hard wrapping, unlike the rest of
-   this repo. The listing renderer deletes a newline inside a paragraph
-   *without* putting a space in its place, so a wrap between "counts down," and
-   "kicks" arrives as `counts down,kicks`. Every one of these looks like a typo
-   in the rendered page and none of them is one.
-2. **No markdown tables.** Their row breaks are newlines inside a block, so
-   they meet the same fate — the whole table arrives as one run-on paragraph
-   with `|---|---|---|` in the middle of it. Bullet lists and fenced code
-   blocks both survive, so anything tabular is a list.
-
-**Before submitting:**
-
-- Confirm the name `Hotwire` is not taken. `umod.org` blocks automated
-  requests, so this has to be a manual look at the plugin directory.
-- Set **AdvancedStatus** as an optional dependency on the page. Do not make it
-  required — the plugin runs without it and announces in chat, which is the
-  normal case rather than a degraded one.
-- Link the repo for the launcher. The launcher is not part of the uMod
-  download and the page should not imply it is.
-
----
-
 ## Hotwire
 
 Scheduled restarts and updates for a Rust server. Announces, counts down, kicks with a reason, saves, and quits — and where you want it, separates "restart" from "install a new build".
