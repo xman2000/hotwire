@@ -13,7 +13,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Hotwire", "xman2000", "0.9.3")]
+    [Info("Hotwire", "xman2000", "0.9.4")]
     [Description("Scheduled restarts and updates. Announces, counts down, writes a flag, quits.")]
     internal class Hotwire : CovalencePlugin
     {
@@ -175,12 +175,24 @@ namespace Oxide.Plugins
 
         private class CountdownSettings
         {
+            // An hour. The status bar is unobtrusive enough to carry a long
+            // runway, and an hour is enough warning to finish a raid, bank a
+            // run, or log off deliberately rather than be thrown out of a
+            // fight. The bar is the warning; chat is the punctuation.
             [JsonProperty("Start the countdown this many seconds before")]
-            public int StartSeconds = 600;
+            public int StartSeconds = 3600;
 
+            // 60, 30, 15, 10, 5, 2 and 1 minutes, then 30, 20 and 10 seconds,
+            // then every second to zero. Sparse where nothing is at stake and
+            // dense where it is -- the last ten seconds are when somebody is
+            // deciding whether to open one more door.
             [JsonProperty("Announce when this many seconds remain",
                 ObjectCreationHandling = ObjectCreationHandling.Replace)]
-            public List<int> AnnounceAt = new List<int> { 600, 300, 180, 60, 30, 10, 5, 4, 3, 2, 1 };
+            public List<int> AnnounceAt = new List<int>
+            {
+                3600, 1800, 900, 600, 300, 120, 60,
+                30, 20, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1
+            };
 
             [JsonProperty("Seconds between the last announcement and the kick")]
             public float KickDelaySeconds = 1.0f;

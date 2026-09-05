@@ -7,6 +7,12 @@ restarting the moment it is installed is a restarter that catches you out.
 The config stays hand-editable and always will. Chat commands are a
 convenience over the same file, never the only way in (ADR-0006).
 
+> **Upgrading to 0.9.4?** The countdown now starts an hour out instead of ten
+> minutes, with a fuller set of announcements. Existing configs keep their old
+> values — delete the `Countdown` section to pick the new ones up. Note that
+> `hotwire now` with no seconds argument uses this value too, so a bare
+> `hotwire now` is an hour-long countdown unless you pass a number.
+>
 > **Upgrading to 0.9.0?** `Bar drains as the countdown runs` is replaced by
 > `Fill style`, and the fill colour key was renamed and given a real default.
 > Delete the `Status bar` section to pick them up.
@@ -141,11 +147,28 @@ satisfies both. Validate beats update for the same reason.
 
 ```json
 "Countdown": {
-  "Start the countdown this many seconds before": 600,
-  "Announce when this many seconds remain": [600, 300, 180, 60, 30, 10, 5, 4, 3, 2, 1],
+  "Start the countdown this many seconds before": 3600,
+  "Announce when this many seconds remain": [
+    3600, 1800, 900, 600, 300, 120, 60,
+    30, 20, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1
+  ],
   "Seconds between the last announcement and the kick": 1.0
 }
 ```
+
+**An hour of warning by default.** The status bar is unobtrusive enough to
+carry a long runway, and an hour is enough to finish a raid, bank a run, or log
+off deliberately rather than be thrown out of a fight. The bar is the warning;
+chat is the punctuation.
+
+Announcements land at 60, 30, 15, 10, 5, 2 and 1 minutes, then 30, 20 and 10
+seconds, then every second to zero — sparse where nothing is at stake and dense
+where it is. The last ten seconds are when somebody is deciding whether to open
+one more door.
+
+The bar itself changes text about once a minute over that hour, which is one
+push each. If that ever reads as flicker on a busy HUD, coarsening the bar's
+wording at long range is the lever — the announcements are independent of it.
 
 Announcements are plain lang strings (ADR-0004) and are editable in
 `oxide/lang/en/Hotwire.json`.
