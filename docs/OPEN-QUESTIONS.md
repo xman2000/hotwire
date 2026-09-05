@@ -164,12 +164,14 @@ fill them in from memory.
 - [x] ~~**The admin menu (ADR-0006).**~~ **Built in v0.4.0**, after the chat
       commands could do everything it does. Lives in `Hotwire.cs` and
       knowingly breaks ADR-0014 — see ADR-0016.
-- [ ] **The menu has never been opened.** Written blind against the CUI API.
-      Unverified in particular: that a `CuiButton` command routes to a
-      Covalence-registered command (`hotwire.ui`) rather than needing a
-      Facepunch console command; that `CuiHelper.AddUi(BasePlayer,
-      CuiElementContainer)` is the current overload; and that the layout is
-      readable at the anchors chosen. Expect at least one round of fixes.
+- [x] ~~**The menu has never been opened.**~~ **It opens, and the buttons
+      work** (2026-09-05). That confirms two things written blind: a
+      `CuiButton` command does route to a Covalence-registered command, so no
+      Facepunch console command is needed, and
+      `CuiHelper.AddUi(BasePlayer, CuiElementContainer)` is the right overload.
+- [ ] **Whether the panel is actually readable.** It renders, but the anchors,
+      font sizes and row heights were chosen without ever seeing it. Nine rows
+      before it overflows is a guess too.
 - [ ] Event-aware deferral — do not restart on top of a live event. Blocked:
       the reference server's event plugin exposes no `[HookMethod]` and no
       public API, so there is currently nothing to ask. The options are to

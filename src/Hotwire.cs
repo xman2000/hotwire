@@ -13,7 +13,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Hotwire", "xman2000", "0.4.0")]
+    [Info("Hotwire", "xman2000", "0.4.1")]
     [Description("Scheduled restarts and updates. Announces, counts down, writes a flag, quits.")]
     internal class Hotwire : CovalencePlugin
     {
@@ -1372,12 +1372,21 @@ namespace Oxide.Plugins
         // destroyed on close, on disconnect and on unload; the BasePlayer is
         // re-fetched at each use and never held across a frame.
 
+        // Two elements, and the split matters. The root owns CursorEnabled and
+        // is created ONCE per open; the content is destroyed and rebuilt on
+        // every click. Rust frees the mouse only while some UI asks for it, so
+        // if the cursor-owning element is destroyed and re-added across two
+        // frames -- which is what fast clicking causes -- there is a frame with
+        // nothing asking, and the game re-locks the cursor to look-control and
+        // parks it at screen centre.
         private const string MenuRoot = "hotwire.menu";
+        private const string MenuContent = "hotwire.menu.content";
 
         private class MenuState
         {
             public string List = "";
             public int Index = -1;                 // -1 means the list view
+            public bool RootDrawn;
             public bool Editing => Index >= 0;
         }
 
@@ -1427,6 +1436,7 @@ namespace Oxide.Plugins
             _menus.Remove(player.Id);
             var basePlayer = ToBasePlayer(player);
             if (basePlayer == null) return;
+            // Destroying the root takes the content with it; it is a child.
             try { CuiHelper.DestroyUi(basePlayer, MenuRoot); }
             catch (Exception ex) { PrintWarning($"Could not close the menu: {ex.Message}"); }
         }
@@ -1466,28 +1476,47 @@ namespace Oxide.Plugins
 
             try
             {
-                CuiHelper.DestroyUi(basePlayer, MenuRoot);
-
                 var ui = new CuiElementContainer();
+
+                if (!state.RootDrawn)
+                {
+                    // First draw only. Anything stale from a previous session
+                    // goes here, and never again while the menu is open.
+                    CuiHelper.DestroyUi(basePlayer, MenuRoot);
+                    ui.Add(new CuiPanel
+                    {
+                        Image = { Color = ColBackground },
+                        RectTransform = { AnchorMin = Anchor(0.22, 0.12), AnchorMax = Anchor(0.78, 0.88) },
+                        CursorEnabled = true
+                    }, "Overlay", MenuRoot);
+                    state.RootDrawn = true;
+                }
+                else
+                {
+                    // Redraw: only the content goes. The root, and with it the
+                    // cursor, stays put.
+                    CuiHelper.DestroyUi(basePlayer, MenuContent);
+                }
+
+                // Transparent, and deliberately does NOT request the cursor.
                 ui.Add(new CuiPanel
                 {
-                    Image = { Color = ColBackground },
-                    RectTransform = { AnchorMin = Anchor(0.22, 0.12), AnchorMax = Anchor(0.78, 0.88) },
-                    CursorEnabled = true
-                }, "Overlay", MenuRoot);
+                    Image = { Color = "0 0 0 0" },
+                    RectTransform = { AnchorMin = Anchor(0, 0), AnchorMax = Anchor(1, 1) }
+                }, MenuRoot, MenuContent);
 
                 ui.Add(new CuiPanel
                 {
                     Image = { Color = ColHeader },
                     RectTransform = { AnchorMin = Anchor(0, 0.92), AnchorMax = Anchor(1, 1) }
-                }, MenuRoot, MenuRoot + ".header");
+                }, MenuContent, MenuContent + ".header");
 
-                Label(ui, MenuRoot + ".header", 0.02, 0, 0.8, 1,
+                Label(ui, MenuContent + ".header", 0.02, 0, 0.8, 1,
                       state.Editing ? "Hotwire  /  editing " + state.List + " " + state.Index
                                     : "Hotwire  /  schedule",
                       15, ColText, TextAnchor.MiddleLeft);
 
-                Button(ui, MenuRoot + ".header", 0.93, 0.15, 0.98, 0.85, "X", "hotwire.ui close", ColDanger);
+                Button(ui, MenuContent + ".header", 0.93, 0.15, 0.98, 0.85, "X", "hotwire.ui close", ColDanger);
 
                 if (state.Editing) DrawEdit(ui, player, state);
                 else DrawList(ui, player);
@@ -1511,7 +1540,7 @@ namespace Oxide.Plugins
             for (var i = 0; i < _config.Updates.Count; i++) rows.Add(new KeyValuePair<string, int>("update", i));
 
             if (rows.Count == 0)
-                Label(ui, MenuRoot, 0.04, 0.75, 0.96, 0.85,
+                Label(ui, MenuContent, 0.04, 0.75, 0.96, 0.85,
                       "Nothing scheduled. Add a restart or an update below.", 14, ColMuted, TextAnchor.MiddleLeft);
 
             var shown = Math.Min(rows.Count, 9);
@@ -1528,7 +1557,7 @@ namespace Oxide.Plugins
                 {
                     Image = { Color = ColRow },
                     RectTransform = { AnchorMin = Anchor(0.02, y0), AnchorMax = Anchor(0.98, y1) }
-                }, MenuRoot, MenuRoot + ".row" + i);
+                }, MenuContent, MenuContent + ".row" + i);
 
                 var problem = ValidationError(entry);
                 var next = entry.Enabled && problem == null ? NextOccurrence(entry, DateTime.Now) : null;
@@ -1538,28 +1567,28 @@ namespace Oxide.Plugins
                         ? "next " + next.Value.ToString("ddd dd MMM HH:mm", CultureInfo.InvariantCulture)
                         : entry.Enabled ? "no next occurrence" : "disabled";
 
-                Label(ui, MenuRoot + ".row" + i, 0.02, 0.45, 0.62, 0.98, Describe(entry), 13, ColText, TextAnchor.MiddleLeft);
-                Label(ui, MenuRoot + ".row" + i, 0.02, 0.05, 0.62, 0.5, detail, 11,
+                Label(ui, MenuContent + ".row" + i, 0.02, 0.45, 0.62, 0.98, Describe(entry), 13, ColText, TextAnchor.MiddleLeft);
+                Label(ui, MenuContent + ".row" + i, 0.02, 0.05, 0.62, 0.5, detail, 11,
                       problem != null ? "0.85 0.45 0.40 1.00" : ColMuted, TextAnchor.MiddleLeft);
 
-                Button(ui, MenuRoot + ".row" + i, 0.63, 0.15, 0.75, 0.85,
+                Button(ui, MenuContent + ".row" + i, 0.63, 0.15, 0.75, 0.85,
                        entry.Enabled ? "ON" : "OFF",
                        $"hotwire.ui toggle {listName} {index}",
                        entry.Enabled ? ColOn : ColOff);
-                Button(ui, MenuRoot + ".row" + i, 0.76, 0.15, 0.87, 0.85,
+                Button(ui, MenuContent + ".row" + i, 0.76, 0.15, 0.87, 0.85,
                        "Edit", $"hotwire.ui edit {listName} {index}", ColButton);
-                Button(ui, MenuRoot + ".row" + i, 0.88, 0.15, 0.98, 0.85,
+                Button(ui, MenuContent + ".row" + i, 0.88, 0.15, 0.98, 0.85,
                        "Delete", $"hotwire.ui delete {listName} {index}", ColDanger);
             }
 
             if (rows.Count > shown)
-                Label(ui, MenuRoot, 0.04, 0.11, 0.96, 0.16,
+                Label(ui, MenuContent, 0.04, 0.11, 0.96, 0.16,
                       $"...and {rows.Count - shown} more. Use \"hotwire list\" to see them all.",
                       11, ColMuted, TextAnchor.MiddleLeft);
 
-            Button(ui, MenuRoot, 0.02, 0.02, 0.26, 0.09, "+ Restart", "hotwire.ui add restart", ColButton);
-            Button(ui, MenuRoot, 0.27, 0.02, 0.51, 0.09, "+ Update", "hotwire.ui add update", ColButton);
-            Label(ui, MenuRoot, 0.54, 0.02, 0.98, 0.09,
+            Button(ui, MenuContent, 0.02, 0.02, 0.26, 0.09, "+ Restart", "hotwire.ui add restart", ColButton);
+            Button(ui, MenuContent, 0.27, 0.02, 0.51, 0.09, "+ Update", "hotwire.ui add update", ColButton);
+            Label(ui, MenuContent, 0.54, 0.02, 0.98, 0.09,
                   "New entries start disabled. Turn one ON when it is right.",
                   11, ColMuted, TextAnchor.MiddleRight);
         }
@@ -1585,18 +1614,18 @@ namespace Oxide.Plugins
             // Time -- stepped by buttons rather than typed. An input field is
             // one more unverified Cui component and one more way to end up
             // with "5:0" in a field that must parse.
-            Label(ui, MenuRoot, 0.04, y, 0.24, y + h, "Time", 13, ColMuted, TextAnchor.MiddleLeft);
-            Button(ui, MenuRoot, 0.25, y, 0.32, y + h, "-1h", $"{prefix} time {target} -60", ColButton);
-            Button(ui, MenuRoot, 0.33, y, 0.40, y + h, "-5m", $"{prefix} time {target} -5", ColButton);
-            Label(ui, MenuRoot, 0.41, y, 0.55, y + h, entry.Time, 16, ColText, TextAnchor.MiddleCenter);
-            Button(ui, MenuRoot, 0.56, y, 0.63, y + h, "+5m", $"{prefix} time {target} 5", ColButton);
-            Button(ui, MenuRoot, 0.64, y, 0.71, y + h, "+1h", $"{prefix} time {target} 60", ColButton);
+            Label(ui, MenuContent, 0.04, y, 0.24, y + h, "Time", 13, ColMuted, TextAnchor.MiddleLeft);
+            Button(ui, MenuContent, 0.25, y, 0.32, y + h, "-1h", $"{prefix} time {target} -60", ColButton);
+            Button(ui, MenuContent, 0.33, y, 0.40, y + h, "-5m", $"{prefix} time {target} -5", ColButton);
+            Label(ui, MenuContent, 0.41, y, 0.55, y + h, entry.Time, 16, ColText, TextAnchor.MiddleCenter);
+            Button(ui, MenuContent, 0.56, y, 0.63, y + h, "+5m", $"{prefix} time {target} 5", ColButton);
+            Button(ui, MenuContent, 0.64, y, 0.71, y + h, "+1h", $"{prefix} time {target} 60", ColButton);
 
             y -= h + gap;
-            Label(ui, MenuRoot, 0.04, y, 0.24, y + h, "Repeat", 13, ColMuted, TextAnchor.MiddleLeft);
-            Button(ui, MenuRoot, 0.25, y, 0.32, y + h, "<", $"{prefix} repeat {target} -1", ColButton);
-            Label(ui, MenuRoot, 0.33, y, 0.63, y + h, RepeatLabel(mode), 14, ColText, TextAnchor.MiddleCenter);
-            Button(ui, MenuRoot, 0.64, y, 0.71, y + h, ">", $"{prefix} repeat {target} 1", ColButton);
+            Label(ui, MenuContent, 0.04, y, 0.24, y + h, "Repeat", 13, ColMuted, TextAnchor.MiddleLeft);
+            Button(ui, MenuContent, 0.25, y, 0.32, y + h, "<", $"{prefix} repeat {target} -1", ColButton);
+            Label(ui, MenuContent, 0.33, y, 0.63, y + h, RepeatLabel(mode), 14, ColText, TextAnchor.MiddleCenter);
+            Button(ui, MenuContent, 0.64, y, 0.71, y + h, ">", $"{prefix} repeat {target} 1", ColButton);
 
             y -= h + gap;
 
@@ -1608,12 +1637,12 @@ namespace Oxide.Plugins
                     DayOfWeek.Monday, DayOfWeek.Tuesday, DayOfWeek.Wednesday, DayOfWeek.Thursday,
                     DayOfWeek.Friday, DayOfWeek.Saturday, DayOfWeek.Sunday
                 };
-                Label(ui, MenuRoot, 0.04, y, 0.24, y + h,
+                Label(ui, MenuContent, 0.04, y, 0.24, y + h,
                       mode == RepeatWeekly ? "Days" : "Weekday", 13, ColMuted, TextAnchor.MiddleLeft);
                 for (var i = 0; i < order.Length; i++)
                 {
                     var x0 = 0.25 + i * 0.098;
-                    Button(ui, MenuRoot, x0, y, x0 + 0.09, y + h,
+                    Button(ui, MenuContent, x0, y, x0 + 0.09, y + h,
                            order[i].ToString().Substring(0, 3),
                            $"{prefix} day {target} {order[i]}",
                            selected.Contains(order[i]) ? ColOn : ColButton);
@@ -1623,11 +1652,11 @@ namespace Oxide.Plugins
 
             if (mode == RepeatMonthlyWeekday)
             {
-                Label(ui, MenuRoot, 0.04, y, 0.24, y + h, "Which", 13, ColMuted, TextAnchor.MiddleLeft);
+                Label(ui, MenuContent, 0.04, y, 0.24, y + h, "Which", 13, ColMuted, TextAnchor.MiddleLeft);
                 for (var i = 0; i < Ordinals.Length; i++)
                 {
                     var x0 = 0.25 + i * 0.138;
-                    Button(ui, MenuRoot, x0, y, x0 + 0.13, y + h, Ordinals[i],
+                    Button(ui, MenuContent, x0, y, x0 + 0.13, y + h, Ordinals[i],
                            $"{prefix} ordinal {target} {Ordinals[i]}",
                            string.Equals(Ordinals[i], entry.Ordinal, StringComparison.OrdinalIgnoreCase)
                                ? ColOn : ColButton);
@@ -1637,23 +1666,23 @@ namespace Oxide.Plugins
 
             if (mode == RepeatMonthlyDay)
             {
-                Label(ui, MenuRoot, 0.04, y, 0.24, y + h, "Day of month", 13, ColMuted, TextAnchor.MiddleLeft);
-                Button(ui, MenuRoot, 0.25, y, 0.32, y + h, "-", $"{prefix} dom {target} -1", ColButton);
-                Label(ui, MenuRoot, 0.33, y, 0.47, y + h, entry.DayOfMonth.ToString(), 16, ColText, TextAnchor.MiddleCenter);
-                Button(ui, MenuRoot, 0.48, y, 0.55, y + h, "+", $"{prefix} dom {target} 1", ColButton);
+                Label(ui, MenuContent, 0.04, y, 0.24, y + h, "Day of month", 13, ColMuted, TextAnchor.MiddleLeft);
+                Button(ui, MenuContent, 0.25, y, 0.32, y + h, "-", $"{prefix} dom {target} -1", ColButton);
+                Label(ui, MenuContent, 0.33, y, 0.47, y + h, entry.DayOfMonth.ToString(), 16, ColText, TextAnchor.MiddleCenter);
+                Button(ui, MenuContent, 0.48, y, 0.55, y + h, "+", $"{prefix} dom {target} 1", ColButton);
                 if (entry.DayOfMonth > 28)
-                    Label(ui, MenuRoot, 0.57, y, 0.98, y + h,
+                    Label(ui, MenuContent, 0.57, y, 0.98, y + h,
                           "Skipped in months this short.", 11, "0.85 0.65 0.40 1.00", TextAnchor.MiddleLeft);
                 y -= h + gap;
             }
 
             if (mode == RepeatEveryNDays)
             {
-                Label(ui, MenuRoot, 0.04, y, 0.24, y + h, "Every", 13, ColMuted, TextAnchor.MiddleLeft);
-                Button(ui, MenuRoot, 0.25, y, 0.32, y + h, "-", $"{prefix} interval {target} -1", ColButton);
-                Label(ui, MenuRoot, 0.33, y, 0.47, y + h, entry.IntervalDays + " days", 15, ColText, TextAnchor.MiddleCenter);
-                Button(ui, MenuRoot, 0.48, y, 0.55, y + h, "+", $"{prefix} interval {target} 1", ColButton);
-                Label(ui, MenuRoot, 0.57, y, 0.98, y + h,
+                Label(ui, MenuContent, 0.04, y, 0.24, y + h, "Every", 13, ColMuted, TextAnchor.MiddleLeft);
+                Button(ui, MenuContent, 0.25, y, 0.32, y + h, "-", $"{prefix} interval {target} -1", ColButton);
+                Label(ui, MenuContent, 0.33, y, 0.47, y + h, entry.IntervalDays + " days", 15, ColText, TextAnchor.MiddleCenter);
+                Button(ui, MenuContent, 0.48, y, 0.55, y + h, "+", $"{prefix} interval {target} 1", ColButton);
+                Label(ui, MenuContent, 0.57, y, 0.98, y + h,
                       "counting from " + (string.IsNullOrWhiteSpace(entry.AnchorDate) ? "today" : entry.AnchorDate),
                       11, ColMuted, TextAnchor.MiddleLeft);
                 y -= h + gap;
@@ -1661,29 +1690,29 @@ namespace Oxide.Plugins
 
             if (mode == RepeatOnce)
             {
-                Label(ui, MenuRoot, 0.04, y, 0.24, y + h, "Date", 13, ColMuted, TextAnchor.MiddleLeft);
-                Button(ui, MenuRoot, 0.25, y, 0.32, y + h, "-1m", $"{prefix} date {target} -30", ColButton);
-                Button(ui, MenuRoot, 0.33, y, 0.40, y + h, "-1d", $"{prefix} date {target} -1", ColButton);
-                Label(ui, MenuRoot, 0.41, y, 0.55, y + h,
+                Label(ui, MenuContent, 0.04, y, 0.24, y + h, "Date", 13, ColMuted, TextAnchor.MiddleLeft);
+                Button(ui, MenuContent, 0.25, y, 0.32, y + h, "-1m", $"{prefix} date {target} -30", ColButton);
+                Button(ui, MenuContent, 0.33, y, 0.40, y + h, "-1d", $"{prefix} date {target} -1", ColButton);
+                Label(ui, MenuContent, 0.41, y, 0.55, y + h,
                       string.IsNullOrWhiteSpace(entry.Date) ? "(unset)" : entry.Date, 14, ColText, TextAnchor.MiddleCenter);
-                Button(ui, MenuRoot, 0.56, y, 0.63, y + h, "+1d", $"{prefix} date {target} 1", ColButton);
-                Button(ui, MenuRoot, 0.64, y, 0.71, y + h, "+1m", $"{prefix} date {target} 30", ColButton);
+                Button(ui, MenuContent, 0.56, y, 0.63, y + h, "+1d", $"{prefix} date {target} 1", ColButton);
+                Button(ui, MenuContent, 0.64, y, 0.71, y + h, "+1m", $"{prefix} date {target} 30", ColButton);
                 y -= h + gap;
             }
 
             if (entry is UpdateEntry)
             {
                 var update = (UpdateEntry)entry;
-                Label(ui, MenuRoot, 0.04, y, 0.24, y + h, "Validate", 13, ColMuted, TextAnchor.MiddleLeft);
-                Button(ui, MenuRoot, 0.25, y, 0.40, y + h, update.Validate ? "ON" : "OFF",
+                Label(ui, MenuContent, 0.04, y, 0.24, y + h, "Validate", 13, ColMuted, TextAnchor.MiddleLeft);
+                Button(ui, MenuContent, 0.25, y, 0.40, y + h, update.Validate ? "ON" : "OFF",
                        $"{prefix} validate {target}", update.Validate ? ColOn : ColButton);
-                Label(ui, MenuRoot, 0.42, y, 0.98, y + h,
+                Label(ui, MenuContent, 0.42, y, 0.98, y + h,
                       "Re-checksums the whole install. Slow.", 11, ColMuted, TextAnchor.MiddleLeft);
                 y -= h + gap;
             }
 
-            Label(ui, MenuRoot, 0.04, y, 0.24, y + h, "Enabled", 13, ColMuted, TextAnchor.MiddleLeft);
-            Button(ui, MenuRoot, 0.25, y, 0.40, y + h, entry.Enabled ? "ON" : "OFF",
+            Label(ui, MenuContent, 0.04, y, 0.24, y + h, "Enabled", 13, ColMuted, TextAnchor.MiddleLeft);
+            Button(ui, MenuContent, 0.25, y, 0.40, y + h, entry.Enabled ? "ON" : "OFF",
                    $"{prefix} toggle {target}", entry.Enabled ? ColOn : ColOff);
 
             // The whole reason an ordinal schedule is comprehensible: it says
@@ -1701,12 +1730,12 @@ namespace Oxide.Plugins
             {
                 Image = { Color = ColRow },
                 RectTransform = { AnchorMin = Anchor(0.02, 0.11), AnchorMax = Anchor(0.98, 0.20) }
-            }, MenuRoot, MenuRoot + ".summary");
-            Label(ui, MenuRoot + ".summary", 0.02, 0, 0.98, 1, summary, 13,
+            }, MenuContent, MenuContent + ".summary");
+            Label(ui, MenuContent + ".summary", 0.02, 0, 0.98, 1, summary, 13,
                   problem != null ? "0.85 0.45 0.40 1.00" : ColText, TextAnchor.MiddleLeft);
 
-            Button(ui, MenuRoot, 0.02, 0.02, 0.20, 0.09, "< Back", "hotwire.ui list", ColButton);
-            Button(ui, MenuRoot, 0.80, 0.02, 0.98, 0.09, "Delete",
+            Button(ui, MenuContent, 0.02, 0.02, 0.20, 0.09, "< Back", "hotwire.ui list", ColButton);
+            Button(ui, MenuContent, 0.80, 0.02, 0.98, 0.09, "Delete",
                    $"{prefix} delete {target}", ColDanger);
         }
 

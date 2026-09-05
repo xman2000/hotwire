@@ -260,7 +260,8 @@ Things worth knowing:
 - **A change that makes an enabled entry invalid disables it** and says so,
   rather than leaving it to fail at three in the morning.
 - **Time and numbers are stepped with buttons**, not typed. Fewer ways to end
-  up with something that will not parse.
+  up with something that will not parse. Click as fast as you like — the panel
+  is built so redrawing never drops the cursor.
 
 The panel is a convenience and never the only way in. Everything it does,
 `hotwire add`, `set`, `remove`, `enable` and `disable` also do — which is what
