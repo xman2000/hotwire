@@ -96,12 +96,15 @@ Put `REM` in front to disable it; take it away to enable it. You cannot break
 the file by turning one option off, because nothing depends on the line
 above it.
 
-**Documents itself against your build.** `tools/convars.py` reads the
-`[ServerVar]` attributes out of the `Assembly-CSharp.dll` you actually have
-and generates the annotated option list, with real defaults where the compiler
-stored them and `UNKNOWN` where it did not. It never guesses a default — a
-comment claiming a default that has moved is worse than no comment, because
-someone will believe it.
+**Every default in it is real.** The option list is curated by hand, but the
+names and defaults beside each one were read out of a Rust build rather than
+copied from a guide, and they are re-checked against a new build after every
+Rust update. A comment claiming a default that has quietly moved is worse than
+no comment, because someone will believe it.
+
+That checking is maintenance work, not yours: nothing here needs Python, and
+the launcher never asks you to run anything. See `tools/` if you are curious
+how it is done.
 
 ## Layout
 
@@ -118,6 +121,19 @@ docs/GAME-API.md                what has been read from a real assembly
 BRIEF.md                        the full brief
 ```
 
+## Requirements
+
+The launcher needs Windows, a Rust dedicated server, and steamcmd. That is all
+— it is a batch file.
+
+The plugin is optional and needs [Oxide/uMod](https://umod.org). Nothing about
+the launcher requires it, and nothing about the plugin requires the launcher;
+they meet at a flag file.
+
+The plugin's countdown bar is drawn through **AdvancedStatus**, which is a paid
+plugin most servers will not have. Without it the countdown still runs and is
+announced in chat — that is the normal case, not a degraded one.
+
 ## Getting started
 
 1. Copy `launcher/hotwire.bat` and `launcher/secrets.example.bat` next to your
@@ -129,9 +145,46 @@ BRIEF.md                        the full brief
    options.
 4. Run it.
 
-The plugin is separate and optional: drop `src/Hotwire.cs` into
-`oxide/plugins/` and it will write the flags on a schedule. See
-`docs/CONFIG.md`.
+### Adding the plugin
+
+1. Drop `src/Hotwire.cs` into `oxide/plugins/`. It compiles on the spot and
+   writes `oxide/config/Hotwire.json` with **every schedule disabled**, so
+   installing it cannot restart anything by surprise.
+
+2. Give yourself permission. Nothing works without this, and the first command
+   you try will simply refuse:
+
+   ```
+   oxide.grant user <your name> hotwire.status
+   oxide.grant user <your name> hotwire.restart
+   oxide.grant user <your name> hotwire.cancel
+   oxide.grant user <your name> hotwire.edit
+   ```
+
+   Or grant them to a group, which is easier to maintain:
+
+   ```
+   oxide.grant group admin hotwire.status
+   ```
+
+   | Permission | Lets you |
+   |---|---|
+   | `hotwire.status` | See what is scheduled, and open the menu |
+   | `hotwire.restart` | Start a countdown now |
+   | `hotwire.cancel` | Cancel a running countdown |
+   | `hotwire.edit` | Add, change and remove schedule entries |
+
+3. Set `UPDATE_MODE=hotwire` in the launcher, so scheduled updates are the
+   plugin's decision rather than something that happens on every restart.
+
+4. Add a schedule — `hotwire menu` in game, or from the console:
+
+   ```
+   hotwire add restart 05:00 daily
+   hotwire add update 20:00 first Thursday
+   ```
+
+Full reference in `docs/CONFIG.md`.
 
 Optionally, generate the full option reference for your own build:
 

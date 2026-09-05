@@ -167,7 +167,17 @@ rate tuning is missing from the reference server because it uses plugins).
 
 ## ADR-0010 — Config file layout: by tier, not by topic (for now)
 
-**Date:** 2026-09-04 · **Status:** PROPOSED — revisit once `convars.py` runs
+**Date:** 2026-09-04 · **Status:** SUPERSEDED by ADR-0018 on 2026-09-05.
+
+Its trigger fired and the answer was that the question had dissolved. This ADR
+chose between two ways of splitting the options across files, and asked to be
+revisited once `convars.py` ran. It ran: there are 1,623 convars, ADR-0018
+curated 75 of them into one hand-written list, and the tier boundary it was
+reasoning about no longer exists. There is one file, and no split to choose.
+
+The counting in it is still worth reading. It is a good demonstration that two
+plausible ways of organising the same thing can cut across each other so badly
+that neither survives contact with the data.
 
 Batch supports this cleanly: `call "%~dp0conf\network.bat"` runs in the same
 environment, so `set` in the child persists in the parent. Rules: the child

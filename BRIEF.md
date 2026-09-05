@@ -125,28 +125,26 @@ Two mechanics make the launcher editable, and both are load-bearing:
    started the reference server on protocol 2633.288.1. What has not run is
    this file with its own defaults, and in particular `UPDATE_MODE=always`,
    which is the default and was not the mode that ran.
-1. **Run `tools/convars.py` against a real `Assembly-CSharp.dll`.** It has
-   never been executed. Everything downstream — real defaults, tier 3, the
-   ADR-0010 recount — is blocked on it.
-2. Teach it to report `ShowInAdminUI`, which is confirmed to exist on the
-   `ServerVar` attribute. That is Facepunch's own list of admin-facing
-   convars, and it turns tier 2 from a judgement call into data.
-3. Decide where tier 3 lives and write the ADR (ADR-0008 leaves it open).
-4. Split `launcher/hotwire.bat` into labelled tiers; 1 and 2 are mixed today.
-5. Generate tier 3 and replace every `[default: unknown]` with a verified
-   value — or leave it honest.
-6. Build `tools/Test-Launcher.ps1`: check every `+convar` in a launcher
-   against the installed build and report the ones that no longer exist. It
-   turns a Rust update from a mystery outage into a two-line diff, and it is
-   probably the most useful thing in the repo.
-7. **Event-aware deferral.** Blocked on having anything to ask; see
+1. **Fire the framework-update check once.** It is off by default and has
+   never run, so the path from detecting a new release through to an announced
+   update is untested — as are the two assumptions only reachable through it,
+   the feed's shape and the extension's name.
+2. **Watch a countdown cross a DST boundary.** ADR-0013's guard is written,
+   persisted and reasoned about, but the autumn repeat it exists for has not
+   happened yet.
+3. **Event-aware deferral.** Blocked on having anything to ask; see
    `docs/OPEN-QUESTIONS.md`. Must degrade to "restart on schedule, say nothing
    about events" on a server with none of the relevant plugins.
 
-The plugin side is done for v1: schedule, six recurrence modes, countdown,
+The plugin is done for v1: schedule, six recurrence modes, countdown,
 announcements, status bar, kick, save, quit, flag, chat commands and the
-in-game panel (ADR-0006, built last as it was meant to be). What is left is
-almost all launcher work.
+in-game panel (ADR-0006, built last as it was meant to be).
+
+The launcher is done too, and so is its option list — 75 curated options whose
+names and defaults were read out of a real build, with `convars.py --check`
+keeping them honest after a Rust update. The tier scheme this brief used to
+describe is gone: ADR-0018 replaced it with one curated list, and ADR-0010,
+which chose how to split the tiers across files, went with it.
 
 ## 6. Do not
 
