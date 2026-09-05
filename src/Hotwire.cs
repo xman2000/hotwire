@@ -13,7 +13,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Hotwire", "xman2000", "0.8.0")]
+    [Info("Hotwire", "xman2000", "0.8.1")]
     [Description("Scheduled restarts and updates. Announces, counts down, writes a flag, quits.")]
     internal class Hotwire : CovalencePlugin
     {
@@ -989,6 +989,23 @@ namespace Oxide.Plugins
             }
         }
 
+        // A countdown runs from a copy of the schedule, so switching an entry
+        // off only stopped it happening AGAIN. The countdown already under way
+        // carried on, and the panel showed the entry as disabled the whole
+        // time -- which reads as "cancelled" and is not.
+        //
+        // Anything that disables, deletes or edits the entry a live countdown
+        // came from now cancels that countdown too. Cancelling is the safe
+        // direction: the envelope forbids restarting a server unannounced, and
+        // an admin who has just switched the thing off is not expecting one.
+        private bool CancelCountdownFor(ScheduleEntry entry, string by)
+        {
+            if (!_countdownActive || _shuttingDown) return false;
+            if (_countdownEntry == null || !ReferenceEquals(_countdownEntry, entry)) return false;
+            CancelCountdown(by);
+            return true;
+        }
+
         private void CancelCountdown(string by)
         {
             if (!_countdownActive) return;
@@ -1659,8 +1676,31 @@ namespace Oxide.Plugins
 
                 Button(ui, MenuContent + ".header", 0.93, 0.15, 0.98, 0.85, "X", "hotwire.ui close", ColDanger);
 
-                if (state.Editing) DrawEdit(ui, player, state);
-                else DrawList(ui, player);
+                // A live countdown is the most important thing on this screen,
+                // and it used to be the one thing the panel did not show. An
+                // admin switching an entry off saw it read "disabled" and
+                // reasonably concluded the restart was called off.
+                var top = 0.88;
+                if (_countdownActive && !_shuttingDown)
+                {
+                    ui.Add(new CuiPanel
+                    {
+                        Image = { Color = ColDanger },
+                        RectTransform = { AnchorMin = Anchor(0.02, 0.815), AnchorMax = Anchor(0.98, 0.905) }
+                    }, MenuContent, MenuContent + ".live");
+
+                    var remaining = Math.Max(0, (int)Math.Ceiling((_countdownTarget - DateTime.Now).TotalSeconds));
+                    Label(ui, MenuContent + ".live", 0.02, 0, 0.72, 1,
+                          $"COUNTING DOWN  --  {KindWord()} in {FormatRemaining(remaining)}",
+                          14, ColText, TextAnchor.MiddleLeft);
+                    Button(ui, MenuContent + ".live", 0.74, 0.15, 0.98, 0.85,
+                           "Cancel the restart", "hotwire.ui cancelcountdown", ColButton);
+
+                    top = 0.79;
+                }
+
+                if (state.Editing) DrawEdit(ui, player, state, top);
+                else DrawList(ui, player, top);
 
                 CuiHelper.AddUi(basePlayer, ui);
             }
@@ -1673,9 +1713,9 @@ namespace Oxide.Plugins
             }
         }
 
-        private void DrawList(CuiElementContainer ui, IPlayer player)
+        private void DrawList(CuiElementContainer ui, IPlayer player, double top)
         {
-            const double top = 0.88, height = 0.075, gap = 0.013;
+            const double height = 0.075, gap = 0.013;
             var rows = new List<KeyValuePair<string, int>>();
             for (var i = 0; i < _config.Restarts.Count; i++) rows.Add(new KeyValuePair<string, int>("restart", i));
             for (var i = 0; i < _config.Updates.Count; i++) rows.Add(new KeyValuePair<string, int>("update", i));
@@ -1684,7 +1724,8 @@ namespace Oxide.Plugins
                 Label(ui, MenuContent, 0.04, 0.75, 0.96, 0.85,
                       "Nothing scheduled. Add a restart or an update below.", 14, ColMuted, TextAnchor.MiddleLeft);
 
-            var shown = Math.Min(rows.Count, 9);
+            // One fewer visible row when the countdown banner is up.
+            var shown = Math.Min(rows.Count, top > 0.85 ? 9 : 8);
             for (var i = 0; i < shown; i++)
             {
                 var listName = rows[i].Key;
@@ -1735,13 +1776,13 @@ namespace Oxide.Plugins
                   11, ColMuted, TextAnchor.MiddleRight);
         }
 
-        private void DrawEdit(CuiElementContainer ui, IPlayer player, MenuState state)
+        private void DrawEdit(CuiElementContainer ui, IPlayer player, MenuState state, double top)
         {
             var list = ListFor(state.List);
             if (list == null || state.Index < 0 || state.Index >= list.Count)
             {
                 state.Index = -1;
-                DrawList(ui, player);
+                DrawList(ui, player, top);
                 return;
             }
 
@@ -1750,7 +1791,7 @@ namespace Oxide.Plugins
             var prefix = $"hotwire.ui";
             var target = $"{state.List} {state.Index}";
 
-            double y = 0.80;
+            var y = top - 0.08;
             const double h = 0.075, gap = 0.02;
 
             // Time -- stepped by buttons rather than typed. An input field is
@@ -1986,6 +2027,16 @@ namespace Oxide.Plugins
 
             if (!_menus.ContainsKey(player.Id)) return;
 
+            if (action == "cancelcountdown")
+            {
+                if (!Allowed(player, PermCancel)) return;
+                if (_shuttingDown) Reply(player, "TooLateToCancel");
+                else if (!_countdownActive) Reply(player, "NoCountdownRunning");
+                else CancelCountdown(player.Name);
+                DrawMenu(player);
+                return;
+            }
+
             if (action == "list")
             {
                 _menus[player.Id].Index = -1;
@@ -2031,6 +2082,11 @@ namespace Oxide.Plugins
 
             if (!Allowed(player, PermEdit)) return;
             var entry = list[index];
+
+            // Captured before the switch: "delete" removes the entry from the
+            // list, and "toggle" is the case that started all this.
+            var wasCountingDownForThis = _countdownActive && !_shuttingDown &&
+                                         _countdownEntry != null && ReferenceEquals(_countdownEntry, entry);
 
             switch (action)
             {
@@ -2184,6 +2240,15 @@ namespace Oxide.Plugins
             {
                 entry.Enabled = false;
                 Reply(player, "Raw", "That change made the entry invalid, so it has been disabled.");
+            }
+
+            // The entry a live countdown came from was just disabled, deleted
+            // or rescheduled. Stop the countdown; anything else lets a restart
+            // arrive that the admin believes they called off.
+            if (wasCountingDownForThis && (action != "toggle" || !entry.Enabled))
+            {
+                CancelCountdown(player.Name);
+                Reply(player, "CountdownCancelledToo");
             }
 
             SaveConfig();
@@ -2490,6 +2555,9 @@ namespace Oxide.Plugins
                     return;
             }
 
+            var rescheduled = CancelCountdownFor(entry, player.Name);
+            if (rescheduled) Reply(player, "CountdownCancelledToo");
+
             var stillBroken = ValidationError(entry);
             if (stillBroken != null)
             {
@@ -2605,8 +2673,10 @@ namespace Oxide.Plugins
             }
 
             var removed = list[index];
+            var stopped = CancelCountdownFor(removed, player.Name);
             list.RemoveAt(index);
             SaveConfig();
+            if (stopped) Reply(player, "CountdownCancelledToo");
             Reply(player, "Raw", "Removed: " + Describe(removed));
             Puts($"{player.Name} removed {args[1]} {index} ({Describe(removed)}).");
         }
@@ -2624,9 +2694,11 @@ namespace Oxide.Plugins
                 return;
             }
 
+            var stopped = !enable && CancelCountdownFor(list[index], player.Name);
             list[index].Enabled = enable;
             if (enable) ValidateSchedule();
             SaveConfig();
+            if (stopped) Reply(player, "CountdownCancelledToo");
             Reply(player, enable ? "Enabled" : "Disabled", args[1].ToLowerInvariant(), index.ToString());
             Puts($"{player.Name} {(enable ? "enabled" : "disabled")} {args[1]} {index}.");
         }
@@ -2734,6 +2806,8 @@ namespace Oxide.Plugins
                 ["CountdownTick"] = "Server {0} in {1}.",
                 ["Now"] = "{0} now. See you in a few minutes.",
                 ["Cancelled"] = "The scheduled restart has been cancelled.",
+                ["CountdownCancelledToo"] = "That entry had a countdown running. It has been cancelled too.",
+                ["NoCountdownRunning"] = "Nothing is counting down.",
                 ["KickReason"] = "Scheduled restart. Back shortly.",
 
                 ["FrameworkFound"] = "A new framework release is available. An update is scheduled for {0}.",

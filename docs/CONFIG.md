@@ -271,6 +271,13 @@ Things worth knowing:
   on when the summary line says what you meant.
 - **A change that makes an enabled entry invalid disables it** and says so,
   rather than leaving it to fail at three in the morning.
+- **Disabling, deleting or rescheduling an entry cancels its running
+  countdown**, if it has one, and tells you it did (ADR-0017). Switching an
+  entry off used to stop it happening *again* while the countdown already
+  under way carried on to a restart — which is not what "disabled" reads as.
+- **A running countdown appears as a banner** across the top of the panel, with
+  a button to cancel it outright. It is the most important thing on the screen
+  and it used to be the one thing the panel did not show.
 - **Time and numbers are stepped with buttons**, not typed. Fewer ways to end
   up with something that will not parse. Click as fast as you like — the panel
   is built so redrawing never drops the cursor.
@@ -323,6 +330,9 @@ after installing, after moving the server, and after any Oxide update.
 
 A manual `hotwire now` is not subject to the fired-recently guard and does not
 feed it. An admin asking for a restart means it.
+
+`hotwire cancel` stops the countdown and leaves the schedule alone; disabling
+the entry stops both.
 
 **Cancel stops working once the shutdown has begun** — players have been
 kicked by then, and pretending the restart can still be called off would leave

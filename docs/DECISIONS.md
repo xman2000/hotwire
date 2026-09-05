@@ -420,3 +420,29 @@ Two implementation choices worth recording:
 - **No input fields.** Time, day-of-month, interval and date are stepped with
   buttons. `CuiInputFieldComponent` is one more unverified component and one
   more way to end up with `5:0` in a field that has to parse.
+
+## ADR-0017 — Editing the entry a countdown came from cancels that countdown
+
+**Date:** 2026-09-05 · **Status:** ACCEPTED
+
+Found in use: an admin disabled a scheduled restart in the panel while its
+countdown was already running. The button flipped to `OFF`, the entry read as
+disabled, and the server restarted a couple of minutes later anyway.
+
+Nothing was malfunctioning. A countdown runs from state captured when it
+started, so switching the entry off only stopped it happening *again*. But the
+panel showed "disabled" and nothing else, and "disabled" reads as "called off".
+
+Chosen: **disabling, deleting or rescheduling the entry a live countdown came
+from cancels that countdown**, from the panel and from chat alike, and says so.
+Re-enabling does not cancel, and unrelated entries are untouched.
+
+Cancelling is the safe direction. The envelope forbids restarting a server
+unannounced, and a restart the admin believes they called off is worse than
+unannounced — they have stopped watching for it. The opposite error, a restart
+that does not happen, is loud, recoverable, and one `hotwire now` away.
+
+The second half of the fix is that the panel now shows a running countdown at
+all, as a banner with a cancel button. The state was invisible, and an
+interface that hides the most important thing on the screen will keep producing
+this mistake whatever the semantics underneath are.
