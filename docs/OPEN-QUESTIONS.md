@@ -38,12 +38,15 @@ its use site.
       which one renders and this closes. It ships as a guess at all only
       because the failure is a visibly broken glyph rather than a silent wrong
       value.
-- [ ] **The `TimeStamp` keys, now the one that matters.** AdvancedStatus takes
-      `TimeStamp`, `TimeStampStart` and `TimeStampDestroy` as doubles. If it
-      renders a countdown client-side from those, Hotwire could create the bar
-      once and push nothing: no flicker at any granularity, and a bar that
-      counts smoothly rather than a minute at a time. That is the only thing
-      standing between the current bar and a good one.
+- [x] ~~**The `TimeStamp` keys.**~~ **Read from the plugin, 2026-09-05.** They
+      do exactly that: `BarType: TimeProgressCounter` makes AdvancedStatus
+      count the bar down itself and delete it when the time arrives. One
+      `CreateBar`, nothing pushed after it. Written up in `docs/GAME-API.md`.
+- [ ] **That `Network.TimeEx.currentTimestamp` is Unix epoch seconds.**
+      Hotwire computes the same value from `DateTime.UtcNow` rather than
+      calling the Facepunch property, so the status code stays free of
+      Facepunch types. If the epoch differs, the bar shows nonsense or
+      disappears immediately — loud and harmless, but unverified.
 - [ ] **AdvancedStatus's own version drift.** The integration is written
       against 0.1.26. It is wrapped and self-disabling, so a changed API costs
       a cosmetic bar rather than a restart, but nothing tells us it changed

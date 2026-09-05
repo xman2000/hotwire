@@ -209,8 +209,9 @@ replaced by the `Status bar` section below.
   "Bar colour, hex (empty = the status plugin's default)": "",
   "Text colour, hex (empty = default)": "",
   "Progress colour, hex (empty = default)": "",
-  "Icon: game sprite path (empty = none)": "",
-  "Icon: image URL (empty = none)": ""
+  "Icon: game sprite path (empty = none)": "assets/icons/clock.png",
+  "Icon: image URL (empty = none)": "",
+  "Bar drains as the countdown runs": true
 }
 ```
 
@@ -235,11 +236,15 @@ server's theme reads as a bug.
 The bar appears when the countdown starts, is given to players who connect
 mid-countdown, and is removed on cancel, on shutdown and on unload.
 
-**It updates roughly once a minute, not once a second.** AdvancedStatus
-re-lays out the whole stack when a bar changes, so a per-second countdown made
-every bar on screen blink. The bar reads "3 minutes", "2 minutes", "1 minute",
-"less than a minute", and the chat announcements carry the precise countdown
-at the end. If the status plugin errors, Hotwire logs it once, falls back to
+**Hotwire creates it once and never touches it again.** The bar is a
+`TimeProgressCounter`, so AdvancedStatus counts it down itself from the
+timestamps it was given, drives the progress fill, and removes the bar when the
+time arrives. Nothing is pushed per second, which is what used to make every
+bar on the screen blink — and it counts smoothly rather than a minute at a
+time.
+
+`Bar drains as the countdown runs` picks the direction: true empties the bar as
+time runs out, false fills it toward the restart. If the status plugin errors, Hotwire logs it once, falls back to
 chat for the rest of the session, and the countdown is unaffected.
 
 ## Commands

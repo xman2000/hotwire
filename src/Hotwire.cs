@@ -13,7 +13,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Hotwire", "xman2000", "0.6.0")]
+    [Info("Hotwire", "xman2000", "0.7.0")]
     [Description("Scheduled restarts and updates. Announces, counts down, writes a flag, quits.")]
     internal class Hotwire : CovalencePlugin
     {
@@ -247,6 +247,11 @@ namespace Oxide.Plugins
 
             [JsonProperty("Icon: image URL (empty = none)")]
             public string ImageUrl = "";
+
+            // True: the bar empties as the countdown runs, which reads as time
+            // running out. False: it fills toward the restart.
+            [JsonProperty("Bar drains as the countdown runs")]
+            public bool Drain = true;
         }
 
         private class GeneralSettings
@@ -352,7 +357,7 @@ namespace Oxide.Plugins
         [PluginReference] private Plugin AdvancedStatus;
         private bool _statusDisabled;
         private int _countdownTotal;
-        private string _lastBarText;
+        private DateTime _countdownStarted;
 
         private string _knownFrameworkVersion;
 
@@ -917,6 +922,7 @@ namespace Oxide.Plugins
 
             var remaining = (int)Math.Round((target - DateTime.Now).TotalSeconds);
             _countdownTotal = Math.Max(1, remaining);
+            _countdownStarted = DateTime.Now;
 
             // Everything at or above the time actually remaining has already
             // been said by the line below, or is in the past. Without this the
@@ -951,7 +957,6 @@ namespace Oxide.Plugins
                 return;
             }
 
-            UpdateBars(remaining);
 
             foreach (var point in _config.Countdown.AnnounceAt)
             {
@@ -1181,29 +1186,56 @@ namespace Oxide.Plugins
                          "of this session. The countdown itself is unaffected.");
         }
 
-        private Dictionary<string, object> BarParameters(int remaining, string text)
+        // Unix epoch seconds, which is what AdvancedStatus compares against.
+        //
+        // VERIFY: it reads the clock as Network.TimeEx.currentTimestamp, a
+        // Facepunch type. Computing the same value here rather than calling
+        // that keeps this region free of Facepunch types, which matters: if the
+        // menu region ever has to be deleted after a Rust update, everything
+        // else -- this bar included -- still compiles. If the epoch turns out
+        // to differ, the bar shows nonsense or vanishes at once, which is loud
+        // and harmless.
+        private static readonly DateTime UnixEpoch = new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+
+        private static double UnixAt(DateTime when)
+        {
+            return (when.ToUniversalTime() - UnixEpoch).TotalSeconds;
+        }
+
+        // One call, and then nothing. BarType TimeProgressCounter makes
+        // AdvancedStatus render the remaining time itself from TimeStamp, drive
+        // the progress fill from TimeStampStart -> TimeStamp in its own
+        // watcher, and delete the bar when the timestamp passes.
+        //
+        // This is why the bar no longer blinks. The previous version pushed an
+        // update every second, and AdvancedStatus re-lays out the whole stack
+        // when a bar changes, so every bar on screen flickered. Now there is
+        // nothing to push, and it counts smoothly instead of a minute at a time.
+        private Dictionary<string, object> BarParameters()
         {
             var p = new Dictionary<string, object>
             {
-                // Both required. CreateBar and UpdateContent return without
-                // doing anything if either is missing or is not a string.
+                // Both required; CreateBar returns silently without them.
                 ["Plugin"] = Name,
                 ["Id"] = BarId,
                 ["Category"] = _config.StatusBar.Category,
                 ["Order"] = _config.StatusBar.Order,
-                ["Text"] = text
+
+                ["BarType"] = "TimeProgressCounter",
+
+                // Doubles, and checked as such -- an int or a float here is
+                // ignored in silence and the bar quietly becomes a plain one.
+                ["TimeStampStart"] = UnixAt(_countdownStarted),
+                ["TimeStamp"] = UnixAt(_countdownTarget),
+
+                ["Progress_Reverse"] = _config.StatusBar.Drain,
+
+                // The label only. AdvancedStatus overwrites SubText with the
+                // time remaining, which is how the other bars on a HUD read:
+                // name on the left, time on the right.
+                ["Text"] = Sentence(KindWord())
             };
 
-            // Every key is type-checked with `obj is float` / `obj is int` and
-            // a mismatch is silently ignored rather than reported, so the cast
-            // is load-bearing: a double here renders an empty bar and no error.
-            var fraction = _countdownTotal > 0
-                ? (float)Math.Max(0.0, Math.Min(1.0, remaining / (double)_countdownTotal))
-                : 0f;
-            p["Progress"] = fraction;
-
-            // Sprite wins if both are set -- it is the cheaper of the two and
-            // needs no ImageLibrary round trip.
             if (!string.IsNullOrWhiteSpace(_config.StatusBar.ImageSprite))
                 p["Image_Sprite"] = _config.StatusBar.ImageSprite.Trim();
             else if (!string.IsNullOrWhiteSpace(_config.StatusBar.ImageUrl))
@@ -1223,17 +1255,14 @@ namespace Oxide.Plugins
         private void ShowBars()
         {
             if (!StatusAvailable()) return;
-            var remaining = RemainingSeconds();
-            var text = BarText(remaining);
-            _lastBarText = text;
             try
             {
+                var parameters = BarParameters();
                 foreach (var player in players.Connected.ToArray())
                 {
                     if (player == null || !player.IsConnected) continue;
-                    // Passing the id as a string picks the string overload, so
-                    // nothing here needs a BasePlayer -- ADR-0014 holds.
-                    AdvancedStatus.Call("CreateBar", player.Id, BarParameters(remaining, text));
+                    // The string overload, so nothing here needs a BasePlayer.
+                    AdvancedStatus.Call("CreateBar", player.Id, parameters);
                 }
             }
             catch (Exception ex)
@@ -1245,37 +1274,9 @@ namespace Oxide.Plugins
         private void ShowBarFor(IPlayer player)
         {
             if (!StatusAvailable() || player == null || !player.IsConnected) return;
-            var remaining = RemainingSeconds();
             try
             {
-                AdvancedStatus.Call("CreateBar", player.Id, BarParameters(remaining, BarText(remaining)));
-            }
-            catch (Exception ex)
-            {
-                DisableStatus(ex);
-            }
-        }
-
-        private void UpdateBars(int remaining)
-        {
-            if (!StatusAvailable()) return;
-
-            var text = BarText(remaining);
-
-            // Only when the words change. Anything more often is a visible
-            // flicker across every bar on screen, and it buys nothing: the
-            // chat announcements carry the urgency at the end.
-            if (text == _lastBarText) return;
-            _lastBarText = text;
-
-            try
-            {
-                var parameters = BarParameters(remaining, text);
-                foreach (var player in players.Connected.ToArray())
-                {
-                    if (player == null || !player.IsConnected) continue;
-                    AdvancedStatus.Call("UpdateContent", player.Id, parameters);
-                }
+                AdvancedStatus.Call("CreateBar", player.Id, BarParameters());
             }
             catch (Exception ex)
             {
@@ -1285,47 +1286,18 @@ namespace Oxide.Plugins
 
         private void RemoveBars()
         {
-            _lastBarText = null;
             if (AdvancedStatus == null || _statusDisabled) return;
             try
             {
-                // One call removes it for everyone, including players who
-                // joined mid-countdown and anyone we never tracked. Strict
-                // lifecycle without a per-player bookkeeping list to get wrong.
+                // The bar removes itself when its timestamp passes, so this is
+                // for the endings that arrive early: a cancel, an unload, a
+                // shutdown that beats the clock.
                 AdvancedStatus.Call("DeleteBarForAll", BarId, Name);
             }
             catch (Exception ex)
             {
-                // Not worth disabling over: we are on our way out anyway.
                 PrintWarning($"Could not remove the status bar: {ex.Message}");
             }
-        }
-
-        private string BarText(int remaining)
-        {
-            // The kind word is lower case because it reads mid-sentence in
-            // chat ("Scheduled restart in 1 minute"). On a bar it is the whole
-            // label and sits beside other plugins' title-cased ones, so it
-            // gets a capital here rather than a second set of lang strings.
-            return Sentence(string.Format(lang.GetMessage("StatusBar", this, null),
-                                          KindWord(), BarRemaining(remaining)));
-        }
-
-        // Deliberately coarser than the chat countdown. Every push redraws the
-        // bar, and AdvancedStatus re-lays out the whole stack when it does, so
-        // a per-second update made every bar on screen blink. Minute
-        // granularity means roughly one redraw a minute; the chat carries the
-        // precise countdown at the end.
-        private static string BarRemaining(int seconds)
-        {
-            if (seconds >= 120) return $"{seconds / 60} minutes";
-            if (seconds >= 60) return "1 minute";
-            return "less than a minute";
-        }
-
-        private int RemainingSeconds()
-        {
-            return Math.Max(0, (int)Math.Ceiling((_countdownTarget - DateTime.Now).TotalSeconds));
         }
 
         // A player who connects mid-countdown gets the bar too. They also get
@@ -2664,7 +2636,6 @@ namespace Oxide.Plugins
                 ["Now"] = "{0} now. See you in a few minutes.",
                 ["Cancelled"] = "The scheduled restart has been cancelled.",
                 ["KickReason"] = "Scheduled restart. Back shortly.",
-                ["StatusBar"] = "{0} in {1}",
 
                 ["FrameworkFound"] = "A new framework release is available. An update is scheduled for {0}.",
 

@@ -38,6 +38,32 @@ Parameter keys used, from the bar's own constructor:
 | `Progress` | **float** | 0–1 |
 | `Main_Color`, `Text_Color`, `Progress_Color` | string | hex; omit to inherit the server's theme |
 
+### Bar types and the countdown
+
+`BarType` is a string parsed into `Default | Timed | TimeCounter | TimeProgress
+| TimeProgressCounter`. The last of those is the one worth having:
+
+| Key | Type | Note |
+|---|---|---|
+| `BarType` | string | `"TimeProgressCounter"` |
+| `TimeStampStart` | **double** | when the countdown began |
+| `TimeStamp` | **double** | when it ends |
+| `TimeStampDestroy` | double | optional, removes the bar early |
+| `Progress_Reverse` | bool | true drains, false fills |
+
+With that type set, AdvancedStatus does the work itself: its watcher rewrites
+`SubText` with the remaining time, computes `Progress` as
+`(now - TimeStampStart) / (TimeStamp - TimeStampStart)`, and **deletes the bar
+when `TimeStamp` passes**. So a countdown is one `CreateBar` and nothing after
+it — no per-second pushes, and no flicker from the whole stack being re-laid
+out on every update. `Text` stays whatever you set, so the bar reads as a
+label on the left and a time on the right.
+
+The timestamps are compared against `Network.TimeEx.currentTimestamp`, i.e.
+Unix epoch seconds. Hotwire computes that from `DateTime.UtcNow` rather than
+calling the Facepunch property, to keep its status code free of Facepunch
+types — **assumed to be the same epoch, not verified.**
+
 **Every key is type-checked and a mismatch is silently ignored.** `Progress`
 is tested with `obj is float`, so a `double` there renders an empty bar and
 logs nothing. `Order`, `Height` and the `*_Size` keys want `int`; the
