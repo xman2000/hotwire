@@ -4,6 +4,29 @@ Versions cover both halves at once. The plugin and the launcher are only
 useful together, so "Hotwire 1.0.0" means the same thing whichever one you are
 holding.
 
+## 1.1.3 — 2026-09-05
+
+**The launcher now refuses to start on a password that cannot be right**, and
+says which file to fix. Empty, under 8 characters, still the example value, or
+containing a double quote — each gets its own line and the path to the secrets
+file.
+
+This exists because a two-character leftover in a secrets file was passed
+through as `+rcon.password "xx"` and the server died in `Bootstrap.Init_Tier0`
+with `ArgumentException: String cannot be of zero length`. Rust redacts the
+password out of its own logged command line, so an implausible value makes that
+redaction throw before anything else runs. The message names nothing and points
+nowhere, and the launcher — which knows exactly which file the value came from
+— had said nothing at all. It only checked that the variable was *defined*.
+
+The check runs in PowerShell rather than with batch string slicing, because the
+value is untrusted text and a quote or caret in it would break the comparison
+meant to catch a bad password.
+
+Also added: a missing `RustDedicated.exe` under `ROOT` is now refused by name.
+That is the same class of failure — every convar correct and the server simply
+not there.
+
 ## 1.1.2 — 2026-09-05
 
 **The RCON password was passed unquoted**, so a password containing a space

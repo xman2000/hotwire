@@ -2,7 +2,7 @@
 setlocal EnableDelayedExpansion
 
 REM ==[ H O T W I R E ]===================================================
-REM  Version 1.1.2   2026-09-05
+REM  Version 1.1.3   2026-09-05
 REM  Built by xman2000 and Claude.  MIT License.
 REM
 REM  The launcher. Starts a Rust dedicated server, relaunches it when it
@@ -192,6 +192,55 @@ if not defined RCON_PASSWORD (
     echo [%date% %time%] The RCON password did not survive being read.
     echo [%date% %time%] A leading semicolon or a double quote in it will
     echo [%date% %time%] do that. Change the password; do not quote it.
+    pause & exit /b 1
+)
+
+REM  Everything above proves the password exists. This proves it is
+REM  plausible, which is a different question and the one that bites.
+REM
+REM  A two-character leftover in a secrets file went through as
+REM  +rcon.password "xx" and the server died in Bootstrap.Init_Tier0 with
+REM  "String cannot be of zero length", naming nothing and pointing
+REM  nowhere. Rust redacts the password out of its own logged command
+REM  line, so an empty or absurd value makes that redaction throw before
+REM  anything else runs. Hours went into that. The launcher knows which
+REM  file the value came from and the engine never will, so the check
+REM  belongs here.
+REM
+REM  Asked in PowerShell rather than with batch string slicing, because
+REM  the value is untrusted text: a quote or a caret in it would break
+REM  the very comparison meant to catch a bad password.
+set "PWCHECK="
+for /f %%R in ('powershell -NoProfile -Command "$p=$env:RCON_PASSWORD; if (-not $p) {'EMPTY'} elseif ($p.Length -lt 8) {'SHORT'} elseif ($p -eq 'change_me') {'EXAMPLE'} elseif ($p.Contains([char]34)) {'QUOTE'} else {'OK'}"') do set "PWCHECK=%%R"
+if not defined PWCHECK set "PWCHECK=OK"
+
+if not "!PWCHECK!"=="OK" (
+    echo [%date% %time%] ================================================
+    if "!PWCHECK!"=="EMPTY"   echo [%date% %time%] The RCON password is empty.
+    if "!PWCHECK!"=="SHORT"   echo [%date% %time%] The RCON password is under 8 characters.
+    if "!PWCHECK!"=="EXAMPLE" echo [%date% %time%] The RCON password is still the example value.
+    if "!PWCHECK!"=="QUOTE"   echo [%date% %time%] The RCON password contains a double quote.
+    echo [%date% %time%] Fix it in:
+    echo [%date% %time%]   %SECRETS%
+    echo [%date% %time%] The line should read, with one pair of quotes
+    echo [%date% %time%] around the whole assignment:
+    echo [%date% %time%]   set "RCON_PASSWORD=your password here"
+    echo [%date% %time%] RCON is remote code execution on this machine.
+    echo [%date% %time%] Not starting -- the server would have crashed in
+    echo [%date% %time%] Bootstrap.Init_Tier0 without telling you why.
+    echo [%date% %time%] ================================================
+    pause & exit /b 1
+)
+
+REM  The other opaque failure: a wrong ROOT. Every convar would be fine
+REM  and the server simply would not be there.
+if not exist "%ROOT%\RustDedicated.exe" (
+    echo [%date% %time%] ================================================
+    echo [%date% %time%] No RustDedicated.exe in:
+    echo [%date% %time%]   %ROOT%
+    echo [%date% %time%] ROOT is set at the top of this file and is wrong,
+    echo [%date% %time%] or the install is incomplete.
+    echo [%date% %time%] ================================================
     pause & exit /b 1
 )
 

@@ -777,3 +777,37 @@ other; the invented one came from trusting a derived file. Verify against the
 thing that runs.
 
 **Not executed.** Read-verified.
+
+## ADR-0025 — Validate what fails opaquely, at the layer that knows the answer
+
+**Date:** 2026-09-05 · **Status:** ACCEPTED
+
+The launcher checked that `RCON_PASSWORD` was *defined*. A two-character
+leftover in a secrets file satisfied that, went onto the command line as
+`+rcon.password "xx"`, and the server died in `Bootstrap.Init_Tier0` with
+`ArgumentException: String cannot be of zero length` — because Rust redacts the
+password out of its own logged command line, and an implausible value makes
+that redaction throw before anything else initializes.
+
+The engine's message names no file, no convar and no cause. The launcher knew
+exactly which file the value came from and said nothing, because "defined" was
+the only question it asked.
+
+Chosen: **check the values that produce opaque failures, and name the file.**
+Empty, shorter than eight characters, still the example, or containing a double
+quote — each refuses to start with its own line and the path to the secrets
+file. A missing `RustDedicated.exe` under `ROOT` is refused the same way.
+
+The test runs in PowerShell, not with batch string slicing. The value is
+untrusted text, and `if "!PW:~7,1!"==""` breaks on a password containing a
+quote — the comparison meant to catch a bad password would itself be the
+syntax error. Asking a language with real strings costs one process at startup.
+
+**This is deliberately not a general "scan ARGS for empty values" check.** That
+needs quote-substitution on a string full of quotes, which is exactly the kind
+of clever batch that this file already got wrong once. Every value in `ARGS`
+that comes from a variable rather than a literal is checked individually
+instead; today that is the password, and a new one is three lines.
+
+Refusing to start is the right failure here even under rule 2. The alternative
+is not a running server, it is the same dead server with a worse message.
