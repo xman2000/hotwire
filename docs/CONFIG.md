@@ -7,6 +7,11 @@ restarting the moment it is installed is a restarter that catches you out.
 The config stays hand-editable and always will. Chat commands are a
 convenience over the same file, never the only way in (ADR-0006).
 
+> **Upgrading to 0.2.1?** Two announcement strings changed. Lang files are
+> only written once, so `oxide/lang/en/Hotwire.json` keeps whatever it already
+> had — delete it to pick up the new wording, or edit it in place. It is meant
+> to be edited; that is the point of ADR-0004.
+>
 > **Upgrading to 0.2.0?** The `Render the countdown through AdvancedStatus`
 > key under `General` has been replaced by a `Status bar` section. The old key
 > is ignored; the new section is written with defaults on first load.
@@ -120,9 +125,18 @@ replaced by the `Status bar` section below.
   "Order": 10,
   "Bar colour, hex (empty = the status plugin's default)": "",
   "Text colour, hex (empty = default)": "",
-  "Progress colour, hex (empty = default)": ""
+  "Progress colour, hex (empty = default)": "",
+  "Icon: game sprite path (empty = none)": "",
+  "Icon: image URL (empty = none)": ""
 }
 ```
+
+**The icon.** With neither icon key set, AdvancedStatus falls back to its own
+default image, which renders as a broken-image glyph if that image was never
+loaded — so an iconless bar can look like a bug rather than a choice. Set
+`Icon: game sprite path` to a game sprite, or `Icon: image URL` to a URL that
+ImageLibrary will cache. The sprite is cheaper and needs no round trip, so it
+wins if both are set.
 
 Renders the countdown as a status bar through **AdvancedStatus**, which is a
 paid plugin most servers will not have. Without it this section does nothing

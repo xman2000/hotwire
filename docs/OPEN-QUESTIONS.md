@@ -32,6 +32,12 @@ its use site.
       original guess was wrong — `SetStatus(userId, id, text, seconds)` versus
       the real `CreateBar(userId, Dictionary<string,object>)` — which is the
       case for having shipped it disabled rather than enabled.
+- [ ] **A game sprite path for the status bar icon.** The config accepts one
+      but ships empty, because no sprite path has been verified against a real
+      build. `assets/icons/clock.png` is the obvious candidate and is a guess
+      until someone sets it and looks. Never write one into the defaults
+      unverified — a broken icon is cosmetic, but a default that is wrong is
+      the same class of mistake as a wrong convar default.
 - [ ] **The `TimeStamp` keys.** AdvancedStatus accepts `TimeStamp`,
       `TimeStampStart` and `TimeStampDestroy` as doubles. If it renders a
       countdown client-side from those, Hotwire could create the bar once

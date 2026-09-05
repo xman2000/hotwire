@@ -11,7 +11,7 @@ using Oxide.Core.Plugins;
 
 namespace Oxide.Plugins
 {
-    [Info("Hotwire", "xman2000", "0.2.0")]
+    [Info("Hotwire", "xman2000", "0.2.1")]
     [Description("Scheduled restarts and updates. Announces, counts down, writes a flag, quits.")]
     internal class Hotwire : CovalencePlugin
     {
@@ -174,6 +174,17 @@ namespace Oxide.Plugins
 
             [JsonProperty("Progress colour, hex (empty = default)")]
             public string ProgressColor = "";
+
+            // With no image key at all, AdvancedStatus falls back to its own
+            // default image -- which renders as a broken-image glyph if that
+            // image was never loaded. Set one of these to get an icon.
+            // Image_Sprite takes a game sprite path; Image takes a URL that
+            // ImageLibrary caches.
+            [JsonProperty("Icon: game sprite path (empty = none)")]
+            public string ImageSprite = "";
+
+            [JsonProperty("Icon: image URL (empty = none)")]
+            public string ImageUrl = "";
         }
 
         private class GeneralSettings
@@ -815,6 +826,13 @@ namespace Oxide.Plugins
                 : 0f;
             p["Progress"] = fraction;
 
+            // Sprite wins if both are set -- it is the cheaper of the two and
+            // needs no ImageLibrary round trip.
+            if (!string.IsNullOrWhiteSpace(_config.StatusBar.ImageSprite))
+                p["Image_Sprite"] = _config.StatusBar.ImageSprite.Trim();
+            else if (!string.IsNullOrWhiteSpace(_config.StatusBar.ImageUrl))
+                p["Image"] = _config.StatusBar.ImageUrl.Trim();
+
             AddColour(p, "Main_Color", _config.StatusBar.MainColor);
             AddColour(p, "Text_Color", _config.StatusBar.TextColor);
             AddColour(p, "Progress_Color", _config.StatusBar.ProgressColor);
@@ -911,7 +929,14 @@ namespace Oxide.Plugins
 
         private string BarText(int remaining)
         {
-            return string.Format(lang.GetMessage("StatusBar", this, null), KindWord(), FormatRemaining(remaining));
+            // The kind word is lower case because it reads mid-sentence in
+            // chat ("Scheduled restart in 1 minute"). On a bar it is the whole
+            // label and sits beside SOMEONE ELSE'S title-cased ones, so it
+            // gets a capital here rather than a second set of lang strings to
+            // keep in sync.
+            var text = string.Format(lang.GetMessage("StatusBar", this, null), KindWord(), FormatRemaining(remaining));
+            if (string.IsNullOrEmpty(text)) return text;
+            return char.ToUpper(text[0]) + text.Substring(1);
         }
 
         private int RemainingSeconds()
@@ -1412,7 +1437,7 @@ namespace Oxide.Plugins
                 ["KindValidate"] = "validate and restart",
 
                 ["CountdownStart"] = "Scheduled {0} in {1}. The server will save before it goes down.",
-                ["CountdownTick"] = "{0} in {1}.",
+                ["CountdownTick"] = "Server {0} in {1}.",
                 ["Now"] = "{0} now. See you in a few minutes.",
                 ["Cancelled"] = "The scheduled restart has been cancelled.",
                 ["KickReason"] = "Scheduled restart. Back shortly.",
