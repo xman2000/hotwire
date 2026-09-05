@@ -32,17 +32,18 @@ its use site.
       original guess was wrong — `SetStatus(userId, id, text, seconds)` versus
       the real `CreateBar(userId, Dictionary<string,object>)` — which is the
       case for having shipped it disabled rather than enabled.
-- [ ] **A game sprite path for the status bar icon.** The config accepts one
-      but ships empty, because no sprite path has been verified against a real
-      build. `assets/icons/clock.png` is the obvious candidate and is a guess
-      until someone sets it and looks. Never write one into the defaults
-      unverified — a broken icon is cosmetic, but a default that is wrong is
-      the same class of mistake as a wrong convar default.
-- [ ] **The `TimeStamp` keys.** AdvancedStatus accepts `TimeStamp`,
-      `TimeStampStart` and `TimeStampDestroy` as doubles. If it renders a
-      countdown client-side from those, Hotwire could create the bar once
-      instead of pushing updates, and the bar would survive a laggy tick.
-      Not read, so not used. Worth ten minutes.
+- [ ] **A game sprite path for the status bar icon.** `assets/icons/clock.png`
+      now ships as the default and is **still a guess** — it is tagged
+      `VERIFY:` in the config comment with three alternatives listed. Confirm
+      which one renders and this closes. It ships as a guess at all only
+      because the failure is a visibly broken glyph rather than a silent wrong
+      value.
+- [ ] **The `TimeStamp` keys, now the one that matters.** AdvancedStatus takes
+      `TimeStamp`, `TimeStampStart` and `TimeStampDestroy` as doubles. If it
+      renders a countdown client-side from those, Hotwire could create the bar
+      once and push nothing: no flicker at any granularity, and a bar that
+      counts smoothly rather than a minute at a time. That is the only thing
+      standing between the current bar and a good one.
 - [ ] **AdvancedStatus's own version drift.** The integration is written
       against 0.1.26. It is wrapped and self-disabling, so a changed API costs
       a cosmetic bar rather than a restart, but nothing tells us it changed

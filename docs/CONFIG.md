@@ -7,6 +7,11 @@ restarting the moment it is installed is a restarter that catches you out.
 The config stays hand-editable and always will. Chat commands are a
 convenience over the same file, never the only way in (ADR-0006).
 
+> **Upgrading to 0.6.0?** The `Chat prefix` key is replaced by
+> `Name shown in chat announcements` and `Name colour (hex)`, so an existing
+> config picks up the new default of "Server Manager" rather than keeping
+> "Hotwire".
+>
 > **Upgrading to 0.3.0?** Schedule entries changed shape: `Days` is now a list
 > and there is a `Repeat` mode, so an entry written by 0.2.x is not read. The
 > old keys are ignored rather than throwing, so the plugin loads and your other
@@ -170,8 +175,8 @@ to.
   "Update flag file name": "UPDATE.flag",
   "Validate flag file name": "VALIDATE.flag",
   "Refuse to fire the same entry twice within this many hours": 20.0,
-  "Render the countdown through AdvancedStatus (unverified -- see docs)": false,
-  "Chat prefix": "<color=#e0995e>Hotwire</color>: "
+  "Name shown in chat announcements": "Server Manager",
+  "Name colour (hex)": "#e0995e"
 }
 ```
 
@@ -181,6 +186,16 @@ to.
 - **Refuse to fire the same entry twice** — the DST guard (ADR-0013). Leave it
   at 20 hours unless you genuinely schedule the same entry twice a day, in
   which case set it below the gap between them. `0` disables it.
+- **Name shown in chat announcements** — **"Hotwire" means nothing to a
+  player.** Announcements go out under this name, not the plugin's, so what a
+  player reads is *"Server Manager: Scheduled restart in 4 minutes"*. Set it to
+  whatever your server calls itself. An empty name drops the prefix entirely;
+  an empty colour drops the markup.
+
+Sentences are capitalised when they are sent rather than in the lang file, so
+correcting one reaches servers that already have a lang file — lang files are
+written once and never rewritten.
+
 The `Render the countdown through AdvancedStatus` key from 0.1.x is gone,
 replaced by the `Status bar` section below.
 
@@ -201,10 +216,12 @@ replaced by the `Status bar` section below.
 
 **The icon.** With neither icon key set, AdvancedStatus falls back to its own
 default image, which renders as a broken-image glyph if that image was never
-loaded — so an iconless bar can look like a bug rather than a choice. Set
-`Icon: game sprite path` to a game sprite, or `Icon: image URL` to a URL that
-ImageLibrary will cache. The sprite is cheaper and needs no round trip, so it
-wins if both are set.
+cached — so an iconless bar looks like a bug rather than a choice. A game
+sprite avoids the round trip and now ships as the default, but **that sprite
+path has not been verified against a real build.** If the glyph is still
+broken, try `assets/icons/refresh.png`, `assets/icons/warning.png` or
+`assets/icons/settings.png`, or set `Icon: image URL` to a URL ImageLibrary
+will cache. The sprite wins if both are set.
 
 Renders the countdown as a status bar through **AdvancedStatus**, which is a
 paid plugin most servers will not have. Without it this section does nothing
@@ -215,9 +232,14 @@ Leave the colours empty unless you have a reason. Empty inherits whatever the
 server owner themed their bars with, and a restart bar that ignores the
 server's theme reads as a bug.
 
-The bar appears when the countdown starts, updates as it runs, is given to
-players who connect mid-countdown, and is removed on cancel, on shutdown and
-on unload. If the status plugin errors, Hotwire logs it once, falls back to
+The bar appears when the countdown starts, is given to players who connect
+mid-countdown, and is removed on cancel, on shutdown and on unload.
+
+**It updates roughly once a minute, not once a second.** AdvancedStatus
+re-lays out the whole stack when a bar changes, so a per-second countdown made
+every bar on screen blink. The bar reads "3 minutes", "2 minutes", "1 minute",
+"less than a minute", and the chat announcements carry the precise countdown
+at the end. If the status plugin errors, Hotwire logs it once, falls back to
 chat for the rest of the session, and the countdown is unaffected.
 
 ## Commands
@@ -263,7 +285,8 @@ Things worth knowing:
   up with something that will not parse. Click as fast as you like — the panel
   is built so redrawing never drops the cursor.
 - **Time steps by 5, 15, 60 and 360 minutes**, so any hour is at most four
-  clicks away.
+  clicks away. Every stepper button carries its unit — `-15m`, `+1h`, `+7d`,
+  `-1M`, `+1y` — because a button reading `-15` does not say of what.
 - **A one-off date has day, month and year steppers**, and shows the weekday it
   lands on. Month steps move whole months and clamp the day, so stepping a
   month on from 31 January gives 28 February rather than 3 March.
