@@ -434,6 +434,23 @@ Containment, so that deletion stays a real option:
 - `BasePlayer` re-fetched at each use and never held across a frame (rule 4).
 - A draw failure is caught, logged, and closes the menu rather than escaping.
 
+**Verified 2026-09-05, and it was not true when first written.** Checking which
+names the region defines and who uses them found four references reaching in
+from outside. Three are unavoidable — a command registration in `Init`, a
+cleanup call in `Unload`, and a `case` in the command switch — and each now
+carries an `// ADR-0016: goes with the menu` marker, so deleting the region is
+a mechanical four-step rather than a hunt through compiler errors.
+
+The fourth was `Ordinalise`, which turns 15 into "15th" for schedule
+descriptions and had drifted into the menu region because that is where it was
+first needed. Nothing about it is menu-related, and while it lived there this
+ADR's central promise was simply false: deleting the region would have broken
+`DescribeRecurrence`, which every `hotwire list` depends on. It now sits beside
+its caller.
+
+**To delete this region:** remove `#region Admin menu` through its `#endregion`,
+then the three lines marked `ADR-0016`. Nothing else refers to it.
+
 Two implementation choices worth recording:
 
 - **No draft state.** Each click edits the entry and saves immediately, then

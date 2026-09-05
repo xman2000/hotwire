@@ -13,7 +13,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Hotwire", "xman2000", "0.9.6")]
+    [Info("Hotwire", "xman2000", "0.9.7")]
     [Description("Scheduled restarts and updates. Announces, counts down, writes a flag, quits.")]
     internal class Hotwire : CovalencePlugin
     {
@@ -460,7 +460,7 @@ namespace Oxide.Plugins
             permission.RegisterPermission(PermEdit, this);
 
             AddCovalenceCommand(new[] { "hotwire", "hw" }, nameof(CmdHotwire));
-            AddCovalenceCommand("hotwire.ui", nameof(CmdMenuAction));
+            AddCovalenceCommand("hotwire.ui", nameof(CmdMenuAction));   // ADR-0016: goes with the menu
 
             try
             {
@@ -511,7 +511,7 @@ namespace Oxide.Plugins
             _countdownTimer?.Destroy();
             _frameworkTimer?.Destroy();
 
-            CloseAllMenus();
+            CloseAllMenus();   // ADR-0016: goes with the menu
 
             // Belt and braces: removes every bar this plugin ever created,
             // whatever state we think we are in. A bar left on someone's
@@ -1023,6 +1023,21 @@ namespace Oxide.Plugins
                     return e.IntervalDays == 1 ? "daily" : $"every {e.IntervalDays} days";
                 case RepeatOnce: return $"once on {e.Date}";
                 default: return e.Repeat;
+            }
+        }
+
+        // Lives here, beside its only caller, rather than in the menu region.
+        // It was in the menu region, which quietly made that region impossible
+        // to delete -- see ADR-0016.
+        private static string Ordinalise(int day)
+        {
+            if (day >= 11 && day <= 13) return day + "th";
+            switch (day % 10)
+            {
+                case 1: return day + "st";
+                case 2: return day + "nd";
+                case 3: return day + "rd";
+                default: return day + "th";
             }
         }
 
@@ -2165,18 +2180,6 @@ namespace Oxide.Plugins
                    $"{prefix} delete {target}", ColDanger);
         }
 
-        private static string Ordinalise(int day)
-        {
-            if (day >= 11 && day <= 13) return day + "th";
-            switch (day % 10)
-            {
-                case 1: return day + "st";
-                case 2: return day + "nd";
-                case 3: return day + "rd";
-                default: return day + "th";
-            }
-        }
-
         private static string RepeatLabel(string mode)
         {
             switch (mode)
@@ -2471,7 +2474,7 @@ namespace Oxide.Plugins
             switch (sub)
             {
                 case "status": CmdStatus(player); return;
-                case "menu": CmdMenu(player); return;
+                case "menu": CmdMenu(player); return;   // ADR-0016: goes with the menu
                 case "check": CmdCheck(player); return;
                 case "list": CmdList(player); return;
                 case "now": CmdNow(player, args); return;
