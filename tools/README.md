@@ -1,9 +1,19 @@
 # tools
 
+**These are for maintaining Hotwire, not for running it.** Nothing in
+`launcher/` refers to them and nobody installing the launcher needs Python.
+The launcher ships with its defaults already filled in; this is how they got
+there and how they stay right.
+
 `convars.py` reads the `[ServerVar]` convars out of a real
 `Assembly-CSharp.dll` with pure Python — no .NET runtime, no Unity, nothing but
-the file the server already has. It reports each convar's name and, where the
-compiler stored one, its default.
+the file itself. It reports each convar's name, type and default.
+
+**The workflow after a Rust update**, for whoever maintains this repo: copy
+`RustDedicated_Data\\Managed\\Assembly-CSharp.dll` off a server, run `--check`
+against `launcher/hotwire.bat`, and fix whatever it reports. Then the launcher
+is correct again for everyone who uses it, without any of them running
+anything.
 
 ```
 python -m venv venv

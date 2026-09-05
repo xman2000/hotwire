@@ -67,18 +67,27 @@ its use site.
 
 ## Unverified tooling
 
-- [ ] **`tools/convars.py` has never been run against a real
-      `Assembly-CSharp.dll`.** It is written against the metadata tables
-      `dnfile` exposes, but that is an argument that it should work, not
-      evidence that it does. **It is now the block on everything else in the
-      launcher half**: the curated option list (ADR-0018) is waiting on the
-      `ShowInAdminUI` set, which is Facepunch's own answer to which convars an
-      admin touches.
-- [ ] **Does the `ShowInAdminUI` blob read correctly?** The flag is located by
-      scanning the attribute blob for the property name rather than by decoding
-      it, because decoding means skipping the constructor's fixed arguments and
-      `[ServerVar]` is used both with and without them. It is a scan, it is
-      labelled as one, and the first real run will say whether it works.
+- [x] ~~**`tools/convars.py` has never been run.**~~ **Run 2026-09-05.** 1,623
+      convars found, 1,620 defaults read out of static-constructor IL. It took
+      three fixes to get there, each of which had produced silence rather than
+      an error: attributes all resolving to `.ctor`, convars living outside the
+      `ConVar` namespace, and convars declared as properties rather than
+      fields.
+- [x] ~~**Does the `ShowInAdminUI` blob read correctly?**~~ **Yes** — it finds
+      71. Whether that set is *useful* is a separate question, answered in
+      ADR-0009: it is not the curation oracle it was taken for.
+- [ ] **Why is `modded` not among the browser tag strings?** The build contains
+      `monthly`, `biweekly`, `weekly`, `vanilla`, `softcore`, `hardcore`,
+      `primitive`, `pve`, `roleplay`, `creative`, `minigame`, `training`,
+      `battlefield` and `builds` — but not `modded`, which every modded server
+      puts in `server.tags` regardless. Possibly the browser derives it rather
+      than reading it. Until that is known the launcher's example uses tags
+      that are definitely in the build.
+- [ ] **The tag vocabulary is not machine-checked.** Tags live in Unity prefab
+      data rather than in the assembly, so `--check` validates convar names but
+      cannot validate the values in `server.tags`. The list in the launcher was
+      read out of the build's string heap, which is evidence but not the same
+      guarantee as the rest of the file.
 - [ ] Defaults assigned in a static constructor come back `UNKNOWN`, because
       they live in IL rather than metadata. Teaching `convars.py` to walk
       `.cctor` assignments in IL would close most of the gap.
