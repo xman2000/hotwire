@@ -4,86 +4,68 @@ setlocal EnableDelayedExpansion
 REM =====================================================================
 REM  HOTWIRE LAUNCHER
 REM
-REM  A start script for a Rust dedicated server that is meant to be read.
-REM  Every option sits on its own line with the game's real default beside
-REM  it, and switching one off cannot disturb the others.
+REM  Start script for a Rust dedicated server. Relaunches the server when
+REM  it exits, and updates it either on every start or on demand.
 REM
 REM  Built by xman2000 and Claude.  MIT licence.
 REM  https://github.com/xman2000/hotwire
 REM =====================================================================
 REM
-REM  START HERE
-REM    1. Set ROOT and STEAMCMD in section 1, just below.
-REM    2. Copy secrets.example.bat to secrets.bat and put your RCON
-REM       password in it.
-REM    3. Fill in section 4. A handful of options are switched on already;
-REM       anything you leave alone keeps the game's default.
-REM    4. Run this file and leave it running.
+REM  SETUP
+REM    1. Section 1: set ROOT and STEAMCMD.
+REM    2. Copy secrets.example.bat to secrets.bat and set RCON_PASSWORD.
+REM    3. Section 4: enable the options you need. Anything left disabled
+REM       uses the game's default.
+REM    4. Run this file. Leave the window open.
 REM
-REM  WHAT THIS FILE DOES WHILE IT RUNS
-REM    It does not start the server and finish. It stays open, and when the
-REM    server process exits -- for any reason at all -- it starts it again.
-REM    So restarting the server just means letting it quit, and this window
-REM    brings it back. Closing this window is how you stop the server for
-REM    good.
+REM  RUN LOOP
+REM    The script does not exit after starting the server. It waits for the
+REM    server process to end, then starts it again after RESTART_DELAY
+REM    seconds. Close the window to stop the server permanently.
 REM
-REM    Out of the box it updates the server every time it starts. That is
-REM    how nearly every Rust launcher behaves, and it is the right thing
-REM    while you are the one deciding when to restart.
+REM  UPDATE MODES            set with UPDATE_MODE in section 1
+REM    always     steamcmd and the mod framework run on every start.
+REM               This is the default and matches most Rust launchers.
+REM    hotwire    steamcmd and the mod framework run only when UPDATE.flag
+REM               or VALIDATE.flag is present in ROOT. The flag is deleted
+REM               once acted on: one flag, one update. All other restarts
+REM               relaunch and nothing more.
 REM
-REM    The second mode is where this file differs. Set UPDATE_MODE=hotwire
-REM    in section 1 and a restart becomes only a restart -- no steamcmd, no
-REM    mod framework download -- while updating happens when a file named
-REM    UPDATE.flag appears in the server folder. This file spots it,
-REM    updates, deletes the flag and carries on, so one flag buys exactly
-REM    one update and a restart can never become an update by accident.
+REM    Use hotwire when restarts are automated. In always mode an
+REM    unattended restart installs whatever build is current at the time,
+REM    with no operator present.
 REM
-REM    That matters the moment something other than you is deciding when to
-REM    restart. A launcher that updates on every restart will cheerfully
-REM    install a new build at 5am over a working server while nobody is
-REM    watching. Twenty-nine days a month that is harmless. The day after a
-REM    Rust update it is how a server comes back with half its plugins
-REM    dead.
-REM
-REM    In hotwire mode you make the flag yourself whenever you want an
-REM    update:
-REM
+REM    Create a flag by hand:
 REM      New-Item -ItemType File C:\rustserver\UPDATE.flag
 REM
-REM    Or install the Hotwire plugin, which does it on a schedule: it warns
-REM    players, counts down, writes the flag if the restart is an update,
-REM    and shuts the server down cleanly for this file to catch. The two
-REM    halves only ever talk through that flag file. The plugin is optional
-REM    and this launcher works perfectly well without it.
+REM    In hotwire mode, if MAX_DAYS_WITHOUT_UPDATE days pass without an
+REM    update, one runs regardless. Rust clients update themselves; a
+REM    server that does not eventually refuses every connection.
 REM
-REM  SWITCHING AN OPTION ON OR OFF
-REM    Put REM in front of a line to switch it off, take it away to switch
-REM    it on. That is the whole editing model.
+REM  PLUGIN                  optional, see src\Hotwire.cs
+REM    Schedules restarts, announces them to players, counts down, and
+REM    writes the flag when a scheduled restart is an update. The flag file
+REM    is the only interface between plugin and launcher. Neither half
+REM    requires the other.
+REM
+REM  EDITING OPTIONS
+REM    One option per line. REM disables it, removing REM enables it:
 REM
 REM      REM  server.maxplayers -- Slots.
 REM      REM  [int, default 500]
 REM      set "ARGS=!ARGS! +server.maxplayers 50"
 REM
-REM    No line depends on the one above it, so you cannot break this file
-REM    by switching something off -- which is not true of the single long
-REM    command most launchers use, where commenting out one line silently
-REM    takes the rest of the launch with it.
+REM    Lines are independent. Disabling one cannot affect any other.
 REM
-REM  WRITING A VALUE
-REM    Quote anything containing a space, and double a literal percent
-REM    sign: 20%% rather than 20%.
+REM  VALUES
+REM    Quote values containing spaces. Write a literal percent sign as %%.
+REM    !ARGS! is required and is not a typo for %ARGS%: delayed expansion
+REM    substitutes after cmd parses the line, which keeps | & > < ^ safe
+REM    inside a value.
 REM
-REM    The !ARGS! is deliberate and not a typo for %ARGS%. It defers
-REM    substitution until after cmd has parsed the line, which keeps
-REM    | & > < ^ safe inside a value -- so a hostname like
-REM    My Server | Monthly | NA works here and breaks almost everywhere
-REM    else.
-REM
-REM  THE DEFAULTS IN THIS FILE
-REM    Every default shown below was read out of a real Rust build rather
-REM    than copied from a guide, so a comment claiming 4000 when the game
-REM    means 4500 should not happen. If one ever disagrees with what the
-REM    game actually does, believe the game and tell us.
+REM  DEFAULTS
+REM    The defaults shown in section 4 were read out of a Rust build, not
+REM    copied from documentation. Report any that disagree with the game.
 REM =====================================================================
 
 
