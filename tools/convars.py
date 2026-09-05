@@ -140,7 +140,18 @@ def collect(path):
         table = parent.table.name if getattr(parent, "table", None) else "?"
         ca_map.setdefault((table, parent.row_index), []).append((attr_name(ca), attr_blob(ca)))
 
+    # Two ways to find a field's row number, because dnfile's FieldList
+    # entries are index objects: they normally carry row_index themselves, and
+    # matching on id() of a resolved row only works if .row hands back the
+    # very same object each time, which it need not.
     field_index = {id(r): i + 1 for i, r in enumerate(md.Field.rows)}
+
+    def field_row_index(entry):
+        direct = getattr(entry, "row_index", None)
+        if direct is not None:
+            return direct
+        resolved = entry.row if hasattr(entry, "row") else entry
+        return field_index.get(id(resolved))
 
     # constant values, for the defaults the compiler stored inline
     consts = {}
@@ -166,7 +177,7 @@ def collect(path):
             row = f.row if hasattr(f, "row") else f
             if row is None:
                 continue
-            idx = field_index.get(id(row))
+            idx = field_row_index(f)
             if idx is None:
                 continue
 
@@ -196,6 +207,97 @@ def collect(path):
 
     out.sort(key=lambda r: r["convar"])
     return out
+
+
+def emit_debug(path):
+    """Print what the walk actually sees, so a zero result can be diagnosed.
+
+    Written after the first real run returned nothing: the file parsed, so the
+    question is which assumption about dnfile's shape is wrong -- how a
+    namespace string comes back, or how a TypeDef's fields are indexed.
+    """
+    from collections import Counter
+
+    pe = dnfile.dnPE(path)
+    md = pe.net.mdtables
+
+    print("dnfile version:", getattr(dnfile, "__version__", "unknown"))
+    print()
+    print("TABLE SIZES")
+    for name in ("TypeDef", "Field", "CustomAttribute", "Constant", "MethodDef"):
+        table = getattr(md, name, None)
+        print("  %-16s %s" % (name, len(table.rows) if table else "MISSING"))
+
+    if not getattr(md, "TypeDef", None) or not md.TypeDef.rows:
+        print("\nNo TypeDef rows at all -- nothing else can work.")
+        return
+
+    first = md.TypeDef.rows[0]
+    ns_value = getattr(first, "TypeNamespace", None)
+    print()
+    print("TYPEDEF SHAPE")
+    print("  TypeNamespace is a %s: %r" % (type(ns_value).__name__, ns_value))
+    print("  TypeName      is a %s: %r"
+          % (type(getattr(first, "TypeName", None)).__name__, getattr(first, "TypeName", None)))
+
+    counts = Counter(str(getattr(td, "TypeNamespace", "") or "") for td in md.TypeDef.rows)
+    print()
+    print("TOP NAMESPACES")
+    for ns, n in counts.most_common(12):
+        print("  %5d  %r" % (n, ns))
+    print("  'ConVar' present as an exact string: %s" % ("ConVar" in counts))
+    near = [ns for ns in counts if "convar" in ns.lower()]
+    if near:
+        print("  namespaces containing 'convar': %r" % near[:8])
+
+    print()
+    print("CONVAR TYPES AND FIELD COUNTS")
+    shown = 0
+    for td in md.TypeDef.rows:
+        if str(getattr(td, "TypeNamespace", "") or "") != "ConVar":
+            continue
+        fields = getattr(td, "FieldList", None)
+        print("  ConVar.%-22s fields=%s" % (getattr(td, "TypeName", "?"),
+                                            len(fields) if fields else 0))
+        shown += 1
+        if shown >= 10:
+            print("  ...")
+            break
+    if shown == 0:
+        print("  none")
+
+    print()
+    print("FIELDLIST ENTRY SHAPE")
+    for td in md.TypeDef.rows:
+        fields = getattr(td, "FieldList", None)
+        if not fields:
+            continue
+        entry = fields[0]
+        print("  entry type: %s" % type(entry).__name__)
+        print("  has row_index: %s (value %r)"
+              % (hasattr(entry, "row_index"), getattr(entry, "row_index", None)))
+        resolved = getattr(entry, "row", None)
+        same = any(resolved is r for r in md.Field.rows[:500])
+        print("  .row resolves: %s, and is identical to a Field row: %s"
+              % (resolved is not None, same))
+        break
+
+    print()
+    print("TOP CUSTOM ATTRIBUTE NAMES")
+    names = Counter(attr_name(ca) for ca in md.CustomAttribute.rows)
+    for name, n in names.most_common(12):
+        print("  %5d  %s" % (n, name))
+    varish = [n for n in names if "Var" in n]
+    print("  names containing 'Var': %r" % varish[:10])
+
+    parents = Counter(
+        ca.Parent.table.name if getattr(ca.Parent, "table", None) else "?"
+        for ca in md.CustomAttribute.rows
+    )
+    print()
+    print("CUSTOM ATTRIBUTE PARENT TABLES")
+    for table, n in parents.most_common(8):
+        print("  %5d  %s" % (n, table))
 
 
 def emit_tsv(rows):
@@ -285,6 +387,11 @@ if __name__ == "__main__":
         sys.exit(__doc__)
 
     args = sys.argv[1:]
+
+    if "--debug" in args:
+        emit_debug(args[0])
+        sys.exit(0)
+
     everything = "--all" in args
     rows = collect(args[0])
 
@@ -305,3 +412,10 @@ if __name__ == "__main__":
         % (len(rows), admin_count, len(curated), len(shown)),
         file=sys.stderr,
     )
+    if not rows:
+        print(
+            "Nothing found. Run again with --debug to print what the metadata "
+            "walk actually sees; a zero here means an assumption about the "
+            "table layout is wrong, not that the assembly has no convars.",
+            file=sys.stderr,
+        )
