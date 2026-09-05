@@ -187,7 +187,7 @@ curated 75 of them into one hand-written list, and the tier boundary it was
 reasoning about no longer exists. There is one file, and no split to choose.
 
 The counting in it is still worth reading. It is a good demonstration that two
-plausible ways of organising the same thing can cut across each other so badly
+plausible ways of organizing the same thing can cut across each other so badly
 that neither survives contact with the data.
 
 Batch supports this cleanly: `call "%~dp0conf\network.bat"` runs in the same
@@ -511,7 +511,7 @@ because a list nobody verifies rots.
 
 **Date:** 2026-09-05 · **Status:** ACCEPTED
 
-The launcher shipped with flag-gated updates as its only behaviour. That is the
+The launcher shipped with flag-gated updates as its only behavior. That is the
 right policy for a server whose restarts are automated and the wrong default
 for a stranger who has just downloaded it.
 

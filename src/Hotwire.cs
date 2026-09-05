@@ -98,7 +98,7 @@ namespace Oxide.Plugins
         // string or a phrase to be parsed (ADR-0015). Every value validates on
         // its own, an error can name the exact field that is wrong, and the
         // menu maps one control per field instead of round-tripping somebody's
-        // hand-written wording through a serialiser.
+        // hand-written wording through a serializer.
         //
         // Only the fields the chosen Repeat mode needs are read. The rest sit
         // there holding whatever they held, which is what lets you switch a
@@ -240,16 +240,16 @@ namespace Oxide.Plugins
             // Blank means inherit AdvancedStatus's own frame, which is what
             // makes the bar match every other plugin's by construction rather
             // than by us picking a value that happens to agree today.
-            [JsonProperty("Bar colour, hex (blank = inherit)")]
+            [JsonProperty("Bar color, hex (blank = inherit)")]
             public string MainColor = "";
 
-            [JsonProperty("Text colour, hex")]
+            [JsonProperty("Text color, hex")]
             public string TextColor = "#FFFFFF";
 
             // Alert red, and the same red the server's other urgent bars
             // already use, so it reads as part of the set rather than as a
-            // stray colour.
-            [JsonProperty("Bar fill colour, hex")]
+            // stray color.
+            [JsonProperty("Bar fill color, hex")]
             public string ProgressColor = "#E74C3C";
 
             // A verified built-in path. assets/icons/clock.png does NOT exist
@@ -263,7 +263,7 @@ namespace Oxide.Plugins
             [JsonProperty("Icon: URL (used only when the other two are blank)")]
             public string ImageUrl = "";
 
-            [JsonProperty("Icon colour, hex (blank = the progress colour)")]
+            [JsonProperty("Icon color, hex (blank = the progress color)")]
             public string IconColor = "";
 
             // "Full" | "Fills" | "Drains".
@@ -330,9 +330,9 @@ namespace Oxide.Plugins
             [JsonProperty("Name shown in chat announcements")]
             public string AnnouncementName = "Server Manager";
 
-            // Empty for no colour markup at all.
-            [JsonProperty("Name colour (hex)")]
-            public string AnnouncementColour = "#e0995e";
+            // Empty for no color markup at all.
+            [JsonProperty("Name color (hex)")]
+            public string AnnouncementColor = "#e0995e";
         }
 
         protected override void LoadDefaultConfig()
@@ -348,7 +348,7 @@ namespace Oxide.Plugins
             try
             {
                 _config = Config.ReadObject<HotwireConfig>();
-                if (_config == null) throw new JsonException("configuration deserialised to null");
+                if (_config == null) throw new JsonException("configuration deserialized to null");
                 RepairConfig();
             }
             catch (Exception ex)
@@ -365,7 +365,7 @@ namespace Oxide.Plugins
         }
 
         // A null in the file is not the same as a missing key. Delete a key and
-        // the field initialiser's default survives; write "Restarts": null and
+        // the field initializer's default survives; write "Restarts": null and
         // Newtonsoft faithfully replaces the list with null. Every use then
         // dereferences it -- and Scan() runs on a ten-second timer, so a single
         // null would either throw forever or kill the timer, and in both cases
@@ -527,9 +527,9 @@ namespace Oxide.Plugins
                 // Say so. A countdown that vanishes silently is the "restarts
                 // unannounced" half of the safety envelope in reverse: players
                 // brace for a restart that never comes.
-                Broadcast("Cancelled");
+                Broadcast("Canceled");
                 RemoveBars();
-                Puts("Unloaded mid-countdown. The restart was cancelled.");
+                Puts("Unloaded mid-countdown. The restart was canceled.");
             }
         }
 
@@ -552,7 +552,7 @@ namespace Oxide.Plugins
 
         private static readonly string[] Ordinals = { "First", "Second", "Third", "Fourth", "Last" };
 
-        private static string Normalise(string repeat)
+        private static string Normalize(string repeat)
         {
             foreach (var mode in RepeatModes)
                 if (string.Equals(mode, repeat, StringComparison.OrdinalIgnoreCase)) return mode;
@@ -567,7 +567,7 @@ namespace Oxide.Plugins
             if (ParseTime(e.Time) == null)
                 return $"\"{e.Time}\" is not a valid time. Use HH:mm, such as 05:00.";
 
-            switch (Normalise(e.Repeat))
+            switch (Normalize(e.Repeat))
             {
                 case RepeatDaily:
                     return null;
@@ -615,7 +615,7 @@ namespace Oxide.Plugins
                     continue;
                 }
 
-                var mode = Normalise(e.Repeat);
+                var mode = Normalize(e.Repeat);
 
                 if (mode == RepeatEveryNDays && ParseDate(e.AnchorDate) == null)
                 {
@@ -724,7 +724,7 @@ namespace Oxide.Plugins
 
         private static bool Matches(ScheduleEntry e, DateTime date)
         {
-            switch (Normalise(e.Repeat))
+            switch (Normalize(e.Repeat))
             {
                 case RepeatDaily:
                     return true;
@@ -905,7 +905,7 @@ namespace Oxide.Plugins
                 var t = token.Trim();
                 if (t.Length == 0) continue;
                 var day = ParseDay(t);
-                if (day == null) return $"\"{t}\" is not a day name, and not a pattern I recognise.";
+                if (day == null) return $"\"{t}\" is not a day name, and not a pattern I recognize.";
                 days.Add(day.Value.ToString());
             }
             if (days.Count == 0) return "No days were given.";
@@ -1012,7 +1012,7 @@ namespace Oxide.Plugins
 
         private static string DescribeRecurrence(ScheduleEntry e)
         {
-            switch (Normalise(e.Repeat))
+            switch (Normalize(e.Repeat))
             {
                 case RepeatDaily: return "daily";
                 case RepeatWeekly: return "every " + DayList(e);
@@ -1118,7 +1118,7 @@ namespace Oxide.Plugins
         // A countdown runs from a copy of the schedule, so switching an entry
         // off only stopped it happening AGAIN. The countdown already under way
         // carried on, and the panel showed the entry as disabled the whole
-        // time -- which reads as "cancelled" and is not.
+        // time -- which reads as "canceled" and is not.
         //
         // Anything that disables, deletes or edits the entry a live countdown
         // came from now cancels that countdown too. Cancelling is the safe
@@ -1147,8 +1147,8 @@ namespace Oxide.Plugins
             _announced.Clear();
             RemoveBars();
 
-            Broadcast("Cancelled");
-            Puts($"Countdown cancelled by {by}.");
+            Broadcast("Canceled");
+            Puts($"Countdown canceled by {by}.");
         }
 
         private void Execute()
@@ -1176,7 +1176,7 @@ namespace Oxide.Plugins
             // A one-off has done the only thing it was for. Disabling it here
             // rather than deleting it leaves a record of what ran and when,
             // and lets an admin re-enable it rather than retype the date.
-            if (_countdownEntry != null && Normalise(_countdownEntry.Repeat) == RepeatOnce)
+            if (_countdownEntry != null && Normalize(_countdownEntry.Repeat) == RepeatOnce)
             {
                 _countdownEntry.Enabled = false;
                 SaveConfig();
@@ -1386,7 +1386,7 @@ namespace Oxide.Plugins
         }
 
         // AdvancedStatus passes an un-prefixed hex string straight through to
-        // CUI, where it is unparseable and every bar renders white. Normalise
+        // CUI, where it is unparseable and every bar renders white. Normalize
         // to #RRGGBB, and expand #RGB shorthand, which CUI does not understand
         // either.
         private static string Hex(string value)
@@ -1694,7 +1694,7 @@ namespace Oxide.Plugins
         // if the cursor-owning element is destroyed and re-added across two
         // frames -- which is what fast clicking causes -- there is a frame with
         // nothing asking, and the game re-locks the cursor to look-control and
-        // parks it at screen centre.
+        // parks it at screen center.
         private const string MenuRoot = "hotwire.menu";
         private const string MenuContent = "hotwire.menu.content";
 
@@ -1708,7 +1708,7 @@ namespace Oxide.Plugins
 
         private readonly Dictionary<string, MenuState> _menus = new Dictionary<string, MenuState>();
 
-        // Colours are space-separated floats, not hex, and they must be
+        // Colors are space-separated floats, not hex, and they must be
         // formatted with the invariant culture: on a server whose locale uses a
         // comma decimal separator, "0.35" becomes "0,35" and the whole panel
         // renders wrong. Same reason Anchor() exists below.
@@ -1949,7 +1949,7 @@ namespace Oxide.Plugins
             }
 
             var entry = list[state.Index];
-            var mode = Normalise(entry.Repeat);
+            var mode = Normalize(entry.Repeat);
             var prefix = $"hotwire.ui";
             var target = $"{state.List} {state.Index}";
 
@@ -2114,15 +2114,15 @@ namespace Oxide.Plugins
             var kind = entry.IsValidate ? "validate and restart"
                      : entry.IsUpdate ? "update and restart"
                      : "restart";
-            var recurrence = Normalise(entry.Repeat) == RepeatOnce ? "once" : DescribeRecurrence(entry);
+            var recurrence = Normalize(entry.Repeat) == RepeatOnce ? "once" : DescribeRecurrence(entry);
             var rule = Sentence($"{kind} {recurrence}");
 
-            string headline, detail, headlineColour;
+            string headline, detail, headlineColor;
             if (problem != null)
             {
                 headline = "Not valid";
                 detail = problem;
-                headlineColour = "0.85 0.45 0.40 1.00";
+                headlineColor = "0.85 0.45 0.40 1.00";
             }
             else if (!entry.Enabled)
             {
@@ -2132,13 +2132,13 @@ namespace Oxide.Plugins
                     ? rule + ". It has no occurrence in the next year."
                     : $"{rule}. Would run {Friendly(would.Value)}, on " +
                       would.Value.ToString("dddd d MMMM yyyy 'at' HH:mm", CultureInfo.InvariantCulture) + ".";
-                headlineColour = "0.85 0.65 0.40 1.00";
+                headlineColor = "0.85 0.65 0.40 1.00";
             }
             else if (next == null)
             {
                 headline = "Never runs";
                 detail = rule + ". It has no occurrence in the next year.";
-                headlineColour = "0.85 0.65 0.40 1.00";
+                headlineColor = "0.85 0.65 0.40 1.00";
             }
             else
             {
@@ -2148,7 +2148,7 @@ namespace Oxide.Plugins
                          ", " + ZoneSuffix(next.Value) + ".";
                 if (OffsetChangesBetween(DateTime.Now, next.Value))
                     detail += "  The clocks change before then.";
-                headlineColour = ColText;
+                headlineColor = ColText;
             }
 
             // Sits under the fields rather than pinned to the bottom of the
@@ -2171,7 +2171,7 @@ namespace Oxide.Plugins
             }, MenuContent, MenuContent + ".summary");
 
             Label(ui, MenuContent + ".summary", 0.02, 0.44, 0.98, 0.94, headline, 18,
-                  headlineColour, TextAnchor.MiddleLeft);
+                  headlineColor, TextAnchor.MiddleLeft);
             Label(ui, MenuContent + ".summary", 0.02, 0.08, 0.98, 0.44, detail, 11,
                   ColMuted, TextAnchor.MiddleLeft);
 
@@ -2195,21 +2195,21 @@ namespace Oxide.Plugins
         }
 
         private static void Label(CuiElementContainer ui, string parent, double x0, double y0, double x1,
-                                  double y1, string text, int size, string colour, TextAnchor align)
+                                  double y1, string text, int size, string color, TextAnchor align)
         {
             ui.Add(new CuiLabel
             {
-                Text = { Text = text ?? "", FontSize = size, Color = colour, Align = align },
+                Text = { Text = text ?? "", FontSize = size, Color = color, Align = align },
                 RectTransform = { AnchorMin = Anchor(x0, y0), AnchorMax = Anchor(x1, y1) }
             }, parent);
         }
 
         private static void Button(CuiElementContainer ui, string parent, double x0, double y0, double x1,
-                                   double y1, string text, string command, string colour)
+                                   double y1, string text, string command, string color)
         {
             ui.Add(new CuiButton
             {
-                Button = { Command = command, Color = colour },
+                Button = { Command = command, Color = color },
                 RectTransform = { AnchorMin = Anchor(x0, y0), AnchorMax = Anchor(x1, y1) },
                 Text = { Text = text, FontSize = 12, Color = ColText, Align = TextAnchor.MiddleCenter }
             }, parent);
@@ -2328,7 +2328,7 @@ namespace Oxide.Plugins
                 {
                     int step;
                     if (args.Length < 4 || !int.TryParse(args[3], out step)) return;
-                    var at = Array.IndexOf(RepeatModes, Normalise(entry.Repeat));
+                    var at = Array.IndexOf(RepeatModes, Normalize(entry.Repeat));
                     if (at < 0) at = 0;
                     at = (at + step + RepeatModes.Length) % RepeatModes.Length;
                     entry.Repeat = RepeatModes[at];
@@ -2355,7 +2355,7 @@ namespace Oxide.Plugins
                     var name = day.Value.ToString();
                     if (entry.Days == null) entry.Days = new List<string>();
 
-                    if (Normalise(entry.Repeat) == RepeatMonthlyWeekday)
+                    if (Normalize(entry.Repeat) == RepeatMonthlyWeekday)
                     {
                         // An ordinal applies to exactly one weekday. "The first
                         // Monday and Thursday" is two rules, not one.
@@ -2452,7 +2452,7 @@ namespace Oxide.Plugins
             if (wasCountingDownForThis && (action != "toggle" || !entry.Enabled))
             {
                 CancelCountdown(player.Name);
-                Reply(player, "CountdownCancelledToo");
+                Reply(player, "CountdownCanceledToo");
             }
 
             SaveConfig();
@@ -2769,7 +2769,7 @@ namespace Oxide.Plugins
             }
 
             var rescheduled = CancelCountdownFor(entry, player.Name);
-            if (rescheduled) Reply(player, "CountdownCancelledToo");
+            if (rescheduled) Reply(player, "CountdownCanceledToo");
 
             var stillBroken = ValidationError(entry);
             if (stillBroken != null)
@@ -2889,7 +2889,7 @@ namespace Oxide.Plugins
             var stopped = CancelCountdownFor(removed, player.Name);
             list.RemoveAt(index);
             SaveConfig();
-            if (stopped) Reply(player, "CountdownCancelledToo");
+            if (stopped) Reply(player, "CountdownCanceledToo");
             Reply(player, "Raw", "Removed: " + Describe(removed));
             Puts($"{player.Name} removed {args[1]} {index} ({Describe(removed)}).");
         }
@@ -2911,7 +2911,7 @@ namespace Oxide.Plugins
             list[index].Enabled = enable;
             if (enable) ValidateSchedule();
             SaveConfig();
-            if (stopped) Reply(player, "CountdownCancelledToo");
+            if (stopped) Reply(player, "CountdownCanceledToo");
             Reply(player, enable ? "Enabled" : "Disabled", args[1].ToLowerInvariant(), index.ToString());
             Puts($"{player.Name} {(enable ? "enabled" : "disabled")} {args[1]} {index}.");
         }
@@ -2970,10 +2970,10 @@ namespace Oxide.Plugins
         {
             var name = _config.General.AnnouncementName;
             if (string.IsNullOrWhiteSpace(name)) return "";
-            var colour = _config.General.AnnouncementColour;
-            return string.IsNullOrWhiteSpace(colour)
+            var color = _config.General.AnnouncementColor;
+            return string.IsNullOrWhiteSpace(color)
                 ? name.Trim() + ": "
-                : $"<color={colour.Trim()}>{name.Trim()}</color>: ";
+                : $"<color={color.Trim()}>{name.Trim()}</color>: ";
         }
 
         // Lang files are written once and never rewritten, so correcting a
@@ -3023,8 +3023,8 @@ namespace Oxide.Plugins
                 ["CountdownStart"] = "Scheduled {0} in {1}. The server will save before it goes down.",
                 ["CountdownTick"] = "Server {0} in {1}.",
                 ["Now"] = "{0} now. See you in a few minutes.",
-                ["Cancelled"] = "The scheduled restart has been cancelled.",
-                ["CountdownCancelledToo"] = "That entry had a countdown running. It has been cancelled too.",
+                ["Canceled"] = "The scheduled restart has been canceled.",
+                ["CountdownCanceledToo"] = "That entry had a countdown running. It has been canceled too.",
                 ["NoCountdownRunning"] = "Nothing is counting down.",
                 ["KickReason"] = "Scheduled restart. Back shortly.",
 

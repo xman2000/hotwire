@@ -36,7 +36,7 @@ not a file to paste.
 
 DEFAULTS ARE REPORTED AS UNKNOWN RATHER THAN GUESSED
 
-Many convars are initialised in a static constructor rather than as a
+Many convars are initialized in a static constructor rather than as a
 compile-time constant, so the value lives in IL, not metadata. Walking those
 .cctor assignments would close most of the gap and is the obvious next step.
 A comment claiming a default that has quietly moved is worse than no comment,

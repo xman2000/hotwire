@@ -72,9 +72,9 @@ These were paid for once already, by a sibling plugin on the same server that
 drives its event timers through AdvancedStatus. Repeated here so the next
 person does not rediscover them.
 
-- **Colours must be `#RRGGBB`.** AdvancedStatus passes an un-prefixed hex
+- **Colors must be `#RRGGBB`.** AdvancedStatus passes an un-prefixed hex
   string straight through to CUI, where it is unparseable — and every bar
-  renders white. `#RGB` shorthand is not understood either. Normalise before
+  renders white. `#RGB` shorthand is not understood either. Normalize before
   sending.
 - **Short `SubText` gets clipped.** The rect is sized from a character-count
   estimate and under-allocates for short strings; Unity wraps the overflow to a
@@ -95,7 +95,7 @@ construction, including after AdvancedStatus itself is retuned.
 `oxide/data/AdvancedStatus/Images`), then `Image` (a URL, rendered as a
 RawImage with the address directly, so no ImageLibrary round trip). With none
 of them set you get AdvancedStatus's tinted placeholder, which renders as a
-solid coloured square.
+solid colored square.
 
 **Built-in sprite paths cannot be validated server-side** — a wrong one logs
 `[FileSystem] Not Found: <path> (UnityEngine.Sprite)` once per draw and shows
@@ -111,7 +111,7 @@ assets/icons/target.png      assets/icons/weapon.png
 
 Hotwire uses `stopwatch.png`. Note that `warning.png` is the generic alert
 glyph, so several plugins reach for it and their bars end up
-indistinguishable except by colour.
+indistinguishable except by color.
 
 **Every key is type-checked and a mismatch is silently ignored.** `Progress`
 is tested with `obj is float`, so a `double` there renders an empty bar and
@@ -159,7 +159,7 @@ build you are targeting, then record what you found in this shape:
 ### ConVar.Global.quit
 **Verified:** <date> against protocol <version>
 **Signature:** <exact signature as read from metadata>
-**Notes:** <behaviour, saving, side effects>
+**Notes:** <behavior, saving, side effects>
 ```
 
 Re-run the tools after a Rust update. An entry here is a claim about a

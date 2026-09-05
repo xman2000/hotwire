@@ -92,7 +92,7 @@ REM ======================================================================
 
 
 REM ======================================================================
-REM  1. PATHS AND BEHAVIOUR
+REM  1. PATHS AND BEHAVIOR
 REM ======================================================================
 
 REM   Where the server is installed. steamcmd writes here.
@@ -398,7 +398,7 @@ REM   [string, default "No server description has been provided."]
 set "ARGS=!ARGS! +server.description "What makes this server different.""
 
 REM   server.tags -- Browser filter tags, comma separated, no spaces. The
-REM     tags the client recognises are:
+REM     tags the client recognizes are:
 REM
 REM     wipe schedule   monthly biweekly weekly
 REM     ruleset         vanilla softcore hardcore primitive pve

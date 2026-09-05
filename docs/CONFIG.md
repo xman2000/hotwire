@@ -7,6 +7,13 @@ restarting the moment it is installed is a restarter that catches you out.
 The config stays hand-editable and always will. Chat commands are a
 convenience over the same file, never the only way in (ADR-0006).
 
+> **Upgrading to 1.0.0?** Five config keys were spelled the British way and are
+> now American: the four `... color, hex` keys under `Status bar` and
+> `Name color (hex)` under `General`. An existing config keeps the old keys,
+> which are now ignored, so those five settings fall back to their defaults —
+> delete those sections to pick the new keys up. Two lang keys changed the same
+> way; delete `oxide/lang/en/Hotwire.json` if you want the corrected wording.
+>
 > **Upgrading to 0.9.4?** The countdown now starts an hour out instead of ten
 > minutes, with a fuller set of announcements. Existing configs keep their old
 > values — delete the `Countdown` section to pick the new ones up. Note that
@@ -14,7 +21,7 @@ convenience over the same file, never the only way in (ADR-0006).
 > `hotwire now` is an hour-long countdown unless you pass a number.
 >
 > **Upgrading to 0.9.0?** `Bar drains as the countdown runs` is replaced by
-> `Fill style`, and the fill colour key was renamed and given a real default.
+> `Fill style`, and the fill color key was renamed and given a real default.
 > Delete the `Status bar` section to pick them up.
 >
 > **Upgrading to 0.8.0?** The `Status bar` section gained several keys and the
@@ -22,7 +29,7 @@ convenience over the same file, never the only way in (ADR-0006).
 > config, or the whole file, to pick the new defaults up.
 >
 > **Upgrading to 0.6.0?** The `Chat prefix` key is replaced by
-> `Name shown in chat announcements` and `Name colour (hex)`, so an existing
+> `Name shown in chat announcements` and `Name color (hex)`, so an existing
 > config picks up the new default of "Server Manager" rather than keeping
 > "Hotwire".
 >
@@ -234,7 +241,7 @@ to.
   "Validate flag file name": "VALIDATE.flag",
   "Refuse to fire the same entry twice within this many hours": 20.0,
   "Name shown in chat announcements": "Server Manager",
-  "Name colour (hex)": "#e0995e"
+  "Name color (hex)": "#e0995e"
 }
 ```
 
@@ -248,7 +255,7 @@ to.
   player.** Announcements go out under this name, not the plugin's, so what a
   player reads is *"Server Manager: Scheduled restart in 4 minutes"*. Set it to
   whatever your server calls itself. An empty name drops the prefix entirely;
-  an empty colour drops the markup.
+  an empty color drops the markup.
 
 Sentences are capitalised when they are sent rather than in the lang file, so
 correcting one reaches servers that already have a lang file — lang files are
@@ -264,13 +271,13 @@ replaced by the `Status bar` section below.
   "Enabled": true,
   "Category": "Hotwire",
   "Order": 10,
-  "Bar colour, hex (blank = inherit)": "",
-  "Text colour, hex": "#FFFFFF",
-  "Bar fill colour, hex": "#E74C3C",
+  "Bar color, hex (blank = inherit)": "",
+  "Text color, hex": "#FFFFFF",
+  "Bar fill color, hex": "#E74C3C",
   "Icon: built-in sprite path": "assets/icons/stopwatch.png",
   "Icon: local name in oxide/data/AdvancedStatus/Images": "",
   "Icon: URL (used only when the other two are blank)": "",
-  "Icon colour, hex (blank = the progress colour)": "",
+  "Icon color, hex (blank = the progress color)": "",
   "Fill style: Full, Fills or Drains": "Full",
   "Text left padding (pixels)": 5,
   "Countdown minimum width (characters)": 5,
@@ -310,14 +317,14 @@ fill, but it still deletes itself when the timestamp passes, which `Default`
 does not — and a stuck bar on every player's screen is the worst failure this
 integration has available to it.
 
-**Leave the frame colour blank unless you mean it.** Blank inherits AdvancedStatus's
+**Leave the frame color blank unless you mean it.** Blank inherits AdvancedStatus's
 own frame, so the bar matches every other plugin's by construction — including
-after AdvancedStatus is retuned. Hex is normalised for you: bare hex without a
+after AdvancedStatus is retuned. Hex is normalized for you: bare hex without a
 `#` reaches CUI unparseable and renders the bar white.
 
 **The icon** is a built-in sprite, then a local file in
 `oxide/data/AdvancedStatus/Images`, then a URL, in that order. With none set
-you get AdvancedStatus's tinted placeholder, which is a solid coloured square.
+you get AdvancedStatus's tinted placeholder, which is a solid colored square.
 Built-in sprite paths cannot be validated server-side: a wrong one logs
 `[FileSystem] Not Found` once per draw and shows nothing. `docs/GAME-API.md`
 lists the paths known to exist.

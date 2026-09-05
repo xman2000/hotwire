@@ -53,8 +53,8 @@ New-Item -ItemType File C:\rustserver\UPDATE.flag
 
 That mode is opt-in because Rust clients update themselves: a server that never
 updates does not go stale, it becomes unjoinable, and it usually happens on
-force wipe day. So the default is the safe, slow behaviour, and the sharp
-behaviour is a deliberate choice — with a backstop that updates anyway if a
+force wipe day. So the default is the safe, slow behavior, and the sharp
+behavior is a deliberate choice — with a backstop that updates anyway if a
 fortnight passes without one.
 
 **Schedules the restart, and announces it.** The plugin holds the schedule,

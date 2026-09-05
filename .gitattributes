@@ -1,4 +1,4 @@
-# Default: normalise text to LF in the repo, native on checkout.
+# Default: normalize text to LF in the repo, native on checkout.
 * text=auto
 
 # cmd.exe wants CRLF. A .bat checked out with LF fails in ways that are

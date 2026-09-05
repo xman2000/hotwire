@@ -46,7 +46,7 @@ quietly changed is worse than one documenting nothing, because someone reads
 the comment and believes it. The assembly on your server is the only authority.
 
 **Defaults come back `UNKNOWN` rather than guessed** when a convar is
-initialised in a static constructor: the value is in IL, not metadata. Walking
+initialized in a static constructor: the value is in IL, not metadata. Walking
 those `.cctor` assignments would close most of the gap, and is the obvious next
 step.
 
