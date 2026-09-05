@@ -209,9 +209,12 @@ namespace Oxide.Plugins
         private const string LastFiredFile = "Hotwire/last_fired";
         private const string StatusId = "hotwire_countdown";
 
-        private Oxide.Core.Libraries.Timer.TimerInstance _scanTimer;
-        private Oxide.Core.Libraries.Timer.TimerInstance _countdownTimer;
-        private Oxide.Core.Libraries.Timer.TimerInstance _frameworkTimer;
+        // Oxide.Plugins.Timer, injected by the plugin compiler -- NOT
+        // Oxide.Core.Libraries.Timer, which is the library that hands these
+        // out. timer.Every() returns the former.
+        private Timer _scanTimer;
+        private Timer _countdownTimer;
+        private Timer _frameworkTimer;
 
         private bool _countdownActive;
         private DateTime _countdownTarget;
