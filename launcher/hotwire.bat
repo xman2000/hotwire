@@ -129,8 +129,18 @@ set "MAX_STEAM_TRIES=5"
 REM   Rotated server logs to keep.
 set "LOG_KEEP=14"
 
-REM   Seconds to wait before relaunching after the server exits.
+REM   Seconds to wait before relaunching after the server exits. A run
+REM     that crashed backs off from here; see CRASH_SECONDS below.
 set "RESTART_DELAY=15"
+
+REM   A run shorter than this counts as a crash rather than a restart.
+REM     A Rust server takes minutes to boot, so anything under a minute
+REM     did not start -- bad convar, port already bound, corrupt save.
+set "CRASH_SECONDS=60"
+
+REM   Consecutive crashes before the launcher stops instead of looping
+REM     forever. Set to 0 to never stop.
+set "MAX_CRASH_STREAK=10"
 
 REM   Optional commands run before and after an update, for backups or
 REM     notifications. Leave empty to do nothing.
@@ -139,6 +149,10 @@ set "HOOK_AFTER="
 
 set "LOGFILE=%ROOT%\logs\server_log.txt"
 set "UPDATE_STAMP=%ROOT%\logs\last_update.txt"
+
+REM  Consecutive crashes. Set here rather than at :start so it survives
+REM  the loop, which is the whole point of counting it.
+set /a CRASH_STREAK=0
 
 
 REM ======================================================================
@@ -784,21 +798,84 @@ REM ======================================================================
 REM  5. LAUNCH
 REM ======================================================================
 
-REM Rotate the log. -logfile TRUNCATES on every start, so without this a
-REM restart destroys the log of whatever went wrong before it.
+REM  Rotate the log. -logfile TRUNCATES on every start, so without this a
+REM  restart destroys the log of whatever went wrong before it.
+REM
+REM  That was true of a crash loop too, which is the case it most needed
+REM  to be false for. Rotation culled to LOG_KEEP every pass, and a server
+REM  dying on boot loops every 15 seconds, so about three and a half
+REM  minutes later the log holding the actual failure had been culled away
+REM  and fourteen identical near-empty ones were left in its place.
+REM
+REM  So the first log of a crash streak goes to server_crash_*, which the
+REM  cull never matches. Later crashes in the same streak rotate normally:
+REM  they say the same thing as the first, and keeping every one of them
+REM  is how a crash loop fills a disk.
 if exist "%LOGFILE%" (
     set "LOGSTAMP="
     for /f %%i in ('powershell -NoProfile -Command "Get-Date -Format yyyyMMdd-HHmmss"') do set "LOGSTAMP=%%i"
-    REM  If that call failed the name would be server_log_.txt, and every
-    REM  later failure would overwrite the same file.
     if not defined LOGSTAMP set "LOGSTAMP=unstamped-!RANDOM!"
-    move /y "%LOGFILE%" "%ROOT%\logs\server_log_!LOGSTAMP!.txt" >nul
+    set "ROTATED=%ROOT%\logs\server_log_!LOGSTAMP!.txt"
+    if "!CRASH_STREAK!"=="1" set "ROTATED=%ROOT%\logs\server_crash_!LOGSTAMP!.txt"
+    move /y "%LOGFILE%" "!ROTATED!" >nul
     powershell -NoProfile -Command "Get-ChildItem '%ROOT%\logs\server_log_*.txt' | Sort-Object LastWriteTime -Descending | Select-Object -Skip %LOG_KEEP% | Remove-Item -Force" 2>nul
 )
 
 echo [%date% %time%] Starting server...
+
+REM  Timed so a crash loop can be told from a working restart. If either
+REM  call fails the run is treated as a long one: erring that way keeps
+REM  the server running, and the other way would stop it over a failed
+REM  timestamp.
+set "RUN_START=0"
+for /f %%t in ('powershell -NoProfile -Command "[int]((Get-Date).ToUniversalTime() - (Get-Date '1970-01-01')).TotalSeconds"') do set "RUN_START=%%t"
+
 RustDedicated.exe !ARGS! -logfile "!LOGFILE!"
 
-echo [%date% %time%] Server exited. Restarting in %RESTART_DELAY%s. Ctrl+C to stop.
-timeout /t %RESTART_DELAY% /nobreak
+set "RUN_END=0"
+for /f %%t in ('powershell -NoProfile -Command "[int]((Get-Date).ToUniversalTime() - (Get-Date '1970-01-01')).TotalSeconds"') do set "RUN_END=%%t"
+set "RUN_SECONDS=99999"
+if not "!RUN_START!"=="0" if not "!RUN_END!"=="0" set /a RUN_SECONDS=RUN_END-RUN_START
+
+if !RUN_SECONDS! LSS %CRASH_SECONDS% (
+    set /a CRASH_STREAK+=1
+) else (
+    set /a CRASH_STREAK=0
+)
+
+if not "%MAX_CRASH_STREAK%"=="0" if !CRASH_STREAK! GEQ %MAX_CRASH_STREAK% goto crashstop
+
+REM  Back off, so a permanently broken config does not relaunch four
+REM  times a minute forever -- and does not run HOOK_BEFORE that often
+REM  either, which for anyone hooking a backup in is the expensive part.
+set "DELAY=%RESTART_DELAY%"
+if !CRASH_STREAK! GEQ 2 set "DELAY=30"
+if !CRASH_STREAK! GEQ 3 set "DELAY=60"
+if !CRASH_STREAK! GEQ 4 set "DELAY=120"
+if !CRASH_STREAK! GEQ 5 set "DELAY=300"
+
+if !CRASH_STREAK! GTR 0 (
+    echo [%date% %time%] Server exited after !RUN_SECONDS!s -- that is a crash, not a restart.
+    echo [%date% %time%] Crash !CRASH_STREAK! of %MAX_CRASH_STREAK%. Retrying in !DELAY!s.
+) else (
+    echo [%date% %time%] Server exited. Restarting in !DELAY!s. Ctrl+C to stop.
+)
+timeout /t !DELAY! /nobreak
 goto start
+
+:crashstop
+echo [%date% %time%] ====================================================
+echo [%date% %time%] STOPPED. %MAX_CRASH_STREAK% consecutive crashes, each
+echo [%date% %time%] under %CRASH_SECONDS%s. The server is not starting, and
+echo [%date% %time%] relaunching it again will not change that.
+echo [%date% %time%]
+echo [%date% %time%] The log from the first crash is kept as
+echo [%date% %time%]   %ROOT%\logs\server_crash_*.txt
+echo [%date% %time%] and is the one worth reading. Usual causes: a bad
+echo [%date% %time%] convar in section 4, a port already in use, or a
+echo [%date% %time%] corrupt save.
+echo [%date% %time%]
+echo [%date% %time%] Set MAX_CRASH_STREAK=0 to loop forever instead.
+echo [%date% %time%] ====================================================
+pause
+exit /b 1

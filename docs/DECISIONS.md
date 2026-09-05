@@ -684,3 +684,44 @@ so 13.6 days tripped a 14-day backstop half a day early. It is `[math]::Floor`
 now, which is what "full days since" meant.
 
 **None of this has been executed.** It is read-verified only.
+
+## ADR-0023 — A crash loop is not a restart loop, and its first log is kept
+
+**Date:** 2026-09-05 · **Status:** ACCEPTED
+
+The launcher rotated the server log once per pass and culled to `LOG_KEEP`
+(14) unconditionally, then relaunched after a flat 15 seconds. A server dying
+on boot therefore destroyed the evidence of why in about three and a half
+minutes, leaving fourteen identical near-empty logs. The block's own comment
+says it exists so "a restart destroys the log of whatever went wrong before
+it" cannot happen; under the one failure where that log is the only thing
+anyone wants, it did exactly that.
+
+Chosen: **time every run.** Shorter than `CRASH_SECONDS` (60) is a crash, not a
+restart — a Rust server takes minutes to boot, so seconds means it never
+started. Consecutive crashes are counted, and:
+
+- The **first** crash of a streak rotates to `server_crash_*`, which the cull
+  glob does not match. Later ones rotate normally; they repeat the first and
+  keeping all of them is how a crash loop fills a disk.
+- The delay **backs off** 15/30/60/120/300. This also throttles `HOOK_BEFORE`,
+  which for anyone hooking a backup into it is the expensive part.
+- After `MAX_CRASH_STREAK` (10) the launcher **stops**, says why, and names the
+  preserved log. `0` restores the old loop-forever behavior.
+
+This reverses a documented non-goal — "recover from a crash loop" was listed
+under what the launcher does not do. It still does not *recover*; it fails
+visibly instead of silently, which is the difference worth having.
+
+Rule 2 says a bug must never leave a server unable to restart, and stopping
+after ten crashes is the closest thing in this project to doing that
+deliberately. It is justified by what the tenth relaunch actually is: the
+server has not started once, the config has not changed, and the next attempt
+cannot succeed either. What stopping costs is nothing; what it buys is a person
+noticing.
+
+**If the timestamp call fails, the run counts as long.** Erring that way keeps
+the server running. Erring the other way would stop a working server over a
+failed clock read, which is the failure this project exists to prevent.
+
+**Not executed.** Read-verified only, like everything else in this file.

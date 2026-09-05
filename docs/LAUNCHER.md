@@ -118,8 +118,33 @@ venv\Scripts\pip install dnfile
 venv\Scripts\python tools\convars.py "<server>\RustDedicated_Data\Managed\Assembly-CSharp.dll" --bat
 ```
 
+## When the server will not start
+
+A run shorter than `CRASH_SECONDS` (60) did not start — a Rust server takes
+minutes to boot, so a run measured in seconds means a bad convar, a port
+already in use, or a corrupt save. The launcher counts consecutive short runs
+and treats them differently from restarts:
+
+- **The first crash of a streak keeps its log.** It rotates to
+  `logs/server_crash_<stamp>.txt`, which the `LOG_KEEP` cull never matches.
+  Later crashes in the same streak rotate normally, since they say the same
+  thing and keeping every one is how a crash loop fills a disk.
+- **The delay backs off** — 15s, 30, 60, 120, then 300 — so a permanently
+  broken config does not relaunch four times a minute, and does not run
+  `HOOK_BEFORE` that often either.
+- **After `MAX_CRASH_STREAK` (10) it stops**, prints why, names the crash log
+  and waits. Set it to `0` to loop forever instead.
+
+A successful run resets the streak. If the timestamp call it uses ever fails,
+the run is treated as a long one — that keeps the server running, where the
+other direction would stop it over a failed clock read.
+
+Note that the stop is a `pause`: it holds the window open so the message is
+readable. Under a scheduled task with no console that means it waits rather
+than exits, which is the correct state — stopped and visible — but is worth
+knowing before you wrap this in a service.
+
 ## What it does not do
 
-Recover from a crash loop. If the server dies on boot the launcher will keep
-relaunching it every 15 seconds. Run on Linux; it is batch, and a shell port
-does not exist yet.
+Diagnose the crash for you; it only keeps the log that explains it. Run on
+Linux; it is batch, and a shell port does not exist yet.

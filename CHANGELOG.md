@@ -29,6 +29,16 @@ that `!` and `^` cannot appear in an RCON password, because delayed expansion
 eats them and the server would listen on a different password than the one
 written in the file.
 
+**A crash loop destroyed the log explaining it.** Rotation culled to `LOG_KEEP`
+every pass, and a server dying on boot relaunched every 15 seconds, so about
+three and a half minutes in, the log holding the actual failure had been culled
+and fourteen identical near-empty ones were left. The launcher now times every
+run: shorter than `CRASH_SECONDS` (60) is a crash, the first crash of a streak
+keeps its log as `server_crash_*` where the cull cannot reach it, the delay
+backs off 15/30/60/120/300, and after `MAX_CRASH_STREAK` (10) it stops and says
+why rather than looping forever. Set `MAX_CRASH_STREAK=0` for the old behavior.
+ADR-0023.
+
 Read-verified, not executed.
 
 ## 1.1.0 — 2026-09-05
