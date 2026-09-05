@@ -757,14 +757,23 @@ a message naming the cause, rather than starting the server on a password that
 is not the one in the file. A silent wrong password is the failure worth
 engineering against; a refusal to start with a reason is not.
 
-**The third fault was not ours, and is the reason this was looked at.** The
-copy of the launcher on the reference server had lost a quote —
-`+rcon.password "%PW%"` where four quotes were needed — leaving `ARGS` holding
-an unterminated quote that swallowed every option appended after it, including
-`-logfile`, which quietly disabled log rotation entirely. The repo's copy was
-correct; the server's had diverged outside git and was captured by an automated
-backup commit. Worth recording because it is the failure mode of hand-copying a
-launcher between machines, and because one missing character disabled two
-features without a single error message.
+**The third fault was mine, twice over, and is worth recording as a method
+failure rather than a code one.** A three-quote `+rcon.password "%PW%"` turned
+up in the reference server's configuration repository, and I reported it as a
+live defect on that server: an unterminated quote swallowing every later
+option, including `-logfile`. I was wrong. The launcher on that server has
+always been correct. What I had found was a *generated mirror* of it — that
+repo regenerates the file on every backup, scrubbing the password out — and the
+missing quote came from the scrubber's own regex, where an ERE alternation is
+leftmost-longest and the bare-token branch beat the quoted one by exactly the
+closing quote of the `set`.
+
+Two things went wrong and neither was a typo. I read a file without
+establishing whether it was a source or an artifact, and I asserted a live
+failure from a diff rather than from the running system — a check that took one
+`grep` on the actual server and immediately disproved it. The real defects
+above are real, and were found by comparing the two launchers against each
+other; the invented one came from trusting a derived file. Verify against the
+thing that runs.
 
 **Not executed.** Read-verified.
