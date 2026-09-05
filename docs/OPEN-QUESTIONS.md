@@ -154,10 +154,10 @@ fill them in from memory.
       the game was already up to date and no validate was asked for. That is
       not the 6–8 minute figure and does not contradict it; nothing was
       actually downloaded.
-- [ ] **Confirm the launcher deletes the flag.** One flag must buy exactly one
-      update. If it survives, every later restart silently becomes an update —
-      the precise failure Hotwire exists to prevent. `hotwire check` reports
-      it; the assertion is that no flag is present after an update pass.
+- [x] ~~**Confirm the launcher deletes the flag.**~~ **Confirmed 2026-09-04.**
+      `hotwire check` immediately after an update pass reported no flag
+      present. One flag buys exactly one update, which is the invariant the
+      whole design rests on.
 - [ ] **`launcher/hotwire.bat` is still unrun.** The flag *contract* is proven,
       but against the reference server's own launcher, not against the one in
       this repository. Those are different claims and the second is untested.
