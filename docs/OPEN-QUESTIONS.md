@@ -144,10 +144,23 @@ fill them in from memory.
       `Oxide.Plugins.Timer`, not `Oxide.Core.Libraries.Timer.TimerInstance`.
       It loads, writes its default config, and correctly reports that nothing
       is scheduled.
-- [ ] **Run it.** Compiling is not running. Still unexercised: whether the
-      flag lands where the launcher looks; whether a countdown announces,
-      kicks and quits cleanly; whether the launcher acts on the flag on its
-      next pass; and every lang string, since none has been seen in chat.
+- [x] ~~**Run it.**~~ **Proven end to end on the reference server,
+      2026-09-04.** A plain restart announced, rendered a status bar, kicked,
+      and quit cleanly — `Saved 76,643 ents / Saving complete`, so the world
+      was saved on the way out. An update restart then wrote the flag, the
+      launcher found it (`UPDATE.flag found -- this pass will update`), ran
+      its backup hook, ran steamcmd, fetched the framework, and relaunched.
+      Quit at 23:18:26, server starting at 23:19:26 — about a minute, because
+      the game was already up to date and no validate was asked for. That is
+      not the 6–8 minute figure and does not contradict it; nothing was
+      actually downloaded.
+- [ ] **Confirm the launcher deletes the flag.** One flag must buy exactly one
+      update. If it survives, every later restart silently becomes an update —
+      the precise failure Hotwire exists to prevent. `hotwire check` reports
+      it; the assertion is that no flag is present after an update pass.
+- [ ] **`launcher/hotwire.bat` is still unrun.** The flag *contract* is proven,
+      but against the reference server's own launcher, not against the one in
+      this repository. Those are different claims and the second is untested.
 - [ ] **The admin menu (ADR-0006).** Deliberately last. The chat commands it
       is meant to wrap now exist, which was the precondition.
 - [ ] Event-aware deferral — do not restart on top of a live event. Blocked:
