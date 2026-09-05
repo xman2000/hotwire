@@ -101,7 +101,7 @@ chosen accordingly.
 - **Every schedule entry in the shipped config is disabled.** Installing the
   plugin cannot restart anything by surprise. Turn one on when you mean it.
 - A failed flag write downgrades an update to a plain restart rather than
-  cancelling it.
+  canceling it.
 - An entry that becomes invalid is switched off and reported, rather than
   left to fail at three in the morning.
 - Disabling an entry cancels a countdown that came from it.
@@ -134,12 +134,24 @@ Chat or console, and `hw` works as a short form. Bare `hotwire` is `status`.
 | `hotwire menu` | `hotwire.status` | The in-game panel |
 | `hotwire list` | `hotwire.status` | Every entry with its index and next occurrence |
 | `hotwire check` | `hotwire.status` | Diagnostics: where the flag goes, whether that is really the server root, the clock, the DST guard, the status bar |
-| `hotwire now [update\|validate] [seconds]` | `hotwire.restart` | Start a countdown now |
+| `hotwire now` | `hotwire.restart` | Start a countdown now |
 | `hotwire cancel` | `hotwire.cancel` | Stop the one that is running |
-| `hotwire add <restart\|update\|validate> <HH:mm> [pattern]` | `hotwire.edit` | Add an entry |
-| `hotwire set <restart\|update> <index> <time\|pattern\|validate> <value>` | `hotwire.edit` | Edit one in place |
-| `hotwire remove <restart\|update> <index>` | `hotwire.edit` | Remove one |
-| `hotwire enable\|disable <restart\|update> <index>` | `hotwire.edit` | Turn one on or off |
+| `hotwire add` | `hotwire.edit` | Add an entry |
+| `hotwire set` | `hotwire.edit` | Edit one in place |
+| `hotwire remove` | `hotwire.edit` | Remove one |
+| `hotwire enable`, `hotwire disable` | `hotwire.edit` | Turn one on or off |
+
+Full syntax where arguments are involved:
+
+```
+hotwire now    [update|validate] [seconds]
+hotwire add    <restart|update|validate> <HH:mm> [pattern]
+hotwire set    <restart|update> <index> <time|pattern|validate> <value>
+hotwire remove <restart|update> <index>
+
+hotwire enable  <restart|update> <index>
+hotwire disable <restart|update> <index>
+```
 
 `hotwire now` with no seconds uses the configured countdown length, which is
 an hour by default. Pass a number if you mean sooner.
