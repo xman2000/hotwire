@@ -11,7 +11,7 @@ using Oxide.Core.Plugins;
 
 namespace Oxide.Plugins
 {
-    [Info("Hotwire", "xman2000", "0.2.1")]
+    [Info("Hotwire", "xman2000", "0.3.0")]
     [Description("Scheduled restarts and updates. Announces, counts down, writes a flag, quits.")]
     internal class Hotwire : CovalencePlugin
     {
@@ -54,13 +54,25 @@ namespace Oxide.Plugins
             [JsonProperty("Restarts", ObjectCreationHandling = ObjectCreationHandling.Replace)]
             public List<ScheduleEntry> Restarts = new List<ScheduleEntry>
             {
-                new ScheduleEntry { Time = "05:00", Days = "Daily", Enabled = false }
+                new ScheduleEntry { Time = "05:00", Repeat = "Daily", Enabled = false }
             };
 
+            // The default update entry is the first Thursday of the month at
+            // 20:00, because that is Rust's force wipe day and the single most
+            // likely thing an admin wants an announced update for. Disabled,
+            // like everything else, but it is the shape of the answer.
             [JsonProperty("Updates", ObjectCreationHandling = ObjectCreationHandling.Replace)]
             public List<UpdateEntry> Updates = new List<UpdateEntry>
             {
-                new UpdateEntry { Time = "05:00", Days = "Thursday", Validate = false, Enabled = false }
+                new UpdateEntry
+                {
+                    Time = "20:00",
+                    Repeat = "MonthlyWeekday",
+                    Ordinal = "First",
+                    Days = new List<string> { "Thursday" },
+                    Validate = false,
+                    Enabled = false
+                }
             };
 
             [JsonProperty("Countdown")]
@@ -76,29 +88,72 @@ namespace Oxide.Plugins
             public StatusBarSettings StatusBar = new StatusBarSettings();
         }
 
+        // Recurrence is stored as explicit fields rather than as a cron
+        // string or a phrase to be parsed (ADR-0015). Every value validates on
+        // its own, an error can name the exact field that is wrong, and the
+        // menu maps one control per field instead of round-tripping somebody's
+        // hand-written wording through a serialiser.
+        //
+        // Only the fields the chosen Repeat mode needs are read. The rest sit
+        // there holding whatever they held, which is what lets you switch a
+        // schedule from weekly to monthly and back without retyping it.
         private class ScheduleEntry
         {
-            [JsonProperty("Time (HH:mm, server local time)")]
+            [JsonProperty("Time")]
             public string Time = "05:00";
 
-            // "Daily", "Weekdays", "Weekends", or a comma-separated list of
-            // day names: "Monday,Thursday". Short forms work: "Mon,Thu".
-            [JsonProperty("Days")]
-            public string Days = "Daily";
+            // Daily | Weekly | MonthlyWeekday | MonthlyDay | EveryNDays | Once
+            [JsonProperty("Repeat")]
+            public string Repeat = RepeatDaily;
+
+            // Weekly: every day it runs on.
+            // MonthlyWeekday: the weekday the ordinal applies to.
+            [JsonProperty("Days", ObjectCreationHandling = ObjectCreationHandling.Replace)]
+            public List<string> Days = new List<string>();
+
+            // MonthlyWeekday: First | Second | Third | Fourth | Last.
+            // Fifth is deliberately absent: it does not exist in every month,
+            // and Last is what people mean when they reach for it.
+            [JsonProperty("Ordinal")]
+            public string Ordinal = "First";
+
+            // MonthlyDay: 1-31. A day that does not exist in a given month is
+            // skipped that month rather than moved, because a restart that
+            // silently shifts is worse than one that does not happen.
+            [JsonProperty("DayOfMonth")]
+            public int DayOfMonth = 1;
+
+            [JsonProperty("IntervalDays")]
+            public int IntervalDays = 2;
+
+            // EveryNDays counts from here. Filled in with today the first time
+            // the entry is validated, so "every 2 days" is a fixed set of days
+            // rather than one that re-anchors on every reload.
+            [JsonProperty("AnchorDate")]
+            public string AnchorDate = "";
+
+            // Once: yyyy-MM-dd. The entry disables itself after it fires.
+            [JsonProperty("Date")]
+            public string Date = "";
 
             [JsonProperty("Enabled")]
             public bool Enabled = true;
 
-            [JsonIgnore]
-            public virtual bool IsUpdate => false;
+            [JsonIgnore] public virtual bool IsUpdate => false;
+            [JsonIgnore] public virtual bool IsValidate => false;
 
+            // Stable across reordering, so the fired-recently guard survives
+            // someone rearranging the config. It deliberately includes the
+            // recurrence: editing an entry's schedule should clear its history
+            // rather than have yesterday's fire suppress today's new time.
             [JsonIgnore]
-            public virtual bool IsValidate => false;
-
-            // Stable across reordering and editing, so the fired-recently
-            // guard survives someone rearranging the config.
-            [JsonIgnore]
-            public string Key => $"{(IsValidate ? "validate" : IsUpdate ? "update" : "restart")}|{Time}|{Days}";
+            public string Key => string.Join("|", new[]
+            {
+                IsValidate ? "validate" : IsUpdate ? "update" : "restart",
+                Time ?? "", Repeat ?? "",
+                Days == null ? "" : string.Join(",", Days.ToArray()),
+                Ordinal ?? "", DayOfMonth.ToString(), IntervalDays.ToString(), Date ?? ""
+            });
         }
 
         private class UpdateEntry : ScheduleEntry
@@ -108,11 +163,8 @@ namespace Oxide.Plugins
             [JsonProperty("Validate")]
             public bool Validate = false;
 
-            [JsonIgnore]
-            public override bool IsUpdate => true;
-
-            [JsonIgnore]
-            public override bool IsValidate => Validate;
+            [JsonIgnore] public override bool IsUpdate => true;
+            [JsonIgnore] public override bool IsValidate => Validate;
         }
 
         private class CountdownSettings
@@ -372,25 +424,95 @@ namespace Oxide.Plugins
 
         #region Schedule scanning
 
+        private const string RepeatDaily = "Daily";
+        private const string RepeatWeekly = "Weekly";
+        private const string RepeatMonthlyWeekday = "MonthlyWeekday";
+        private const string RepeatMonthlyDay = "MonthlyDay";
+        private const string RepeatEveryNDays = "EveryNDays";
+        private const string RepeatOnce = "Once";
+
+        private static readonly string[] RepeatModes =
+        {
+            RepeatDaily, RepeatWeekly, RepeatMonthlyWeekday,
+            RepeatMonthlyDay, RepeatEveryNDays, RepeatOnce
+        };
+
+        private static readonly string[] Ordinals = { "First", "Second", "Third", "Fourth", "Last" };
+
+        private static string Normalise(string repeat)
+        {
+            foreach (var mode in RepeatModes)
+                if (string.Equals(mode, repeat, StringComparison.OrdinalIgnoreCase)) return mode;
+            return repeat ?? "";
+        }
+
+        // Returns null when the entry is usable, or a sentence saying what is
+        // wrong with it. Both the console and the menu show this, so it has to
+        // read like something a person wrote rather than a field name.
+        private static string ValidationError(ScheduleEntry e)
+        {
+            if (ParseTime(e.Time) == null)
+                return $"\"{e.Time}\" is not a valid time. Use HH:mm, such as 05:00.";
+
+            switch (Normalise(e.Repeat))
+            {
+                case RepeatDaily:
+                    return null;
+
+                case RepeatWeekly:
+                    return ParsedDays(e).Count == 0 ? "No days are selected." : null;
+
+                case RepeatMonthlyWeekday:
+                    if (ParsedDays(e).Count == 0) return "No weekday is selected.";
+                    foreach (var o in Ordinals)
+                        if (string.Equals(o, e.Ordinal, StringComparison.OrdinalIgnoreCase)) return null;
+                    return $"\"{e.Ordinal}\" is not one of First, Second, Third, Fourth, Last.";
+
+                case RepeatMonthlyDay:
+                    return e.DayOfMonth < 1 || e.DayOfMonth > 31
+                        ? "Day of month must be between 1 and 31."
+                        : null;
+
+                case RepeatEveryNDays:
+                    return e.IntervalDays < 1 ? "The interval must be at least one day." : null;
+
+                case RepeatOnce:
+                    return ParseDate(e.Date) == null
+                        ? $"\"{e.Date}\" is not a valid date. Use yyyy-MM-dd."
+                        : null;
+
+                default:
+                    return $"\"{e.Repeat}\" is not a repeat mode. Use one of: {string.Join(", ", RepeatModes)}.";
+            }
+        }
+
         private void ValidateSchedule()
         {
             var changed = false;
             foreach (var e in AllEntries())
             {
                 if (!e.Enabled) continue;
-                if (ParseTime(e.Time) == null)
+
+                var problem = ValidationError(e);
+                if (problem != null)
                 {
                     e.Enabled = false;
                     changed = true;
-                    PrintError($"Schedule entry \"{e.Time}\" is not a valid HH:mm time. Entry DISABLED.");
+                    PrintError($"Schedule entry at {e.Time}: {problem} Entry DISABLED.");
                     continue;
                 }
-                if (ParseDays(e.Days) == null)
+
+                if (Normalise(e.Repeat) == RepeatEveryNDays && ParseDate(e.AnchorDate) == null)
                 {
-                    e.Enabled = false;
+                    e.AnchorDate = DateTime.Now.ToString("yyyy-MM-dd");
                     changed = true;
-                    PrintError($"Schedule entry \"{e.Time}\" has unreadable Days \"{e.Days}\". Entry DISABLED.");
+                    Puts($"The entry at {e.Time} repeats every {e.IntervalDays} days and had no anchor " +
+                         $"date. Anchored to {e.AnchorDate}; edit it if you meant a different day.");
                 }
+
+                if (Normalise(e.Repeat) == RepeatMonthlyDay && e.DayOfMonth > 28)
+                    PrintWarning($"The entry at {e.Time} runs on day {e.DayOfMonth}, which does not exist " +
+                                 "in every month. Those months are skipped, not moved.");
             }
             if (changed) SaveConfig();
         }
@@ -464,21 +586,77 @@ namespace Oxide.Plugins
             return since < hours && since > -hours;
         }
 
-        private DateTime? NextOccurrence(ScheduleEntry e, DateTime now)
+        // Walks forward a day at a time and asks each date whether it matches.
+        // Slower than computing the next date per mode, and far harder to get
+        // wrong: one predicate covers all six recurrences, "the 31st" simply
+        // never matches in a short month, and there is no arithmetic to
+        // misplace at a month or year boundary.
+        private static DateTime? NextOccurrence(ScheduleEntry e, DateTime now)
         {
             var time = ParseTime(e.Time);
             if (time == null) return null;
-            var days = ParseDays(e.Days);
-            if (days == null) return null;
+            if (ValidationError(e) != null) return null;
 
-            for (var i = 0; i <= 7; i++)
+            for (var i = 0; i <= 366; i++)
             {
-                var candidate = now.Date.AddDays(i).Add(time.Value);
-                if (candidate <= now) continue;
-                if (!days.Contains(candidate.DayOfWeek)) continue;
-                return candidate;
+                var date = now.Date.AddDays(i);
+                if (!Matches(e, date)) continue;
+                var candidate = date.Add(time.Value);
+                if (candidate > now) return candidate;
             }
             return null;
+        }
+
+        private static bool Matches(ScheduleEntry e, DateTime date)
+        {
+            switch (Normalise(e.Repeat))
+            {
+                case RepeatDaily:
+                    return true;
+
+                case RepeatWeekly:
+                    return ParsedDays(e).Contains(date.DayOfWeek);
+
+                case RepeatMonthlyWeekday:
+                    return ParsedDays(e).Contains(date.DayOfWeek) && OrdinalMatches(date, e.Ordinal);
+
+                case RepeatMonthlyDay:
+                    return date.Day == e.DayOfMonth;
+
+                case RepeatEveryNDays:
+                    var anchor = ParseDate(e.AnchorDate);
+                    if (anchor == null || e.IntervalDays < 1) return false;
+                    var span = (date - anchor.Value.Date).Days;
+                    return span >= 0 && span % e.IntervalDays == 0;
+
+                case RepeatOnce:
+                    var once = ParseDate(e.Date);
+                    return once != null && once.Value.Date == date.Date;
+
+                default:
+                    return false;
+            }
+        }
+
+        private static bool OrdinalMatches(DateTime date, string ordinal)
+        {
+            // "Last" is the only one that needs the month's length: if adding
+            // a week lands in the next month, this is the last such weekday.
+            if (string.Equals(ordinal, "Last", StringComparison.OrdinalIgnoreCase))
+                return date.AddDays(7).Month != date.Month;
+
+            // Every month contains a first through fourth of every weekday,
+            // because every month has at least 28 days. A fifth does not always
+            // exist, which is why it is not offered.
+            var which = (date.Day - 1) / 7 + 1;
+            switch (ordinal == null ? "" : ordinal.ToLowerInvariant())
+            {
+                case "first": return which == 1;
+                case "second": return which == 2;
+                case "third": return which == 3;
+                case "fourth": return which == 4;
+                default: return false;
+            }
         }
 
         private static TimeSpan? ParseTime(string raw)
@@ -489,6 +667,13 @@ namespace Oxide.Plugins
             if (TimeSpan.TryParseExact(raw.Trim(), @"h\:mm", CultureInfo.InvariantCulture, out ts))
                 return ts;
             return null;
+        }
+
+        private static DateTime? ParseDate(string raw)
+        {
+            if (string.IsNullOrWhiteSpace(raw)) return null;
+            return DateTime.TryParseExact(raw.Trim(), "yyyy-MM-dd", CultureInfo.InvariantCulture,
+                DateTimeStyles.None, out var d) ? d : (DateTime?)null;
         }
 
         private static readonly Dictionary<string, DayOfWeek> DayNames = new Dictionary<string, DayOfWeek>(StringComparer.OrdinalIgnoreCase)
@@ -502,35 +687,149 @@ namespace Oxide.Plugins
             { "sun", DayOfWeek.Sunday }, { "sunday", DayOfWeek.Sunday }
         };
 
-        private static HashSet<DayOfWeek> ParseDays(string raw)
+        private static DayOfWeek? ParseDay(string token)
         {
-            if (string.IsNullOrWhiteSpace(raw)) return null;
-            var s = raw.Trim();
+            if (string.IsNullOrWhiteSpace(token)) return null;
+            return DayNames.TryGetValue(token.Trim(), out var day) ? day : (DayOfWeek?)null;
+        }
 
-            if (s.Equals("daily", StringComparison.OrdinalIgnoreCase) ||
-                s.Equals("everyday", StringComparison.OrdinalIgnoreCase) ||
-                s.Equals("every day", StringComparison.OrdinalIgnoreCase))
-                return new HashSet<DayOfWeek>((DayOfWeek[])Enum.GetValues(typeof(DayOfWeek)));
-
-            if (s.Equals("weekdays", StringComparison.OrdinalIgnoreCase))
-                return new HashSet<DayOfWeek>
-                {
-                    DayOfWeek.Monday, DayOfWeek.Tuesday, DayOfWeek.Wednesday,
-                    DayOfWeek.Thursday, DayOfWeek.Friday
-                };
-
-            if (s.Equals("weekends", StringComparison.OrdinalIgnoreCase))
-                return new HashSet<DayOfWeek> { DayOfWeek.Saturday, DayOfWeek.Sunday };
-
+        private static HashSet<DayOfWeek> ParsedDays(ScheduleEntry e)
+        {
             var set = new HashSet<DayOfWeek>();
-            foreach (var part in s.Split(','))
+            if (e.Days == null) return set;
+            foreach (var token in e.Days)
             {
-                var token = part.Trim();
-                if (token.Length == 0) continue;
-                if (!DayNames.TryGetValue(token, out var day)) return null;
-                set.Add(day);
+                var day = ParseDay(token);
+                if (day != null) set.Add(day.Value);
             }
-            return set.Count == 0 ? null : set;
+            return set;
+        }
+
+        // Takes the tail of a chat command and turns it into a recurrence.
+        // Returns null on success, or a sentence explaining what it could not
+        // read. The menu writes the same fields directly; this exists so the
+        // console is not the poor relation.
+        private static string ApplyPattern(ScheduleEntry e, string[] tokens)
+        {
+            var list = new List<string>();
+            foreach (var t in tokens)
+                if (!string.IsNullOrWhiteSpace(t)) list.Add(t.Trim());
+
+            // Politeness words people will type anyway.
+            while (list.Count > 0 &&
+                   (list[0].Equals("the", StringComparison.OrdinalIgnoreCase) ||
+                    list[0].Equals("on", StringComparison.OrdinalIgnoreCase) &&
+                    list.Count > 1 && ParseDate(list[1]) == null && ParseDay(list[1]) != null))
+                list.RemoveAt(0);
+
+            if (list.Count == 0 || list[0].Equals("daily", StringComparison.OrdinalIgnoreCase))
+            {
+                e.Repeat = RepeatDaily;
+                return null;
+            }
+
+            var head = list[0].ToLowerInvariant();
+
+            if (head == "weekdays" || head == "weekends")
+            {
+                e.Repeat = RepeatWeekly;
+                e.Days = head == "weekdays"
+                    ? new List<string> { "Monday", "Tuesday", "Wednesday", "Thursday", "Friday" }
+                    : new List<string> { "Saturday", "Sunday" };
+                return null;
+            }
+
+            if (head == "day" && list.Count >= 2 && int.TryParse(list[1], out var dayOfMonth))
+            {
+                if (dayOfMonth < 1 || dayOfMonth > 31) return "Day of month must be between 1 and 31.";
+                e.Repeat = RepeatMonthlyDay;
+                e.DayOfMonth = dayOfMonth;
+                return null;
+            }
+
+            if (head == "every" && list.Count >= 2 && int.TryParse(list[1], out var interval))
+            {
+                if (interval < 1) return "The interval must be at least one day.";
+                e.Repeat = RepeatEveryNDays;
+                e.IntervalDays = interval;
+                e.AnchorDate = DateTime.Now.ToString("yyyy-MM-dd");
+                return null;
+            }
+
+            // "every Tuesday" -- drop the word and read the rest as days.
+            if (head == "every" && list.Count >= 2)
+            {
+                list.RemoveAt(0);
+                head = list[0].ToLowerInvariant();
+            }
+
+            if ((head == "once" || head == "on") && list.Count >= 2)
+            {
+                if (ParseDate(list[1]) == null) return $"\"{list[1]}\" is not a date. Use yyyy-MM-dd.";
+                e.Repeat = RepeatOnce;
+                e.Date = list[1].Trim();
+                return null;
+            }
+
+            foreach (var ordinal in Ordinals)
+            {
+                if (!string.Equals(ordinal, head, StringComparison.OrdinalIgnoreCase)) continue;
+                if (list.Count < 2) return $"\"{ordinal}\" needs a day, such as \"{ordinal.ToLowerInvariant()} Thursday\".";
+                var day = ParseDay(list[1]);
+                if (day == null) return $"\"{list[1]}\" is not a day name.";
+                e.Repeat = RepeatMonthlyWeekday;
+                e.Ordinal = ordinal;
+                e.Days = new List<string> { day.Value.ToString() };
+                return null;
+            }
+
+            // Otherwise: a list of weekday names, comma or space separated.
+            var days = new List<string>();
+            foreach (var token in string.Join(",", list.ToArray()).Split(','))
+            {
+                var t = token.Trim();
+                if (t.Length == 0) continue;
+                var day = ParseDay(t);
+                if (day == null) return $"\"{t}\" is not a day name, and not a pattern I recognise.";
+                days.Add(day.Value.ToString());
+            }
+            if (days.Count == 0) return "No days were given.";
+            e.Repeat = RepeatWeekly;
+            e.Days = days;
+            return null;
+        }
+
+        private static string Describe(ScheduleEntry e)
+        {
+            var kind = e.IsValidate ? "validate" : e.IsUpdate ? "update" : "restart";
+            return $"{kind} {DescribeRecurrence(e)} at {e.Time}";
+        }
+
+        private static string DescribeRecurrence(ScheduleEntry e)
+        {
+            switch (Normalise(e.Repeat))
+            {
+                case RepeatDaily: return "daily";
+                case RepeatWeekly: return "every " + DayList(e);
+                case RepeatMonthlyWeekday:
+                    return $"the {(e.Ordinal ?? "").ToLowerInvariant()} {DayList(e)} of the month";
+                case RepeatMonthlyDay: return $"day {e.DayOfMonth} of the month";
+                case RepeatEveryNDays:
+                    return e.IntervalDays == 1 ? "daily" : $"every {e.IntervalDays} days";
+                case RepeatOnce: return $"once on {e.Date}";
+                default: return e.Repeat;
+            }
+        }
+
+        private static string DayList(ScheduleEntry e)
+        {
+            // Monday first, which is how a schedule reads, rather than
+            // DayOfWeek's Sunday-first numbering.
+            var days = ParsedDays(e)
+                .OrderBy(d => ((int)d + 6) % 7)
+                .Select(d => d.ToString())
+                .ToArray();
+            return days.Length == 0 ? "(no days)" : string.Join(", ", days);
         }
 
         #endregion
@@ -633,6 +932,16 @@ namespace Oxide.Plugins
                     // twice, which is a duplicate restart, not a missed one.
                     PrintWarning($"Could not persist the fired-recently guard: {ex.Message}");
                 }
+            }
+
+            // A one-off has done the only thing it was for. Disabling it here
+            // rather than deleting it leaves a record of what ran and when,
+            // and lets an admin re-enable it rather than retype the date.
+            if (_countdownEntry != null && Normalise(_countdownEntry.Repeat) == RepeatOnce)
+            {
+                _countdownEntry.Enabled = false;
+                SaveConfig();
+                Puts($"One-off entry fired ({Describe(_countdownEntry)}); it has disabled itself.");
             }
 
             // Flags first, while a failure can still be reported and while the
@@ -1059,6 +1368,7 @@ namespace Oxide.Plugins
                 case "now": CmdNow(player, args); return;
                 case "cancel": CmdCancel(player); return;
                 case "add": CmdAdd(player, args); return;
+                case "set": case "edit": CmdSet(player, args); return;
                 case "remove": case "delete": CmdRemove(player, args); return;
                 case "enable": CmdToggle(player, args, true); return;
                 case "disable": CmdToggle(player, args, false); return;
@@ -1108,7 +1418,7 @@ namespace Oxide.Plugins
 
             if (best == null) return null;
             var kind = best.IsValidate ? "validate" : best.IsUpdate ? "update" : "restart";
-            return $"{kind} at {bestTarget:yyyy-MM-dd HH:mm}";
+            return $"{kind} at {bestTarget:ddd yyyy-MM-dd HH:mm} ({DescribeRecurrence(best)})";
         }
 
         // Answers the questions you would otherwise have to spend a real
@@ -1239,15 +1549,9 @@ namespace Oxide.Plugins
 
             var lines = new List<string>();
             for (var i = 0; i < _config.Restarts.Count; i++)
-            {
-                var e = _config.Restarts[i];
-                lines.Add($"restart {i}: {e.Time} {e.Days} {(e.Enabled ? "enabled" : "disabled")}");
-            }
+                lines.Add(DescribeRow("restart", i, _config.Restarts[i]));
             for (var i = 0; i < _config.Updates.Count; i++)
-            {
-                var e = _config.Updates[i];
-                lines.Add($"update {i}: {e.Time} {e.Days} {(e.Validate ? "validate " : "")}{(e.Enabled ? "enabled" : "disabled")}");
-            }
+                lines.Add(DescribeRow("update", i, _config.Updates[i]));
 
             if (lines.Count == 0)
             {
@@ -1255,6 +1559,110 @@ namespace Oxide.Plugins
                 return;
             }
             player.Reply(_config.General.ChatPrefix + string.Join("\n", lines.ToArray()));
+        }
+
+        private string DescribeRow(string list, int index, ScheduleEntry e)
+        {
+            var state = e.Enabled ? "enabled" : "disabled";
+            var problem = ValidationError(e);
+            var next = e.Enabled && problem == null ? NextOccurrence(e, DateTime.Now) : null;
+
+            var row = $"{list} {index}: {Describe(e)} [{state}]";
+            if (problem != null) return row + $" -- BROKEN: {problem}";
+            if (next != null) row += $" -- next {next.Value:ddd yyyy-MM-dd HH:mm}";
+            return row;
+        }
+
+        // hotwire set <restart|update> <index> <time|pattern|validate> <value...>
+        //
+        // "pattern" takes the same words as add, so anything you can create you
+        // can change without deleting and retyping it.
+        private void CmdSet(IPlayer player, string[] args)
+        {
+            if (!Allowed(player, PermEdit)) return;
+            if (args.Length < 5) { Reply(player, "UsageSet"); return; }
+
+            var list = ListFor(args[1]);
+            if (list == null) { Reply(player, "UsageSet"); return; }
+            if (!int.TryParse(args[2], out var index) || index < 0 || index >= list.Count)
+            {
+                Reply(player, "BadIndex", args[2]);
+                return;
+            }
+
+            var entry = list[index];
+            var field = args[3].ToLowerInvariant();
+            var rest = args.Skip(4).ToArray();
+
+            switch (field)
+            {
+                case "time":
+                    if (ParseTime(rest[0]) == null) { Reply(player, "BadTime", rest[0]); return; }
+                    entry.Time = rest[0].Trim();
+                    break;
+
+                case "pattern":
+                case "repeat":
+                case "days":
+                {
+                    // Work on a copy: a half-applied pattern would leave the
+                    // entry in a state nobody asked for.
+                    var draft = CopyOf(entry);
+                    var problem = ApplyPattern(draft, rest);
+                    if (problem != null) { Reply(player, "Raw", problem); return; }
+                    entry.Repeat = draft.Repeat;
+                    entry.Days = draft.Days;
+                    entry.Ordinal = draft.Ordinal;
+                    entry.DayOfMonth = draft.DayOfMonth;
+                    entry.IntervalDays = draft.IntervalDays;
+                    entry.AnchorDate = draft.AnchorDate;
+                    entry.Date = draft.Date;
+                    break;
+                }
+
+                case "validate":
+                {
+                    var update = entry as UpdateEntry;
+                    if (update == null) { Reply(player, "ValidateNotOnRestart"); return; }
+                    update.Validate = rest[0].Equals("true", StringComparison.OrdinalIgnoreCase)
+                                      || rest[0] == "1";
+                    break;
+                }
+
+                default:
+                    Reply(player, "UsageSet");
+                    return;
+            }
+
+            var stillBroken = ValidationError(entry);
+            if (stillBroken != null)
+            {
+                entry.Enabled = false;
+                Reply(player, "Raw", $"Saved, but the entry is now invalid and has been disabled: {stillBroken}");
+            }
+            else
+            {
+                Reply(player, "Raw", DescribeRow(args[1].ToLowerInvariant(), index, entry));
+            }
+
+            SaveConfig();
+            Puts($"{player.Name} edited {args[1]} {index}: {Describe(entry)}");
+        }
+
+        private static ScheduleEntry CopyOf(ScheduleEntry e)
+        {
+            return new ScheduleEntry
+            {
+                Time = e.Time,
+                Repeat = e.Repeat,
+                Days = e.Days == null ? new List<string>() : new List<string>(e.Days),
+                Ordinal = e.Ordinal,
+                DayOfMonth = e.DayOfMonth,
+                IntervalDays = e.IntervalDays,
+                AnchorDate = e.AnchorDate,
+                Date = e.Date,
+                Enabled = e.Enabled
+            };
         }
 
         private void CmdNow(IPlayer player, string[] args)
@@ -1305,17 +1713,26 @@ namespace Oxide.Plugins
             var time = args[2];
             if (ParseTime(time) == null) { Reply(player, "BadTime", time); return; }
 
-            var days = args.Length > 3 ? string.Join(",", args.Skip(3).ToArray()) : "Daily";
-            if (ParseDays(days) == null) { Reply(player, "BadDays", days); return; }
+            ScheduleEntry entry = kind == "restart"
+                ? new ScheduleEntry()
+                : new UpdateEntry { Validate = kind == "validate" };
+            entry.Time = time;
+            entry.Enabled = true;
 
-            if (kind == "restart")
-                _config.Restarts.Add(new ScheduleEntry { Time = time, Days = days, Enabled = true });
-            else
-                _config.Updates.Add(new UpdateEntry { Time = time, Days = days, Validate = kind == "validate", Enabled = true });
+            var problem = ApplyPattern(entry, args.Skip(3).ToArray());
+            if (problem != null) { Reply(player, "Raw", problem); return; }
 
+            problem = ValidationError(entry);
+            if (problem != null) { Reply(player, "Raw", problem); return; }
+
+            var listName = kind == "restart" ? "restart" : "update";
+            if (kind == "restart") _config.Restarts.Add(entry);
+            else _config.Updates.Add((UpdateEntry)entry);
+
+            var index = (kind == "restart" ? _config.Restarts.Count : _config.Updates.Count) - 1;
             SaveConfig();
-            Reply(player, "Added", kind, time, days);
-            Puts($"{player.Name} added {kind} {time} {days}.");
+            Reply(player, "Raw", "Added: " + DescribeRow(listName, index, entry));
+            Puts($"{player.Name} added {Describe(entry)}.");
         }
 
         private void CmdRemove(IPlayer player, string[] args)
@@ -1334,8 +1751,8 @@ namespace Oxide.Plugins
             var removed = list[index];
             list.RemoveAt(index);
             SaveConfig();
-            Reply(player, "Removed", args[1].ToLowerInvariant(), removed.Time, removed.Days);
-            Puts($"{player.Name} removed {args[1]} {index} ({removed.Time} {removed.Days}).");
+            Reply(player, "Raw", "Removed: " + Describe(removed));
+            Puts($"{player.Name} removed {args[1]} {index} ({Describe(removed)}).");
         }
 
         private void CmdToggle(IPlayer player, string[] args, bool enable)
@@ -1456,18 +1873,21 @@ namespace Oxide.Plugins
                 ["NothingToCancel"] = "Nothing is counting down.",
                 ["TooLateToCancel"] = "Too late -- players have already been kicked.",
                 ["BadTime"] = "\"{0}\" is not a valid time. Use HH:mm, such as 05:00.",
-                ["BadDays"] = "\"{0}\" is not a valid day list. Use Daily, Weekdays, Weekends, or Monday,Thursday.",
                 ["BadIndex"] = "\"{0}\" is not a valid index. Run: hotwire list",
-                ["Added"] = "Added {0} at {1} on {2}.",
-                ["Removed"] = "Removed {0} at {1} on {2}.",
+                ["Raw"] = "{0}",
                 ["Enabled"] = "Enabled {0} {1}.",
                 ["Disabled"] = "Disabled {0} {1}.",
 
+                ["ValidateNotOnRestart"] = "Only an update entry can validate. Remove it and add it as an update.",
                 ["Usage"] = "hotwire status | check | list | now [update|validate] [seconds] | cancel | " +
-                            "add <restart|update|validate> <HH:mm> [days] | remove <restart|update> <index> | " +
+                            "add <restart|update|validate> <HH:mm> [pattern] | set <restart|update> <index> " +
+                            "<time|pattern|validate> <value> | remove <restart|update> <index> | " +
                             "enable|disable <restart|update> <index>",
+                ["UsageSet"] = "hotwire set <restart|update> <index> <time|pattern|validate> <value>",
                 ["UsageNow"] = "hotwire now [update|validate] [seconds]",
-                ["UsageAdd"] = "hotwire add <restart|update|validate> <HH:mm> [days]",
+                ["UsageAdd"] = "hotwire add <restart|update|validate> <HH:mm> [pattern]. Patterns: daily | " +
+                               "weekdays | weekends | Mon,Thu | first Thursday | last Friday | day 15 | " +
+                               "every 2 days | once 2026-12-24",
                 ["UsageRemove"] = "hotwire remove <restart|update> <index>",
                 ["UsageToggle"] = "hotwire enable|disable <restart|update> <index>"
             }, this);

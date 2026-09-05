@@ -316,3 +316,49 @@ needed, and the plugin keeps compiling across Rust updates that rename things.
 The cost is that `server.Command` is a string, so a typo is not caught by the
 compiler either — but a typo in a four-letter word in one place is a smaller
 risk than a moving signature in a hot path.
+
+## ADR-0015 — Recurrence is stored as structured fields, not cron and not a phrase
+
+**Date:** 2026-09-05 · **Status:** ACCEPTED
+
+Schedules have to express more than "a time and some weekdays": daily, weekly,
+every Tuesday at 3am, the second Tuesday of the month, and — the one that
+actually matters for Rust — **the first Thursday of the month**, which is force
+wipe day and the most valuable update schedule this plugin can hold.
+
+Alternatives: a cron expression, or a richer human-readable string.
+
+**Cron** is compact and universal, and cannot express an ordinal weekday at
+all. Standard five-field cron has no syntax for "second Tuesday"; that requires
+Quartz's non-standard `#`. It is also opaque to a non-technical admin and
+awkward to render as an editable panel.
+
+**A richer string** (`"first Thursday"`, `"day 15"`, `"every 2 days"`) is the
+nicest thing to hand-edit and was a close call. It lost on the menu: a panel
+must parse the string and write it back, so somebody's hand-written phrasing
+gets silently rewritten on save, and error messages degrade to "I could not
+read that" rather than naming the field.
+
+Chosen: **explicit fields, with `Repeat` selecting which of them are read.**
+Every value validates on its own, an error names the exact field, and each
+field maps to one control in the menu.
+
+The string form is not lost — `ApplyPattern` accepts the same words on the
+console (`hotwire add update 20:00 first Thursday`) and writes the structured
+form. The terse input stays; the ambiguous storage does not.
+
+Three details settled rather than left to emerge:
+
+- **No `Fifth` ordinal.** Not every month has one. `Last` is what people mean.
+- **A `DayOfMonth` above 28 is skipped in short months, not clamped.** A
+  restart that silently moves is worse than one that does not happen. The
+  plugin warns at load when an entry can do this.
+- **`EveryNDays` stores an anchor date**, filled in on first validation, so
+  "every 2 days" is a fixed set of days rather than one that re-anchors on
+  every reload.
+
+The next-occurrence search walks forward a day at a time for up to 366 days and
+asks one predicate whether each date matches. Slower than per-mode arithmetic
+and much harder to get wrong: one predicate covers all six modes, a month
+without a 31st simply never matches, and there is no month- or year-boundary
+arithmetic to misplace.

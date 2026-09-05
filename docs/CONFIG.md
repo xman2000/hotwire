@@ -7,6 +7,12 @@ restarting the moment it is installed is a restarter that catches you out.
 The config stays hand-editable and always will. Chat commands are a
 convenience over the same file, never the only way in (ADR-0006).
 
+> **Upgrading to 0.3.0?** Schedule entries changed shape: `Days` is now a list
+> and there is a `Repeat` mode, so an entry written by 0.2.x is not read. The
+> old keys are ignored rather than throwing, so the plugin loads and your other
+> settings survive — but any schedule you had is gone and must be re-added.
+> `hotwire list` shows what you have.
+>
 > **Upgrading to 0.2.1?** Two announcement strings changed. Lang files are
 > only written once, so `oxide/lang/en/Hotwire.json` keeps whatever it already
 > had — delete it to pick up the new wording, or edit it in place. It is meant
@@ -28,29 +34,91 @@ convenience over the same file, never the only way in (ADR-0006).
 
 ## Restarts and Updates
 
-Two lists (ADR-0012). A restart relaunches the server; an update also writes
-a flag file the launcher acts on.
+Two lists (ADR-0012). A restart relaunches the server; an update also writes a
+flag file the launcher acts on.
 
 ```json
 "Restarts": [
-  { "Time (HH:mm, server local time)": "05:00", "Days": "Daily", "Enabled": true }
+  { "Time": "05:00", "Repeat": "Daily", "Enabled": true }
 ],
 "Updates": [
-  { "Time (HH:mm, server local time)": "05:00", "Days": "Thursday",
-    "Validate": false, "Enabled": true }
+  { "Time": "20:00", "Repeat": "MonthlyWeekday", "Ordinal": "First",
+    "Days": [ "Thursday" ], "Validate": false, "Enabled": true }
 ]
 ```
 
-| Field | Meaning |
-|---|---|
-| `Time` | `HH:mm`, 24-hour, **server local time**. |
-| `Days` | `Daily`, `Weekdays`, `Weekends`, or a comma list: `Monday,Thursday`. Short forms work: `Mon,Thu`. |
-| `Enabled` | Off means the entry is ignored entirely. |
-| `Validate` | Updates only. Adds `validate` to the steamcmd call, which re-checksums the whole install. Slow — six to eight minutes on a large one. Weekly at most, or after a crash. |
+That second entry is **the first Thursday of the month at 20:00** — Rust's
+force wipe day, and the reason monthly recurrence exists at all. It ships as
+the default update entry, disabled like everything else.
+
+### Fields
+
+| Field | Used by | Meaning |
+|---|---|---|
+| `Time` | all | `HH:mm`, 24-hour, **server local time** |
+| `Repeat` | all | one of the six modes below |
+| `Days` | Weekly, MonthlyWeekday | list of day names: `[ "Monday", "Thursday" ]` |
+| `Ordinal` | MonthlyWeekday | `First`, `Second`, `Third`, `Fourth`, `Last` |
+| `DayOfMonth` | MonthlyDay | 1–31 |
+| `IntervalDays` | EveryNDays | how many days between runs |
+| `AnchorDate` | EveryNDays | `yyyy-MM-dd`, the day the count starts from |
+| `Date` | Once | `yyyy-MM-dd` |
+| `Enabled` | all | off means the entry is ignored entirely |
+| `Validate` | Updates only | adds `validate` to steamcmd — slow, weekly at most |
+
+Only the fields the chosen `Repeat` needs are read. The others keep whatever
+they held, which is what lets you switch an entry from weekly to monthly and
+back without retyping it.
+
+### Repeat modes
+
+| Mode | Means | Example |
+|---|---|---|
+| `Daily` | every day | 05:00 daily |
+| `Weekly` | the listed weekdays | every Tuesday; Mon and Thu |
+| `MonthlyWeekday` | an ordinal weekday | the **first Thursday**; the last Friday |
+| `MonthlyDay` | a date in the month | day 1; day 15 |
+| `EveryNDays` | a fixed interval from an anchor | every other day |
+| `Once` | one specific date, then it disables itself | 2026-12-24 |
+
+**`Fifth` is deliberately not offered.** Not every month has a fifth Tuesday,
+so `Last` covers what people mean by it without the edge case.
+
+**A `DayOfMonth` above 28 is skipped in months that are too short**, not moved
+to the last day. A restart that silently shifts is worse than one that does not
+happen, and the plugin warns at load if you set one.
+
+**`EveryNDays` needs an anchor.** If `AnchorDate` is empty it is filled in with
+today's date and saved, so "every 2 days" means a fixed set of days rather than
+one that re-anchors every time the plugin reloads.
+
+### Creating them from chat
+
+Everything above is reachable from the console or in game, so you never have to
+hand-edit JSON unless you want to:
+
+```
+hotwire add restart 05:00                       daily
+hotwire add restart 05:00 weekdays
+hotwire add restart 03:00 Tue                   every Tuesday at 3am
+hotwire add restart 05:00 Mon,Thu
+hotwire add update  20:00 first Thursday        Rust force wipe day
+hotwire add update  04:00 last Friday
+hotwire add restart 05:00 day 15
+hotwire add restart 05:00 every 2 days
+hotwire add update  02:00 once 2026-12-24
+```
+
+`hotwire set` edits an entry in place, taking the same words:
+
+```
+hotwire set restart 0 time 06:00
+hotwire set update  0 pattern second Tuesday
+hotwire set update  0 validate true
+```
 
 **An entry that will not parse is disabled and reported, not guessed at.** A
-bad `Days` string disables that one entry and leaves the rest of the schedule
-running.
+bad entry disables itself and leaves the rest of the schedule running.
 
 **If a restart and an update fall at the same minute, the update wins.** An
 update entry is a restart entry that also writes a flag, so running it
