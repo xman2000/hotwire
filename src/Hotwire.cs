@@ -13,7 +13,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Hotwire", "xman2000", "0.8.2")]
+    [Info("Hotwire", "xman2000", "0.9.0")]
     [Description("Scheduled restarts and updates. Announces, counts down, writes a flag, quits.")]
     internal class Hotwire : CovalencePlugin
     {
@@ -230,8 +230,11 @@ namespace Oxide.Plugins
             [JsonProperty("Text colour, hex")]
             public string TextColor = "#FFFFFF";
 
-            [JsonProperty("Progress colour, hex (blank = inherit)")]
-            public string ProgressColor = "";
+            // Alert red, and the same red the server's other urgent bars
+            // already use, so it reads as part of the set rather than as a
+            // stray colour.
+            [JsonProperty("Bar fill colour, hex")]
+            public string ProgressColor = "#E74C3C";
 
             // A verified built-in path. assets/icons/clock.png does NOT exist
             // and logs "[FileSystem] Not Found" once per draw.
@@ -247,8 +250,20 @@ namespace Oxide.Plugins
             [JsonProperty("Icon colour, hex (blank = the progress colour)")]
             public string IconColor = "";
 
-            [JsonProperty("Bar drains as the countdown runs")]
-            public bool Drain = true;
+            // "Full" | "Fills" | "Drains".
+            //
+            // Full is the default because the bar exists to be noticed. A
+            // draining fill is loudest at the start and quietest at the moment
+            // the restart actually lands, which is backwards; a filling one is
+            // invisible for the first nine minutes of a ten-minute countdown.
+            // Full is a solid block of alert red the whole way, and the
+            // countdown text carries the time, which is what it is there for.
+            //
+            // Full uses bar type Timed: manual control of the fill, but it
+            // still self-deletes at TimeStamp, which Default does not, and a
+            // stuck bar on every player's screen is the worst failure here.
+            [JsonProperty("Fill style: Full, Fills or Drains")]
+            public string FillStyle = "Full";
 
             // AdvancedStatus positions bar text at Text_Offset_Horizontal and
             // falls back to its own config value when the key is absent, which
@@ -1299,9 +1314,10 @@ namespace Oxide.Plugins
         // here is the only way to control either.
         private Dictionary<string, object> BarParameters(int remaining)
         {
-            var progress = Hex(string.IsNullOrWhiteSpace(_config.StatusBar.ProgressColor)
-                ? _config.StatusBar.TextColor
-                : _config.StatusBar.ProgressColor);
+            var progress = Hex(_config.StatusBar.ProgressColor);
+            var style = (_config.StatusBar.FillStyle ?? "").Trim();
+            var fills = style.Equals("Fills", StringComparison.OrdinalIgnoreCase)
+                        || style.Equals("Drains", StringComparison.OrdinalIgnoreCase);
 
             var p = new Dictionary<string, object>
             {
@@ -1311,17 +1327,13 @@ namespace Oxide.Plugins
                 ["Category"] = _config.StatusBar.Category,
                 ["Order"] = _config.StatusBar.Order,
 
-                ["BarType"] = "TimeProgress",
+                ["BarType"] = fills ? "TimeProgress" : "Timed",
 
-                ["Text"] = Sentence(KindWord()),
+                ["Text"] = lang.GetMessage("BarLabel", this, null),
                 ["Text_Color"] = Hex(_config.StatusBar.TextColor),
                 ["Text_Offset_Horizontal"] = _config.StatusBar.TextIndent,
 
                 ["SubText"] = CountdownText(remaining),
-
-                // No Progress key: TimeProgress recomputes it every tick from
-                // the timestamps, so anything set here is overwritten at once.
-                ["Progress_Reverse"] = _config.StatusBar.Drain,
 
                 // Doubles, and checked as such -- an int or a float here is
                 // ignored in silence and the bar quietly becomes a plain one.
@@ -1329,11 +1341,23 @@ namespace Oxide.Plugins
                 ["TimeStamp"] = UnixAt(_countdownTarget)
             };
 
-            if (!string.IsNullOrWhiteSpace(_config.StatusBar.ProgressColor))
-                p["Progress_Color"] = progress;
+            p["Progress_Color"] = progress;
+
+            if (fills)
+            {
+                // TimeProgress recomputes Progress every tick from the
+                // timestamps, so a value set here would be overwritten at once.
+                p["Progress_Reverse"] = style.Equals("Drains", StringComparison.OrdinalIgnoreCase);
+            }
+            else
+            {
+                // Timed leaves Progress alone. A float: an int or a double here
+                // is ignored in silence and the bar renders empty.
+                p["Progress"] = 1f;
+            }
 
             p["Image_Color"] = string.IsNullOrWhiteSpace(_config.StatusBar.IconColor)
-                ? Hex(_config.StatusBar.TextColor)
+                ? progress
                 : Hex(_config.StatusBar.IconColor);
 
             // Sprite, then local file, then URL -- cheapest first. A URL is
@@ -2819,6 +2843,11 @@ namespace Oxide.Plugins
         {
             lang.RegisterMessages(new Dictionary<string, string>
             {
+                // The bar is a glance surface: players need to know the server
+                // is going down, not which flavour of going down it is. The
+                // chat announcements carry that distinction.
+                ["BarLabel"] = "Server Restart",
+
                 ["KindRestart"] = "restart",
                 ["KindUpdate"] = "update and restart",
                 ["KindValidate"] = "validate and restart",

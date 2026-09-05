@@ -7,6 +7,10 @@ restarting the moment it is installed is a restarter that catches you out.
 The config stays hand-editable and always will. Chat commands are a
 convenience over the same file, never the only way in (ADR-0006).
 
+> **Upgrading to 0.9.0?** `Bar drains as the countdown runs` is replaced by
+> `Fill style`, and the fill colour key was renamed and given a real default.
+> Delete the `Status bar` section to pick them up.
+>
 > **Upgrading to 0.8.0?** The `Status bar` section gained several keys and the
 > icon default changed to a sprite that exists. Delete the section from your
 > config, or the whole file, to pick the new defaults up.
@@ -219,12 +223,12 @@ replaced by the `Status bar` section below.
   "Order": 10,
   "Bar colour, hex (blank = inherit)": "",
   "Text colour, hex": "#FFFFFF",
-  "Progress colour, hex (blank = inherit)": "",
+  "Bar fill colour, hex": "#E74C3C",
   "Icon: built-in sprite path": "assets/icons/stopwatch.png",
   "Icon: local name in oxide/data/AdvancedStatus/Images": "",
   "Icon: URL (used only when the other two are blank)": "",
   "Icon colour, hex (blank = the progress colour)": "",
-  "Bar drains as the countdown runs": true,
+  "Fill style: Full, Fills or Drains": "Full",
   "Text left padding (pixels)": 5,
   "Countdown minimum width (characters)": 5,
   "Count seconds in the final minute": false
@@ -246,7 +250,24 @@ per-second countdown made every bar on screen blink.
 countdown. It is off because that is sixty redraws of every bar on the screen,
 and the chat announcements already carry the last minute.
 
-**Leave the colours blank unless you mean it.** Blank inherits AdvancedStatus's
+**The bar reads `Server Restart` on a solid block of alert red**, with the
+countdown on the right. It is a glance surface: a player needs to know the
+server is going down, not which flavour of going down it is — the chat
+announcements carry that. The label is a lang string, so change it in
+`oxide/lang/en/Hotwire.json`.
+
+**Fill style** is `Full` by default because the bar exists to be noticed.
+`Drains` is loudest at the start and quietest at the moment the restart
+actually lands, which is backwards. `Fills` is invisible for the first nine
+minutes of a ten-minute countdown. `Full` is solid the whole way and lets the
+countdown text carry the time.
+
+`Full` uses bar type `Timed` rather than `TimeProgress`: manual control of the
+fill, but it still deletes itself when the timestamp passes, which `Default`
+does not — and a stuck bar on every player's screen is the worst failure this
+integration has available to it.
+
+**Leave the frame colour blank unless you mean it.** Blank inherits AdvancedStatus's
 own frame, so the bar matches every other plugin's by construction — including
 after AdvancedStatus is retuned. Hex is normalised for you: bare hex without a
 `#` reaches CUI unparseable and renders the bar white.
