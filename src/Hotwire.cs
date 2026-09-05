@@ -13,7 +13,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Hotwire", "xman2000", "0.9.4")]
+    [Info("Hotwire", "xman2000", "0.9.5")]
     [Description("Scheduled restarts and updates. Announces, counts down, writes a flag, quits.")]
     internal class Hotwire : CovalencePlugin
     {
@@ -1776,8 +1776,8 @@ namespace Oxide.Plugins
 
                 Label(ui, MenuContent + ".header", 0.02, 0, 0.8, 1,
                       state.Editing
-                          ? $"Hotwire  /  Editing {state.List} {state.Index}"
-                          : "Hotwire  /  Schedule",
+                          ? $"Hotwire {Version}  /  Editing {state.List} {state.Index}"
+                          : $"Hotwire {Version}  /  Schedule",
                       15, ColText, TextAnchor.MiddleLeft);
 
                 Button(ui, MenuContent + ".header", 0.93, 0.15, 0.98, 0.85, "X", "hotwire.ui close", ColDanger);
@@ -2595,6 +2595,16 @@ namespace Oxide.Plugins
             lines.Add($"  next         : {next ?? "nothing scheduled"}");
             lines.Add($"  countdown    : starts {_config.Countdown.StartSeconds}s before, " +
                       $"{_config.Countdown.AnnounceAt.Count} announcements");
+
+            // Whether one is running RIGHT NOW, which is the first thing to
+            // establish when the status bar has not appeared: no countdown
+            // means no bar, and that is the schedule's problem, not the bar's.
+            if (_shuttingDown)
+                lines.Add("                 SHUTTING DOWN now");
+            else if (_countdownActive)
+                lines.Add($"                 RUNNING NOW: {KindWord()} in {FormatRemaining(RemainingSeconds())}");
+            else
+                lines.Add("                 not running");
             lines.Add($"  DST guard    : {_config.General.MinimumHoursBetweenSameEntry}h " +
                       $"({_lastFired.Count} entr{(_lastFired.Count == 1 ? "y" : "ies")} on record)");
 
