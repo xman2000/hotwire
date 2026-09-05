@@ -422,8 +422,17 @@ The fourth was `Ordinalise`, which turns 15 into "15th" for schedule
 descriptions and had drifted into the menu region because that is where it was
 first needed. Nothing about it is menu-related, and while it lived there this
 ADR's central promise was simply false: deleting the region would have broken
-`DescribeRecurrence`, which every `hotwire list` depends on. It now sits beside
-its caller.
+`DescribeRecurrence`, which every `hotwire list` depends on. It was moved out,
+and in 1.1.0 it was deleted outright: ADR-0020 replaced English ordinal
+suffixes with a translatable sentence, so nothing generates "15th" any more.
+
+**Re-verified 2026-09-05 after ADR-0020**, which touched most of the region.
+The three markers still stand and no new reference reaches in. `RepeatLabel`
+was made an instance method to read from lang; it lives inside the region and
+is used only there, so it goes when the region goes. `DayNameShort` lives
+outside and is used only inside — the mirror of the `Ordinalise` case, and
+harmless in a way that one was not: deleting the region leaves an unused
+private method, not a broken caller.
 
 **To delete this region:** remove `#region Admin menu` through its `#endregion`,
 then the three lines marked `ADR-0016`. Nothing else refers to it.
@@ -547,3 +556,52 @@ The backstop is the one place the launcher acts against an explicit
 instruction. It is justified by the safety envelope's own asymmetry: the
 project's whole premise is that a server which cannot come back is worse than
 one that comes back at an awkward moment.
+
+## ADR-0020 — Sentences are composed from lang keys, not concatenated in code
+
+**Date:** 2026-09-05 · **Status:** ACCEPTED
+
+Announcements were lang strings from the start (ADR-0004), but the schedule
+*descriptions* were not. `"the " + ordinal + " " + DayList(e) + " of the
+month"` produces correct English and untranslatable anything-else: word order
+differs between languages, and a key that only covers the frame around a
+hard-coded middle cannot be repaired by a translator.
+
+Chosen: **every string a player can see is a key, and every sentence takes its
+parts as `{0}` arguments.** Ordinals, weekday names, the kind of restart, the
+recurrence and the validation complaints are all keys in their own right. The
+weekday names in particular no longer come from `DayOfWeek.ToString()`, which
+is English on every server regardless of its culture.
+
+Two consequences worth stating, because both were bugs rather than
+inconveniences:
+
+**Arguments must be resolved per recipient, not once.** `Broadcast` translated
+its template for each player and then interpolated a word that had been
+resolved once in the server's language. A second `Broadcast` overload takes a
+factory that runs per recipient. The status bar's label and the kick reason had
+the same shape and are fixed the same way; the bar's parameter dictionary is
+now rebuilt per player rather than shared.
+
+**Code that finds a fault usually cannot translate it.** `ValidationError` and
+`ApplyPattern` are static and have no viewer. They return a `Problem` — a key
+and its arguments — and whoever displays it calls `Text()` with the reader's
+id. This is also what lets the same fault reach the console in the server's
+language and the panel in the player's.
+
+**Not converted: the `hotwire check` diagnostic dump.** It is a console tool
+for whoever runs the server, never seen in game, and its forty column-aligned
+fragments would make the lang file worse for nobody's benefit. The line is
+between prose a player reads and diagnostics an admin reads, and it is drawn
+deliberately rather than by exhaustion.
+
+The command grammar stays English on both sides of that line. `weekdays`,
+`first Thursday`, `once 2026-12-24` are things a person types, not things they
+read, and a parser that accepted translated tokens would accept a different
+language on every server. Only the complaint about a bad token is translated,
+and where a message lists the accepted words they arrive as an argument so the
+list cannot drift out of step with the parser.
+
+The lang file goes from 30 keys to 153. Lang files are written once and never
+rewritten, so upgrading servers keep their old file and fall back to English
+until they delete it — `docs/CONFIG.md` says so.

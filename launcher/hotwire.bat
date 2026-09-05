@@ -2,7 +2,7 @@
 setlocal EnableDelayedExpansion
 
 REM ==[ H O T W I R E ]===================================================
-REM  Version 1.0.0   2026-09-05
+REM  Version 1.1.0   2026-09-05
 REM  Built by xman2000 and Claude.  MIT License.
 REM
 REM  The launcher. Starts a Rust dedicated server, relaunches it when it

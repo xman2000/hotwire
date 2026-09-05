@@ -13,7 +13,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Hotwire", "xman2000", "1.0.1")]
+    [Info("Hotwire", "xman2000", "1.1.0")]
     [Description("Scheduled restarts and updates. Announces, counts down, writes a flag, quits.")]
     internal class Hotwire : CovalencePlugin
     {
@@ -501,7 +501,7 @@ namespace Oxide.Plugins
                      $"A new release schedules an announced update at {_config.Framework.UpdateAt}.");
             }
 
-            var next = DescribeNext();
+            var next = DescribeNext(null);
             Puts(next == null ? "No schedule is enabled. Nothing will restart." : $"Next: {next}");
         }
 
@@ -559,13 +559,33 @@ namespace Oxide.Plugins
             return repeat ?? "";
         }
 
-        // Returns null when the entry is usable, or a sentence saying what is
-        // wrong with it. Both the console and the menu show this, so it has to
-        // read like something a person wrote rather than a field name.
-        private static string ValidationError(ScheduleEntry e)
+        // What is wrong with an entry, carried as a lang key plus its
+        // arguments rather than as a finished sentence: the code that finds
+        // the fault is static and has no viewer to translate for, and the
+        // console, the chat commands and the panel all show the same fault to
+        // different audiences. Whoever displays it calls Text().
+        private sealed class Problem
+        {
+            public readonly string Key;
+            public readonly object[] Args;
+
+            public Problem(string key, params object[] args)
+            {
+                Key = key;
+                Args = args;
+            }
+        }
+
+        private string Text(Problem problem, string user)
+        {
+            return problem == null ? null : T(problem.Key, user, problem.Args);
+        }
+
+        // Returns null when the entry is usable.
+        private static Problem ValidationError(ScheduleEntry e)
         {
             if (ParseTime(e.Time) == null)
-                return $"\"{e.Time}\" is not a valid time. Use HH:mm, such as 05:00.";
+                return new Problem("ErrBadTime", e.Time);
 
             switch (Normalize(e.Repeat))
             {
@@ -573,29 +593,27 @@ namespace Oxide.Plugins
                     return null;
 
                 case RepeatWeekly:
-                    return ParsedDays(e).Count == 0 ? "No days are selected." : null;
+                    return ParsedDays(e).Count == 0 ? new Problem("ErrNoDays") : null;
 
                 case RepeatMonthlyWeekday:
-                    if (ParsedDays(e).Count == 0) return "No weekday is selected.";
+                    if (ParsedDays(e).Count == 0) return new Problem("ErrNoWeekday");
                     foreach (var o in Ordinals)
                         if (string.Equals(o, e.Ordinal, StringComparison.OrdinalIgnoreCase)) return null;
-                    return $"\"{e.Ordinal}\" is not one of First, Second, Third, Fourth, Last.";
+                    return new Problem("ErrBadOrdinal", e.Ordinal, string.Join(", ", Ordinals));
 
                 case RepeatMonthlyDay:
                     return e.DayOfMonth < 1 || e.DayOfMonth > 31
-                        ? "Day of month must be between 1 and 31."
+                        ? new Problem("ErrDayOfMonth")
                         : null;
 
                 case RepeatEveryNDays:
-                    return e.IntervalDays < 1 ? "The interval must be at least one day." : null;
+                    return e.IntervalDays < 1 ? new Problem("ErrInterval") : null;
 
                 case RepeatOnce:
-                    return ParseDate(e.Date) == null
-                        ? $"\"{e.Date}\" is not a valid date. Use yyyy-MM-dd."
-                        : null;
+                    return ParseDate(e.Date) == null ? new Problem("ErrBadDate", e.Date) : null;
 
                 default:
-                    return $"\"{e.Repeat}\" is not a repeat mode. Use one of: {string.Join(", ", RepeatModes)}.";
+                    return new Problem("ErrBadRepeat", e.Repeat, string.Join(", ", RepeatModes));
             }
         }
 
@@ -611,7 +629,7 @@ namespace Oxide.Plugins
                 {
                     e.Enabled = false;
                     changed = true;
-                    PrintError($"Schedule entry at {e.Time}: {problem} Entry DISABLED.");
+                    PrintError($"Schedule entry at {e.Time}: {Text(problem, null)} Entry DISABLED.");
                     continue;
                 }
 
@@ -855,10 +873,14 @@ namespace Oxide.Plugins
         }
 
         // Takes the tail of a chat command and turns it into a recurrence.
-        // Returns null on success, or a sentence explaining what it could not
-        // read. The menu writes the same fields directly; this exists so the
-        // console is not the poor relation.
-        private static string ApplyPattern(ScheduleEntry e, string[] tokens)
+        // Returns null on success, or the Problem it could not read past. The
+        // menu writes the same fields directly; this exists so the console is
+        // not the poor relation.
+        //
+        // The tokens it accepts stay English -- "weekdays", "first Thursday" --
+        // because they are a command grammar, not prose. Only the complaint
+        // about them is translated.
+        private static Problem ApplyPattern(ScheduleEntry e, string[] tokens)
         {
             var list = new List<string>();
             foreach (var t in tokens)
@@ -890,7 +912,7 @@ namespace Oxide.Plugins
 
             if (head == "day" && list.Count >= 2 && int.TryParse(list[1], out var dayOfMonth))
             {
-                if (dayOfMonth < 1 || dayOfMonth > 31) return "Day of month must be between 1 and 31.";
+                if (dayOfMonth < 1 || dayOfMonth > 31) return new Problem("ErrDayOfMonth");
                 e.Repeat = RepeatMonthlyDay;
                 e.DayOfMonth = dayOfMonth;
                 return null;
@@ -898,7 +920,7 @@ namespace Oxide.Plugins
 
             if (head == "every" && list.Count >= 2 && int.TryParse(list[1], out var interval))
             {
-                if (interval < 1) return "The interval must be at least one day.";
+                if (interval < 1) return new Problem("ErrInterval");
                 e.Repeat = RepeatEveryNDays;
                 e.IntervalDays = interval;
                 e.AnchorDate = DateTime.Now.ToString("yyyy-MM-dd");
@@ -914,7 +936,7 @@ namespace Oxide.Plugins
 
             if ((head == "once" || head == "on") && list.Count >= 2)
             {
-                if (ParseDate(list[1]) == null) return $"\"{list[1]}\" is not a date. Use yyyy-MM-dd.";
+                if (ParseDate(list[1]) == null) return new Problem("ErrBadDate", list[1]);
                 e.Repeat = RepeatOnce;
                 e.Date = list[1].Trim();
                 return null;
@@ -923,9 +945,9 @@ namespace Oxide.Plugins
             foreach (var ordinal in Ordinals)
             {
                 if (!string.Equals(ordinal, head, StringComparison.OrdinalIgnoreCase)) continue;
-                if (list.Count < 2) return $"\"{ordinal}\" needs a day, such as \"{ordinal.ToLowerInvariant()} Thursday\".";
+                if (list.Count < 2) return new Problem("ErrOrdinalNeedsDay", ordinal, ordinal.ToLowerInvariant());
                 var day = ParseDay(list[1]);
-                if (day == null) return $"\"{list[1]}\" is not a day name.";
+                if (day == null) return new Problem("ErrNotADay", list[1]);
                 e.Repeat = RepeatMonthlyWeekday;
                 e.Ordinal = ordinal;
                 e.Days = new List<string> { day.Value.ToString() };
@@ -939,23 +961,37 @@ namespace Oxide.Plugins
                 var t = token.Trim();
                 if (t.Length == 0) continue;
                 var day = ParseDay(t);
-                if (day == null) return $"\"{t}\" is not a day name, and not a pattern I recognize.";
+                if (day == null) return new Problem("ErrNotADayOrPattern", t);
                 days.Add(day.Value.ToString());
             }
-            if (days.Count == 0) return "No days were given.";
+            if (days.Count == 0) return new Problem("ErrNoDaysGiven");
             e.Repeat = RepeatWeekly;
             e.Days = days;
             return null;
         }
 
-        // Every time this plugin prints gets its zone and DST state attached.
+        // Every phrase the plugin shows a player is composed from lang keys,
+        // not built by concatenating English. That is a uMod requirement, and
+        // it is also what stops "the first Thursday of the month" being
+        // untranslatable: word order differs between languages, so the ordinal
+        // and the weekday are format arguments rather than glued together.
+        //
+        // Each of these takes the viewer's id so a translated server can show
+        // two players different languages. Pass null for console output.
+        private string T(string key, string user, params object[] args)
+        {
+            var message = lang.GetMessage(key, this, user);
+            return args.Length == 0 ? message : string.Format(message, args);
+        }
+
+        // The zone and DST state, attached to every time the plugin prints.
         // The schedule is local wall-clock (ADR-0013), so "05:00" means a
-        // different absolute moment either side of a DST change -- and an admin
+        // different absolute moment either side of a DST change, and an admin
         // reading "next Sunday 05:00" deserves to know which 05:00 that is.
         //
         // Computed for the moment being displayed, not for now: a date in
         // November can be standard time while today is still daylight time.
-        private static string ZoneSuffix(DateTime when)
+        private string ZoneSuffix(DateTime when, string user)
         {
             try
             {
@@ -966,49 +1002,20 @@ namespace Oxide.Plugins
                 var abs = offset.Duration();
                 var name = dst ? tz.DaylightName : tz.StandardName;
                 if (string.IsNullOrWhiteSpace(name)) name = tz.Id;
-                return $"{name} (UTC{sign}{abs.Hours:00}:{abs.Minutes:00}{(dst ? ", DST" : "")})";
+                var utc = $"{sign}{abs.Hours:00}:{abs.Minutes:00}";
+                return T(dst ? "ZoneDst" : "Zone", user, name, utc);
             }
             catch
             {
                 // Some Mono builds have thin zone data. Saying nothing beats
                 // saying something wrong about what time it is.
-                return "server local time";
+                return T("ZoneUnknown", user);
             }
-        }
-
-        private static string Stamp(DateTime when)
-        {
-            return when.ToString("ddd dd MMM yyyy HH:mm", CultureInfo.InvariantCulture) + " " + ZoneSuffix(when);
-        }
-
-        // "in 4 minutes", "today at 11:10", "tomorrow at 05:00", "Saturday at
-        // 11:10". The panel is read at a glance, and an absolute date answers a
-        // question nobody asked: "next Saturday 5 September 2026" for something
-        // four minutes away is technically true and actively misleading.
-        private static string Friendly(DateTime when)
-        {
-            var now = DateTime.Now;
-            var span = when - now;
-
-            if (span.TotalSeconds <= 0) return "now";
-            if (span.TotalSeconds < 60) return "in less than a minute";
-            if (span.TotalMinutes < 60)
-            {
-                var minutes = WholeMinutes((int)span.TotalSeconds);
-                return minutes == 1 ? "in 1 minute" : $"in {minutes} minutes";
-            }
-
-            var at = when.ToString("HH:mm", CultureInfo.InvariantCulture);
-            if (when.Date == now.Date) return $"today at {at}";
-            if (when.Date == now.Date.AddDays(1)) return $"tomorrow at {at}";
-            if ((when.Date - now.Date).TotalDays < 7)
-                return $"{when.ToString("dddd", CultureInfo.InvariantCulture)} at {at}";
-            return $"{when.ToString("ddd d MMM", CultureInfo.InvariantCulture)} at {at}";
         }
 
         // Just the offset. The full zone name is three lines of wrapped text in
-        // a panel row and the summary line already carries it.
-        private static string ZoneShort(DateTime when)
+        // a panel row, and the summary line already carries it.
+        private string ZoneShort(DateTime when, string user)
         {
             try
             {
@@ -1016,18 +1023,45 @@ namespace Oxide.Plugins
                 var offset = tz.GetUtcOffset(when);
                 var sign = offset < TimeSpan.Zero ? "-" : "+";
                 var abs = offset.Duration();
-                return $"UTC{sign}{abs.Hours:00}:{abs.Minutes:00}" +
-                       (tz.IsDaylightSavingTime(when) ? " DST" : "");
+                var utc = $"{sign}{abs.Hours:00}:{abs.Minutes:00}";
+                return T(tz.IsDaylightSavingTime(when) ? "ZoneShortDst" : "ZoneShort", user, utc);
             }
             catch
             {
-                return "local";
+                return T("ZoneShortUnknown", user);
             }
         }
 
-        private static string ShortStamp(DateTime when)
+        private string Stamp(DateTime when, string user)
         {
-            return when.ToString("ddd dd MMM HH:mm", CultureInfo.InvariantCulture) + " " + ZoneSuffix(when);
+            return T("Stamp", user,
+                     when.ToString("ddd dd MMM yyyy HH:mm", CultureInfo.InvariantCulture),
+                     ZoneSuffix(when, user));
+        }
+
+        // "in 4 minutes", "today at 11:10", "tomorrow at 05:00", "Saturday at
+        // 11:10". The panel is read at a glance, and an absolute date answers a
+        // question nobody asked: "next Saturday 5 September 2026" for something
+        // four minutes away is technically true and actively misleading.
+        private string Friendly(DateTime when, string user)
+        {
+            var now = DateTime.Now;
+            var span = when - now;
+
+            if (span.TotalSeconds <= 0) return T("WhenNow", user);
+            if (span.TotalSeconds < 60) return T("WhenUnderMinute", user);
+            if (span.TotalMinutes < 60)
+            {
+                var minutes = WholeMinutes((int)span.TotalSeconds);
+                return T(minutes == 1 ? "WhenInMinute" : "WhenInMinutes", user, minutes);
+            }
+
+            var at = when.ToString("HH:mm", CultureInfo.InvariantCulture);
+            if (when.Date == now.Date) return T("WhenToday", user, at);
+            if (when.Date == now.Date.AddDays(1)) return T("WhenTomorrow", user, at);
+            if ((when.Date - now.Date).TotalDays < 7)
+                return T("WhenAt", user, DayName(when.DayOfWeek, user), at);
+            return T("WhenAt", user, when.ToString("ddd d MMM", CultureInfo.InvariantCulture), at);
         }
 
         // True when a DST transition falls between the two moments, which is
@@ -1038,52 +1072,64 @@ namespace Oxide.Plugins
             catch { return false; }
         }
 
-        private static string Describe(ScheduleEntry e)
+        // Weekday names come from lang rather than from DayOfWeek.ToString(),
+        // which is always English regardless of the server's culture.
+        private string DayName(DayOfWeek day, string user)
         {
-            var kind = e.IsValidate ? "validate" : e.IsUpdate ? "update" : "restart";
-            return $"{kind} {DescribeRecurrence(e)} at {e.Time}";
+            return T("Day" + day, user);
         }
 
-        private static string DescribeRecurrence(ScheduleEntry e)
+        private string DayNameShort(DayOfWeek day, string user)
+        {
+            return T("DayShort" + day, user);
+        }
+
+        private string Describe(ScheduleEntry e, string user)
+        {
+            var kind = T(e.IsValidate ? "KindValidate" : e.IsUpdate ? "KindUpdate" : "KindRestart", user);
+            return T("EntryDescription", user, kind, DescribeRecurrence(e, user), e.Time);
+        }
+
+        private string DescribeRecurrence(ScheduleEntry e, string user)
         {
             switch (Normalize(e.Repeat))
             {
-                case RepeatDaily: return "daily";
-                case RepeatWeekly: return "every " + DayList(e);
+                case RepeatDaily:
+                    return T("RecurDaily", user);
+                case RepeatWeekly:
+                    return T("RecurWeekly", user, DayList(e, user));
                 case RepeatMonthlyWeekday:
-                    return $"the {(e.Ordinal ?? "").ToLowerInvariant()} {DayList(e)} of the month";
-                case RepeatMonthlyDay: return $"the {Ordinalise(e.DayOfMonth)} of the month";
+                    return T("RecurMonthlyWeekday", user, OrdinalWord(e.Ordinal, user), DayList(e, user));
+                case RepeatMonthlyDay:
+                    return T("RecurMonthlyDay", user, e.DayOfMonth);
                 case RepeatEveryNDays:
-                    return e.IntervalDays == 1 ? "daily" : $"every {e.IntervalDays} days";
-                case RepeatOnce: return $"once on {e.Date}";
-                default: return e.Repeat;
+                    return e.IntervalDays == 1
+                        ? T("RecurDaily", user)
+                        : T("RecurEveryNDays", user, e.IntervalDays);
+                case RepeatOnce:
+                    return T("RecurOnce", user, e.Date);
+                default:
+                    return e.Repeat;
             }
         }
 
-        // Lives here, beside its only caller, rather than in the menu region.
-        // It was in the menu region, which quietly made that region impossible
-        // to delete -- see ADR-0016.
-        private static string Ordinalise(int day)
+        private string OrdinalWord(string ordinal, string user)
         {
-            if (day >= 11 && day <= 13) return day + "th";
-            switch (day % 10)
-            {
-                case 1: return day + "st";
-                case 2: return day + "nd";
-                case 3: return day + "rd";
-                default: return day + "th";
-            }
+            foreach (var known in Ordinals)
+                if (string.Equals(known, ordinal, StringComparison.OrdinalIgnoreCase))
+                    return T("Ordinal" + known, user);
+            return ordinal ?? "";
         }
 
-        private static string DayList(ScheduleEntry e)
+        private string DayList(ScheduleEntry e, string user)
         {
             // Monday first, which is how a schedule reads, rather than
             // DayOfWeek's Sunday-first numbering.
             var days = ParsedDays(e)
                 .OrderBy(d => ((int)d + 6) % 7)
-                .Select(d => d.ToString())
+                .Select(d => DayName(d, user))
                 .ToArray();
-            return days.Length == 0 ? "(no days)" : string.Join(", ", days);
+            return days.Length == 0 ? T("DayListEmpty", user) : string.Join(", ", days);
         }
 
         #endregion
@@ -1110,8 +1156,8 @@ namespace Oxide.Plugins
             // first tick repeats the opening announcement a second later.
             foreach (var point in _config.Countdown.AnnounceAt)
                 if (point >= remaining) _announced.Add(point);
-            Puts($"Countdown started: {KindWord()} in {remaining}s (entry {key}).");
-            Broadcast("CountdownStart", KindWord(), FormatRemaining(remaining));
+            Puts($"Countdown started: {KindWord(null)} in {remaining}s (entry {key}).");
+            Broadcast("CountdownStart", u => new object[] { KindWord(u), FormatRemaining(remaining) });
 
             ShowBars();
 
@@ -1144,7 +1190,7 @@ namespace Oxide.Plugins
             {
                 if (remaining > point) continue;
                 if (!_announced.Add(point)) continue;
-                Broadcast("CountdownTick", KindWord(), FormatRemaining(remaining));
+                Broadcast("CountdownTick", u => new object[] { KindWord(u), FormatRemaining(remaining) });
                 break;
             }
         }
@@ -1214,7 +1260,7 @@ namespace Oxide.Plugins
             {
                 _countdownEntry.Enabled = false;
                 SaveConfig();
-                Puts($"One-off entry fired ({Describe(_countdownEntry)}); it has disabled itself.");
+                Puts($"One-off entry fired ({Describe(_countdownEntry, null)}); it has disabled itself.");
             }
 
             // Flags first, while a failure can still be reported and while the
@@ -1223,9 +1269,8 @@ namespace Oxide.Plugins
             if (_countdownIsUpdate)
                 WriteFlags(_countdownIsValidate);
 
-            Broadcast("Now", KindWord());
+            Broadcast("Now", u => new object[] { KindWord(u) });
 
-            var reason = lang.GetMessage("KickReason", this, null);
             var kicked = 0;
             foreach (var p in players.Connected.ToArray())
             {
@@ -1234,7 +1279,7 @@ namespace Oxide.Plugins
                 if (p == null || !p.IsConnected) continue;
                 try
                 {
-                    p.Kick(reason);
+                    p.Kick(T("KickReason", p.Id));
                     kicked++;
                 }
                 catch (Exception ex)
@@ -1324,10 +1369,15 @@ namespace Oxide.Plugins
             }
         }
 
-        private string KindWord()
+        // Takes the viewer because it is dropped into a message that is
+        // itself translated per player -- a server-language kind word inside a
+        // German sentence is exactly the half-translation the lang API exists
+        // to prevent. Pass null for console output.
+        private string KindWord(string user)
         {
-            var key = _countdownIsValidate ? "KindValidate" : _countdownIsUpdate ? "KindUpdate" : "KindRestart";
-            return lang.GetMessage(key, this, null);
+            return T(_countdownIsValidate ? "KindValidate"
+                   : _countdownIsUpdate ? "KindUpdate"
+                   : "KindRestart", user);
         }
 
         // Rounded UP, and that is the whole point.
@@ -1459,7 +1509,7 @@ namespace Oxide.Plugins
         // seconds on the bar for the whole countdown, and its short strings hit
         // the SubText rect under-allocation described above. Rendering SubText
         // here is the only way to control either.
-        private Dictionary<string, object> BarParameters(int remaining)
+        private Dictionary<string, object> BarParameters(int remaining, string user)
         {
             var progress = Hex(_config.StatusBar.ProgressColor);
             var style = (_config.StatusBar.FillStyle ?? "").Trim();
@@ -1476,7 +1526,7 @@ namespace Oxide.Plugins
 
                 ["BarType"] = fills ? "TimeProgress" : "Timed",
 
-                ["Text"] = lang.GetMessage("BarLabel", this, null),
+                ["Text"] = T("BarLabel", user),
                 ["Text_Color"] = Hex(_config.StatusBar.TextColor),
                 ["Text_Offset_Horizontal"] = _config.StatusBar.TextIndent,
 
@@ -1533,12 +1583,14 @@ namespace Oxide.Plugins
             _lastSubText = CountdownText(remaining);
             try
             {
-                var parameters = BarParameters(remaining);
                 foreach (var player in players.Connected.ToArray())
                 {
                     if (player == null || !player.IsConnected) continue;
+                    // Rebuilt per player rather than once: the label is a lang
+                    // string, and one dictionary shared across everyone would
+                    // show the server's language to a player who reads another.
                     // The string overload, so nothing here needs a BasePlayer.
-                    AdvancedStatus.Call("CreateBar", player.Id, parameters);
+                    AdvancedStatus.Call("CreateBar", player.Id, BarParameters(remaining, player.Id));
                 }
             }
             catch (Exception ex)
@@ -1552,7 +1604,7 @@ namespace Oxide.Plugins
             if (!StatusAvailable() || player == null || !player.IsConnected) return;
             try
             {
-                AdvancedStatus.Call("CreateBar", player.Id, BarParameters(RemainingSeconds()));
+                AdvancedStatus.Call("CreateBar", player.Id, BarParameters(RemainingSeconds(), player.Id));
             }
             catch (Exception ex)
             {
@@ -1678,7 +1730,9 @@ namespace Oxide.Plugins
 
                 _oneShotTarget = target;
                 _oneShotValidate = _config.Framework.Validate;
-                _oneShotReason = $"framework {latest}";
+                // The version only. The word around it is a lang string,
+                // added when the line is rendered for a particular reader.
+                _oneShotReason = latest;
 
                 Puts($"Framework {latest} is available (installed {installed}). " +
                      $"An announced update is scheduled for {target:yyyy-MM-dd HH:mm}.");
@@ -1863,8 +1917,8 @@ namespace Oxide.Plugins
 
                 Label(ui, MenuContent + ".header", 0.02, 0, 0.8, 1,
                       state.Editing
-                          ? $"Hotwire {Version}  /  Editing {state.List} {state.Index}"
-                          : $"Hotwire {Version}  /  Schedule",
+                          ? T("MenuTitleEditing", player.Id, Version, state.List, state.Index)
+                          : T("MenuTitleList", player.Id, Version),
                       15, ColText, TextAnchor.MiddleLeft);
 
                 Button(ui, MenuContent + ".header", 0.93, 0.15, 0.98, 0.85, "X", "hotwire.ui close", ColDanger);
@@ -1883,10 +1937,11 @@ namespace Oxide.Plugins
                     }, MenuContent, MenuContent + ".live");
 
                     Label(ui, MenuContent + ".live", 0.02, 0, 0.72, 1,
-                          $"COUNTING DOWN  --  {KindWord()} in {FormatRemaining(RemainingSeconds())}",
+                          T("MenuCountingDown", player.Id, KindWord(player.Id),
+                            FormatRemaining(RemainingSeconds())),
                           14, ColText, TextAnchor.MiddleLeft);
                     Button(ui, MenuContent + ".live", 0.74, 0.15, 0.98, 0.85,
-                           "Cancel the restart", "hotwire.ui cancelcountdown", ColButton);
+                           T("MenuCancel", player.Id), "hotwire.ui cancelcountdown", ColButton);
 
                     top = 0.79;
                 }
@@ -1917,7 +1972,7 @@ namespace Oxide.Plugins
 
             if (rows.Count == 0)
                 Label(ui, MenuContent, 0.04, 0.75, 0.96, 0.85,
-                      "Nothing scheduled. Add a restart or an update below.", 14, ColMuted, TextAnchor.MiddleLeft);
+                      T("MenuNothingScheduled", player.Id), 14, ColMuted, TextAnchor.MiddleLeft);
 
             // One fewer visible row when the countdown banner is up.
             var shown = Math.Min(rows.Count, top > 0.85 ? 9 : 8);
@@ -1939,36 +1994,40 @@ namespace Oxide.Plugins
                 var problem = ValidationError(entry);
                 var next = entry.Enabled && problem == null ? NextOccurrence(entry, DateTime.Now) : null;
                 var detail = problem != null
-                    ? "BROKEN: " + problem
+                    ? T("MenuBroken", player.Id, Text(problem, player.Id))
                     : next != null
-                        ? Friendly(next.Value) +
-                          (OffsetChangesBetween(DateTime.Now, next.Value) ? "   (clocks change before then)" : "")
-                        : entry.Enabled ? "No occurrence in the next year" : "Disabled";
+                        ? Friendly(next.Value, player.Id) +
+                          (OffsetChangesBetween(DateTime.Now, next.Value)
+                              ? "   " + T("MenuClocksChangeShort", player.Id)
+                              : "")
+                        : T(entry.Enabled ? "MenuNoOccurrenceShort" : "MenuDisabled", player.Id);
 
                 Label(ui, MenuContent + ".row" + i, 0.02, 0.45, 0.62, 0.98,
-                      Sentence(Describe(entry)), 13, ColText, TextAnchor.MiddleLeft);
+                      Sentence(Describe(entry, player.Id)), 13, ColText, TextAnchor.MiddleLeft);
                 Label(ui, MenuContent + ".row" + i, 0.02, 0.05, 0.62, 0.5, detail, 11,
                       problem != null ? "0.85 0.45 0.40 1.00" : ColMuted, TextAnchor.MiddleLeft);
 
                 Button(ui, MenuContent + ".row" + i, 0.63, 0.15, 0.75, 0.85,
-                       entry.Enabled ? "ON" : "OFF",
+                       T(entry.Enabled ? "MenuOn" : "MenuOff", player.Id),
                        $"hotwire.ui toggle {listName} {index}",
                        entry.Enabled ? ColOn : ColOff);
                 Button(ui, MenuContent + ".row" + i, 0.76, 0.15, 0.87, 0.85,
-                       "Edit", $"hotwire.ui edit {listName} {index}", ColButton);
+                       T("MenuEdit", player.Id), $"hotwire.ui edit {listName} {index}", ColButton);
                 Button(ui, MenuContent + ".row" + i, 0.88, 0.15, 0.98, 0.85,
-                       "Delete", $"hotwire.ui delete {listName} {index}", ColDanger);
+                       T("MenuDelete", player.Id), $"hotwire.ui delete {listName} {index}", ColDanger);
             }
 
             if (rows.Count > shown)
                 Label(ui, MenuContent, 0.04, 0.11, 0.96, 0.16,
-                      $"...and {rows.Count - shown} more. Use \"hotwire list\" to see them all.",
+                      T("MenuMoreRows", player.Id, rows.Count - shown),
                       11, ColMuted, TextAnchor.MiddleLeft);
 
-            Button(ui, MenuContent, 0.02, 0.02, 0.26, 0.09, "+ Restart", "hotwire.ui add restart", ColButton);
-            Button(ui, MenuContent, 0.27, 0.02, 0.51, 0.09, "+ Update", "hotwire.ui add update", ColButton);
+            Button(ui, MenuContent, 0.02, 0.02, 0.26, 0.09, T("MenuAddRestart", player.Id),
+                   "hotwire.ui add restart", ColButton);
+            Button(ui, MenuContent, 0.27, 0.02, 0.51, 0.09, T("MenuAddUpdate", player.Id),
+                   "hotwire.ui add update", ColButton);
             Label(ui, MenuContent, 0.54, 0.02, 0.98, 0.09,
-                  "New entries start disabled. Turn one ON when it is right.",
+                  T("MenuAddHint", player.Id),
                   11, ColMuted, TextAnchor.MiddleRight);
         }
 
@@ -1995,22 +2054,26 @@ namespace Oxide.Plugins
             // with "5:0" in a field that must parse.
             // Coarse and fine steps in one row, so any hour is at most four
             // clicks away instead of twelve.
-            Label(ui, MenuContent, 0.04, y, 0.20, y + h, "Time", 13, ColMuted, TextAnchor.MiddleLeft);
-            Button(ui, MenuContent, 0.21, y, 0.27, y + h, "-6h", $"{prefix} time {target} -360", ColButton);
-            Button(ui, MenuContent, 0.275, y, 0.335, y + h, "-1h", $"{prefix} time {target} -60", ColButton);
-            Button(ui, MenuContent, 0.34, y, 0.40, y + h, "-15m", $"{prefix} time {target} -15", ColButton);
-            Button(ui, MenuContent, 0.405, y, 0.465, y + h, "-5m", $"{prefix} time {target} -5", ColButton);
+            var uh = T("UnitHourShort", player.Id);
+            var um = T("UnitMinuteShort", player.Id);
+            Label(ui, MenuContent, 0.04, y, 0.20, y + h, T("MenuTime", player.Id), 13, ColMuted, TextAnchor.MiddleLeft);
+            Button(ui, MenuContent, 0.21, y, 0.27, y + h, "-6" + uh, $"{prefix} time {target} -360", ColButton);
+            Button(ui, MenuContent, 0.275, y, 0.335, y + h, "-1" + uh, $"{prefix} time {target} -60", ColButton);
+            Button(ui, MenuContent, 0.34, y, 0.40, y + h, "-15" + um, $"{prefix} time {target} -15", ColButton);
+            Button(ui, MenuContent, 0.405, y, 0.465, y + h, "-5" + um, $"{prefix} time {target} -5", ColButton);
             Label(ui, MenuContent, 0.47, y, 0.60, y + h, entry.Time, 17, ColText, TextAnchor.MiddleCenter);
-            Button(ui, MenuContent, 0.605, y, 0.665, y + h, "+5m", $"{prefix} time {target} 5", ColButton);
-            Button(ui, MenuContent, 0.67, y, 0.73, y + h, "+15m", $"{prefix} time {target} 15", ColButton);
-            Button(ui, MenuContent, 0.735, y, 0.795, y + h, "+1h", $"{prefix} time {target} 60", ColButton);
-            Button(ui, MenuContent, 0.80, y, 0.86, y + h, "+6h", $"{prefix} time {target} 360", ColButton);
-            Label(ui, MenuContent, 0.87, y, 0.99, y + h, ZoneShort(DateTime.Now), 11, ColMuted, TextAnchor.MiddleLeft);
+            Button(ui, MenuContent, 0.605, y, 0.665, y + h, "+5" + um, $"{prefix} time {target} 5", ColButton);
+            Button(ui, MenuContent, 0.67, y, 0.73, y + h, "+15" + um, $"{prefix} time {target} 15", ColButton);
+            Button(ui, MenuContent, 0.735, y, 0.795, y + h, "+1" + uh, $"{prefix} time {target} 60", ColButton);
+            Button(ui, MenuContent, 0.80, y, 0.86, y + h, "+6" + uh, $"{prefix} time {target} 360", ColButton);
+            Label(ui, MenuContent, 0.87, y, 0.99, y + h, ZoneShort(DateTime.Now, player.Id), 11, ColMuted, TextAnchor.MiddleLeft);
 
             y -= h + gap;
-            Label(ui, MenuContent, 0.04, y, 0.24, y + h, "Repeat", 13, ColMuted, TextAnchor.MiddleLeft);
+            Label(ui, MenuContent, 0.04, y, 0.24, y + h, T("MenuRepeat", player.Id), 13, ColMuted,
+                  TextAnchor.MiddleLeft);
             Button(ui, MenuContent, 0.25, y, 0.32, y + h, "<", $"{prefix} repeat {target} -1", ColButton);
-            Label(ui, MenuContent, 0.33, y, 0.63, y + h, RepeatLabel(mode), 14, ColText, TextAnchor.MiddleCenter);
+            Label(ui, MenuContent, 0.33, y, 0.63, y + h, RepeatLabel(mode, player.Id), 14, ColText,
+                  TextAnchor.MiddleCenter);
             Button(ui, MenuContent, 0.64, y, 0.71, y + h, ">", $"{prefix} repeat {target} 1", ColButton);
 
             y -= h + gap;
@@ -2024,12 +2087,13 @@ namespace Oxide.Plugins
                     DayOfWeek.Friday, DayOfWeek.Saturday, DayOfWeek.Sunday
                 };
                 Label(ui, MenuContent, 0.04, y, 0.24, y + h,
-                      mode == RepeatWeekly ? "Days" : "Weekday", 13, ColMuted, TextAnchor.MiddleLeft);
+                      T(mode == RepeatWeekly ? "MenuDays" : "MenuWeekday", player.Id), 13, ColMuted,
+                      TextAnchor.MiddleLeft);
                 for (var i = 0; i < order.Length; i++)
                 {
                     var x0 = 0.25 + i * 0.098;
                     Button(ui, MenuContent, x0, y, x0 + 0.09, y + h,
-                           order[i].ToString().Substring(0, 3),
+                           DayNameShort(order[i], player.Id),
                            $"{prefix} day {target} {order[i]}",
                            selected.Contains(order[i]) ? ColOn : ColButton);
                 }
@@ -2038,11 +2102,12 @@ namespace Oxide.Plugins
 
             if (mode == RepeatMonthlyWeekday)
             {
-                Label(ui, MenuContent, 0.04, y, 0.24, y + h, "Which", 13, ColMuted, TextAnchor.MiddleLeft);
+                Label(ui, MenuContent, 0.04, y, 0.24, y + h, T("MenuWhich", player.Id), 13, ColMuted,
+                      TextAnchor.MiddleLeft);
                 for (var i = 0; i < Ordinals.Length; i++)
                 {
                     var x0 = 0.25 + i * 0.138;
-                    Button(ui, MenuContent, x0, y, x0 + 0.13, y + h, Ordinals[i],
+                    Button(ui, MenuContent, x0, y, x0 + 0.13, y + h, OrdinalWord(Ordinals[i], player.Id),
                            $"{prefix} ordinal {target} {Ordinals[i]}",
                            string.Equals(Ordinals[i], entry.Ordinal, StringComparison.OrdinalIgnoreCase)
                                ? ColOn : ColButton);
@@ -2052,31 +2117,39 @@ namespace Oxide.Plugins
 
             if (mode == RepeatMonthlyDay)
             {
-                Label(ui, MenuContent, 0.04, y, 0.24, y + h, "Day of month", 13, ColMuted, TextAnchor.MiddleLeft);
-                Button(ui, MenuContent, 0.25, y, 0.31, y + h, "-7d", $"{prefix} dom {target} -7", ColButton);
-                Button(ui, MenuContent, 0.315, y, 0.375, y + h, "-1d", $"{prefix} dom {target} -1", ColButton);
+                var ud = T("UnitDayShort", player.Id);
+                Label(ui, MenuContent, 0.04, y, 0.24, y + h, T("MenuDayOfMonth", player.Id), 13, ColMuted,
+                      TextAnchor.MiddleLeft);
+                Button(ui, MenuContent, 0.25, y, 0.31, y + h, "-7" + ud, $"{prefix} dom {target} -7", ColButton);
+                Button(ui, MenuContent, 0.315, y, 0.375, y + h, "-1" + ud, $"{prefix} dom {target} -1", ColButton);
                 Label(ui, MenuContent, 0.38, y, 0.47, y + h,
-                      "the " + Ordinalise(entry.DayOfMonth), 15, ColText, TextAnchor.MiddleCenter);
-                Button(ui, MenuContent, 0.475, y, 0.535, y + h, "+1d", $"{prefix} dom {target} 1", ColButton);
-                Button(ui, MenuContent, 0.54, y, 0.60, y + h, "+7d", $"{prefix} dom {target} 7", ColButton);
+                      T("MenuDayOfMonthValue", player.Id, entry.DayOfMonth), 15, ColText, TextAnchor.MiddleCenter);
+                Button(ui, MenuContent, 0.475, y, 0.535, y + h, "+1" + ud, $"{prefix} dom {target} 1", ColButton);
+                Button(ui, MenuContent, 0.54, y, 0.60, y + h, "+7" + ud, $"{prefix} dom {target} 7", ColButton);
                 if (entry.DayOfMonth > 28)
                     Label(ui, MenuContent, 0.62, y, 0.98, y + h,
-                          "Skipped in months this short.", 11, "0.85 0.65 0.40 1.00", TextAnchor.MiddleLeft);
+                          T("MenuShortMonthWarning", player.Id), 11, "0.85 0.65 0.40 1.00",
+                          TextAnchor.MiddleLeft);
                 y -= h + gap;
             }
 
             if (mode == RepeatEveryNDays)
             {
-                Label(ui, MenuContent, 0.04, y, 0.24, y + h, "Every", 13, ColMuted, TextAnchor.MiddleLeft);
-                Button(ui, MenuContent, 0.25, y, 0.31, y + h, "-7d", $"{prefix} interval {target} -7", ColButton);
-                Button(ui, MenuContent, 0.315, y, 0.375, y + h, "-1d", $"{prefix} interval {target} -1", ColButton);
+                var un = T("UnitDayShort", player.Id);
+                Label(ui, MenuContent, 0.04, y, 0.24, y + h, T("MenuEvery", player.Id), 13, ColMuted,
+                      TextAnchor.MiddleLeft);
+                Button(ui, MenuContent, 0.25, y, 0.31, y + h, "-7" + un, $"{prefix} interval {target} -7", ColButton);
+                Button(ui, MenuContent, 0.315, y, 0.375, y + h, "-1" + un, $"{prefix} interval {target} -1", ColButton);
                 Label(ui, MenuContent, 0.38, y, 0.50, y + h,
-                      entry.IntervalDays == 1 ? "1 day" : entry.IntervalDays + " days",
+                      T(entry.IntervalDays == 1 ? "MenuOneDay" : "MenuNDays", player.Id, entry.IntervalDays),
                       15, ColText, TextAnchor.MiddleCenter);
-                Button(ui, MenuContent, 0.505, y, 0.565, y + h, "+1d", $"{prefix} interval {target} 1", ColButton);
-                Button(ui, MenuContent, 0.57, y, 0.63, y + h, "+7d", $"{prefix} interval {target} 7", ColButton);
+                Button(ui, MenuContent, 0.505, y, 0.565, y + h, "+1" + un, $"{prefix} interval {target} 1", ColButton);
+                Button(ui, MenuContent, 0.57, y, 0.63, y + h, "+7" + un, $"{prefix} interval {target} 7", ColButton);
                 Label(ui, MenuContent, 0.65, y, 0.98, y + h,
-                      "counting from " + (string.IsNullOrWhiteSpace(entry.AnchorDate) ? "today" : entry.AnchorDate),
+                      T("MenuCountingFrom", player.Id,
+                        string.IsNullOrWhiteSpace(entry.AnchorDate)
+                            ? T("MenuToday", player.Id)
+                            : entry.AnchorDate),
                       11, ColMuted, TextAnchor.MiddleLeft);
                 y -= h + gap;
             }
@@ -2089,25 +2162,29 @@ namespace Oxide.Plugins
                 // and the day clamps to whatever the target month actually has.
                 var picked = ParseDate(entry.Date) ?? DateTime.Now.Date.AddDays(1);
 
-                Label(ui, MenuContent, 0.04, y, 0.20, y + h, "Date", 13, ColMuted, TextAnchor.MiddleLeft);
+                var udd = T("UnitDayShort", player.Id);
+                var umo = T("UnitMonthShort", player.Id);
+                var uy = T("UnitYearShort", player.Id);
+                Label(ui, MenuContent, 0.04, y, 0.20, y + h, T("MenuDate", player.Id), 13, ColMuted, TextAnchor.MiddleLeft);
 
-                Button(ui, MenuContent, 0.21, y, 0.26, y + h, "-1d", $"{prefix} dateday {target} -1", ColButton);
+                Button(ui, MenuContent, 0.21, y, 0.26, y + h, "-1" + udd, $"{prefix} dateday {target} -1", ColButton);
                 Label(ui, MenuContent, 0.265, y, 0.335, y + h, picked.Day.ToString("00"), 16, ColText, TextAnchor.MiddleCenter);
-                Button(ui, MenuContent, 0.34, y, 0.39, y + h, "+1d", $"{prefix} dateday {target} 1", ColButton);
+                Button(ui, MenuContent, 0.34, y, 0.39, y + h, "+1" + udd, $"{prefix} dateday {target} 1", ColButton);
 
                 // "mo", not "M". Capital M for month is a date-format
                 // convention borrowed from strftime, and the only reason it
                 // exists is that lower-case m was already taken by minutes in
                 // a machine-readable string. Nothing on a button should ask
-                // someone to know that.
-                Button(ui, MenuContent, 0.42, y, 0.47, y + h, "-1mo", $"{prefix} datemonth {target} -1", ColButton);
+                // someone to know that. It is UnitMonthShort in lang, so a
+                // translator can pick whatever two characters work for them.
+                Button(ui, MenuContent, 0.42, y, 0.47, y + h, "-1" + umo, $"{prefix} datemonth {target} -1", ColButton);
                 Label(ui, MenuContent, 0.475, y, 0.595, y + h,
                       picked.ToString("MMMM", CultureInfo.InvariantCulture), 15, ColText, TextAnchor.MiddleCenter);
-                Button(ui, MenuContent, 0.60, y, 0.65, y + h, "+1mo", $"{prefix} datemonth {target} 1", ColButton);
+                Button(ui, MenuContent, 0.60, y, 0.65, y + h, "+1" + umo, $"{prefix} datemonth {target} 1", ColButton);
 
-                Button(ui, MenuContent, 0.68, y, 0.73, y + h, "-1y", $"{prefix} dateyear {target} -1", ColButton);
+                Button(ui, MenuContent, 0.68, y, 0.73, y + h, "-1" + uy, $"{prefix} dateyear {target} -1", ColButton);
                 Label(ui, MenuContent, 0.735, y, 0.825, y + h, picked.Year.ToString(), 15, ColText, TextAnchor.MiddleCenter);
-                Button(ui, MenuContent, 0.83, y, 0.88, y + h, "+1y", $"{prefix} dateyear {target} 1", ColButton);
+                Button(ui, MenuContent, 0.83, y, 0.88, y + h, "+1" + uy, $"{prefix} dateyear {target} 1", ColButton);
 
                 // Its own row. Drawing it into a half-height band left the
                 // next control sitting on top of it, which is how "Saturday"
@@ -2122,16 +2199,18 @@ namespace Oxide.Plugins
             if (entry is UpdateEntry)
             {
                 var update = (UpdateEntry)entry;
-                Label(ui, MenuContent, 0.04, y, 0.24, y + h, "Validate", 13, ColMuted, TextAnchor.MiddleLeft);
-                Button(ui, MenuContent, 0.25, y, 0.40, y + h, update.Validate ? "ON" : "OFF",
+                Label(ui, MenuContent, 0.04, y, 0.24, y + h, T("MenuValidate", player.Id), 13, ColMuted,
+                      TextAnchor.MiddleLeft);
+                Button(ui, MenuContent, 0.25, y, 0.40, y + h, T(update.Validate ? "MenuOn" : "MenuOff", player.Id),
                        $"{prefix} validate {target}", update.Validate ? ColOn : ColButton);
                 Label(ui, MenuContent, 0.42, y, 0.98, y + h,
-                      "Re-checksums the whole install. Slow.", 11, ColMuted, TextAnchor.MiddleLeft);
+                      T("MenuValidateHint", player.Id), 11, ColMuted, TextAnchor.MiddleLeft);
                 y -= h + gap;
             }
 
-            Label(ui, MenuContent, 0.04, y, 0.24, y + h, "Enabled", 13, ColMuted, TextAnchor.MiddleLeft);
-            Button(ui, MenuContent, 0.25, y, 0.40, y + h, entry.Enabled ? "ON" : "OFF",
+            Label(ui, MenuContent, 0.04, y, 0.24, y + h, T("MenuEnabled", player.Id), 13, ColMuted,
+                  TextAnchor.MiddleLeft);
+            Button(ui, MenuContent, 0.25, y, 0.40, y + h, T(entry.Enabled ? "MenuOn" : "MenuOff", player.Id),
                    $"{prefix} toggle {target}", entry.Enabled ? ColOn : ColOff);
 
             // The answer first, in the largest text on the panel, because
@@ -2145,43 +2224,45 @@ namespace Oxide.Plugins
             // reassurance that let a disabled entry restart a server (ADR-0017).
             var next = problem == null && entry.Enabled ? NextOccurrence(entry, DateTime.Now) : null;
 
-            var kind = entry.IsValidate ? "validate and restart"
-                     : entry.IsUpdate ? "update and restart"
-                     : "restart";
-            var recurrence = Normalize(entry.Repeat) == RepeatOnce ? "once" : DescribeRecurrence(entry);
-            var rule = Sentence($"{kind} {recurrence}");
+            var kind = T(entry.IsValidate ? "KindValidate"
+                       : entry.IsUpdate ? "KindUpdate"
+                       : "KindRestart", player.Id);
+            var recurrence = Normalize(entry.Repeat) == RepeatOnce
+                ? T("RecurOnceShort", player.Id)
+                : DescribeRecurrence(entry, player.Id);
+            var rule = Sentence(T("MenuRule", player.Id, kind, recurrence));
 
             string headline, detail, headlineColor;
             if (problem != null)
             {
-                headline = "Not valid";
-                detail = problem;
+                headline = T("MenuNotValid", player.Id);
+                detail = Text(problem, player.Id);
                 headlineColor = "0.85 0.45 0.40 1.00";
             }
             else if (!entry.Enabled)
             {
                 var would = NextOccurrence(entry, DateTime.Now);
-                headline = "Disabled";
+                headline = T("MenuDisabled", player.Id);
                 detail = would == null
-                    ? rule + ". It has no occurrence in the next year."
-                    : $"{rule}. Would run {Friendly(would.Value)}, on " +
-                      would.Value.ToString("dddd d MMMM yyyy 'at' HH:mm", CultureInfo.InvariantCulture) + ".";
+                    ? T("MenuNoOccurrence", player.Id, rule)
+                    : T("MenuWouldRun", player.Id, rule, Friendly(would.Value, player.Id),
+                        would.Value.ToString("dddd d MMMM yyyy 'at' HH:mm", CultureInfo.InvariantCulture));
                 headlineColor = "0.85 0.65 0.40 1.00";
             }
             else if (next == null)
             {
-                headline = "Never runs";
-                detail = rule + ". It has no occurrence in the next year.";
+                headline = T("MenuNeverRuns", player.Id);
+                detail = T("MenuNoOccurrence", player.Id, rule);
                 headlineColor = "0.85 0.65 0.40 1.00";
             }
             else
             {
-                headline = Sentence(Friendly(next.Value));
-                detail = $"{rule}. " +
-                         next.Value.ToString("dddd d MMMM yyyy 'at' HH:mm", CultureInfo.InvariantCulture) +
-                         ", " + ZoneSuffix(next.Value) + ".";
+                headline = Sentence(Friendly(next.Value, player.Id));
+                detail = T("MenuNextDetail", player.Id, rule,
+                           next.Value.ToString("dddd d MMMM yyyy 'at' HH:mm", CultureInfo.InvariantCulture),
+                           ZoneSuffix(next.Value, player.Id));
                 if (OffsetChangesBetween(DateTime.Now, next.Value))
-                    detail += "  The clocks change before then.";
+                    detail += "  " + T("ClocksChange", player.Id);
                 headlineColor = ColText;
             }
 
@@ -2209,23 +2290,17 @@ namespace Oxide.Plugins
             Label(ui, MenuContent + ".summary", 0.02, 0.08, 0.98, 0.44, detail, 11,
                   ColMuted, TextAnchor.MiddleLeft);
 
-            Button(ui, MenuContent, 0.02, 0.02, 0.20, 0.09, "< Back", "hotwire.ui list", ColButton);
-            Button(ui, MenuContent, 0.80, 0.02, 0.98, 0.09, "Delete",
+            Button(ui, MenuContent, 0.02, 0.02, 0.20, 0.09, T("MenuBack", player.Id),
+                   "hotwire.ui list", ColButton);
+            Button(ui, MenuContent, 0.80, 0.02, 0.98, 0.09, T("MenuDelete", player.Id),
                    $"{prefix} delete {target}", ColDanger);
         }
 
-        private static string RepeatLabel(string mode)
+        private string RepeatLabel(string mode, string user)
         {
-            switch (mode)
-            {
-                case RepeatDaily: return "Every day";
-                case RepeatWeekly: return "Certain weekdays";
-                case RepeatMonthlyWeekday: return "Nth weekday of the month";
-                case RepeatMonthlyDay: return "A date each month";
-                case RepeatEveryNDays: return "Every N days";
-                case RepeatOnce: return "Once, on a date";
-                default: return mode;
-            }
+            foreach (var known in RepeatModes)
+                if (known == mode) return T("Mode" + known, user);
+            return mode;
         }
 
         private static void Label(CuiElementContainer ui, string parent, double x0, double y0, double x1,
@@ -2334,7 +2409,7 @@ namespace Oxide.Plugins
                         var problem = ValidationError(entry);
                         if (problem != null)
                         {
-                            Reply(player, "Raw", "Cannot enable: " + problem);
+                            Reply(player, "CannotEnable", Text(problem, player.Id));
                             return;
                         }
                     }
@@ -2342,7 +2417,7 @@ namespace Oxide.Plugins
                     break;
 
                 case "delete":
-                    Puts($"{player.Name} deleted {listName} {index} ({Describe(entry)}) from the menu.");
+                    Puts($"{player.Name} deleted {listName} {index} ({Describe(entry, null)}) from the menu.");
                     list.RemoveAt(index);
                     _menus[player.Id].Index = -1;
                     break;
@@ -2477,7 +2552,7 @@ namespace Oxide.Plugins
             if (entry.Enabled && ValidationError(entry) != null)
             {
                 entry.Enabled = false;
-                Reply(player, "Raw", "That change made the entry invalid, so it has been disabled.");
+                Reply(player, "EditMadeInvalid");
             }
 
             // The entry a live countdown came from was just disabled, deleted
@@ -2528,16 +2603,16 @@ namespace Oxide.Plugins
 
             if (_countdownActive)
             {
-                Reply(player, "StatusCounting", KindWord(), FormatRemaining(RemainingSeconds()));
+                Reply(player, "StatusCounting", KindWord(player.Id), FormatRemaining(RemainingSeconds()));
                 return;
             }
 
-            var next = DescribeNext();
+            var next = DescribeNext(player.Id);
             if (next == null) Reply(player, "StatusNone");
             else Reply(player, "StatusNext", next);
         }
 
-        private string DescribeNext()
+        private string DescribeNext(string user)
         {
             var now = DateTime.Now;
             ScheduleEntry best = null;
@@ -2557,13 +2632,14 @@ namespace Oxide.Plugins
 
             if (_oneShotTarget != null && _oneShotTarget.Value < bestTarget)
             {
-                var word = _oneShotValidate ? "validate" : "update";
-                return $"{word} once -- next {Stamp(_oneShotTarget.Value)} ({_oneShotReason})";
+                var word = T(_oneShotValidate ? "KindValidateShort" : "KindUpdateShort", user);
+                return T("NextOneShot", user, word, Stamp(_oneShotTarget.Value, user),
+                         T("ReasonFramework", user, _oneShotReason));
             }
 
             if (best == null) return null;
-            var kind = best.IsValidate ? "validate" : best.IsUpdate ? "update" : "restart";
-            return $"{kind} {DescribeRecurrence(best)} -- next {Stamp(bestTarget)}";
+            var kind = T(best.IsValidate ? "KindValidate" : best.IsUpdate ? "KindUpdate" : "KindRestart", user);
+            return T("NextEntry", user, kind, DescribeRecurrence(best, user), Stamp(bestTarget, user));
         }
 
         // Answers the questions you would otherwise have to spend a real
@@ -2655,7 +2731,7 @@ namespace Oxide.Plugins
                 }
             }
 
-            lines.Add($"  clock        : {Stamp(DateTime.Now)}");
+            lines.Add($"  clock        : {Stamp(DateTime.Now, player.Id)}");
             try
             {
                 if (!TimeZoneInfo.Local.SupportsDaylightSavingTime)
@@ -2666,7 +2742,7 @@ namespace Oxide.Plugins
             var enabled = AllEntries().Count(e => e.Enabled);
             var total = _config.Restarts.Count + _config.Updates.Count;
             lines.Add($"  schedule     : {enabled} enabled of {total}");
-            var next = DescribeNext();
+            var next = DescribeNext(player.Id);
             lines.Add($"  next         : {next ?? "nothing scheduled"}");
             lines.Add($"  countdown    : starts {_config.Countdown.StartSeconds}s before, " +
                       $"{_config.Countdown.AnnounceAt.Count} announcements");
@@ -2677,7 +2753,7 @@ namespace Oxide.Plugins
             if (_shuttingDown)
                 lines.Add("                 SHUTTING DOWN now");
             else if (_countdownActive)
-                lines.Add($"                 RUNNING NOW: {KindWord()} in {FormatRemaining(RemainingSeconds())}");
+                lines.Add($"                 RUNNING NOW: {KindWord(null)} in {FormatRemaining(RemainingSeconds())}");
             else
                 lines.Add("                 not running");
             lines.Add($"  DST guard    : {_config.General.MinimumHoursBetweenSameEntry}h " +
@@ -2712,9 +2788,9 @@ namespace Oxide.Plugins
 
             var lines = new List<string>();
             for (var i = 0; i < _config.Restarts.Count; i++)
-                lines.Add(DescribeRow("restart", i, _config.Restarts[i]));
+                lines.Add(DescribeRow("restart", i, _config.Restarts[i], player.Id));
             for (var i = 0; i < _config.Updates.Count; i++)
-                lines.Add(DescribeRow("update", i, _config.Updates[i]));
+                lines.Add(DescribeRow("update", i, _config.Updates[i], player.Id));
 
             if (lines.Count == 0)
             {
@@ -2724,19 +2800,19 @@ namespace Oxide.Plugins
             player.Reply(Prefix() + string.Join("\n", lines.ToArray()));
         }
 
-        private string DescribeRow(string list, int index, ScheduleEntry e)
+        private string DescribeRow(string list, int index, ScheduleEntry e, string user)
         {
-            var state = e.Enabled ? "enabled" : "disabled";
+            var state = T(e.Enabled ? "StateEnabled" : "StateDisabled", user);
             var problem = ValidationError(e);
             var next = e.Enabled && problem == null ? NextOccurrence(e, DateTime.Now) : null;
 
-            var row = $"{list} {index}: {Describe(e)} [{state}]";
-            if (problem != null) return row + $" -- BROKEN: {problem}";
+            var row = $"{list} {index}: {Describe(e, user)} [{state}]";
+            if (problem != null) return row + " -- " + T("MenuBroken", user, Text(problem, user));
             if (next != null)
             {
-                row += $" -- next {Stamp(next.Value)}";
+                row += $" -- next {Stamp(next.Value, user)}";
                 if (OffsetChangesBetween(DateTime.Now, next.Value))
-                    row += " (a DST change falls before then)";
+                    row += " (" + T("MenuClocksChangeShort", user) + ")";
             }
             return row;
         }
@@ -2777,7 +2853,7 @@ namespace Oxide.Plugins
                     // entry in a state nobody asked for.
                     var draft = CopyOf(entry);
                     var problem = ApplyPattern(draft, rest);
-                    if (problem != null) { Reply(player, "Raw", problem); return; }
+                    if (problem != null) { Reply(player, "Raw", Text(problem, player.Id)); return; }
                     entry.Repeat = draft.Repeat;
                     entry.Days = draft.Days;
                     entry.Ordinal = draft.Ordinal;
@@ -2809,15 +2885,15 @@ namespace Oxide.Plugins
             if (stillBroken != null)
             {
                 entry.Enabled = false;
-                Reply(player, "Raw", $"Saved, but the entry is now invalid and has been disabled: {stillBroken}");
+                Reply(player, "SavedButInvalid", Text(stillBroken, player.Id));
             }
             else
             {
-                Reply(player, "Raw", DescribeRow(args[1].ToLowerInvariant(), index, entry));
+                Reply(player, "Raw", DescribeRow(args[1].ToLowerInvariant(), index, entry, player.Id));
             }
 
             SaveConfig();
-            Puts($"{player.Name} edited {args[1]} {index}: {Describe(entry)}");
+            Puts($"{player.Name} edited {args[1]} {index}: {Describe(entry, null)}");
         }
 
         private static ScheduleEntry CopyOf(ScheduleEntry e)
@@ -2860,7 +2936,7 @@ namespace Oxide.Plugins
             // does not apply to it and does not learn from it. An admin asking
             // for a restart means it.
             BeginCountdown(DateTime.Now.AddSeconds(seconds), isUpdate, isValidate, null, "");
-            Puts($"Manual {KindWord()} started by {player.Name} ({seconds}s).");
+            Puts($"Manual {KindWord(null)} started by {player.Name} ({seconds}s).");
         }
 
         private void CmdCancel(IPlayer player)
@@ -2891,10 +2967,10 @@ namespace Oxide.Plugins
             entry.Enabled = true;
 
             var problem = ApplyPattern(entry, args.Skip(3).ToArray());
-            if (problem != null) { Reply(player, "Raw", problem); return; }
+            if (problem != null) { Reply(player, "Raw", Text(problem, player.Id)); return; }
 
             problem = ValidationError(entry);
-            if (problem != null) { Reply(player, "Raw", problem); return; }
+            if (problem != null) { Reply(player, "Raw", Text(problem, player.Id)); return; }
 
             var listName = kind == "restart" ? "restart" : "update";
             if (kind == "restart") _config.Restarts.Add(entry);
@@ -2902,8 +2978,8 @@ namespace Oxide.Plugins
 
             var index = (kind == "restart" ? _config.Restarts.Count : _config.Updates.Count) - 1;
             SaveConfig();
-            Reply(player, "Raw", "Added: " + DescribeRow(listName, index, entry));
-            Puts($"{player.Name} added {Describe(entry)}.");
+            Reply(player, "Added", DescribeRow(listName, index, entry, player.Id));
+            Puts($"{player.Name} added {Describe(entry, null)}.");
         }
 
         private void CmdRemove(IPlayer player, string[] args)
@@ -2924,8 +3000,8 @@ namespace Oxide.Plugins
             list.RemoveAt(index);
             SaveConfig();
             if (stopped) Reply(player, "CountdownCanceledToo");
-            Reply(player, "Raw", "Removed: " + Describe(removed));
-            Puts($"{player.Name} removed {args[1]} {index} ({Describe(removed)}).");
+            Reply(player, "Removed", Describe(removed, player.Id));
+            Puts($"{player.Name} removed {args[1]} {index} ({Describe(removed, null)}).");
         }
 
         private void CmdToggle(IPlayer player, string[] args, bool enable)
@@ -3037,22 +3113,50 @@ namespace Oxide.Plugins
             }
         }
 
+        // For messages whose ARGUMENTS are themselves translated, not just the
+        // template around them: the factory runs once per recipient, so a
+        // player reading German gets the German kind word inside the German
+        // sentence rather than the server's.
+        private void Broadcast(string key, Func<string, object[]> args)
+        {
+            foreach (var p in players.Connected.ToArray())
+            {
+                if (p == null || !p.IsConnected) continue;
+                var msg = lang.GetMessage(key, this, p.Id);
+                p.Message(Prefix() + Sentence(string.Format(msg, args(p.Id))));
+            }
+        }
+
         #endregion
 
         #region Messages
 
+        // Every string a player can see lives here, including the words the
+        // schedule descriptions are assembled from. Sentences take their parts
+        // as {0}-style arguments rather than being concatenated in code, so a
+        // translator can put the ordinal after the weekday, or the time before
+        // the day, without touching the plugin.
+        //
+        // Deliberately absent: the "hotwire check" diagnostic dump. It is a
+        // console tool for whoever runs the server, never seen in game, and
+        // forty untranslated column-aligned fragments would make this file
+        // worse for nobody's benefit.
         protected override void LoadDefaultMessages()
         {
             lang.RegisterMessages(new Dictionary<string, string>
             {
                 // The bar is a glance surface: players need to know the server
-                // is going down, not which flavour of going down it is. The
+                // is going down, not which flavor of going down it is. The
                 // chat announcements carry that distinction.
                 ["BarLabel"] = "Server Restart",
 
                 ["KindRestart"] = "restart",
                 ["KindUpdate"] = "update and restart",
                 ["KindValidate"] = "validate and restart",
+                // Without the "and restart", for lines that already say it.
+                ["KindUpdateShort"] = "update",
+                ["KindValidateShort"] = "validate",
+                ["ReasonFramework"] = "framework {0}",
 
                 ["CountdownStart"] = "Scheduled {0} in {1}. The server will save before it goes down.",
                 ["CountdownTick"] = "Server {0} in {1}.",
@@ -3079,9 +3183,171 @@ namespace Oxide.Plugins
                 ["Raw"] = "{0}",
                 ["Enabled"] = "Enabled {0} {1}.",
                 ["Disabled"] = "Disabled {0} {1}.",
+                ["Added"] = "Added: {0}",
+                ["Removed"] = "Removed: {0}",
+                ["CannotEnable"] = "Cannot enable: {0}",
+                ["EditMadeInvalid"] = "That change made the entry invalid, so it has been disabled.",
+                ["SavedButInvalid"] = "Saved, but the entry is now invalid and has been disabled: {0}",
 
                 ["ValidateNotOnRestart"] = "Only an update entry can validate. Remove it and add it as an update.",
                 ["MenuNeedsPlayer"] = "The menu only opens in game. Use the chat commands from the console.",
+
+                // -- Time and zone ----------------------------------------
+                // {0} is the zone name, {1} the offset as +HH:mm or -HH:mm.
+                ["Zone"] = "{0} (UTC{1})",
+                ["ZoneDst"] = "{0} (UTC{1}, DST)",
+                ["ZoneUnknown"] = "server local time",
+                ["ZoneShort"] = "UTC{0}",
+                ["ZoneShortDst"] = "UTC{0} DST",
+                ["ZoneShortUnknown"] = "local",
+
+                // {0} is the date and time, {1} the zone from the keys above.
+                ["Stamp"] = "{0} {1}",
+
+                ["WhenNow"] = "now",
+                ["WhenUnderMinute"] = "in under a minute",
+                ["WhenInMinute"] = "in {0} minute",
+                ["WhenInMinutes"] = "in {0} minutes",
+                ["WhenToday"] = "today at {0}",
+                ["WhenTomorrow"] = "tomorrow at {0}",
+                ["WhenAt"] = "{0} at {1}",
+
+                // -- Weekdays ---------------------------------------------
+                // Not taken from DayOfWeek.ToString(), which is English on
+                // every server regardless of its culture.
+                ["DayMonday"] = "Monday",
+                ["DayTuesday"] = "Tuesday",
+                ["DayWednesday"] = "Wednesday",
+                ["DayThursday"] = "Thursday",
+                ["DayFriday"] = "Friday",
+                ["DaySaturday"] = "Saturday",
+                ["DaySunday"] = "Sunday",
+
+                // Three or four characters. These sit on seven buttons across
+                // one panel row, so length is a layout constraint, not taste.
+                ["DayShortMonday"] = "Mon",
+                ["DayShortTuesday"] = "Tue",
+                ["DayShortWednesday"] = "Wed",
+                ["DayShortThursday"] = "Thu",
+                ["DayShortFriday"] = "Fri",
+                ["DayShortSaturday"] = "Sat",
+                ["DayShortSunday"] = "Sun",
+
+                ["OrdinalFirst"] = "first",
+                ["OrdinalSecond"] = "second",
+                ["OrdinalThird"] = "third",
+                ["OrdinalFourth"] = "fourth",
+                ["OrdinalLast"] = "last",
+
+                // -- Describing an entry ----------------------------------
+                // {0} kind, {1} recurrence, {2} the time as HH:mm.
+                ["EntryDescription"] = "{0} {1} at {2}",
+                ["RecurDaily"] = "daily",
+                ["RecurWeekly"] = "every {0}",
+                // {0} is the ordinal word, {1} the weekday.
+                ["RecurMonthlyWeekday"] = "on the {0} {1} of the month",
+                ["RecurMonthlyDay"] = "on day {0} of the month",
+                ["RecurEveryNDays"] = "every {0} days",
+                ["RecurOnce"] = "once on {0}",
+                ["RecurOnceShort"] = "once",
+                ["DayListEmpty"] = "no days",
+
+                // {0} kind, {1} recurrence, {2} the next occurrence.
+                ["NextEntry"] = "{0} {1} -- next {2}",
+                // {0} kind, {1} the moment, {2} why it was scheduled.
+                ["NextOneShot"] = "{0} once -- next {1} ({2})",
+
+                ["StateEnabled"] = "enabled",
+                ["StateDisabled"] = "disabled",
+
+                // -- Validation -------------------------------------------
+                // The command grammar itself stays English -- "weekdays",
+                // "first Thursday" -- because it is typed, not read. Only the
+                // complaint about it is translated. Where a message lists the
+                // accepted words, they arrive as an argument so the list can
+                // never drift out of step with the parser.
+                ["ErrBadTime"] = "\"{0}\" is not a valid time. Use HH:mm, such as 05:00.",
+                ["ErrBadDate"] = "\"{0}\" is not a valid date. Use yyyy-MM-dd.",
+                ["ErrNoDays"] = "No days are selected.",
+                ["ErrNoDaysGiven"] = "No days were given.",
+                ["ErrNoWeekday"] = "No weekday is selected.",
+                ["ErrBadOrdinal"] = "\"{0}\" is not one of: {1}.",
+                ["ErrDayOfMonth"] = "Day of month must be between 1 and 31.",
+                ["ErrInterval"] = "The interval must be at least one day.",
+                ["ErrBadRepeat"] = "\"{0}\" is not a repeat mode. Use one of: {1}.",
+                ["ErrOrdinalNeedsDay"] = "\"{0}\" needs a day, such as \"{1} Thursday\".",
+                ["ErrNotADay"] = "\"{0}\" is not a day name.",
+                ["ErrNotADayOrPattern"] = "\"{0}\" is not a day name, and not a pattern I recognize.",
+
+                // -- The in-game panel ------------------------------------
+                ["MenuTitleList"] = "Hotwire {0}  /  Schedule",
+                ["MenuTitleEditing"] = "Hotwire {0}  /  Editing {1} {2}",
+                ["MenuCountingDown"] = "COUNTING DOWN  --  {0} in {1}",
+                ["MenuCancel"] = "Cancel the restart",
+                ["MenuNothingScheduled"] = "Nothing scheduled. Add a restart or an update below.",
+                ["MenuEdit"] = "Edit",
+                ["MenuDelete"] = "Delete",
+                ["MenuBack"] = "< Back",
+                ["MenuOn"] = "ON",
+                ["MenuOff"] = "OFF",
+                ["MenuMoreRows"] = "...and {0} more. Use \"hotwire list\" to see them all.",
+                ["MenuAddRestart"] = "+ Restart",
+                ["MenuAddUpdate"] = "+ Update",
+                ["MenuAddHint"] = "New entries start disabled. Turn one ON when it is right.",
+
+                ["MenuTime"] = "Time",
+                ["MenuRepeat"] = "Repeat",
+                ["MenuDays"] = "Days",
+                ["MenuWeekday"] = "Weekday",
+                ["MenuWhich"] = "Which",
+                ["MenuDayOfMonth"] = "Day of month",
+                ["MenuDayOfMonthValue"] = "day {0}",
+                ["MenuShortMonthWarning"] = "Skipped in months this short.",
+                ["MenuEvery"] = "Every",
+                ["MenuOneDay"] = "{0} day",
+                ["MenuNDays"] = "{0} days",
+                ["MenuCountingFrom"] = "counting from {0}",
+                ["MenuToday"] = "today",
+                ["MenuDate"] = "Date",
+                ["MenuValidate"] = "Validate",
+                ["MenuValidateHint"] = "Re-checksums the whole install. Slow.",
+                ["MenuEnabled"] = "Enabled",
+
+                // The repeat picker. Each names a rule rather than describing
+                // one occurrence, which is why they read differently from the
+                // Recur keys above.
+                ["ModeDaily"] = "Every day",
+                ["ModeWeekly"] = "Certain weekdays",
+                ["ModeMonthlyWeekday"] = "Nth weekday of the month",
+                ["ModeMonthlyDay"] = "A date each month",
+                ["ModeEveryNDays"] = "Every N days",
+                ["ModeOnce"] = "Once, on a date",
+
+                // Suffixes on the stepper buttons: "-6" + h, "+15" + m. Kept
+                // apart from the number so a translator changes the unit
+                // without touching the arithmetic.
+                ["UnitHourShort"] = "h",
+                ["UnitMinuteShort"] = "m",
+                ["UnitDayShort"] = "d",
+                ["UnitMonthShort"] = "mo",
+                ["UnitYearShort"] = "y",
+
+                // The verdict shown under the edit form.
+                ["MenuNotValid"] = "Not valid",
+                ["MenuDisabled"] = "Disabled",
+                ["MenuNeverRuns"] = "Never runs",
+                ["MenuBroken"] = "BROKEN: {0}",
+                // {0} is the rule, already a sentence fragment of its own.
+                ["MenuNoOccurrence"] = "{0}. It has no occurrence in the next year.",
+                ["MenuNoOccurrenceShort"] = "No occurrence in the next year",
+                ["MenuRule"] = "{0} {1}",
+                // {0} rule, {1} the moment in words, {2} the exact date.
+                ["MenuWouldRun"] = "{0}. Would run {1}, on {2}.",
+                // {0} rule, {1} the exact date, {2} the zone.
+                ["MenuNextDetail"] = "{0}. {1}, {2}.",
+                ["ClocksChange"] = "The clocks change before then.",
+                ["MenuClocksChangeShort"] = "clocks change before then",
+
                 ["Usage"] = "hotwire status | menu | check | list | now [update|validate] [seconds] | cancel | " +
                             "add <restart|update|validate> <HH:mm> [pattern] | set <restart|update> <index> " +
                             "<time|pattern|validate> <value> | remove <restart|update> <index> | " +

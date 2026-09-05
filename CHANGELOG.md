@@ -4,6 +4,40 @@ Versions cover both halves at once. The plugin and the launcher are only
 useful together, so "Hotwire 1.0.0" means the same thing whichever one you are
 holding.
 
+## 1.1.0 — 2026-09-05
+
+**Every string a player can see is now a lang key.** Previously the schedule
+descriptions, the validation complaints and most of the in-game panel were
+English assembled in code — `"the " + ordinal + " " + day + " of the month"` —
+which no translation could reach. They are composed from keys now, with the
+parts passed as `{0}` arguments, so a translator can reorder them.
+
+That is a uMod submission requirement, and it also fixed three real bugs on an
+English server:
+
+- The status bar label, the kick reason and the words *restart* / *update and
+  restart* inside broadcast announcements were resolved once in the server's
+  language and then shown to everybody. On a server with a translation
+  installed, a player reading another language got a translated sentence with
+  an untranslated word inside it. Each is now resolved per recipient.
+- Weekday names came from `DayOfWeek.ToString()`, which is English on every
+  server whatever its culture. They come from lang keys now.
+- English ordinal suffixes (`15th`) were generated in code. That logic is gone;
+  the day of the month is an argument to a translatable sentence.
+
+`oxide/lang/en/Hotwire.json` grows from 30 keys to 153. Lang files are written
+once and never rewritten, so an existing file keeps its old keys and the new
+ones fall back to English — **delete it to pick the new set up.** Wording of
+the existing announcements is unchanged.
+
+Not converted: the `hotwire check` diagnostic dump. It is a console tool for
+whoever runs the server, never seen in game, and forty column-aligned fragments
+would make the lang file worse for nobody's benefit.
+
+Also in this release: a recurrence is parsed once per lookup instead of once
+per day, which took the 367-day scan for the next occurrence from 367
+allocations to one.
+
 ## 1.0.0 — 2026-09-05
 
 First public release.
