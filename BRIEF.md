@@ -116,8 +116,9 @@ Two mechanics make the launcher editable, and both are load-bearing:
 
 ## 5. What is left to do, in order
 
-0. **Fire the plugin once, end to end.** It compiles and loads; it has never
-   run a countdown. Wanted: does the flag land where the launcher looks; does
+0. **Fire the plugin once, end to end.** It compiles and loads, and
+   `hotwire check` confirms the flag path is right; it has never run a
+   countdown. Wanted: does the flag land where the launcher looks; does
    a countdown announce, kick and quit cleanly; does the launcher act on the
    flag on its next pass. Until that has happened the update/restart split is
    a design, not a proven mechanism.

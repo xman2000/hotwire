@@ -31,14 +31,17 @@ its use site.
       and `DeleteStatus(userId, id)` are guesses. This is why
       `UseStatusPlugin` ships `false` — turn it on only after checking the
       real API. It disables itself for the session on the first exception.
-- [ ] **`Interface.Oxide.RootDirectory` is the server root**, i.e. the
-      directory the launcher looks in for `UPDATE.flag`. It returns something
-      non-empty — the boot-time error did not fire on 2026-09-04 — but
-      *where* it points is still unconfirmed. **`hotwire check` now answers
-      this without a restart**: it reports the resolved root, whether
-      `RustDedicated` is in it, whether it is writable, and the exact flag
-      path. Run it and close this. The config has a `Server root` override if
-      the answer is wrong.
+      **Now the largest open question in the plugin**, and newly answerable:
+      AdvancedStatus is confirmed installed on the reference server
+      (`hotwire check`, 2026-09-04), so its actual API can be read off the
+      plugin file rather than guessed. Until it is, ADR-0003's countdown
+      surface is written but not usable.
+- [x] ~~**`Interface.Oxide.RootDirectory` is the server root**~~ **Confirmed
+      2026-09-04** by `hotwire check` on the reference server: it resolves to
+      the install root, `RustDedicated` is present in it, it is writable, and
+      the flag paths are the ones the launcher watches. One data point on one
+      Windows install — the `Server root` override exists for anyone it is
+      wrong for, and `hotwire check` tells them in one line.
 - [ ] **The Oxide extension carrying the framework version is named `Rust`.**
       Used only by the framework-update check.
 - [ ] **Oxide's `timer` is real time, not scaled time.** Not depended on:
