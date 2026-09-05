@@ -811,3 +811,34 @@ instead; today that is the password, and a new one is three lines.
 
 Refusing to start is the right failure here even under rule 2. The alternative
 is not a running server, it is the same dead server with a worse message.
+
+## ADR-0026 — MAJOR.MINOR is shared; PATCH belongs to one half
+
+**Date:** 2026-09-05 · **Status:** ACCEPTED · **Supersedes part of the 1.0.0
+changelog preamble**
+
+The changelog promised that a version "means the same thing whichever half you
+are holding." Three launcher-only fixes in one afternoon broke that promise,
+and keeping it would have meant publishing a plugin release containing no
+changes.
+
+Chosen: **`MAJOR.MINOR` always agrees between the plugin and the launcher;
+`PATCH` advances for whichever half was edited.** A minor release moves the
+pair together and resets both patch numbers to 0.
+
+The first two numbers are the part that carries meaning across the flag file,
+which is the entire interface between the halves (rule 3). If the launcher is
+on 1.1 and the plugin is on 1.1, they were built for each other. A third number
+that differs says only that one of them has been fixed since, which is true and
+useful, where a synchronized number bought by an empty release would be neither.
+
+The cost is that "Hotwire 1.1.3" is ambiguous about which half. That is paid
+by naming the half in every changelog heading, and by the two artifacts
+carrying their own version — `hotwire check` prints the plugin's; the
+launcher's is a comment in its banner, which is weaker and is worth revisiting
+if support ever needs it echoed at startup. The version worth quoting in a bug report is
+"Hotwire 1.1", plus whichever full number the half in question prints.
+
+Rejected: strict lockstep, which forces empty releases; and fully independent
+versioning, which loses the one guarantee a user actually needs, that the two
+halves in front of them are a matched pair.

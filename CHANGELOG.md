@@ -1,10 +1,28 @@
 # Changelog
 
-Versions cover both halves at once. The plugin and the launcher are only
-useful together, so "Hotwire 1.0.0" means the same thing whichever one you are
-holding.
+## How the version numbers work
 
-## 1.1.3 — 2026-09-05
+`MAJOR.MINOR.PATCH`, and the first two are a promise about the pair.
+
+**MAJOR and MINOR always agree between the plugin and the launcher.** They are
+only useful together, and those two numbers are the contract: a launcher on
+1.1 and a plugin on 1.1 are built for each other. When the pair moves, both
+move, and both patch numbers go back to 0.
+
+**PATCH belongs to one half at a time.** A fix to the launcher between minor
+releases advances the launcher's patch and leaves the plugin's alone, and the
+reverse. Shipping a release with no changes in it, purely to keep two numbers
+level, would be worse than the numbers differing.
+
+So "Hotwire 1.1" names the pair and is the version worth quoting. A full
+`1.1.3` names one half, and every entry below says which. They are expected to
+differ; that is the design, not drift.
+
+`hotwire check` prints the plugin's version. The launcher's is in the banner
+at the top of the file — it is a comment, not something it echoes, so read it
+rather than watch for it.
+
+## 1.1.3 — launcher — 2026-09-05
 
 **The launcher now refuses to start on a password that cannot be right**, and
 says which file to fix. Empty, under 8 characters, still the example value, or
@@ -27,7 +45,7 @@ Also added: a missing `RustDedicated.exe` under `ROOT` is now refused by name.
 That is the same class of failure — every convar correct and the server simply
 not there.
 
-## 1.1.2 — 2026-09-05
+## 1.1.2 — launcher — 2026-09-05
 
 **The RCON password was passed unquoted**, so a password containing a space
 became two arguments and the server listened on the first word. It is quoted
@@ -42,7 +60,7 @@ startup with the reason rather than silently changing the password. The
 previous advice to avoid `!` and `^` is withdrawn — it was a bug, not a rule
 for users to remember. ADR-0024.
 
-## 1.1.1 — 2026-09-05
+## 1.1.1 — launcher — 2026-09-05
 
 **The launcher consumed an update flag even when the update failed**, and reset
 its own backstop clock at the same time. Both lines ran unconditionally at a
@@ -79,7 +97,7 @@ ADR-0023.
 
 Read-verified, not executed.
 
-## 1.1.0 — 2026-09-05
+## 1.1.0 — plugin and launcher — 2026-09-05
 
 **Every string a player can see is now a lang key.** Previously the schedule
 descriptions, the validation complaints and most of the in-game panel were
@@ -113,7 +131,7 @@ Also in this release: a recurrence is parsed once per lookup instead of once
 per day, which took the 367-day scan for the next occurrence from 367
 allocations to one.
 
-## 1.0.0 — 2026-09-05
+## 1.0.0 — plugin and launcher — 2026-09-05
 
 First public release.
 
