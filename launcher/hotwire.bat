@@ -11,6 +11,14 @@ REM
 REM  https://github.com/xman2000/hotwire
 REM ======================================================================
 REM
+REM  REQUIREMENTS
+REM     Windows, steamcmd, and a Rust dedicated server. PowerShell and
+REM     curl are used for log rotation, date maths and downloads; both
+REM     ship with Windows 10 and later.
+REM
+REM     Nothing else. The plugin described below is optional and this file
+REM     works perfectly well without it.
+REM
 REM  SETUP
 REM     1.  Section 1: set ROOT and STEAMCMD.
 REM     2.  Copy secrets.example.bat to secrets.bat and set RCON_PASSWORD.
@@ -47,10 +55,16 @@ REM     update, one runs regardless. Rust clients update themselves; a
 REM     server that does not eventually refuses every connection.
 REM
 REM  PLUGIN
-REM     Optional. See src\Hotwire.cs. It schedules restarts, announces
-REM     them to players, counts down, and writes the flag when a scheduled
-REM     restart is an update. The flag file is the only interface between
-REM     plugin and launcher, and neither half requires the other.
+REM     Optional. See src\Hotwire.cs at the address above. It schedules
+REM     restarts, announces them to players, counts down, and writes the
+REM     flag when a scheduled restart is an update. The flag file is the
+REM     only interface between plugin and launcher, and neither half
+REM     requires the other.
+REM
+REM     The plugin needs Oxide/uMod. Its countdown bar is drawn through
+REM     AdvancedStatus, a paid plugin most servers will not have --
+REM     without it the countdown still runs and is announced in chat,
+REM     which is the normal case rather than a degraded one.
 REM
 REM  EDITING OPTIONS
 REM     One option per line. REM disables it, removing REM enables it:
