@@ -13,7 +13,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Hotwire", "xman2000", "0.5.0")]
+    [Info("Hotwire", "xman2000", "0.6.0")]
     [Description("Scheduled restarts and updates. Announces, counts down, writes a flag, quits.")]
     internal class Hotwire : CovalencePlugin
     {
@@ -234,8 +234,16 @@ namespace Oxide.Plugins
             // image was never loaded. Set one of these to get an icon.
             // Image_Sprite takes a game sprite path; Image takes a URL that
             // ImageLibrary caches.
+            // With no icon key at all, AdvancedStatus falls back to its own
+            // default image, which renders as a broken-image glyph when that
+            // image was never cached. A sprite avoids the round trip entirely.
+            //
+            // VERIFY: this path has not been read out of a real build. If the
+            // glyph is still broken, try one of these and tell me which works:
+            //   assets/icons/clock.png     assets/icons/refresh.png
+            //   assets/icons/warning.png   assets/icons/settings.png
             [JsonProperty("Icon: game sprite path (empty = none)")]
-            public string ImageSprite = "";
+            public string ImageSprite = "assets/icons/clock.png";
 
             [JsonProperty("Icon: image URL (empty = none)")]
             public string ImageUrl = "";
@@ -260,8 +268,16 @@ namespace Oxide.Plugins
             [JsonProperty("Refuse to fire the same entry twice within this many hours")]
             public double MinimumHoursBetweenSameEntry = 20.0;
 
-            [JsonProperty("Chat prefix")]
-            public string ChatPrefix = "<color=#e0995e>Hotwire</color>: ";
+            // "Hotwire" means nothing to a player. This is the name they see
+            // in chat, and it should be something they can act on. The old
+            // "Chat prefix" key is gone rather than renamed, so servers that
+            // already had one pick up the better default.
+            [JsonProperty("Name shown in chat announcements")]
+            public string AnnouncementName = "Server Manager";
+
+            // Empty for no colour markup at all.
+            [JsonProperty("Name colour (hex)")]
+            public string AnnouncementColour = "#e0995e";
         }
 
         protected override void LoadDefaultConfig()
@@ -864,7 +880,7 @@ namespace Oxide.Plugins
                 case RepeatWeekly: return "every " + DayList(e);
                 case RepeatMonthlyWeekday:
                     return $"the {(e.Ordinal ?? "").ToLowerInvariant()} {DayList(e)} of the month";
-                case RepeatMonthlyDay: return $"day {e.DayOfMonth} of the month";
+                case RepeatMonthlyDay: return $"the {Ordinalise(e.DayOfMonth)} of the month";
                 case RepeatEveryNDays:
                     return e.IntervalDays == 1 ? "daily" : $"every {e.IntervalDays} days";
                 case RepeatOnce: return $"once on {e.Date}";
@@ -1246,12 +1262,10 @@ namespace Oxide.Plugins
 
             var text = BarText(remaining);
 
-            // Do not push a bar to every player every second for ten minutes.
-            // The text only changes at minute boundaries, so update when it
-            // does, every five seconds so the progress bar still moves, and
-            // every second inside the last minute where it is being watched.
-            var worthIt = text != _lastBarText || remaining <= 60 || remaining % 5 == 0;
-            if (!worthIt) return;
+            // Only when the words change. Anything more often is a visible
+            // flicker across every bar on screen, and it buys nothing: the
+            // chat announcements carry the urgency at the end.
+            if (text == _lastBarText) return;
             _lastBarText = text;
 
             try
@@ -1291,12 +1305,22 @@ namespace Oxide.Plugins
         {
             // The kind word is lower case because it reads mid-sentence in
             // chat ("Scheduled restart in 1 minute"). On a bar it is the whole
-            // label and sits beside SOMEONE ELSE'S title-cased ones, so it
-            // gets a capital here rather than a second set of lang strings to
-            // keep in sync.
-            var text = string.Format(lang.GetMessage("StatusBar", this, null), KindWord(), FormatRemaining(remaining));
-            if (string.IsNullOrEmpty(text)) return text;
-            return char.ToUpper(text[0]) + text.Substring(1);
+            // label and sits beside other plugins' title-cased ones, so it
+            // gets a capital here rather than a second set of lang strings.
+            return Sentence(string.Format(lang.GetMessage("StatusBar", this, null),
+                                          KindWord(), BarRemaining(remaining)));
+        }
+
+        // Deliberately coarser than the chat countdown. Every push redraws the
+        // bar, and AdvancedStatus re-lays out the whole stack when it does, so
+        // a per-second update made every bar on screen blink. Minute
+        // granularity means roughly one redraw a minute; the chat carries the
+        // precise countdown at the end.
+        private static string BarRemaining(int seconds)
+        {
+            if (seconds >= 120) return $"{seconds / 60} minutes";
+            if (seconds >= 60) return "1 minute";
+            return "less than a minute";
         }
 
         private int RemainingSeconds()
@@ -1666,11 +1690,11 @@ namespace Oxide.Plugins
             Label(ui, MenuContent, 0.04, y, 0.20, y + h, "Time", 13, ColMuted, TextAnchor.MiddleLeft);
             Button(ui, MenuContent, 0.21, y, 0.27, y + h, "-6h", $"{prefix} time {target} -360", ColButton);
             Button(ui, MenuContent, 0.275, y, 0.335, y + h, "-1h", $"{prefix} time {target} -60", ColButton);
-            Button(ui, MenuContent, 0.34, y, 0.40, y + h, "-15", $"{prefix} time {target} -15", ColButton);
-            Button(ui, MenuContent, 0.405, y, 0.465, y + h, "-5", $"{prefix} time {target} -5", ColButton);
+            Button(ui, MenuContent, 0.34, y, 0.40, y + h, "-15m", $"{prefix} time {target} -15", ColButton);
+            Button(ui, MenuContent, 0.405, y, 0.465, y + h, "-5m", $"{prefix} time {target} -5", ColButton);
             Label(ui, MenuContent, 0.47, y, 0.60, y + h, entry.Time, 17, ColText, TextAnchor.MiddleCenter);
-            Button(ui, MenuContent, 0.605, y, 0.665, y + h, "+5", $"{prefix} time {target} 5", ColButton);
-            Button(ui, MenuContent, 0.67, y, 0.73, y + h, "+15", $"{prefix} time {target} 15", ColButton);
+            Button(ui, MenuContent, 0.605, y, 0.665, y + h, "+5m", $"{prefix} time {target} 5", ColButton);
+            Button(ui, MenuContent, 0.67, y, 0.73, y + h, "+15m", $"{prefix} time {target} 15", ColButton);
             Button(ui, MenuContent, 0.735, y, 0.795, y + h, "+1h", $"{prefix} time {target} 60", ColButton);
             Button(ui, MenuContent, 0.80, y, 0.86, y + h, "+6h", $"{prefix} time {target} 360", ColButton);
             Label(ui, MenuContent, 0.87, y, 0.98, y + h, ZoneSuffix(DateTime.Now), 10, ColMuted, TextAnchor.MiddleLeft);
@@ -1721,11 +1745,12 @@ namespace Oxide.Plugins
             if (mode == RepeatMonthlyDay)
             {
                 Label(ui, MenuContent, 0.04, y, 0.24, y + h, "Day of month", 13, ColMuted, TextAnchor.MiddleLeft);
-                Button(ui, MenuContent, 0.25, y, 0.31, y + h, "-7", $"{prefix} dom {target} -7", ColButton);
-                Button(ui, MenuContent, 0.315, y, 0.375, y + h, "-1", $"{prefix} dom {target} -1", ColButton);
-                Label(ui, MenuContent, 0.38, y, 0.47, y + h, entry.DayOfMonth.ToString(), 17, ColText, TextAnchor.MiddleCenter);
-                Button(ui, MenuContent, 0.475, y, 0.535, y + h, "+1", $"{prefix} dom {target} 1", ColButton);
-                Button(ui, MenuContent, 0.54, y, 0.60, y + h, "+7", $"{prefix} dom {target} 7", ColButton);
+                Button(ui, MenuContent, 0.25, y, 0.31, y + h, "-7d", $"{prefix} dom {target} -7", ColButton);
+                Button(ui, MenuContent, 0.315, y, 0.375, y + h, "-1d", $"{prefix} dom {target} -1", ColButton);
+                Label(ui, MenuContent, 0.38, y, 0.47, y + h,
+                      "the " + Ordinalise(entry.DayOfMonth), 15, ColText, TextAnchor.MiddleCenter);
+                Button(ui, MenuContent, 0.475, y, 0.535, y + h, "+1d", $"{prefix} dom {target} 1", ColButton);
+                Button(ui, MenuContent, 0.54, y, 0.60, y + h, "+7d", $"{prefix} dom {target} 7", ColButton);
                 if (entry.DayOfMonth > 28)
                     Label(ui, MenuContent, 0.62, y, 0.98, y + h,
                           "Skipped in months this short.", 11, "0.85 0.65 0.40 1.00", TextAnchor.MiddleLeft);
@@ -1735,11 +1760,13 @@ namespace Oxide.Plugins
             if (mode == RepeatEveryNDays)
             {
                 Label(ui, MenuContent, 0.04, y, 0.24, y + h, "Every", 13, ColMuted, TextAnchor.MiddleLeft);
-                Button(ui, MenuContent, 0.25, y, 0.31, y + h, "-7", $"{prefix} interval {target} -7", ColButton);
-                Button(ui, MenuContent, 0.315, y, 0.375, y + h, "-1", $"{prefix} interval {target} -1", ColButton);
-                Label(ui, MenuContent, 0.38, y, 0.50, y + h, entry.IntervalDays + " days", 15, ColText, TextAnchor.MiddleCenter);
-                Button(ui, MenuContent, 0.505, y, 0.565, y + h, "+1", $"{prefix} interval {target} 1", ColButton);
-                Button(ui, MenuContent, 0.57, y, 0.63, y + h, "+7", $"{prefix} interval {target} 7", ColButton);
+                Button(ui, MenuContent, 0.25, y, 0.31, y + h, "-7d", $"{prefix} interval {target} -7", ColButton);
+                Button(ui, MenuContent, 0.315, y, 0.375, y + h, "-1d", $"{prefix} interval {target} -1", ColButton);
+                Label(ui, MenuContent, 0.38, y, 0.50, y + h,
+                      entry.IntervalDays == 1 ? "1 day" : entry.IntervalDays + " days",
+                      15, ColText, TextAnchor.MiddleCenter);
+                Button(ui, MenuContent, 0.505, y, 0.565, y + h, "+1d", $"{prefix} interval {target} 1", ColButton);
+                Button(ui, MenuContent, 0.57, y, 0.63, y + h, "+7d", $"{prefix} interval {target} 7", ColButton);
                 Label(ui, MenuContent, 0.65, y, 0.98, y + h,
                       "counting from " + (string.IsNullOrWhiteSpace(entry.AnchorDate) ? "today" : entry.AnchorDate),
                       11, ColMuted, TextAnchor.MiddleLeft);
@@ -1756,18 +1783,18 @@ namespace Oxide.Plugins
 
                 Label(ui, MenuContent, 0.04, y, 0.20, y + h, "Date", 13, ColMuted, TextAnchor.MiddleLeft);
 
-                Button(ui, MenuContent, 0.21, y, 0.26, y + h, "<", $"{prefix} dateday {target} -1", ColButton);
+                Button(ui, MenuContent, 0.21, y, 0.26, y + h, "-1d", $"{prefix} dateday {target} -1", ColButton);
                 Label(ui, MenuContent, 0.265, y, 0.335, y + h, picked.Day.ToString("00"), 16, ColText, TextAnchor.MiddleCenter);
-                Button(ui, MenuContent, 0.34, y, 0.39, y + h, ">", $"{prefix} dateday {target} 1", ColButton);
+                Button(ui, MenuContent, 0.34, y, 0.39, y + h, "+1d", $"{prefix} dateday {target} 1", ColButton);
 
-                Button(ui, MenuContent, 0.42, y, 0.47, y + h, "<", $"{prefix} datemonth {target} -1", ColButton);
+                Button(ui, MenuContent, 0.42, y, 0.47, y + h, "-1M", $"{prefix} datemonth {target} -1", ColButton);
                 Label(ui, MenuContent, 0.475, y, 0.595, y + h,
                       picked.ToString("MMMM", CultureInfo.InvariantCulture), 15, ColText, TextAnchor.MiddleCenter);
-                Button(ui, MenuContent, 0.60, y, 0.65, y + h, ">", $"{prefix} datemonth {target} 1", ColButton);
+                Button(ui, MenuContent, 0.60, y, 0.65, y + h, "+1M", $"{prefix} datemonth {target} 1", ColButton);
 
-                Button(ui, MenuContent, 0.68, y, 0.73, y + h, "<", $"{prefix} dateyear {target} -1", ColButton);
+                Button(ui, MenuContent, 0.68, y, 0.73, y + h, "-1y", $"{prefix} dateyear {target} -1", ColButton);
                 Label(ui, MenuContent, 0.735, y, 0.825, y + h, picked.Year.ToString(), 15, ColText, TextAnchor.MiddleCenter);
-                Button(ui, MenuContent, 0.83, y, 0.88, y + h, ">", $"{prefix} dateyear {target} 1", ColButton);
+                Button(ui, MenuContent, 0.83, y, 0.88, y + h, "+1y", $"{prefix} dateyear {target} 1", ColButton);
 
                 y -= h + gap;
                 Label(ui, MenuContent, 0.21, y + gap * 0.5, 0.98, y + h,
@@ -1823,6 +1850,18 @@ namespace Oxide.Plugins
             Button(ui, MenuContent, 0.02, 0.02, 0.20, 0.09, "< Back", "hotwire.ui list", ColButton);
             Button(ui, MenuContent, 0.80, 0.02, 0.98, 0.09, "Delete",
                    $"{prefix} delete {target}", ColDanger);
+        }
+
+        private static string Ordinalise(int day)
+        {
+            if (day >= 11 && day <= 13) return day + "th";
+            switch (day % 10)
+            {
+                case 1: return day + "st";
+                case 2: return day + "nd";
+                case 3: return day + "rd";
+                default: return day + "th";
+            }
         }
 
         private static string RepeatLabel(string mode)
@@ -2299,7 +2338,7 @@ namespace Oxide.Plugins
                 Reply(player, "ListEmpty");
                 return;
             }
-            player.Reply(_config.General.ChatPrefix + string.Join("\n", lines.ToArray()));
+            player.Reply(Prefix() + string.Join("\n", lines.ToArray()));
         }
 
         private string DescribeRow(string list, int index, ScheduleEntry e)
@@ -2571,10 +2610,31 @@ namespace Oxide.Plugins
             return false;
         }
 
+        private string Prefix()
+        {
+            var name = _config.General.AnnouncementName;
+            if (string.IsNullOrWhiteSpace(name)) return "";
+            var colour = _config.General.AnnouncementColour;
+            return string.IsNullOrWhiteSpace(colour)
+                ? name.Trim() + ": "
+                : $"<color={colour.Trim()}>{name.Trim()}</color>: ";
+        }
+
+        // Lang files are written once and never rewritten, so correcting a
+        // default string does nothing for a server that already has the old
+        // one. Sentences are capitalised here instead, where the fix reaches
+        // everybody -- and where a translator is free to write lower case and
+        // still get a sentence.
+        private static string Sentence(string text)
+        {
+            if (string.IsNullOrEmpty(text)) return text;
+            return char.ToUpper(text[0]) + text.Substring(1);
+        }
+
         private void Reply(IPlayer player, string key, params string[] args)
         {
             var msg = lang.GetMessage(key, this, player.Id);
-            player.Reply(_config.General.ChatPrefix + (args.Length == 0 ? msg : string.Format(msg, args)));
+            player.Reply(Prefix() + Sentence(args.Length == 0 ? msg : string.Format(msg, args)));
         }
 
         private void Broadcast(string key, params string[] args)
@@ -2583,7 +2643,7 @@ namespace Oxide.Plugins
             {
                 if (p == null || !p.IsConnected) continue;
                 var msg = lang.GetMessage(key, this, p.Id);
-                p.Message(_config.General.ChatPrefix + (args.Length == 0 ? msg : string.Format(msg, args)));
+                p.Message(Prefix() + Sentence(args.Length == 0 ? msg : string.Format(msg, args)));
             }
         }
 
