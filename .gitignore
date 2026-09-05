@@ -1,0 +1,22 @@
+# The RCON password lives here. Never committed.
+launcher/secrets.bat
+secrets.bat
+*.secret
+.env
+
+# Generated option reference -- regenerate it, do not track a stale copy.
+convars.tsv
+options.bat
+
+# Python tooling
+venv/
+__pycache__/
+*.py[cod]
+
+# Editor / OS
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+Thumbs.db

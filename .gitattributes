@@ -1,2 +1,16 @@
-# Auto detect text files and perform LF normalization
+# Default: normalise text to LF in the repo, native on checkout.
 * text=auto
+
+# cmd.exe wants CRLF. A .bat checked out with LF fails in ways that are
+# hard to read -- a stray label, a command that "does not exist".
+*.bat       text eol=crlf
+*.cmd       text eol=crlf
+
+# These must stay LF even on a Windows checkout. Git Bash and Python both
+# choke on CR: bash reports "$'\r': command not found" on every line.
+*.sh        text eol=lf
+*.py        text eol=lf
+
+*.cs        text
+*.json      text
+*.md        text
