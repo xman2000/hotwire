@@ -143,15 +143,23 @@ fill them in from memory.
 
 ## Before this repo is made public
 
-- [ ] **`HANDOFF.md` is still in git history.** It was untracked and
-      gitignored under ADR-0011, but it remains in commits `3e54724` and
-      `3f0dc61`, where anyone can read the reference server's paths, seed,
-      identity and hardware. Untracking is not scrubbing. Either rewrite
-      history (`git filter-repo --path HANDOFF.md --invert-paths`) or squash
-      to a single initial commit before flipping the repo public. Decide
-      which; both discard the existing commit hashes.
-- [ ] **Check nothing else identifying is in history.** The launcher's
-      earlier revisions were written from a site-specific original.
+- [x] ~~**`HANDOFF.md` is still in git history.**~~ **Scrubbed 2026-09-05**
+      with `git filter-repo`, and force-pushed. Every commit hash changed;
+      all 51 commit messages survived, which was the point of filtering
+      rather than squashing.
+- [x] ~~**Check nothing else identifying is in history.**~~ **Checked, and it
+      was not only that file.** Searching every blob in every commit found
+      the reference server's name in old revisions of `launcher/hotwire.bat`
+      and a sibling private repo's name in old revisions of four more files —
+      none of which removing `HANDOFF.md` would have touched. Both were
+      replaced in the same rewrite. Re-verified afterwards: no blob in any
+      commit now contains the install path, the map seed, the host hardware,
+      the server's name or the sibling repo's name.
+- [ ] **GitHub may still serve the old objects by SHA.** A force-push
+      unreferences them but does not immediately delete them, and they stay
+      reachable to anyone who knows a hash until GitHub garbage-collects.
+      The repo is private and has never been shared, so nobody has one — but
+      if that changes before it goes public, ask GitHub support to run a gc.
 
 ## The plugin — settled
 
