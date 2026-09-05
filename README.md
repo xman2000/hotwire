@@ -6,7 +6,7 @@ pair: an Oxide plugin and the launcher script it talks to.**
 Windows. MIT.
 
 > **Status: early.** The launcher is drafted and the plugin is not written
-> yet. Nothing here has run on a production server. See `HANDOFF.md` for the
+> yet. Nothing here has run on a production server. See `BRIEF.md` for the
 > full brief and `docs/OPEN-QUESTIONS.md` for what is still unverified.
 
 ---
@@ -74,8 +74,11 @@ someone will believe it.
 launcher/hotwire.bat            the launcher
 launcher/secrets.example.bat    copy to secrets.bat; never committed
 tools/convars.py                generate the option list from your build
-docs/                           decisions, open questions
-HANDOFF.md                      the full brief
+docs/DECISIONS.md               every design choice, with its reasoning
+docs/RESEARCH.md                the evidence behind the option list
+docs/OPEN-QUESTIONS.md          what is assumed, unverified or undecided
+docs/GAME-API.md                what has been read from a real assembly
+BRIEF.md                        the full brief
 ```
 
 ## Getting started
@@ -83,8 +86,9 @@ HANDOFF.md                      the full brief
 1. Copy `launcher/hotwire.bat` and `launcher/secrets.example.bat` next to your
    server install.
 2. Rename `secrets.example.bat` to `secrets.bat` and set your RCON password.
-   The launcher refuses to start without it rather than starting a server
-   whose RCON password is a literal placeholder.
+   The launcher refuses to start if `secrets.bat` is missing or does not set
+   `RCON_PASSWORD`. It does not inspect the value, so **change the example
+   password** — RCON is remote code execution on the machine running it.
 3. Edit the paths at the top of `hotwire.bat`, then work down the options.
 4. Generate the full option reference for your build:
 

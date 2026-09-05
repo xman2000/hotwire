@@ -34,7 +34,7 @@ REM  purpose. Delayed expansion substitutes AFTER cmd has parsed the
 REM  line, so characters that would otherwise be interpreted -- | & > < ^
 REM  -- are safe inside a value. A hostname like
 REM
-REM      the reference server | Monthly PVE-PVP
+REM      My Rust Server | Monthly | NA
 REM
 REM  breaks a launcher written with %ARGS%, and works here.
 REM
@@ -48,13 +48,20 @@ REM  KEEPING THIS FILE HONEST
 REM
 REM  Convars appear, change and vanish between Rust builds. Two tools:
 REM
-REM    tools\Get-RustConvars.ps1   regenerates the annotated option list
-REM                               from YOUR build, with real defaults
-REM    tools\Test-Launcher.ps1     tells you which options in this file
-REM                               no longer exist in the installed build
+REM    tools\convars.py           regenerates the annotated option list
+REM                              from YOUR build, with the defaults the
+REM                              compiler actually stored:
 REM
-REM  Run the second one after every Rust update. It is much cheaper than
-REM  finding out from a server that will not boot.
+REM                                python tools\convars.py "%ROOT%\Rust
+REM                                Dedicated_Data\Managed\Assembly-
+REM                                CSharp.dll" --bat
+REM
+REM    tools\Test-Launcher.ps1    NOT BUILT YET. Will report which
+REM                              options in this file no longer exist
+REM                              in the installed build.
+REM
+REM  Regenerate after every Rust update. It is much cheaper than finding
+REM  out from a server that will not boot.
 REM
 REM  Defaults quoted below are marked with the build they came from.
 REM  Where a default is written [default: unknown] it has NOT been
@@ -101,10 +108,11 @@ set "LOGFILE=%ROOT%\logs\server_log.txt"
 REM =====================================================================
 REM  2. SECRETS  --  never put a password in this file
 REM =====================================================================
-REM  secrets.bat sets WARREN_RCON_PASSWORD and is NOT in version control.
+REM  secrets.bat sets RCON_PASSWORD and is NOT in version control.
 REM  Copy secrets.example.bat to secrets.bat and edit it. The launcher
-REM  refuses to start without it rather than starting a server whose RCON
-REM  password is the literal string "%%RCON_PASSWORD%%".
+REM  refuses to start if secrets.bat is missing or does not set
+REM  RCON_PASSWORD at all. It does NOT check the value, so it will
+REM  happily start a server still using the example password. Change it.
 
 set "SECRETS=%~dp0secrets.bat"
 
@@ -217,7 +225,7 @@ REM =====================================================================
 REM  4. SERVER OPTIONS
 REM
 REM  One option per line. REM a line to disable it.
-REM  Sections below are a starting set. Run tools\Get-RustConvars.ps1 to
+REM  Sections below are a starting set. Run tools\convars.py to
 REM  regenerate the complete list for your build with real defaults.
 REM =====================================================================
 

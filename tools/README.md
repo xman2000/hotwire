@@ -1,7 +1,7 @@
 # tools
 
-Same approach as `a sibling plugin/tools`: read metadata out of a real
-`Assembly-CSharp.dll` with pure Python, no .NET runtime and no Unity.
+Read metadata out of a real `Assembly-CSharp.dll` with pure Python — no .NET
+runtime, no Unity, nothing but the file the server already has.
 
 ```sh
 python3 -m venv venv && ./venv/bin/pip install dnfile
@@ -20,10 +20,11 @@ only authority, and it is different after every force wipe. Re-run this then.
 
 **Defaults are reported as UNKNOWN rather than guessed.** Many convars are
 initialised in a static constructor rather than as a compile-time constant, so
-their value is in IL, not metadata. `a sibling plugin/tools/il.py` can already read
-that IL — teaching `convars.py` to use it for `.cctor` assignments is the
-obvious next step and is why some defaults are blank today.
+their value is in IL, not metadata. Teaching `convars.py` to walk those
+`.cctor` assignments would close most of the gap. It is the obvious next
+step, and it is why some defaults are blank today.
 
-**Status: unrun.** This was written against the metadata layout
-`a sibling plugin/tools/dump.py` already depends on, but has not been executed
-against a real `Assembly-CSharp.dll`. Until it has, its output is unverified.
+**Status: unrun.** This was written against the metadata tables `dnfile`
+exposes — `TypeDef`, `Field`, `CustomAttribute`, `Constant` — but has not been
+executed against a real `Assembly-CSharp.dll`. Until it has, its output is
+unverified.

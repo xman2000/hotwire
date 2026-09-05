@@ -4,8 +4,8 @@ Every convar Rust accepts on the command line is a static field or property
 carrying a [ServerVar] attribute. Its declaring type gives the prefix, so
 ConVar.Server.maxplayers is reachable as +server.maxplayers.
 
-This reads metadata only -- no .NET runtime, no Unity, same approach as
-a sibling plugin/tools/dump.py. Defaults come from the field's constant value where
+This reads metadata only -- no .NET runtime, no Unity, nothing but the file
+the server already has. Defaults come from the field's constant value where
 the compiler stored one; fields initialised in a static constructor are
 reported as UNKNOWN rather than guessed, because a wrong default in a comment
 is worse than an absent one.
@@ -14,9 +14,10 @@ is worse than an absent one.
     ./venv/bin/python tools/convars.py <Assembly-CSharp.dll> > convars.tsv
     ./venv/bin/python tools/convars.py <Assembly-CSharp.dll> --bat > options.bat
 
-STATUS: written against the metadata layout a sibling plugin/tools/dump.py already
-relies on, but NOT yet run against a real Assembly-CSharp.dll. Treat its
-output as unverified until it has been. See docs/OPEN-QUESTIONS.md.
+STATUS: written against the metadata tables dnfile exposes -- TypeDef, Field,
+CustomAttribute, Constant -- but NOT yet run against a real
+Assembly-CSharp.dll. Treat its output as unverified until it has been. See
+docs/OPEN-QUESTIONS.md.
 """
 
 import sys
@@ -51,7 +52,7 @@ def collect(path):
     pe = dnfile.dnPE(path)
     md = pe.net.mdtables
 
-    # member -> [attribute names], keyed the way dump.py does it
+    # member -> [attribute names], keyed by (table name, 1-based row index)
     ca_map = {}
     for ca in md.CustomAttribute.rows:
         parent = ca.Parent

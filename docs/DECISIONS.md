@@ -2,7 +2,7 @@
 
 Newest last. An ADR is added whenever a design choice is made or reversed.
 These six were taken during the briefing, before any code existed; the
-reasoning is in `HANDOFF.md` and is summarised here.
+reasoning is in `BRIEF.md` and is summarised here.
 
 ---
 
@@ -34,8 +34,8 @@ Kicking first gives players a real disconnect reason instead of a timeout.
 Alternatives: a bespoke CUI panel, as SmoothRestarter does.
 
 Chosen: **render through AdvancedStatus where it is present, chat otherwise.**
-On the reference server, Flashpoint already draws its event timers through
-AdvancedStatus (67 references) and PvpTargetCounter draws into Hud (57). A
+On the reference server, the event plugin already draws its timers through
+AdvancedStatus (67 references) and the PVP-target plugin draws into Hud (57). A
 bespoke panel would be a fifth thing competing for a screen corner and would
 duplicate a bar players already read. Must degrade to chat-only, since no
 status plugin is guaranteed on a public install.
@@ -70,9 +70,10 @@ This does not contradict ADR-0003: that governs the countdown, which every
 player sees constantly. The menu is admin-only, permission-gated, opened
 deliberately and occasionally by one person.
 
-**But `a sibling plugin` chose a CUI panel in its ADR-0001 and superseded it in
-ADR-0007**, and that repo's `CLAUDE.md` says plainly that CUI lifecycle is the
-most bug-prone part of Oxide plugin work. That lesson is already paid for.
+**But a sibling plugin in the same house chose a CUI panel and later
+superseded that decision**, and its `CLAUDE.md` says plainly that CUI
+lifecycle is the most bug-prone part of Oxide plugin work. That lesson has
+already been paid for once.
 Conditions: strict panel lifecycle, destroy on disconnect, and **chat commands
 that do everything the menu does**, written first, so a broken panel never
 means a schedule cannot be changed.
@@ -134,8 +135,9 @@ Two real sources, in order:
    which settings admins touch, it is machine-readable, and tier 2 stops being
    a judgement call. Teach `tools/convars.py` to report it.
 2. **The reference server's live command line** — 23 convars, one real admin,
-   verified working on protocol 2632.287.1. Listed in `HANDOFF.md` §8b.
-   **n = 1**: evidence, not a survey. Say so in the docs.
+   verified working on protocol 2632.287.1. Listed as source A in
+   `docs/RESEARCH.md`. **n = 1**: evidence, not a survey. Say so in the
+   docs.
 
 **Resolved 2026-09-04.** `ShowInAdminUI` is real; the declaration form is
 `[ServerVar(ShowInAdminUI = true)] public static string hostname = "My
@@ -191,3 +193,39 @@ The tail is 3 convars across 3 classes, one each (`decay`, `rideablehorse`,
 design for: tier 2 is mostly one class, tier 3 is where the many one-off
 classes live — and it is generated and grouped by class automatically, so it
 never needs hand-splitting at all.
+
+## ADR-0011 — The public repo carries a sanitized brief; the internal one stays untracked
+
+**Date:** 2026-09-04 · **Status:** ACCEPTED
+
+The original brief, `HANDOFF.md`, describes one production server in enough
+detail to be worth not publishing: install path, identity, map seed, host
+hardware, the plugin roster, and pointers to two private repositories. It is
+also the most useful document in the project, so deleting it was never an
+option.
+
+Alternatives: sanitize it in place, keeping one file; leave it and gate the
+decision until the repo is flipped public.
+
+Chosen: **`HANDOFF.md` is gitignored and stays on the author's disk. A shorter
+`BRIEF.md` is the public version** — same architecture, same measured numbers,
+same ordering of the work, with the identifying detail removed. `CLAUDE.md`
+points contributors at `BRIEF.md`.
+
+Consequences, and one of them is a job still to do:
+
+- Public docs may no longer cite the private repositories. References to a
+  sibling plugin's tooling and ADRs are now described by what they assert
+  rather than by where they live. `HANDOFF.md` keeps the concrete pointers,
+  because its only reader has access to them.
+- Named plugins that are not public — the reference server's event plugin and
+  its PVP-target plugin — are now referred to by role in `docs/`. Plugins
+  Hotwire might integrate with (AdvancedStatus, Hud, ZoneManager) keep their
+  names, because a stranger needs them.
+- Evidence that lived only in `HANDOFF.md` moved into `docs/RESEARCH.md`, so
+  no public document points at a private one. Source A's 23 convars are there
+  in full.
+- **`HANDOFF.md` remains in this repository's git history**, in commits
+  `3e54724` and `3f0dc61`. Untracking a file does not remove it from history.
+  That must be resolved before the repository is made public — see
+  `docs/OPEN-QUESTIONS.md`.

@@ -19,13 +19,12 @@ All four were read from SmoothRestarter's source, not from a real
 ## Unverified tooling
 
 - [ ] **`tools/convars.py` has never been run against a real
-      `Assembly-CSharp.dll`.** It is written against the metadata layout
-      `a sibling plugin/tools/dump.py` already depends on, but that is an argument
-      that it should work, not evidence that it does.
+      `Assembly-CSharp.dll`.** It is written against the metadata tables
+      `dnfile` exposes, but that is an argument that it should work, not
+      evidence that it does.
 - [ ] Defaults assigned in a static constructor come back `UNKNOWN`, because
-      they live in IL rather than metadata. `a sibling plugin/tools/il.py` can read
-      that IL; teaching `convars.py` to walk `.cctor` assignments would close
-      most of the gap.
+      they live in IL rather than metadata. Teaching `convars.py` to walk
+      `.cctor` assignments in IL would close most of the gap.
 - [ ] `launcher/hotwire.bat` has not been executed. Labels and quoting were
       checked by reading, not by running.
 
@@ -73,6 +72,18 @@ fill them in from memory.
       relaunches every 15 seconds forever. Out of scope for v1, but the README
       says so and that should stay true.
 
+## Before this repo is made public
+
+- [ ] **`HANDOFF.md` is still in git history.** It was untracked and
+      gitignored under ADR-0011, but it remains in commits `3e54724` and
+      `3f0dc61`, where anyone can read the reference server's paths, seed,
+      identity and hardware. Untracking is not scrubbing. Either rewrite
+      history (`git filter-repo --path HANDOFF.md --invert-paths`) or squash
+      to a single initial commit before flipping the repo public. Decide
+      which; both discard the existing commit hashes.
+- [ ] **Check nothing else identifying is in history.** The launcher's
+      earlier revisions were written from a site-specific original.
+
 ## Not built yet
 
 - [ ] `tools/Test-Launcher.ps1` — check every `+convar` in a launcher against
@@ -80,5 +91,10 @@ fill them in from memory.
       the most useful thing in the repo; turns a Rust update from a mystery
       outage into a two-line diff.
 - [ ] `src/Hotwire.cs` — the plugin itself.
-- [ ] Event-aware deferral. Blocked on the reference server's Flashpoint
-      exposing no public API at all; see `HANDOFF.md` §6.
+- [ ] Event-aware deferral — do not restart on top of a live event. Blocked:
+      the reference server's event plugin exposes no `[HookMethod]` and no
+      public API, so there is currently nothing to ask. The options are to
+      add a read-only API to it, to query a zone-manager plugin for active
+      zones, or to ask a raid-base plugin about occupied bases. Pick one and
+      write the ADR. Whatever it is, it must degrade to "restart on schedule,
+      say nothing about events" when none of those plugins are installed.

@@ -3,8 +3,11 @@
 Scheduled restarts and updates for a Rust dedicated server: an Oxide plugin
 plus the Windows launcher it drives. Public repo, MIT.
 
-Read `HANDOFF.md` before writing code. It carries the design decisions, the
-measured numbers behind them, and what is still unverified.
+Read `BRIEF.md` before writing code. It carries the design decisions, the
+measured numbers behind them, and what is still unverified. `HANDOFF.md` is
+the longer internal version of the same brief: it describes one production
+server in detail, so it is deliberately untracked and must never be
+committed.
 
 ## Non-negotiable working rules
 

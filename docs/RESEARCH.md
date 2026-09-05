@@ -17,6 +17,23 @@ evidence; one that appears once is a lead.
 
 41 distinct convars across the three.
 
+**Source A in full** — the 23 convars one real modded server passes on its
+command line, verified working on protocol 2632.287.1:
+
+`server.port` `server.queryport` `server.identity` `server.level`
+`server.seed` `server.worldsize` `server.maxplayers` `server.tags`
+`server.hostname` `server.description` `server.headerimage`
+`server.saveinterval` `server.globalchat` `server.itemdespawn`
+`server.combatlog` `server.chatlog` `server.printReportsToConsole`
+`rcon.port` `rcon.password` `rcon.web` `decay.scale`
+`rideablehorse.population` `hackablelockedcrate.requiredhackseconds`
+
+Of those 23, **17 are `server.*`**. The tail is three convars across three
+classes, one each. A heavy head and a long thin tail is the shape to design
+for: tier 2 is mostly one class, and tier 3 is where the many one-off classes
+live — where the generator groups them by class automatically, so it never
+needs hand-splitting at all.
+
 ## Result
 
 **7 named by all three** — the irreducible core:
