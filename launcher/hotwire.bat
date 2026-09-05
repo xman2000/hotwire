@@ -18,8 +18,38 @@ REM    2. Copy secrets.example.bat to secrets.bat and put your RCON
 REM       password in it.
 REM    3. Fill in section 4. A handful of options are switched on already;
 REM       anything you leave alone keeps the game's default.
-REM    4. Run this file. It starts the server, and starts it again every
-REM       time it exits.
+REM    4. Run this file and leave it running.
+REM
+REM  WHAT THIS FILE DOES WHILE IT RUNS
+REM    It does not start the server and finish. It stays open, and when the
+REM    server process exits -- for any reason at all -- it starts it again.
+REM    So restarting the server just means letting it quit, and this window
+REM    brings it back. Closing this window is how you stop the server for
+REM    good.
+REM
+REM    A plain restart is cheap: no steamcmd, no mod framework download,
+REM    just the server starting again. Updating is a separate thing, and it
+REM    happens only when a file named UPDATE.flag appears in the server
+REM    folder. This file spots it, updates, deletes the flag, and carries
+REM    on -- so one flag buys exactly one update, and a restart can never
+REM    turn into an update by accident.
+REM
+REM    That separation is the point of the whole project. The usual Rust
+REM    launcher updates on every single restart, which means a 5am restart
+REM    quietly installs whatever build is current over a working server
+REM    while nobody is watching. Twenty-nine days a month that is harmless.
+REM    The day after a Rust update it is how a server comes back with half
+REM    its plugins dead.
+REM
+REM    You can make the flag yourself whenever you want an update:
+REM
+REM      New-Item -ItemType File C:\rustserver\UPDATE.flag
+REM
+REM    Or install the Hotwire plugin, which does it on a schedule: it warns
+REM    players, counts down, writes the flag if the restart is an update,
+REM    and shuts the server down cleanly for this file to catch. The two
+REM    halves only ever talk through that flag file. The plugin is optional
+REM    and this launcher works perfectly well without it.
 REM
 REM  SWITCHING AN OPTION ON OR OFF
 REM    Put REM in front of a line to switch it off, take it away to switch
@@ -119,9 +149,7 @@ REM =====================================================================
 REM =====================================================================
 REM  3. UPDATE OR RESTART?
 REM
-REM  A restart relaunches and nothing else. An update happens only when a
-REM  flag file says so, and the flag is deleted once acted on -- so one
-REM  flag buys exactly one update.
+REM  The two flag files, and what each one costs:
 REM
 REM    UPDATE.flag     app_update, then the mod framework, then launch
 REM    VALIDATE.flag   the same plus "validate", which re-checksums the
