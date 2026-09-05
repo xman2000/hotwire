@@ -32,12 +32,13 @@ its use site.
       original guess was wrong — `SetStatus(userId, id, text, seconds)` versus
       the real `CreateBar(userId, Dictionary<string,object>)` — which is the
       case for having shipped it disabled rather than enabled.
-- [ ] **A game sprite path for the status bar icon.** `assets/icons/clock.png`
-      now ships as the default and is **still a guess** — it is tagged
-      `VERIFY:` in the config comment with three alternatives listed. Confirm
-      which one renders and this closes. It ships as a guess at all only
-      because the failure is a visibly broken glyph rather than a silent wrong
-      value.
+- [x] ~~**A game sprite path for the status bar icon.**~~ **Closed the way it
+      should have been opened.** `assets/icons/clock.png` does not exist and
+      logged `[FileSystem] Not Found` once per draw — a guessed default,
+      exactly what rule 6 forbids, and it cost a round trip to find out.
+      `assets/icons/stopwatch.png` comes from a list already verified against
+      the Rust UI asset list by a sibling plugin. The verified set is in
+      `docs/GAME-API.md`.
 - [x] ~~**The `TimeStamp` keys.**~~ **Read from the plugin, 2026-09-05.** They
       do exactly that: `BarType: TimeProgressCounter` makes AdvancedStatus
       count the bar down itself and delete it when the time arrives. One

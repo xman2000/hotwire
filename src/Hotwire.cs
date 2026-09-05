@@ -13,7 +13,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Hotwire", "xman2000", "0.7.0")]
+    [Info("Hotwire", "xman2000", "0.8.0")]
     [Description("Scheduled restarts and updates. Announces, counts down, writes a flag, quits.")]
     internal class Hotwire : CovalencePlugin
     {
@@ -206,6 +206,10 @@ namespace Oxide.Plugins
         // already read. Verified against AdvancedStatus 0.1.26 by IIIaKa --
         // see docs/GAME-API.md. Absent that plugin this does nothing at all
         // and chat carries the countdown, which is the case on most servers.
+        // Settings and conventions here follow a sibling plugin on the same
+        // server that has already been through several rounds of this against
+        // AdvancedStatus. Where its changelog records a reason, that reason is
+        // repeated at the use site rather than rediscovered later.
         private class StatusBarSettings
         {
             [JsonProperty("Enabled")]
@@ -217,41 +221,56 @@ namespace Oxide.Plugins
             [JsonProperty("Order")]
             public int Order = 10;
 
-            // Empty means "use the status plugin's own defaults", which is
-            // usually right: the server owner themed those, and a restart bar
-            // that ignores the theme looks like a bug.
-            [JsonProperty("Bar colour, hex (empty = the status plugin's default)")]
+            // Blank means inherit AdvancedStatus's own frame, which is what
+            // makes the bar match every other plugin's by construction rather
+            // than by us picking a value that happens to agree today.
+            [JsonProperty("Bar colour, hex (blank = inherit)")]
             public string MainColor = "";
 
-            [JsonProperty("Text colour, hex (empty = default)")]
-            public string TextColor = "";
+            [JsonProperty("Text colour, hex")]
+            public string TextColor = "#FFFFFF";
 
-            [JsonProperty("Progress colour, hex (empty = default)")]
+            [JsonProperty("Progress colour, hex (blank = inherit)")]
             public string ProgressColor = "";
 
-            // With no image key at all, AdvancedStatus falls back to its own
-            // default image -- which renders as a broken-image glyph if that
-            // image was never loaded. Set one of these to get an icon.
-            // Image_Sprite takes a game sprite path; Image takes a URL that
-            // ImageLibrary caches.
-            // With no icon key at all, AdvancedStatus falls back to its own
-            // default image, which renders as a broken-image glyph when that
-            // image was never cached. A sprite avoids the round trip entirely.
-            //
-            // VERIFY: this path has not been read out of a real build. If the
-            // glyph is still broken, try one of these and tell me which works:
-            //   assets/icons/clock.png     assets/icons/refresh.png
-            //   assets/icons/warning.png   assets/icons/settings.png
-            [JsonProperty("Icon: game sprite path (empty = none)")]
-            public string ImageSprite = "assets/icons/clock.png";
+            // A verified built-in path. assets/icons/clock.png does NOT exist
+            // and logs "[FileSystem] Not Found" once per draw.
+            [JsonProperty("Icon: built-in sprite path")]
+            public string ImageSprite = "assets/icons/stopwatch.png";
 
-            [JsonProperty("Icon: image URL (empty = none)")]
+            [JsonProperty("Icon: local name in oxide/data/AdvancedStatus/Images")]
+            public string ImageLocal = "";
+
+            [JsonProperty("Icon: URL (used only when the other two are blank)")]
             public string ImageUrl = "";
 
-            // True: the bar empties as the countdown runs, which reads as time
-            // running out. False: it fills toward the restart.
+            [JsonProperty("Icon colour, hex (blank = the progress colour)")]
+            public string IconColor = "";
+
             [JsonProperty("Bar drains as the countdown runs")]
             public bool Drain = true;
+
+            // AdvancedStatus positions bar text at Text_Offset_Horizontal and
+            // falls back to its own config value when the key is absent, which
+            // is zero -- so text sits flush against the icon while other
+            // plugins' bars are inset.
+            [JsonProperty("Text left padding (pixels)")]
+            public int TextIndent = 5;
+
+            // AdvancedStatus sizes the SubText rect from a character count and
+            // under-allocates for short strings; Unity then wraps the overflow
+            // onto a second line the rect is too short to show, which is how
+            // "24m" renders as "24". Padding buys the rect proportionally more
+            // room. Trailing, so in the worst case the spaces wrap away rather
+            // than the unit.
+            [JsonProperty("Countdown minimum width (characters)")]
+            public int CountdownMinWidth = 5;
+
+            // Every push redraws the stack, so a per-second final minute blinks
+            // every bar on screen. Off by default: the chat announcements carry
+            // the last minute, which is what they are for.
+            [JsonProperty("Count seconds in the final minute")]
+            public bool SecondsInFinalMinute = false;
         }
 
         private class GeneralSettings
@@ -358,6 +377,7 @@ namespace Oxide.Plugins
         private bool _statusDisabled;
         private int _countdownTotal;
         private DateTime _countdownStarted;
+        private string _lastSubText;
 
         private string _knownFrameworkVersion;
 
@@ -957,6 +977,8 @@ namespace Oxide.Plugins
                 return;
             }
 
+            UpdateBars(remaining);
+
 
             foreach (var point in _config.Countdown.AnnounceAt)
             {
@@ -1189,12 +1211,9 @@ namespace Oxide.Plugins
         // Unix epoch seconds, which is what AdvancedStatus compares against.
         //
         // VERIFY: it reads the clock as Network.TimeEx.currentTimestamp, a
-        // Facepunch type. Computing the same value here rather than calling
-        // that keeps this region free of Facepunch types, which matters: if the
-        // menu region ever has to be deleted after a Rust update, everything
-        // else -- this bar included -- still compiles. If the epoch turns out
-        // to differ, the bar shows nonsense or vanishes at once, which is loud
-        // and harmless.
+        // Facepunch type. Computing the same value here keeps this region free
+        // of Facepunch types, which matters: if the menu region ever has to be
+        // deleted after a Rust update, everything else still compiles.
         private static readonly DateTime UnixEpoch = new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc);
 
         private static double UnixAt(DateTime when)
@@ -1202,17 +1221,50 @@ namespace Oxide.Plugins
             return (when.ToUniversalTime() - UnixEpoch).TotalSeconds;
         }
 
-        // One call, and then nothing. BarType TimeProgressCounter makes
-        // AdvancedStatus render the remaining time itself from TimeStamp, drive
-        // the progress fill from TimeStampStart -> TimeStamp in its own
-        // watcher, and delete the bar when the timestamp passes.
-        //
-        // This is why the bar no longer blinks. The previous version pushed an
-        // update every second, and AdvancedStatus re-lays out the whole stack
-        // when a bar changes, so every bar on screen flickered. Now there is
-        // nothing to push, and it counts smoothly instead of a minute at a time.
-        private Dictionary<string, object> BarParameters()
+        // AdvancedStatus passes an un-prefixed hex string straight through to
+        // CUI, where it is unparseable and every bar renders white. Normalise
+        // to #RRGGBB, and expand #RGB shorthand, which CUI does not understand
+        // either.
+        private static string Hex(string value)
         {
+            if (string.IsNullOrWhiteSpace(value)) return "#FFFFFF";
+            var v = value.Trim();
+            if (!v.StartsWith("#")) v = "#" + v;
+            if (v.Length == 4)
+                v = "#" + v[1] + v[1] + v[2] + v[2] + v[3] + v[3];
+            return v.Length >= 7 ? v.Substring(0, 7) : "#FFFFFF";
+        }
+
+        private int RemainingSeconds()
+        {
+            return Math.Max(0, (int)Math.Ceiling((_countdownTarget - DateTime.Now).TotalSeconds));
+        }
+
+        private string CountdownText(int remaining)
+        {
+            string text;
+            if (remaining >= 60) text = (remaining / 60) + "m";
+            else if (_config.StatusBar.SecondsInFinalMinute) text = remaining + "s";
+            else text = "<1m";
+
+            var min = Math.Max(1, Math.Min(12, _config.StatusBar.CountdownMinWidth));
+            return text.Length >= min ? text : text.PadRight(min);
+        }
+
+        // BarType is TimeProgress, not TimeProgressCounter. Both drive the fill
+        // from the timestamps on AdvancedStatus's own tick and delete the bar
+        // when TimeStamp passes -- so neither the fill nor the removal needs
+        // pushing from here. The Counter variant additionally formats its own
+        // countdown string, in code, with no format parameter: it would put
+        // seconds on the bar for the whole countdown, and its short strings hit
+        // the SubText rect under-allocation described above. Rendering SubText
+        // here is the only way to control either.
+        private Dictionary<string, object> BarParameters(int remaining)
+        {
+            var progress = Hex(string.IsNullOrWhiteSpace(_config.StatusBar.ProgressColor)
+                ? _config.StatusBar.TextColor
+                : _config.StatusBar.ProgressColor);
+
             var p = new Dictionary<string, object>
             {
                 // Both required; CreateBar returns silently without them.
@@ -1221,43 +1273,58 @@ namespace Oxide.Plugins
                 ["Category"] = _config.StatusBar.Category,
                 ["Order"] = _config.StatusBar.Order,
 
-                ["BarType"] = "TimeProgressCounter",
+                ["BarType"] = "TimeProgress",
+
+                ["Text"] = Sentence(KindWord()),
+                ["Text_Color"] = Hex(_config.StatusBar.TextColor),
+                ["Text_Offset_Horizontal"] = _config.StatusBar.TextIndent,
+
+                ["SubText"] = CountdownText(remaining),
+
+                // No Progress key: TimeProgress recomputes it every tick from
+                // the timestamps, so anything set here is overwritten at once.
+                ["Progress_Reverse"] = _config.StatusBar.Drain,
 
                 // Doubles, and checked as such -- an int or a float here is
                 // ignored in silence and the bar quietly becomes a plain one.
                 ["TimeStampStart"] = UnixAt(_countdownStarted),
-                ["TimeStamp"] = UnixAt(_countdownTarget),
-
-                ["Progress_Reverse"] = _config.StatusBar.Drain,
-
-                // The label only. AdvancedStatus overwrites SubText with the
-                // time remaining, which is how the other bars on a HUD read:
-                // name on the left, time on the right.
-                ["Text"] = Sentence(KindWord())
+                ["TimeStamp"] = UnixAt(_countdownTarget)
             };
 
+            if (!string.IsNullOrWhiteSpace(_config.StatusBar.ProgressColor))
+                p["Progress_Color"] = progress;
+
+            p["Image_Color"] = string.IsNullOrWhiteSpace(_config.StatusBar.IconColor)
+                ? Hex(_config.StatusBar.TextColor)
+                : Hex(_config.StatusBar.IconColor);
+
+            // Sprite, then local file, then URL -- cheapest first. A URL is
+            // rendered as a RawImage with the address directly, so it needs no
+            // ImageLibrary round trip.
             if (!string.IsNullOrWhiteSpace(_config.StatusBar.ImageSprite))
                 p["Image_Sprite"] = _config.StatusBar.ImageSprite.Trim();
+            else if (!string.IsNullOrWhiteSpace(_config.StatusBar.ImageLocal))
+                p["Image_Local"] = _config.StatusBar.ImageLocal.Trim();
             else if (!string.IsNullOrWhiteSpace(_config.StatusBar.ImageUrl))
                 p["Image"] = _config.StatusBar.ImageUrl.Trim();
 
-            AddColour(p, "Main_Color", _config.StatusBar.MainColor);
-            AddColour(p, "Text_Color", _config.StatusBar.TextColor);
-            AddColour(p, "Progress_Color", _config.StatusBar.ProgressColor);
-            return p;
-        }
+            // Main_Color and Main_Transparency are deliberately left alone
+            // unless set: the frame then inherits AdvancedStatus's own, and
+            // matches every other plugin's bars even after it is retuned.
+            if (!string.IsNullOrWhiteSpace(_config.StatusBar.MainColor))
+                p["Main_Color"] = Hex(_config.StatusBar.MainColor);
 
-        private static void AddColour(Dictionary<string, object> p, string key, string value)
-        {
-            if (!string.IsNullOrWhiteSpace(value)) p[key] = value.Trim();
+            return p;
         }
 
         private void ShowBars()
         {
             if (!StatusAvailable()) return;
+            var remaining = RemainingSeconds();
+            _lastSubText = CountdownText(remaining);
             try
             {
-                var parameters = BarParameters();
+                var parameters = BarParameters(remaining);
                 foreach (var player in players.Connected.ToArray())
                 {
                     if (player == null || !player.IsConnected) continue;
@@ -1276,7 +1343,38 @@ namespace Oxide.Plugins
             if (!StatusAvailable() || player == null || !player.IsConnected) return;
             try
             {
-                AdvancedStatus.Call("CreateBar", player.Id, BarParameters());
+                AdvancedStatus.Call("CreateBar", player.Id, BarParameters(RemainingSeconds()));
+            }
+            catch (Exception ex)
+            {
+                DisableStatus(ex);
+            }
+        }
+
+        // Only the countdown text is pushed, and only when it changes -- once a
+        // minute by default. The fill animates on AdvancedStatus's own tick
+        // without any of this.
+        private void UpdateBars(int remaining)
+        {
+            if (!StatusAvailable()) return;
+
+            var text = CountdownText(remaining);
+            if (text == _lastSubText) return;
+            _lastSubText = text;
+
+            try
+            {
+                var parameters = new Dictionary<string, object>
+                {
+                    ["Plugin"] = Name,
+                    ["Id"] = BarId,
+                    ["SubText"] = text
+                };
+                foreach (var player in players.Connected.ToArray())
+                {
+                    if (player == null || !player.IsConnected) continue;
+                    AdvancedStatus.Call("UpdateContent", player.Id, parameters);
+                }
             }
             catch (Exception ex)
             {
@@ -1286,6 +1384,7 @@ namespace Oxide.Plugins
 
         private void RemoveBars()
         {
+            _lastSubText = null;
             if (AdvancedStatus == null || _statusDisabled) return;
             try
             {

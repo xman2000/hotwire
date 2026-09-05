@@ -51,18 +51,68 @@ Parameter keys used, from the bar's own constructor:
 | `TimeStampDestroy` | double | optional, removes the bar early |
 | `Progress_Reverse` | bool | true drains, false fills |
 
-With that type set, AdvancedStatus does the work itself: its watcher rewrites
-`SubText` with the remaining time, computes `Progress` as
-`(now - TimeStampStart) / (TimeStamp - TimeStampStart)`, and **deletes the bar
-when `TimeStamp` passes**. So a countdown is one `CreateBar` and nothing after
-it — no per-second pushes, and no flicker from the whole stack being re-laid
-out on every update. `Text` stays whatever you set, so the bar reads as a
-label on the left and a time on the right.
+Both `TimeProgress` and `TimeProgressCounter` compute `Progress` as
+`(now - TimeStampStart) / (TimeStamp - TimeStampStart)` on AdvancedStatus's own
+tick, and **delete the bar when `TimeStamp` passes**. So neither the fill nor
+the removal ever needs pushing.
+
+**Hotwire uses `TimeProgress`, not `TimeProgressCounter`.** The Counter variants
+additionally build their own countdown string, in code, with no format
+parameter — you get seconds on the bar for the whole countdown and no way to
+change it. Rendering `SubText` yourself is the only way to control the format,
+which also matters for the rect bug below.
 
 The timestamps are compared against `Network.TimeEx.currentTimestamp`, i.e.
 Unix epoch seconds. Hotwire computes that from `DateTime.UtcNow` rather than
 calling the Facepunch property, to keep its status code free of Facepunch
 types — **assumed to be the same epoch, not verified.**
+
+### Three things that will bite you
+
+These were paid for once already, by a sibling plugin on the same server that
+drives its event timers through AdvancedStatus. Repeated here so the next
+person does not rediscover them.
+
+- **Colours must be `#RRGGBB`.** AdvancedStatus passes an un-prefixed hex
+  string straight through to CUI, where it is unparseable — and every bar
+  renders white. `#RGB` shorthand is not understood either. Normalise before
+  sending.
+- **Short `SubText` gets clipped.** The rect is sized from a character-count
+  estimate and under-allocates for short strings; Unity wraps the overflow to a
+  second line the rect is too short to show, so `"24m"` renders as `"24"`.
+  Pad the countdown to a minimum width, trailing, so the spaces wrap away
+  rather than the unit.
+- **`Text_Offset_Horizontal` is not optional.** Absent, it falls back to
+  AdvancedStatus's own config value, which is zero — so your text sits flush
+  against the icon while every other plugin's bar is inset.
+
+Leave `Main_Color` and `Main_Transparency` unset unless you mean it: the frame
+then inherits AdvancedStatus's own and matches the rest of the stack by
+construction, including after AdvancedStatus itself is retuned.
+
+### Icons
+
+`Image_Sprite` (a built-in game sprite), then `Image_Local` (a file in
+`oxide/data/AdvancedStatus/Images`), then `Image` (a URL, rendered as a
+RawImage with the address directly, so no ImageLibrary round trip). With none
+of them set you get AdvancedStatus's tinted placeholder, which renders as a
+solid coloured square.
+
+**Built-in sprite paths cannot be validated server-side** — a wrong one logs
+`[FileSystem] Not Found: <path> (UnityEngine.Sprite)` once per draw and shows
+nothing. `assets/icons/clock.png` does **not** exist. These do, verified
+against the Rust UI asset list:
+
+```
+assets/icons/stopwatch.png   assets/icons/warning.png
+assets/icons/explosion.png   assets/icons/grenade.png
+assets/icons/peace.png       assets/icons/radiation.png
+assets/icons/target.png      assets/icons/weapon.png
+```
+
+Hotwire uses `stopwatch.png`. Note that `warning.png` is the generic alert
+glyph, so several plugins reach for it and their bars end up
+indistinguishable except by colour.
 
 **Every key is type-checked and a mismatch is silently ignored.** `Progress`
 is tested with `obj is float`, so a `double` there renders an empty bar and

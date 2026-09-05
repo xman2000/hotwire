@@ -7,6 +7,10 @@ restarting the moment it is installed is a restarter that catches you out.
 The config stays hand-editable and always will. Chat commands are a
 convenience over the same file, never the only way in (ADR-0006).
 
+> **Upgrading to 0.8.0?** The `Status bar` section gained several keys and the
+> icon default changed to a sprite that exists. Delete the section from your
+> config, or the whole file, to pick the new defaults up.
+>
 > **Upgrading to 0.6.0?** The `Chat prefix` key is replaced by
 > `Name shown in chat announcements` and `Name colour (hex)`, so an existing
 > config picks up the new default of "Server Manager" rather than keeping
@@ -206,65 +210,46 @@ replaced by the `Status bar` section below.
   "Enabled": true,
   "Category": "Hotwire",
   "Order": 10,
-  "Bar colour, hex (empty = the status plugin's default)": "",
-  "Text colour, hex (empty = default)": "",
-  "Progress colour, hex (empty = default)": "",
-  "Icon: game sprite path (empty = none)": "assets/icons/clock.png",
-  "Icon: image URL (empty = none)": "",
-  "Bar drains as the countdown runs": true
+  "Bar colour, hex (blank = inherit)": "",
+  "Text colour, hex": "#FFFFFF",
+  "Progress colour, hex (blank = inherit)": "",
+  "Icon: built-in sprite path": "assets/icons/stopwatch.png",
+  "Icon: local name in oxide/data/AdvancedStatus/Images": "",
+  "Icon: URL (used only when the other two are blank)": "",
+  "Icon colour, hex (blank = the progress colour)": "",
+  "Bar drains as the countdown runs": true,
+  "Text left padding (pixels)": 5,
+  "Countdown minimum width (characters)": 5,
+  "Count seconds in the final minute": false
 }
 ```
-
-**The icon.** With neither icon key set, AdvancedStatus falls back to its own
-default image, which renders as a broken-image glyph if that image was never
-cached — so an iconless bar looks like a bug rather than a choice. A game
-sprite avoids the round trip and now ships as the default, but **that sprite
-path has not been verified against a real build.** If the glyph is still
-broken, try `assets/icons/refresh.png`, `assets/icons/warning.png` or
-`assets/icons/settings.png`, or set `Icon: image URL` to a URL ImageLibrary
-will cache. The sprite wins if both are set.
 
 Renders the countdown as a status bar through **AdvancedStatus**, which is a
 paid plugin most servers will not have. Without it this section does nothing
 and chat carries the countdown on its own — that is the normal case, not a
 degraded one.
 
-Leave the colours empty unless you have a reason. Empty inherits whatever the
-server owner themed their bars with, and a restart bar that ignores the
-server's theme reads as a bug.
+**Hotwire creates the bar once and pushes almost nothing.** The fill and the
+bar's removal are handled by AdvancedStatus from the timestamps it was given,
+on its own tick. Only the countdown text is pushed, and only when it changes —
+once a minute by default. Every push redraws the whole stack, which is why a
+per-second countdown made every bar on screen blink.
 
-The bar appears when the countdown starts, is given to players who connect
-mid-countdown, and is removed on cancel, on shutdown and on unload.
+`Count seconds in the final minute` turns the last minute into a per-second
+countdown. It is off because that is sixty redraws of every bar on the screen,
+and the chat announcements already carry the last minute.
 
-**Hotwire creates it once and never touches it again.** The bar is a
-`TimeProgressCounter`, so AdvancedStatus counts it down itself from the
-timestamps it was given, drives the progress fill, and removes the bar when the
-time arrives. Nothing is pushed per second, which is what used to make every
-bar on the screen blink — and it counts smoothly rather than a minute at a
-time.
+**Leave the colours blank unless you mean it.** Blank inherits AdvancedStatus's
+own frame, so the bar matches every other plugin's by construction — including
+after AdvancedStatus is retuned. Hex is normalised for you: bare hex without a
+`#` reaches CUI unparseable and renders the bar white.
 
-`Bar drains as the countdown runs` picks the direction: true empties the bar as
-time runs out, false fills it toward the restart. If the status plugin errors, Hotwire logs it once, falls back to
-chat for the rest of the session, and the countdown is unaffected.
-
-## Commands
-
-All under `hotwire` (alias `hw`), in chat or on the server console.
-
-| Command | Permission | Does |
-|---|---|---|
-| `hotwire status` | `hotwire.status` | What is counting down, or what is next |
-| `hotwire check` | `hotwire.status` | Diagnose the install without restarting anything |
-| `hotwire menu` | `hotwire.status` to open, `hotwire.edit` to change | The in-game panel |
-| `hotwire list` | `hotwire.status` | Every entry with its index |
-| `hotwire now [update\|validate] [seconds]` | `hotwire.restart` | Start a countdown now |
-| `hotwire cancel` | `hotwire.cancel` | Cancel the running countdown |
-| `hotwire add <restart\|update\|validate> <HH:mm> [days]` | `hotwire.edit` | Add an entry |
-| `hotwire remove <restart\|update> <index>` | `hotwire.edit` | Remove one |
-| `hotwire enable\|disable <restart\|update> <index>` | `hotwire.edit` | Toggle one |
-
-Indexes come from `hotwire list` and are per-list, so `restart 0` and
-`update 0` are different entries.
+**The icon** is a built-in sprite, then a local file in
+`oxide/data/AdvancedStatus/Images`, then a URL, in that order. With none set
+you get AdvancedStatus's tinted placeholder, which is a solid coloured square.
+Built-in sprite paths cannot be validated server-side: a wrong one logs
+`[FileSystem] Not Found` once per draw and shows nothing. `docs/GAME-API.md`
+lists the paths known to exist.
 
 ### `hotwire menu`
 
