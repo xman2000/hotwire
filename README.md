@@ -35,8 +35,10 @@ restart daily to shed the memory a busy modded server accumulates:
 
 ## What Hotwire does
 
-**Separates updates from restarts.** A restart relaunches the server and
-nothing else. An update happens when a flag file says so:
+**Separates updates from restarts — when you ask it to.** Out of the box it
+updates on every start, like every other Rust launcher, which is right while
+you are the one deciding when to restart. Set `UPDATE_MODE=hotwire` and a
+restart becomes only a restart, while updates happen when a flag file says so:
 
 | File in the server root | The next launch |
 |---|---|
@@ -51,6 +53,12 @@ framework release:
 ```powershell
 New-Item -ItemType File C:\rustserver\UPDATE.flag
 ```
+
+That mode is opt-in because Rust clients update themselves: a server that never
+updates does not go stale, it becomes unjoinable, and it usually happens on
+force wipe day. So the default is the safe, slow behaviour, and the sharp
+behaviour is a deliberate choice — with a backstop that updates anyway if a
+fortnight passes without one.
 
 **Schedules the restart, and announces it.** The plugin holds the schedule,
 counts down, tells players what is about to happen, kicks them with a reason

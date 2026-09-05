@@ -27,21 +27,26 @@ REM    So restarting the server just means letting it quit, and this window
 REM    brings it back. Closing this window is how you stop the server for
 REM    good.
 REM
-REM    A plain restart is cheap: no steamcmd, no mod framework download,
-REM    just the server starting again. Updating is a separate thing, and it
-REM    happens only when a file named UPDATE.flag appears in the server
-REM    folder. This file spots it, updates, deletes the flag, and carries
-REM    on -- so one flag buys exactly one update, and a restart can never
-REM    turn into an update by accident.
+REM    Out of the box it updates the server every time it starts. That is
+REM    how nearly every Rust launcher behaves, and it is the right thing
+REM    while you are the one deciding when to restart.
 REM
-REM    That separation is the point of the whole project. The usual Rust
-REM    launcher updates on every single restart, which means a 5am restart
-REM    quietly installs whatever build is current over a working server
-REM    while nobody is watching. Twenty-nine days a month that is harmless.
-REM    The day after a Rust update it is how a server comes back with half
-REM    its plugins dead.
+REM    The second mode is where this file differs. Set UPDATE_MODE=hotwire
+REM    in section 1 and a restart becomes only a restart -- no steamcmd, no
+REM    mod framework download -- while updating happens when a file named
+REM    UPDATE.flag appears in the server folder. This file spots it,
+REM    updates, deletes the flag and carries on, so one flag buys exactly
+REM    one update and a restart can never become an update by accident.
 REM
-REM    You can make the flag yourself whenever you want an update:
+REM    That matters the moment something other than you is deciding when to
+REM    restart. A launcher that updates on every restart will cheerfully
+REM    install a new build at 5am over a working server while nobody is
+REM    watching. Twenty-nine days a month that is harmless. The day after a
+REM    Rust update it is how a server comes back with half its plugins
+REM    dead.
+REM
+REM    In hotwire mode you make the flag yourself whenever you want an
+REM    update:
 REM
 REM      New-Item -ItemType File C:\rustserver\UPDATE.flag
 REM
@@ -95,10 +100,26 @@ set "STEAMCMD=C:\steamcmd\steamcmd.exe"
 REM Rust's Steam app id. Do not change this.
 set "APPID=258550"
 
-REM Update once when this launcher starts, on the assumption that we do
-REM not know what state the install was left in. 0 = every update must
-REM be asked for explicitly with a flag file (see section 3).
-set "UPDATE_ON_LAUNCH=1"
+REM  HOW UPDATES HAPPEN. Two modes, and the right one depends on who is
+REM  deciding when your server restarts.
+REM
+REM    always   Update every time the server starts. This is how nearly
+REM             every Rust launcher behaves. Restarts take longer, and you
+REM             are never behind. Right if you restart by hand.
+REM
+REM    hotwire  Update only when a flag file says to, so restarts are quick
+REM             and updates happen when you choose. Right if something is
+REM             restarting the server for you -- the Hotwire plugin, a
+REM             scheduled task -- because otherwise a 5am restart can
+REM             install a new build over a working server unattended.
+set "UPDATE_MODE=always"
+
+REM  Only used in hotwire mode. Rust clients update themselves, so a server
+REM  that never updates eventually cannot be joined at all -- it is not
+REM  stale, it is unreachable, and it usually happens on force wipe day.
+REM  If this many days pass with no update, one is done anyway and said
+REM  loudly in the console. 0 turns the backstop off.
+set "MAX_DAYS_WITHOUT_UPDATE=14"
 
 REM Give up on steamcmd after this many tries and launch the install we
 REM already have. A stale build is a server; an infinite retry is not.
@@ -116,6 +137,7 @@ set "HOOK_BEFORE="
 set "HOOK_AFTER="
 
 set "LOGFILE=%ROOT%\logs\server_log.txt"
+set "STAMP=%ROOT%\logs\last_update.txt"
 
 
 REM =====================================================================
@@ -141,7 +163,6 @@ if not defined RCON_PASSWORD (
 cd /d "%ROOT%" || (echo Cannot cd to %ROOT% & pause & exit /b 1)
 if not exist "%ROOT%\logs" mkdir "%ROOT%\logs"
 
-set "FIRST_PASS=1"
 
 
 REM =====================================================================
@@ -164,6 +185,11 @@ REM =====================================================================
 set "DO_UPDATE=0"
 set "DO_VALIDATE=0"
 
+if /i "%UPDATE_MODE%"=="always" (
+    set "DO_UPDATE=1"
+    echo [%date% %time%] UPDATE_MODE is always -- updating before launch.
+)
+
 if exist "%ROOT%\UPDATE.flag" (
     set "DO_UPDATE=1"
     echo [%date% %time%] UPDATE.flag found -- this pass will update.
@@ -173,11 +199,29 @@ if exist "%ROOT%\VALIDATE.flag" (
     set "DO_VALIDATE=1"
     echo [%date% %time%] VALIDATE.flag found -- update and validate.
 )
-if "%FIRST_PASS%"=="1" if "%UPDATE_ON_LAUNCH%"=="1" (
+
+REM  The backstop. Only in hotwire mode, only when nothing has already
+REM  asked for an update, and skipped entirely when set to 0. A missing
+REM  stamp counts as forever, so a fresh install updates once on its first
+REM  start rather than waiting a fortnight to find out it is out of date.
+if /i "%UPDATE_MODE%"=="always" goto :updatedecided
+if "%DO_UPDATE%"=="1" goto :updatedecided
+if "%MAX_DAYS_WITHOUT_UPDATE%"=="0" goto :updatedecided
+
+set "DAYS_SINCE_UPDATE=9999"
+if exist "%STAMP%" for /f %%d in ('powershell -NoProfile -Command "[int]((Get-Date) - (Get-Item '%STAMP%').LastWriteTime).TotalDays"') do set "DAYS_SINCE_UPDATE=%%d"
+
+if !DAYS_SINCE_UPDATE! GEQ %MAX_DAYS_WITHOUT_UPDATE% (
     set "DO_UPDATE=1"
-    echo [%date% %time%] First pass since launch -- updating.
+    echo [%date% %time%] ================================================
+    echo [%date% %time%] No update in !DAYS_SINCE_UPDATE! days. Updating anyway.
+    echo [%date% %time%] A server that never updates stops being joinable
+    echo [%date% %time%] once the clients move on. Set UPDATE_MODE=always,
+    echo [%date% %time%] or schedule updates, to stop seeing this.
+    echo [%date% %time%] ================================================
 )
-set "FIRST_PASS=0"
+
+:updatedecided
 
 if defined HOOK_BEFORE call %HOOK_BEFORE%
 
@@ -220,6 +264,10 @@ if exist "%ROOT%\OxideMod.zip" del "%ROOT%\OxideMod.zip"
 
 if exist "%ROOT%\UPDATE.flag"   del "%ROOT%\UPDATE.flag"
 if exist "%ROOT%\VALIDATE.flag" del "%ROOT%\VALIDATE.flag"
+
+REM  What the backstop reads. Its timestamp is the whole point; the text
+REM  inside is only there so a person can read it too.
+echo Last update: %date% %time%> "%STAMP%"
 
 if defined HOOK_AFTER call %HOOK_AFTER%
 

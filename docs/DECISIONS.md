@@ -503,3 +503,43 @@ PowerShell, and works wherever the assembly can be copied.
 What this does not change: never write a convar or a default from memory. The
 curated list is only as good as its sources, and the checker exists precisely
 because a list nobody verifies rots.
+
+## ADR-0019 — Updating on every restart is the default; flag-gating is opt-in
+
+**Date:** 2026-09-05 · **Status:** ACCEPTED
+
+The launcher shipped with flag-gated updates as its only behaviour. That is the
+right policy for a server whose restarts are automated and the wrong default
+for a stranger who has just downloaded it.
+
+**Rust clients update themselves.** A server that never updates does not fall
+behind gracefully — the protocol stops matching and nobody can connect at all.
+So the failure mode of flags-only is not a stale server, it is a dead one, and
+it lands on force wipe day, and it lands hardest on the person who did not read
+far enough to learn what a flag was. A default should not punish the reader who
+stopped early.
+
+Chosen: **`UPDATE_MODE=always` by default, `hotwire` opt-in.**
+
+This is not a retreat from the project's argument. That argument was never
+"updating on restart is bad" — it is that *unattended, frequent, automatic*
+restarts should not drag updates along with them. Someone restarting by hand
+once a week and picking up an update is fine, and is what they expect. A plugin
+restarting at 5am daily and pulling whatever build is current is the thing
+worth preventing. The policy should match who is deciding when the server
+restarts, and the two modes say exactly that.
+
+`UPDATE_ON_LAUNCH` is removed. It was a half-measure aimed at the same gap and
+is subsumed by the modes.
+
+**hotwire mode carries a backstop**: if `MAX_DAYS_WITHOUT_UPDATE` (14) passes
+with no update, one happens anyway and says so loudly in the console. Fourteen
+days never fires on a monthly cycle that is working, and turns "my server is
+dead and I do not know why" into a line of log. A missing stamp file counts as
+forever, so a fresh install updates on its first start rather than waiting a
+fortnight to discover it is out of date. Set it to 0 to disable.
+
+The backstop is the one place the launcher acts against an explicit
+instruction. It is justified by the safety envelope's own asymmetry: the
+project's whole premise is that a server which cannot come back is worse than
+one that comes back at an awkward moment.
