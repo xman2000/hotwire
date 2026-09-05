@@ -195,7 +195,16 @@ command routes to a Covalence-registered command; and
 - [x] ~~`tools/Test-Launcher.ps1`~~ **Not needed.** `convars.py --check`
       does the job in the tool that already exists, in Python rather than
       PowerShell (ADR-0018). Written, unrun.
-- [ ] **`launcher/hotwire.bat` has never been executed.** The flag *contract*
-      is proven, but against the reference server's own launcher, not against
-      the one in this repository. Those are different claims and the second is
-      untested. This is now the largest untested thing in the project.
+- [x] ~~**`launcher/hotwire.bat` has never been executed.**~~ **Its structure
+      has now run in production, 2026-09-05** — a launcher generated from it,
+      carrying the site's own settings, booted the reference server on
+      protocol 2633.288.1. That exercised the section layout, `UPDATE_MODE`,
+      the `ARGS` accumulation, the secrets gate, log rotation and the relaunch
+      loop.
+- [ ] **`launcher/hotwire.bat` itself is still unrun**, as shipped, with its
+      own defaults. A derivative running is strong evidence and not the same
+      claim. Untested in particular: `UPDATE_MODE=always`, which is the
+      default here and was not the mode that ran.
+- [ ] **The staleness backstop has never been observed firing on a schedule.**
+      It fired on first boot, which is the missing-stamp case working as
+      designed, but nothing has yet run for fourteen days without an update.

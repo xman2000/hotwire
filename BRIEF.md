@@ -120,10 +120,11 @@ Two mechanics make the launcher editable, and both are load-bearing:
 
 ## 5. What is left to do, in order
 
-0. **Run `launcher/hotwire.bat`.** The plugin half is done and the flag
-   contract holds — but it was proven against the reference server's existing
-   launcher, so this repository's launcher is now the untested half. It has
-   never been executed at all.
+0. **Run `launcher/hotwire.bat` as shipped.** Its structure has now booted a
+   real server — a launcher generated from it, carrying one site's settings,
+   started the reference server on protocol 2633.288.1. What has not run is
+   this file with its own defaults, and in particular `UPDATE_MODE=always`,
+   which is the default and was not the mode that ran.
 1. **Run `tools/convars.py` against a real `Assembly-CSharp.dll`.** It has
    never been executed. Everything downstream — real defaults, tier 3, the
    ADR-0010 recount — is blocked on it.
