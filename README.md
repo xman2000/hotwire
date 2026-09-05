@@ -7,8 +7,9 @@ Windows. MIT.
 
 > **Status: the plugin works, the launcher is unrun.** The plugin has been
 > proven end to end on a live server — announce, countdown, kick, save, quit,
-> write the flag, and a launcher acting on it. `launcher/hotwire.bat` itself
-> has never been executed. See `BRIEF.md` and `docs/OPEN-QUESTIONS.md`.
+> write the flag, and a launcher acting on it — and has a full recurrence
+> model and an in-game panel. `launcher/hotwire.bat` itself has never been
+> executed. See `BRIEF.md` and `docs/OPEN-QUESTIONS.md`.
 
 ---
 

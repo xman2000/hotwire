@@ -13,32 +13,36 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Hotwire", "xman2000", "0.9.0")]
+    [Info("Hotwire", "xman2000", "0.9.1")]
     [Description("Scheduled restarts and updates. Announces, counts down, writes a flag, quits.")]
     internal class Hotwire : CovalencePlugin
     {
         // =================================================================
         //  WHAT THIS PLUGIN DELIBERATELY DOES NOT DO
         //
-        //  It does not touch Assembly-CSharp. Every game interaction goes
-        //  through Covalence, which is a stable Oxide interface rather than
-        //  a moving Facepunch one.
-        //
-        //  That is a safety decision, not a style one (ADR-0014). A wrong
-        //  guess at a Facepunch signature -- ConVar.Global.quit's argument
-        //  shape, say -- is a COMPILE error, and a plugin that does not
-        //  compile is a plugin that never restarts the server. try/catch
-        //  cannot save you from that. server.Command("quit") runs the same
-        //  console command with none of the exposure.
-        //
         //  It does not spawn processes, write scheduled tasks or shell out.
         //  It writes a flag file and quits; the launcher does the rest
         //  (ADR-0001).
         //
-        //  Two runtime assumptions remain, both marked VERIFY below, both
-        //  wrapped so that being wrong disables one cosmetic feature rather
-        //  than the schedule: the AdvancedStatus call shape, and the
-        //  umod.org release-feed response shape.
+        //  Everything that schedules, announces or shuts the server down goes
+        //  through Covalence, which is a stable Oxide interface rather than a
+        //  moving Facepunch one. That is a safety decision, not a style one
+        //  (ADR-0014): a wrong guess at a Facepunch signature is a COMPILE
+        //  error, and a plugin that does not compile is a plugin that never
+        //  restarts the server. try/catch cannot save you from code that never
+        //  runs. server.Command("quit") runs the same console command as
+        //  ConVar.Global.quit with none of that exposure.
+        //
+        //  The ONE exception is the admin menu, which cannot exist without
+        //  Facepunch types -- CuiHelper.AddUi takes a BasePlayer, and Rust's
+        //  UI has no Covalence route. It is confined to a single region so
+        //  that deleting it stays a real option, and everything it does the
+        //  chat commands also do (ADR-0016).
+        //
+        //  What is left is runtime assumption, tagged VERIFY at each use and
+        //  wrapped so that being wrong costs one optional feature rather than
+        //  the schedule: the AdvancedStatus call shape, the uMod release-feed
+        //  response shape, and the epoch its timestamps are measured from.
         // =================================================================
 
         #region Configuration
@@ -359,7 +363,6 @@ namespace Oxide.Plugins
         private const string PermEdit = "hotwire.edit";
 
         private const string LastFiredFile = "Hotwire/last_fired";
-        private const string StatusId = "hotwire_countdown";
 
         // Oxide.Plugins.Timer, injected by the plugin compiler -- NOT
         // Oxide.Core.Libraries.Timer, which is the library that hands these
@@ -390,7 +393,6 @@ namespace Oxide.Plugins
 
         [PluginReference] private Plugin AdvancedStatus;
         private bool _statusDisabled;
-        private int _countdownTotal;
         private DateTime _countdownStarted;
         private string _lastSubText;
 
@@ -563,7 +565,9 @@ namespace Oxide.Plugins
                     continue;
                 }
 
-                if (Normalise(e.Repeat) == RepeatEveryNDays && ParseDate(e.AnchorDate) == null)
+                var mode = Normalise(e.Repeat);
+
+                if (mode == RepeatEveryNDays && ParseDate(e.AnchorDate) == null)
                 {
                     e.AnchorDate = DateTime.Now.ToString("yyyy-MM-dd");
                     changed = true;
@@ -571,7 +575,7 @@ namespace Oxide.Plugins
                          $"date. Anchored to {e.AnchorDate}; edit it if you meant a different day.");
                 }
 
-                if (Normalise(e.Repeat) == RepeatMonthlyDay && e.DayOfMonth > 28)
+                if (mode == RepeatMonthlyDay && e.DayOfMonth > 28)
                     PrintWarning($"The entry at {e.Time} runs on day {e.DayOfMonth}, which does not exist " +
                                  "in every month. Those months are skipped, not moved.");
             }
@@ -956,7 +960,6 @@ namespace Oxide.Plugins
             _announced.Clear();
 
             var remaining = (int)Math.Round((target - DateTime.Now).TotalSeconds);
-            _countdownTotal = Math.Max(1, remaining);
             _countdownStarted = DateTime.Now;
 
             // Everything at or above the time actually remaining has already
@@ -994,7 +997,6 @@ namespace Oxide.Plugins
 
             UpdateBars(remaining);
 
-
             foreach (var point in _config.Countdown.AnnounceAt)
             {
                 if (remaining > point) continue;
@@ -1031,6 +1033,8 @@ namespace Oxide.Plugins
             _countdownActive = false;
             _countdownEntry = null;
             _countdownKey = "";
+            _countdownIsUpdate = false;
+            _countdownIsValidate = false;
             _announced.Clear();
             RemoveBars();
 
@@ -1112,7 +1116,7 @@ namespace Oxide.Plugins
                 // to five minutes of everyone's progress (ADR-0002).
                 //
                 // Routed through Covalence rather than ConVar.Global.quit so
-                // that this file has no compile-time dependency on
+                // that the shutdown path carries no compile-time dependency on
                 // Assembly-CSharp -- see the note at the top (ADR-0014).
                 server.Command("quit");
             }
@@ -1734,9 +1738,8 @@ namespace Oxide.Plugins
                         RectTransform = { AnchorMin = Anchor(0.02, 0.815), AnchorMax = Anchor(0.98, 0.905) }
                     }, MenuContent, MenuContent + ".live");
 
-                    var remaining = Math.Max(0, (int)Math.Ceiling((_countdownTarget - DateTime.Now).TotalSeconds));
                     Label(ui, MenuContent + ".live", 0.02, 0, 0.72, 1,
-                          $"COUNTING DOWN  --  {KindWord()} in {FormatRemaining(remaining)}",
+                          $"COUNTING DOWN  --  {KindWord()} in {FormatRemaining(RemainingSeconds())}",
                           14, ColText, TextAnchor.MiddleLeft);
                     Button(ui, MenuContent + ".live", 0.74, 0.15, 0.98, 0.85,
                            "Cancel the restart", "hotwire.ui cancelcountdown", ColButton);
@@ -1755,6 +1758,9 @@ namespace Oxide.Plugins
                 // it. Close it, say so, and leave the chat commands standing.
                 PrintError($"The menu failed to draw: {ex.Message}. Use the chat commands instead.");
                 _menus.Remove(player.Id);
+                // A half-built panel would keep the cursor and cover the
+                // screen with no way to close it.
+                try { CuiHelper.DestroyUi(basePlayer, MenuRoot); } catch { /* nothing more to try */ }
             }
         }
 
@@ -2335,8 +2341,7 @@ namespace Oxide.Plugins
 
             if (_countdownActive)
             {
-                var remaining = (int)Math.Ceiling((_countdownTarget - DateTime.Now).TotalSeconds);
-                Reply(player, "StatusCounting", KindWord(), FormatRemaining(Math.Max(0, remaining)));
+                Reply(player, "StatusCounting", KindWord(), FormatRemaining(RemainingSeconds()));
                 return;
             }
 
@@ -2366,7 +2371,7 @@ namespace Oxide.Plugins
             if (_oneShotTarget != null && _oneShotTarget.Value < bestTarget)
             {
                 var word = _oneShotValidate ? "validate" : "update";
-                return $"{word} at {_oneShotTarget.Value:yyyy-MM-dd HH:mm} ({_oneShotReason})";
+                return $"{word} once -- next {Stamp(_oneShotTarget.Value)} ({_oneShotReason})";
             }
 
             if (best == null) return null;

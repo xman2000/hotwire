@@ -135,52 +135,50 @@ fill them in from memory.
 - [ ] **Check nothing else identifying is in history.** The launcher's
       earlier revisions were written from a site-specific original.
 
+## The plugin — settled
+
+Kept short deliberately; the reasoning lives in `docs/DECISIONS.md` and the
+detail in `docs/CONFIG.md`.
+
+Built and proven on a live server: the schedule with six recurrence modes,
+countdown and announcements, the AdvancedStatus bar, kick-then-save-then-quit,
+the update flag, the full chat command set, and the in-game panel (ADR-0006,
+built last, after the commands could already do everything it does).
+
+Confirmed along the way, each of which had been a guess: `Oxide.Plugins.Timer`
+is what `timer.Every()` returns; `Interface.Oxide.RootDirectory` is the server
+root; the launcher consumes the flag, so one flag buys one update; a `CuiButton`
+command routes to a Covalence-registered command; and
+`CuiHelper.AddUi(BasePlayer, CuiElementContainer)` is the right overload.
+
+## Still open on the plugin
+
+- [ ] **Whether the panel is actually readable.** It renders and the buttons
+      work, but the anchors, font sizes and row heights were chosen without
+      ever seeing it. Nine rows before it overflows is a guess too, and the
+      time row is now ten elements wide.
+- [ ] **Event-aware deferral** — do not restart on top of a live event.
+      Blocked: the reference server's event plugin exposes no `[HookMethod]`
+      and no public API, so there is nothing to ask. The options are to add a
+      read-only API to it, to query a zone-manager plugin for active zones, or
+      to ask a raid-base plugin about occupied bases. Pick one and write the
+      ADR. Whatever it is, it must degrade to "restart on schedule, say
+      nothing about events" when none of those plugins are installed.
+- [ ] **The framework-update check has never fired.** It is off by default and
+      nothing has exercised the path from detection through to an announced
+      update. Two of its assumptions — the feed shape and the extension name —
+      are listed above and are only reachable through it.
+- [ ] **Nothing has run across a DST boundary.** ADR-0013's guard is written,
+      persisted and unit-reasoned, but the autumn repeat it exists for has not
+      happened yet.
+
 ## Not built yet
 
 - [ ] `tools/Test-Launcher.ps1` — check every `+convar` in a launcher against
       the installed build and report the ones that no longer exist. Probably
       the most useful thing in the repo; turns a Rust update from a mystery
       outage into a two-line diff.
-- [x] ~~`src/Hotwire.cs` — the plugin itself.~~ **v0.1.0 written.** Schedule,
-      countdown, announcements, kick-then-quit, flag writing, chat commands
-      and the opt-in framework check.
-- [x] ~~**Does it compile?**~~ **Yes.** Oxide.Compiler v1.0.32.0, 2026-09-04,
-      after one fix: `timer.Every()` returns the compiler-injected
-      `Oxide.Plugins.Timer`, not `Oxide.Core.Libraries.Timer.TimerInstance`.
-      It loads, writes its default config, and correctly reports that nothing
-      is scheduled.
-- [x] ~~**Run it.**~~ **Proven end to end on the reference server,
-      2026-09-04.** A plain restart announced, rendered a status bar, kicked,
-      and quit cleanly — `Saved 76,643 ents / Saving complete`, so the world
-      was saved on the way out. An update restart then wrote the flag, the
-      launcher found it (`UPDATE.flag found -- this pass will update`), ran
-      its backup hook, ran steamcmd, fetched the framework, and relaunched.
-      Quit at 23:18:26, server starting at 23:19:26 — about a minute, because
-      the game was already up to date and no validate was asked for. That is
-      not the 6–8 minute figure and does not contradict it; nothing was
-      actually downloaded.
-- [x] ~~**Confirm the launcher deletes the flag.**~~ **Confirmed 2026-09-04.**
-      `hotwire check` immediately after an update pass reported no flag
-      present. One flag buys exactly one update, which is the invariant the
-      whole design rests on.
-- [ ] **`launcher/hotwire.bat` is still unrun.** The flag *contract* is proven,
-      but against the reference server's own launcher, not against the one in
-      this repository. Those are different claims and the second is untested.
-- [x] ~~**The admin menu (ADR-0006).**~~ **Built in v0.4.0**, after the chat
-      commands could do everything it does. Lives in `Hotwire.cs` and
-      knowingly breaks ADR-0014 — see ADR-0016.
-- [x] ~~**The menu has never been opened.**~~ **It opens, and the buttons
-      work** (2026-09-05). That confirms two things written blind: a
-      `CuiButton` command does route to a Covalence-registered command, so no
-      Facepunch console command is needed, and
-      `CuiHelper.AddUi(BasePlayer, CuiElementContainer)` is the right overload.
-- [ ] **Whether the panel is actually readable.** It renders, but the anchors,
-      font sizes and row heights were chosen without ever seeing it. Nine rows
-      before it overflows is a guess too.
-- [ ] Event-aware deferral — do not restart on top of a live event. Blocked:
-      the reference server's event plugin exposes no `[HookMethod]` and no
-      public API, so there is currently nothing to ask. The options are to
-      add a read-only API to it, to query a zone-manager plugin for active
-      zones, or to ask a raid-base plugin about occupied bases. Pick one and
-      write the ADR. Whatever it is, it must degrade to "restart on schedule,
-      say nothing about events" when none of those plugins are installed.
+- [ ] **`launcher/hotwire.bat` has never been executed.** The flag *contract*
+      is proven, but against the reference server's own launcher, not against
+      the one in this repository. Those are different claims and the second is
+      untested. This is now the largest untested thing in the project.

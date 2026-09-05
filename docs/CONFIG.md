@@ -162,6 +162,26 @@ counted down, so the countdown is immune to timescale, to a stalled frame and
 to timer drift. The restart lands when it said it would; the worst a hitch can
 do is skip an announcement.
 
+## Times, zones and DST
+
+Every time this plugin prints carries the zone it means and whether daylight
+saving is in effect — `Thu 02 Oct 2026 20:00 Central Daylight Time (UTC-05:00,
+DST)`. That is not decoration. Schedules are local wall-clock time (ADR-0013),
+so `05:00` is a different absolute moment either side of a clock change, and
+"next Sunday at 05:00" is ambiguous without it.
+
+The zone shown is computed **for the moment being displayed**, not for now: a
+date in November reads as standard time while today is still daylight time.
+When a clock change falls between now and the next occurrence, the line says
+so — in the panel, in `hotwire list`, and in `hotwire status`.
+
+`hotwire check` reports the server's current clock, zone and DST state on one
+line, and says when the zone has no daylight saving at all.
+
+The panel is a convenience and never the only way in. Everything it does,
+`hotwire add`, `set`, `remove`, `enable` and `disable` also do — which is what
+lets the panel be deleted outright if a Rust update ever breaks it (ADR-0016).
+
 ## Framework update check
 
 ```json
@@ -279,6 +299,36 @@ Built-in sprite paths cannot be validated server-side: a wrong one logs
 `[FileSystem] Not Found` once per draw and shows nothing. `docs/GAME-API.md`
 lists the paths known to exist.
 
+## Commands
+
+All under `hotwire` (alias `hw`), in chat or on the server console.
+
+| Command | Permission | Does |
+|---|---|---|
+| `hotwire status` | `hotwire.status` | What is counting down, or what is next |
+| `hotwire check` | `hotwire.status` | Diagnose the install without restarting anything |
+| `hotwire menu` | `hotwire.status` to open, `hotwire.edit` to change | The in-game panel |
+| `hotwire list` | `hotwire.status` | Every entry, with what it resolves to next |
+| `hotwire now [update\|validate] [seconds]` | `hotwire.restart` | Start a countdown now |
+| `hotwire cancel` | `hotwire.cancel` | Cancel the running countdown |
+| `hotwire add <restart\|update\|validate> <HH:mm> [pattern]` | `hotwire.edit` | Add an entry |
+| `hotwire set <restart\|update> <index> <time\|pattern\|validate> <value>` | `hotwire.edit` | Edit one in place |
+| `hotwire remove <restart\|update> <index>` | `hotwire.edit` | Remove one |
+| `hotwire enable\|disable <restart\|update> <index>` | `hotwire.edit` | Turn one on or off |
+
+Indexes come from `hotwire list` and are per-list, so `restart 0` and
+`update 0` are different entries.
+
+A manual `hotwire now` is not subject to the fired-recently guard and does not
+feed it. An admin asking for a restart means it.
+
+`hotwire cancel` stops the countdown and leaves the schedule alone. Disabling
+the entry stops both (ADR-0017).
+
+**Cancel stops working once the shutdown has begun** — players have been
+kicked by then, and pretending the restart can still be called off would leave
+the server up with everyone thrown off it.
+
 ### `hotwire menu`
 
 An in-game panel over the same schedule. It opens on `hotwire menu`, lists
@@ -316,26 +366,6 @@ Things worth knowing:
   lands on. Month steps move whole months and clamp the day, so stepping a
   month on from 31 January gives 28 February rather than 3 March.
 
-### Times, zones and DST
-
-Every time this plugin prints carries the zone it means and whether daylight
-saving is in effect — `Thu 02 Oct 2026 20:00 Central Daylight Time (UTC-05:00,
-DST)`. That is not decoration. Schedules are local wall-clock time (ADR-0013),
-so `05:00` is a different absolute moment either side of a clock change, and
-"next Sunday at 05:00" is ambiguous without it.
-
-The zone shown is computed **for the moment being displayed**, not for now: a
-date in November reads as standard time while today is still daylight time.
-When a clock change falls between now and the next occurrence, the line says
-so — in the panel, in `hotwire list`, and in `hotwire status`.
-
-`hotwire check` reports the server's current clock, zone and DST state on one
-line, and says when the zone has no daylight saving at all.
-
-The panel is a convenience and never the only way in. Everything it does,
-`hotwire add`, `set`, `remove`, `enable` and `disable` also do — which is what
-lets the panel be deleted outright if a Rust update ever breaks it (ADR-0016).
-
 ### `hotwire check`
 
 Answers the questions you would otherwise spend a real restart to answer:
@@ -355,16 +385,6 @@ Answers the questions you would otherwise spend a real restart to answer:
 
 It changes nothing except the probe file it cleans up after itself. Run it
 after installing, after moving the server, and after any Oxide update.
-
-A manual `hotwire now` is not subject to the fired-recently guard and does not
-feed it. An admin asking for a restart means it.
-
-`hotwire cancel` stops the countdown and leaves the schedule alone; disabling
-the entry stops both.
-
-**Cancel stops working once the shutdown has begun** — players have been
-kicked by then, and pretending the restart can still be called off would leave
-the server up with everyone thrown off it.
 
 ## What the plugin does at zero
 

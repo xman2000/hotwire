@@ -29,7 +29,9 @@ Kicking first gives players a real disconnect reason instead of a timeout.
 
 ## ADR-0003 — The countdown renders through an existing status plugin
 
-**Date:** 2026-09-04 · **Status:** ACCEPTED
+**Date:** 2026-09-04 · **Status:** ACCEPTED — implemented against
+AdvancedStatus 0.1.26; see `docs/GAME-API.md`. Absent that plugin the bar does
+nothing and chat carries the countdown, which is the case on most servers.
 
 Alternatives: a bespoke CUI panel, as SmoothRestarter does.
 

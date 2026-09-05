@@ -1,12 +1,14 @@
 # Brief — Hotwire
 
-**Status:** the plugin works. Proven end to end on a live server 2026-09-04:
-announced, counted down, rendered a status bar, kicked, saved and quit, wrote
-an update flag, and had a launcher act on it. **`launcher/hotwire.bat` is
-still unrun** — the flag contract was proven against the reference server's
-own launcher, not against the one in this repository. Read this before writing code, then
-`docs/DECISIONS.md` for the choices already made and `docs/OPEN-QUESTIONS.md`
-for what is still unproven.
+**Status:** the plugin works, and has run on a live server — announced,
+counted down, kicked, saved, quit, wrote an update flag, and had a launcher
+act on it. It also has a full recurrence model and an in-game panel.
+**`launcher/hotwire.bat` is still unrun**: the flag contract was proven
+against the reference server's own launcher, not against the one in this
+repository, and those are different claims.
+
+Read this before writing code, then `docs/DECISIONS.md` for the choices
+already made and `docs/OPEN-QUESTIONS.md` for what is still unproven.
 
 There is a longer internal brief, `HANDOFF.md`, which is deliberately not in
 this repository: it describes one specific production server in enough detail
@@ -21,7 +23,7 @@ Scheduled restarts and updates for a Rust dedicated server, as a matched pair:
 
 | | |
 |---|---|
-| `src/Hotwire.cs` | Oxide plugin. Holds the schedule, announces, counts down, decides, quits. **v0.2.1 — proven end to end.** |
+| `src/Hotwire.cs` | Oxide plugin. Holds the schedule, announces, counts down, decides, quits. **Working.** |
 | `launcher/hotwire.bat` | Windows launcher. Restarts the server, and updates it only when told. **Drafted, never executed.** |
 
 They ship together because neither is much use alone. The plugin can shut a
@@ -136,14 +138,14 @@ Two mechanics make the launcher editable, and both are load-bearing:
    against the installed build and report the ones that no longer exist. It
    turns a Rust update from a mystery outage into a two-line diff, and it is
    probably the most useful thing in the repo.
-7. **The admin menu, last** (ADR-0006). Its precondition is met: the chat
-   commands it wraps already do everything it will do, so a broken panel can
-   never mean a schedule cannot be changed. Read ADR-0006 before starting —
-   CUI lifecycle is the most bug-prone part of Oxide plugin work, and that
-   lesson has already been paid for once elsewhere.
-8. **Event-aware deferral.** Blocked on having anything to ask; see
+7. **Event-aware deferral.** Blocked on having anything to ask; see
    `docs/OPEN-QUESTIONS.md`. Must degrade to "restart on schedule, say nothing
    about events" on a server with none of the relevant plugins.
+
+The plugin side is done for v1: schedule, six recurrence modes, countdown,
+announcements, status bar, kick, save, quit, flag, chat commands and the
+in-game panel (ADR-0006, built last as it was meant to be). What is left is
+almost all launcher work.
 
 ## 6. Do not
 
