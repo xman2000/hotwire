@@ -5,10 +5,10 @@ pair: an Oxide plugin and the launcher script it talks to.**
 
 Windows. MIT.
 
-> **Status: early.** The plugin compiles and loads; the launcher is drafted.
-> **Neither has been exercised on a live server** — no countdown has run and
-> no flag has been handed to a launcher. See `BRIEF.md` for the full brief and
-> `docs/OPEN-QUESTIONS.md` for what is still unverified.
+> **Status: the plugin works, the launcher is unrun.** The plugin has been
+> proven end to end on a live server — announce, countdown, kick, save, quit,
+> write the flag, and a launcher acting on it. `launcher/hotwire.bat` itself
+> has never been executed. See `BRIEF.md` and `docs/OPEN-QUESTIONS.md`.
 
 ---
 

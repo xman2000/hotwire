@@ -1,8 +1,10 @@
 # Brief — Hotwire
 
-**Status:** early. The plugin compiles and loads under Oxide.Compiler
-v1.0.32.0; the launcher is drafted. **Neither has been exercised on a live
-server** — no countdown has run, and no flag has been handed to a launcher. Read this before writing code, then
+**Status:** the plugin works. Proven end to end on a live server 2026-09-04:
+announced, counted down, rendered a status bar, kicked, saved and quit, wrote
+an update flag, and had a launcher act on it. **`launcher/hotwire.bat` is
+still unrun** — the flag contract was proven against the reference server's
+own launcher, not against the one in this repository. Read this before writing code, then
 `docs/DECISIONS.md` for the choices already made and `docs/OPEN-QUESTIONS.md`
 for what is still unproven.
 
@@ -19,7 +21,7 @@ Scheduled restarts and updates for a Rust dedicated server, as a matched pair:
 
 | | |
 |---|---|
-| `src/Hotwire.cs` | Oxide plugin. Holds the schedule, announces, counts down, decides, quits. **v0.1.0 — compiles and loads, never yet fired.** |
+| `src/Hotwire.cs` | Oxide plugin. Holds the schedule, announces, counts down, decides, quits. **v0.2.1 — proven end to end.** |
 | `launcher/hotwire.bat` | Windows launcher. Restarts the server, and updates it only when told. **Drafted, never executed.** |
 
 They ship together because neither is much use alone. The plugin can shut a
@@ -116,12 +118,10 @@ Two mechanics make the launcher editable, and both are load-bearing:
 
 ## 5. What is left to do, in order
 
-0. **Fire the plugin once, end to end.** It compiles and loads, and
-   `hotwire check` confirms the flag path is right; it has never run a
-   countdown. Wanted: does the flag land where the launcher looks; does
-   a countdown announce, kick and quit cleanly; does the launcher act on the
-   flag on its next pass. Until that has happened the update/restart split is
-   a design, not a proven mechanism.
+0. **Run `launcher/hotwire.bat`.** The plugin half is done and the flag
+   contract holds — but it was proven against the reference server's existing
+   launcher, so this repository's launcher is now the untested half. It has
+   never been executed at all.
 1. **Run `tools/convars.py` against a real `Assembly-CSharp.dll`.** It has
    never been executed. Everything downstream — real defaults, tier 3, the
    ADR-0010 recount — is blocked on it.
