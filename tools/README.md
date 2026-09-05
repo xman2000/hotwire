@@ -37,8 +37,8 @@ at launch, and burying the twenty that matter among them destroys the only
 thing that makes the file good. The curation comes from two sources that are
 not opinions of ours — `[ServerVar(ShowInAdminUI = true)]`, which is
 Facepunch's own list of what an admin should see, and the names independent
-configuration sources agree on, gathered in `docs/RESEARCH.md`. `--all` prints
-the long tail when you want to search it.
+configuration sources agree on, recorded in ADR-0009. `--all` prints the long
+tail when you want to search it.
 
 **Re-run it after every Rust update.** Convars come and go, and their defaults
 move more often than their names do. A launcher documenting a default that has

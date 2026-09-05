@@ -449,4 +449,5 @@ after installing, after moving the server, and after any Oxide update.
 4. Kicks every connected player, so they get a reason rather than a timeout.
 5. Runs `quit`, which saves the world on the way out.
 
-Then the launcher takes over. See `BRIEF.md` §2.
+Then the launcher takes over: it sees the process exit, acts on the flag if
+there is one, and starts the server again.

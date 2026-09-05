@@ -6,9 +6,7 @@ pair: an Oxide plugin and the launcher script it talks to.**
 Windows. MIT.
 
 > **Version 1.0.0.** Both halves have run on a live server. What has not been
-> exercised is listed plainly in `CHANGELOG.md` under Known limitations, and
-> `docs/OPEN-QUESTIONS.md` keeps everything that is assumed rather than
-> verified.
+> exercised is listed plainly in `CHANGELOG.md` under Known limitations.
 
 ---
 
@@ -111,14 +109,11 @@ how it is done.
 src/Hotwire.cs                  the plugin
 launcher/hotwire.bat            the launcher
 launcher/secrets.example.bat    copy to secrets.bat; never committed
-tools/convars.py                generate the option list from your build
-docs/DECISIONS.md               every design choice, with its reasoning
-docs/RESEARCH.md                the evidence behind the option list
-docs/OPEN-QUESTIONS.md          what is assumed, unverified or undecided
 CHANGELOG.md                    what is in this release, and what is not
 docs/CONFIG.md                  every config field, command and permission
-docs/GAME-API.md                what has been read from a real assembly
-BRIEF.md                        the full brief
+docs/DECISIONS.md               every design choice, with its reasoning
+docs/GAME-API.md                what has been verified against a real build
+tools/convars.py                maintenance tooling; you never need to run it
 ```
 
 ## Requirements

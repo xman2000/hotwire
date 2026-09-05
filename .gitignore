@@ -24,3 +24,10 @@ Thumbs.db
 # The internal brief. Describes one production server in detail;
 # public repo, so it stays out of it. See BRIEF.md for the public version.
 HANDOFF.md
+
+# Working notes. Useful to whoever is building this; noise to anyone
+# using it. Kept on disk, out of the repo.
+BRIEF.md
+CLAUDE.md
+docs/OPEN-QUESTIONS.md
+docs/RESEARCH.md

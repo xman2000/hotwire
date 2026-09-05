@@ -2,7 +2,7 @@
 
 Newest last. An ADR is added whenever a design choice is made or reversed.
 These six were taken during the briefing, before any code existed; the
-reasoning is in `BRIEF.md` and is summarised here.
+reasoning is recorded in each one.
 
 ---
 
@@ -74,9 +74,9 @@ player sees constantly. The menu is admin-only, permission-gated, opened
 deliberately and occasionally by one person.
 
 **But a sibling plugin in the same house chose a CUI panel and later
-superseded that decision**, and its `CLAUDE.md` says plainly that CUI
-lifecycle is the most bug-prone part of Oxide plugin work. That lesson has
-already been paid for once.
+superseded that decision**, having concluded that CUI lifecycle is the most
+bug-prone part of Oxide plugin work. That lesson has already been paid for
+once.
 Conditions: strict panel lifecycle, destroy on disconnect, and **chat commands
 that do everything the menu does**, written first, so a broken panel never
 means a schedule cannot be changed.
@@ -127,8 +127,8 @@ launcher's whole point.
 
 ## ADR-0009 — Tier 2 is seeded from evidence, not from intuition
 
-**Date:** 2026-09-04 · **Status:** ACCEPTED — `ShowInAdminUI` confirmed real,
-and cross-source counting done. See `docs/RESEARCH.md`.
+**Date:** 2026-09-04 · **Status:** ACCEPTED, then amended twice by what the
+evidence turned out to say.
 
 "The top 20 settings admins change" is a claim about a population of admins,
 and inventing it would undermine the one thing this project sells: that the
@@ -141,10 +141,8 @@ Two real sources, in order:
    selection is an attribute property, it is Facepunch's own opinion about
    which settings admins touch, it is machine-readable, and tier 2 stops being
    a judgement call. Teach `tools/convars.py` to report it.
-2. **The reference server's live command line** — 23 convars, one real admin,
-   verified working on protocol 2632.287.1. Listed as source A in
-   `docs/RESEARCH.md`. **n = 1**: evidence, not a survey. Say so in the
-   docs.
+2. **A real server's live command line** — 23 convars, one real admin,
+   verified working. **n = 1**: evidence, not a survey.
 
 **Resolved 2026-09-04.** `ShowInAdminUI` is real; the declaration form is
 `[ServerVar(ShowInAdminUI = true)] public static string hostname = "My
@@ -159,11 +157,24 @@ answers "what does the in-game admin panel expose at runtime", which is a
 different question from "what do you set at launch". It is useful input to
 curation. It is not a substitute for it.
 
-Source 2 was also widened from n=1 to three independent samples. 17 convars
-are named by two or more of them — see `docs/RESEARCH.md` for the list and for
-two methodological artifacts that would otherwise mislead (ports look
-unimportant because they live on the command line rather than in server.cfg;
-rate tuning is missing from the reference server because it uses plugins).
+Source 2 was widened from n=1 to three independent samples: one production
+server's command line, and two hosting providers' configuration surfaces. 41
+distinct convars across the three, of which 7 appear in all three
+(`hostname`, `description`, `headerimage`, `tags`, `maxplayers`, `worldsize`,
+`seed`) and 10 more in two. Those 17 became the seed.
+
+Two artifacts in that method are worth knowing, because both would mislead
+anyone repeating it:
+
+- **Ports look unimportant and are not.** `server.port` and `server.queryport`
+  appear in only one source, because the other two generate `server.cfg` and
+  ports are conventionally passed on the command line instead. The count
+  measures where a setting is written, not how much it matters.
+- **A hosting panel's form is not a list of convars.** Two sources offered
+  gather-rate settings; the assembly has no `gather` class at all. A panel
+  lists what that panel can change, some of which it implements itself.
+  Cross-referencing documentation tells you what people want to configure.
+  Only the assembly tells you what exists.
 
 ## ADR-0010 — Config file layout: by tier, not by topic (for now)
 
@@ -219,42 +230,6 @@ The tail is 3 convars across 3 classes, one each (`decay`, `rideablehorse`,
 design for: tier 2 is mostly one class, tier 3 is where the many one-off
 classes live — and it is generated and grouped by class automatically, so it
 never needs hand-splitting at all.
-
-## ADR-0011 — The public repo carries a sanitized brief; the internal one stays untracked
-
-**Date:** 2026-09-04 · **Status:** ACCEPTED
-
-The original brief, `HANDOFF.md`, describes one production server in enough
-detail to be worth not publishing: install path, identity, map seed, host
-hardware, the plugin roster, and pointers to two private repositories. It is
-also the most useful document in the project, so deleting it was never an
-option.
-
-Alternatives: sanitize it in place, keeping one file; leave it and gate the
-decision until the repo is flipped public.
-
-Chosen: **`HANDOFF.md` is gitignored and stays on the author's disk. A shorter
-`BRIEF.md` is the public version** — same architecture, same measured numbers,
-same ordering of the work, with the identifying detail removed. `CLAUDE.md`
-points contributors at `BRIEF.md`.
-
-Consequences, and one of them is a job still to do:
-
-- Public docs may no longer cite the private repositories. References to a
-  sibling plugin's tooling and ADRs are now described by what they assert
-  rather than by where they live. `HANDOFF.md` keeps the concrete pointers,
-  because its only reader has access to them.
-- Named plugins that are not public — the reference server's event plugin and
-  its PVP-target plugin — are now referred to by role in `docs/`. Plugins
-  Hotwire might integrate with (AdvancedStatus, Hud, ZoneManager) keep their
-  names, because a stranger needs them.
-- Evidence that lived only in `HANDOFF.md` moved into `docs/RESEARCH.md`, so
-  no public document points at a private one. Source A's 23 convars are there
-  in full.
-- **`HANDOFF.md` remains in this repository's git history**, in commits
-  `3e54724` and `3f0dc61`. Untracking a file does not remove it from history.
-  That must be resolved before the repository is made public — see
-  `docs/OPEN-QUESTIONS.md`.
 
 ## ADR-0012 — Two schedule lists, not one typed list
 
@@ -344,8 +319,9 @@ forbids — and `try`/`catch` cannot save you from it, because the code never
 runs. Every remaining assumption in the plugin is a *runtime* one, wrapped, so
 being wrong costs one optional feature and not the schedule.
 
-Consequence: three entries in `docs/OPEN-QUESTIONS.md` close by not being
-needed, and the plugin keeps compiling across Rust updates that rename things.
+Consequence: three of the four assumed Facepunch calls stop being assumptions
+by not being needed at all, and the plugin keeps compiling across Rust updates
+that rename things.
 The cost is that `server.Command` is a string, so a typo is not caught by the
 compiler either — but a typo in a four-letter word in one place is a smaller
 risk than a moving signature in a hot path.
@@ -517,8 +493,8 @@ Chosen: **the option list is curated by hand; the machine checks it.**
   are not opinions of ours: `[ServerVar(ShowInAdminUI = true)]`, which is
   **Facepunch's own list of the convars worth showing an admin** and ships
   inside the game; and the seed of names independent configuration sources
-  agree on, gathered in `docs/RESEARCH.md`. `--all` still prints the long tail
-  for searching.
+  agree on, recorded in ADR-0009. `--all` still prints the long tail for
+  searching.
 - The curated names go into the launcher with real prose, the way tiers 1 and
   2 already do. There is no longer a meaningful line between tier 2 and tier 3
   — there is one hand-written list, and a checker that keeps it honest.

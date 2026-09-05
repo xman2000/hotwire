@@ -1,10 +1,9 @@
 # Game API — what has actually been read from an assembly
 
-This file is the source of truth for Rust and Oxide API used by Hotwire, per
-rule 5 in `CLAUDE.md`. **Only entries read out of a real
-`Assembly-CSharp.dll` belong here.** Anything else is assumed, is tagged
-`// VERIFY:` at its use site, and lives in `docs/OPEN-QUESTIONS.md` until it
-has been checked.
+This file is the source of truth for the Rust and Oxide API that Hotwire
+depends on. **Only entries read out of a real assembly or a real plugin belong
+here.** Anything not read that way is an assumption, is tagged `// VERIFY:` at
+its use site in the source, and stays an assumption until somebody checks it.
 
 ## AdvancedStatus 0.1.26 (IIIaKa)
 
@@ -143,10 +142,10 @@ wrong guess at a Facepunch signature is a compile error, and a plugin that
 does not compile is a plugin that never restarts the server. So this file
 being empty currently costs the plugin nothing.
 
-What remains assumed is all runtime, all wrapped, and all listed in
-`docs/OPEN-QUESTIONS.md`: the uMod release-feed shape, the AdvancedStatus call
-shape, `Interface.Oxide.RootDirectory` as the server root, and the name of the
-extension carrying the framework version.
+What remains assumed is all runtime, all wrapped, and each tagged `// VERIFY:`
+in the source: the uMod release-feed shape, `Interface.Oxide.RootDirectory` as
+the server root, and the name of the extension carrying the framework
+version.
 
 This file becomes load-bearing the moment something here needs a game type —
 event-aware deferral is the likely first case.

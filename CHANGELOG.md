@@ -47,5 +47,6 @@ nothing in `launcher/` refers to it and nobody installing this needs Python.
 - No crash-loop protection: if the server dies on boot, the launcher relaunches
   it every 15 seconds indefinitely.
 
-`docs/OPEN-QUESTIONS.md` keeps the current list, including what is assumed
-rather than verified.
+`docs/DECISIONS.md` records why the design is the way it is, and
+`docs/GAME-API.md` lists what has been verified against a real build rather
+than assumed.
