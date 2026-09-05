@@ -50,14 +50,13 @@ initialized in a static constructor: the value is in IL, not metadata. Walking
 those `.cctor` assignments would close most of the gap, and is the obvious next
 step.
 
-**Status: run, 2026-09-05.** Against a real `Assembly-CSharp.dll` it finds
-**1,623 convars** and reads **1,620 defaults** out of static-constructor IL.
-The remaining 17% are properties, which have a getter rather than a constant
-and so have nothing to read.
+It finds on the order of sixteen hundred convars in a current build and reads
+almost all of their defaults out of static-constructor IL. The ones it cannot
+are properties, which have a getter rather than a constant and so have nothing
+to read.
 
-On its first working run, checking `launcher/hotwire.bat`, it found that
-`server.combatlog`, `server.chatlog` and `server.globalchat` do not exist —
-the real names are `server.combatlogdelay`, `chat.serverlog` and
-`chat.globalchat` — and that a comment claiming `server.worldsize` defaults to
-4000 was wrong by 500. Three of those had been on a live server's command line
-doing nothing.
+`--check` earns its keep on names as much as defaults. Convars get renamed
+quietly: `server.chatlog` and `server.globalchat` were passed on a real
+server's command line for a long time, doing nothing, because the real names
+are `chat.serverlog` and `chat.globalchat`. Nothing warns you — the server
+starts, and the setting is simply ignored.

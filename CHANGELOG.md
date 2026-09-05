@@ -17,7 +17,7 @@ without one, because a Rust server that never updates stops accepting
 connections rather than merely going stale.
 
 Every option is one independent line, so commenting one out cannot break the
-rest of the launch. 75 curated options ship with the game's real defaults
+rest of the launch. The curated options ship with the game's real defaults
 printed beside them, read out of a real `Assembly-CSharp.dll` rather than
 copied from a guide.
 

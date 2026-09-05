@@ -182,9 +182,10 @@ anyone repeating it:
 
 Its trigger fired and the answer was that the question had dissolved. This ADR
 chose between two ways of splitting the options across files, and asked to be
-revisited once `convars.py` ran. It ran: there are 1,623 convars, ADR-0018
-curated 75 of them into one hand-written list, and the tier boundary it was
-reasoning about no longer exists. There is one file, and no split to choose.
+revisited once `convars.py` ran. It ran, and ADR-0018 curated a small
+hand-written list out of the roughly sixteen hundred convars a build contains.
+The tier boundary this ADR was reasoning about no longer exists: there is one
+file, and no split to choose.
 
 The counting in it is still worth reading. It is a good demonstration that two
 plausible ways of organizing the same thing can cut across each other so badly

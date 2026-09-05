@@ -5,11 +5,6 @@ pair: an Oxide plugin and the launcher script it talks to.**
 
 Windows. MIT.
 
-> **Version 1.0.0.** Both halves have run on a live server. What has not been
-> exercised is listed plainly in `CHANGELOG.md` under Known limitations.
-
----
-
 ## The problem
 
 Most Rust launchers are one long `^`-continued command that runs steamcmd,

@@ -140,7 +140,7 @@ More usefully: **`src/Hotwire.cs` does not reference a single Facepunch type.**
 ADR-0014 routes the whole plugin through Covalence and `Oxide.Core`, because a
 wrong guess at a Facepunch signature is a compile error, and a plugin that
 does not compile is a plugin that never restarts the server. So this file
-being empty currently costs the plugin nothing.
+being empty costs the plugin nothing.
 
 What remains assumed is all runtime, all wrapped, and each tagged `// VERIFY:`
 in the source: the uMod release-feed shape, `Interface.Oxide.RootDirectory` as

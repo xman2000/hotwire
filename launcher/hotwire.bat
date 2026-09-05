@@ -284,9 +284,9 @@ REM
 REM     One option per line. REM a line to switch it off; an option you do
 REM     not set uses the game's default, printed beside every one of them.
 REM
-REM     This is a curated list, not every convar Rust has. The game holds
-REM     about sixteen hundred, and the great majority are diagnostics and
-REM     internal tuning that nobody sets when starting a server.
+REM     This is a curated list, not every convar Rust has. Most of them are
+REM     diagnostics and internal tuning that nobody sets when starting a
+REM     server, and listing those here would only bury these.
 REM ======================================================================
 
 set "ARGS="
