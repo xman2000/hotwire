@@ -22,6 +22,27 @@ differ; that is the design, not drift.
 at the top of the file — it is a comment, not something it echoes, so read it
 rather than watch for it.
 
+## 1.1.6 — launcher — 2026-09-05
+
+**The update stamp was written with the redirect last**, so the character
+immediately before the arrow was whatever digit the clock happened to end on —
+and cmd reads a digit in that position as a file handle number, not as text.
+Handle 1 is stdout and worked by luck; handles 3 to 9 created the file and wrote
+nothing into it; handle 2 sent the line to stderr. The backstop reads the file's
+timestamp rather than its contents, so this survived entirely on the file being
+created at all. The redirect comes first now.
+
+**A flag that cannot be deleted, or a stamp that cannot be written, is now
+reported.** Neither shows up in the outcome — the update succeeded — but an
+undeletable `UPDATE.flag` means every restart from then on updates, forever, in
+silence, and an unwritable stamp means the backstop believes no update has ever
+happened. Warnings rather than failures, since the update itself worked.
+
+Section 4 was audited against its own annotations: all 75 options have a name,
+a type and a default, every comment names the convar its line actually sets,
+none is set twice, and all 15 enabled values match their declared types. Three
+defaults are honestly recorded as `UNKNOWN`.
+
 ## 1.1.5 — launcher — 2026-09-05
 
 Hardening found by reviewing 1.1.4 line by line. Most of these were defects in

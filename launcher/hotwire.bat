@@ -8,7 +8,7 @@ set "CHECK_ONLY="
 if /i "%~1"=="check" set "CHECK_ONLY=1"
 
 REM ==[ H O T W I R E ]===================================================
-REM  Version 1.1.5   2026-09-05
+REM  Version 1.1.6   2026-09-05
 REM  Built by xman2000 and Claude.  MIT License.
 REM
 REM  The launcher. Starts a Rust dedicated server, relaunches it when it
@@ -469,10 +469,22 @@ REM  UPDATE_STAMP is what the backstop reads. Its timestamp is the whole
 REM  point; the text inside is only there so a person can read it too.
 REM  No REM inside the block below -- a stray parenthesis in a comment
 REM  closes the block early, and a stray redirect writes a file.
+REM  The stamp line writes its redirect FIRST. Written the other way
+REM  round, the character sitting just before the redirect arrow is
+REM  whatever digit the clock happens to end on, and cmd reads a digit
+REM  in that position as a file handle number rather than as text.
+REM  Handle 1 is stdout and works by luck; handles 3 to 9 create the
+REM  file and write nothing into it; handle 2 sends the line to stderr.
+REM  The backstop reads the file timestamp rather than its contents, so
+REM  this was surviving on the file being created at all.
+REM
+REM  This comment sits outside the block below on purpose. REM does not
+REM  neutralize a redirect, so an arrow inside a comment inside a block
+REM  creates a file.
 if "!UPDATE_OK!"=="1" (
     if exist "%ROOT%\UPDATE.flag"   del "%ROOT%\UPDATE.flag"
     if exist "%ROOT%\VALIDATE.flag" del "%ROOT%\VALIDATE.flag"
-    echo Last update: %date% %time%> "%UPDATE_STAMP%"
+    >"%UPDATE_STAMP%" echo Last update: %date% %time%
 ) else (
     echo [%date% %time%] ================================================
     echo [%date% %time%] The update did NOT complete.
@@ -480,6 +492,31 @@ if "!UPDATE_OK!"=="1" (
     echo [%date% %time%] and the backstop clock has NOT been reset, so
     echo [%date% %time%] the next start will try again.
     echo [%date% %time%] ================================================
+)
+
+REM  Deleting a flag and writing the stamp can both fail on a
+REM  permission problem, and neither failure shows up in the outcome:
+REM  the update worked. A flag that will not delete means every
+REM  restart from now updates, forever, in silence. A stamp that will
+REM  not write means the backstop believes no update has ever
+REM  happened and fires on every start. Warnings, not failures --
+REM  the update itself succeeded.
+if "!UPDATE_OK!"=="1" if exist "%ROOT%\UPDATE.flag" (
+    echo [%date% %time%] WARNING: UPDATE.flag is still present after a
+    echo [%date% %time%] successful update. It could not be deleted, so
+    echo [%date% %time%] every restart from now will update. Check the
+    echo [%date% %time%] permissions on ROOT.
+)
+if "!UPDATE_OK!"=="1" if exist "%ROOT%\VALIDATE.flag" (
+    echo [%date% %time%] WARNING: VALIDATE.flag is still present after a
+    echo [%date% %time%] successful update, so every restart will
+    echo [%date% %time%] validate. That is slow, and unintended.
+)
+if "!UPDATE_OK!"=="1" if not exist "%UPDATE_STAMP%" (
+    echo [%date% %time%] WARNING: could not write the update stamp at
+    echo [%date% %time%]   %UPDATE_STAMP%
+    echo [%date% %time%] The backstop reads it, so it will act as though
+    echo [%date% %time%] no update has ever happened.
 )
 
 if defined HOOK_AFTER call %HOOK_AFTER%
