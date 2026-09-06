@@ -78,11 +78,43 @@ Both `TimeProgress` and `TimeProgressCounter` compute `Progress` as
 tick, and **delete the bar when `TimeStamp` passes**. So neither the fill nor
 the removal ever needs pushing.
 
-**Only the timed types expire.** A `Default` bar stays until something deletes
-it. If you ever move off `TimeProgress`, the cleanup becomes yours, and a
-crashed or unloaded plugin leaves a bar on someone's screen with no way to
-remove itself. Hotwire's `Unload` calls `DeleteAllPluginBars` regardless of
-what state it thinks it is in, for that reason.
+**`Default` is the only type that never expires.** Everything else is on the
+deletion path. From `HandleBarsUpdate`, lines 2008-2046, read out of the
+installed 0.1.26 by the session working on the sibling event plugin:
+
+```csharp
+double currentTimestamp = Network.TimeEx.currentTimestamp;
+for (int i = Bars.Count - 1; i >= 0; i--)
+{
+    bar = Bars[i];
+    if (bar == null) { Bars.RemoveAt(i); continue; }
+    if (bar.ShouldRemove) { bar.HandleBarDeletion(Player); Bars.RemoveAt(i); continue; }
+
+    if (bar.BarType == AdvancedBarType.Default)
+        continue;                                    // the only exemption
+
+    if (bar.TimeStamp <= currentTimestamp || (bar.TimeStampDestroy > 0d && bar.TimeStampDestroy <= currentTimestamp))
+    { bar.HandleBarDeletion(Player); Bars.RemoveAt(i); continue; }
+
+    if (bar.BarType == TimeProgress || bar.BarType == TimeProgressCounter)
+        bar.Progress = (float)((currentTimestamp - bar.TimeStampStart) / (bar.TimeStamp - bar.TimeStampStart));
+}
+```
+
+`Timed`, `TimeCounter`, `TimeProgress` and `TimeProgressCounter` all fall
+through to the `TimeStamp` comparison. Only `Default` is skipped, and a
+`Default` bar therefore stays until something deletes it — a crashed or
+unloaded plugin leaves one on the screen with no way to remove itself, which is
+why Hotwire's `Unload` calls `DeleteAllPluginBars` whatever state it thinks it
+is in.
+
+**This matters for Hotwire's default configuration.** `FillStyle = "Full"`
+sends `BarType = Timed`, which is on the deletion path, so the epoch assumption
+below applies to the shipped default and not only to the opt-in fill styles.
+That is wider than it was assumed to be, not narrower.
+
+`Timed` also computes no `Progress`, so a too-large epoch has nothing that
+looks wrong: the bar neither expires nor animates, it simply sits there.
 
 **Hotwire uses `TimeProgress`, not `TimeProgressCounter`.** The Counter variants
 additionally build their own countdown string, in code, with no format
