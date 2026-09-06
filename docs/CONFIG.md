@@ -7,6 +7,12 @@ restarting the moment it is installed is a restarter that catches you out.
 The config stays hand-editable and always will. Chat commands are a
 convenience over the same file, never the only way in (ADR-0006).
 
+> **Upgrading to plugin 1.1.1?** The status bar's default `Bar fill color, hex`
+> changes from `#E74C3C` to `#C0392B`, matching the panel's one danger red.
+> Config files are only written once, so an existing one keeps the old value —
+> set it yourself, or delete the `Status bar` section, if you want them to
+> agree. Nothing else in the config changed.
+>
 > **Upgrading to 1.1.0?** Config is unchanged. The lang file is not: every
 > string a player can see is now a key, and there are 153 of them rather than
 > 30. Lang files are written once and never rewritten, so an existing

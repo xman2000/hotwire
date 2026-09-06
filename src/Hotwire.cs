@@ -13,7 +13,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Hotwire", "xman2000", "1.1.0")]
+    [Info("Hotwire", "xman2000", "1.1.1")]
     [Description("Scheduled restarts and updates. Announces, counts down, writes a flag, quits.")]
     internal class Hotwire : CovalencePlugin
     {
@@ -250,7 +250,7 @@ namespace Oxide.Plugins
             // already use, so it reads as part of the set rather than as a
             // stray color.
             [JsonProperty("Bar fill color, hex")]
-            public string ProgressColor = "#E74C3C";
+            public string ProgressColor = "#C0392B";
 
             // A verified built-in path. assets/icons/clock.png does NOT exist
             // and logs "[FileSystem] Not Found" once per draw.
@@ -1805,8 +1805,26 @@ namespace Oxide.Plugins
         private const string ColRow = "0.18 0.18 0.20 0.90";
         private const string ColButton = "0.28 0.28 0.31 1.00";
         private const string ColOn = "0.33 0.56 0.33 1.00";
-        private const string ColOff = "0.42 0.22 0.22 1.00";
-        private const string ColDanger = "0.58 0.24 0.20 1.00";
+
+        // OFF is a state, not a hazard. It was red, four inches from a red
+        // Delete on the same row, and only the label told them apart. Recessed
+        // neutral now: dimmer than a normal button, so the toggle column reads
+        // as lit or unlit rather than as safe or dangerous.
+        private const string ColOff = "0.24 0.24 0.27 1.00";
+
+        // One red, for things that destroy or interrupt: Delete, and the
+        // countdown banner. #C0392B, which is also the status bar's default
+        // fill, so the panel and the HUD agree.
+        private const string ColDanger = "0.753 0.224 0.169 1.00";
+
+        // The same red lightened until it is legible as text on a dark row.
+        // A fill color and a text color cannot be the same value; this is the
+        // same hue, not a fourth red.
+        private const string ColDangerText = "0.91 0.51 0.45 1.00";
+
+        // Amber, and deliberately not in the red family. It means "this will
+        // behave in a way you may not expect", not "this is broken".
+        private const string ColWarnText = "0.85 0.65 0.40 1.00";
         private const string ColText = "0.90 0.90 0.90 1.00";
         private const string ColMuted = "0.62 0.62 0.65 1.00";
 
@@ -2005,7 +2023,7 @@ namespace Oxide.Plugins
                 Label(ui, MenuContent + ".row" + i, 0.02, 0.45, 0.62, 0.98,
                       Sentence(Describe(entry, player.Id)), 13, ColText, TextAnchor.MiddleLeft);
                 Label(ui, MenuContent + ".row" + i, 0.02, 0.05, 0.62, 0.5, detail, 11,
-                      problem != null ? "0.85 0.45 0.40 1.00" : ColMuted, TextAnchor.MiddleLeft);
+                      problem != null ? ColDangerText : ColMuted, TextAnchor.MiddleLeft);
 
                 Button(ui, MenuContent + ".row" + i, 0.63, 0.15, 0.75, 0.85,
                        T(entry.Enabled ? "MenuOn" : "MenuOff", player.Id),
@@ -2128,7 +2146,7 @@ namespace Oxide.Plugins
                 Button(ui, MenuContent, 0.54, y, 0.60, y + h, "+7" + ud, $"{prefix} dom {target} 7", ColButton);
                 if (entry.DayOfMonth > 28)
                     Label(ui, MenuContent, 0.62, y, 0.98, y + h,
-                          T("MenuShortMonthWarning", player.Id), 11, "0.85 0.65 0.40 1.00",
+                          T("MenuShortMonthWarning", player.Id), 11, ColWarnText,
                           TextAnchor.MiddleLeft);
                 y -= h + gap;
             }
@@ -2237,7 +2255,7 @@ namespace Oxide.Plugins
             {
                 headline = T("MenuNotValid", player.Id);
                 detail = Text(problem, player.Id);
-                headlineColor = "0.85 0.45 0.40 1.00";
+                headlineColor = ColDangerText;
             }
             else if (!entry.Enabled)
             {
@@ -2247,13 +2265,13 @@ namespace Oxide.Plugins
                     ? T("MenuNoOccurrence", player.Id, rule)
                     : T("MenuWouldRun", player.Id, rule, Friendly(would.Value, player.Id),
                         would.Value.ToString("dddd d MMMM yyyy 'at' HH:mm", CultureInfo.InvariantCulture));
-                headlineColor = "0.85 0.65 0.40 1.00";
+                headlineColor = ColWarnText;
             }
             else if (next == null)
             {
                 headline = T("MenuNeverRuns", player.Id);
                 detail = T("MenuNoOccurrence", player.Id, rule);
-                headlineColor = "0.85 0.65 0.40 1.00";
+                headlineColor = ColWarnText;
             }
             else
             {

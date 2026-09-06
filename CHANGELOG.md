@@ -22,6 +22,28 @@ differ; that is the design, not drift.
 at the top of the file — it is a comment, not something it echoes, so read it
 rather than watch for it.
 
+## 1.1.1 — plugin — 2026-09-05
+
+**One red instead of four.** The panel had `ColOff` at `0.42 0.22 0.22`,
+`ColDanger` at `0.58 0.24 0.20`, an inline `0.85 0.45 0.40` for broken text, and
+a status bar filling `#E74C3C` — four unrelated reds, two of them side by side
+on every row.
+
+Worse, `OFF` was one of them. Being switched off is a state, not a hazard, and
+it sat four inches from a red `Delete` on the same row with only the label
+telling them apart. `OFF` is now a recessed neutral: the toggle column reads as
+lit or unlit rather than as safe or dangerous.
+
+What remains is one danger red — `#C0392B`, for `Delete` and the countdown
+banner — the same hue lightened into `ColDangerText` where it has to be legible
+as text on a dark row, and amber kept deliberately outside the family for
+"this will behave in a way you may not expect". Every color literal in the menu
+is now a named constant.
+
+**The status bar's default fill changes to `#C0392B`** so the HUD and the panel
+agree. An existing config keeps `#E74C3C`; delete the `Status bar` section, or
+set `Bar fill color, hex` yourself, to pick it up.
+
 ## 1.1.7 — launcher — 2026-09-05
 
 **The launcher now knows which Rust build is current, and says so.** Steam
