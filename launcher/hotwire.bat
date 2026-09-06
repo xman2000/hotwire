@@ -1,8 +1,14 @@
 @echo off
 setlocal EnableDelayedExpansion
 
+REM  "hotwire.bat check" validates the settings and the option list,
+REM  says what is wrong, and exits without updating or starting
+REM  anything. Run it after editing section 4.
+set "CHECK_ONLY="
+if /i "%~1"=="check" set "CHECK_ONLY=1"
+
 REM ==[ H O T W I R E ]===================================================
-REM  Version 1.1.3   2026-09-05
+REM  Version 1.1.4   2026-09-05
 REM  Built by xman2000 and Claude.  MIT License.
 REM
 REM  The launcher. Starts a Rust dedicated server, relaunches it when it
@@ -24,7 +30,9 @@ REM     1.  Section 1: set ROOT and STEAMCMD.
 REM     2.  Copy secrets.example.bat to secrets.bat and set RCON_PASSWORD.
 REM     3.  Section 4: enable the options you need. Anything left disabled
 REM         uses the game's default.
-REM     4.  Run this file. Leave the window open.
+REM     4.  Run "hotwire.bat check" to have it read back what you set
+REM         and say what is wrong. It does not update or start anything.
+REM     5.  Run this file. Leave the window open.
 REM
 REM  RUN LOOP
 REM     The script does not exit after starting the server. It waits for
@@ -249,6 +257,75 @@ if not exist "%ROOT%\logs" mkdir "%ROOT%\logs"
 
 
 
+REM ======================================================================
+REM  2b. CHECKING THE SETTINGS ABOVE
+REM
+REM     Section 1 is numbers and paths, and a wrong one there fails a long
+REM     way from where it was typed. LOG_KEEP=0 makes the log cull delete
+REM     every rotated log rather than none. A trailing backslash on ROOT
+REM     turns +force_install_dir "C:\rustserver\" into a quoted string
+REM     steamcmd never closes. A misspelled UPDATE_MODE silently selects
+REM     the mode you did not want, because anything that is not "always"
+REM     is treated as "hotwire".
+REM ======================================================================
+
+set "CFGBAD="
+
+REM  A trailing backslash escapes the closing quote of every path we
+REM  hand to another program. Take it off rather than complain about it.
+if "!ROOT:~-1!"=="\" set "ROOT=!ROOT:~0,-1!"
+if "!STEAMCMD:~-1!"=="\" set "STEAMCMD=!STEAMCMD:~0,-1!"
+
+if not defined ROOT (
+    echo [%date% %time%] ROOT is empty. Set it in section 1.
+    set "CFGBAD=1"
+)
+
+if /i not "%UPDATE_MODE%"=="always" if /i not "%UPDATE_MODE%"=="hotwire" (
+    echo [%date% %time%] UPDATE_MODE is [%UPDATE_MODE%]. It must be
+    echo [%date% %time%] exactly "always" or "hotwire" -- anything else is
+    echo [%date% %time%] treated as hotwire, which is probably not what
+    echo [%date% %time%] you meant.
+    set "CFGBAD=1"
+)
+
+REM  Numeric test with no echo and no pipe. Digits are the delimiters,
+REM  so an all-digit value produces no tokens and the inner loop never
+REM  runs; one non-digit produces a token and clears the flag. An empty
+REM  value produces no tokens either, so it is ruled out first.
+for %%V in (MAX_DAYS_WITHOUT_UPDATE MAX_STEAM_TRIES LOG_KEEP RESTART_DELAY CRASH_SECONDS MAX_CRASH_STREAK) do (
+    set "CFGVAL=!%%V!"
+    set "CFGNUM=1"
+    if not defined CFGVAL set "CFGNUM="
+    for /f "delims=0123456789" %%X in ("!CFGVAL!") do set "CFGNUM="
+    if not defined CFGNUM (
+        echo [%date% %time%] %%V must be a whole number. It is [!CFGVAL!].
+        set "CFGBAD=1"
+    )
+)
+
+REM  Skip 0 keeps nothing back, so the cull would remove every rotated
+REM  log including the one just written.
+if "%LOG_KEEP%"=="0" (
+    echo [%date% %time%] LOG_KEEP is 0, which would delete every rotated
+    echo [%date% %time%] log rather than keep none. Use 1 or more.
+    set "CFGBAD=1"
+)
+
+if "%MAX_STEAM_TRIES%"=="0" (
+    echo [%date% %time%] MAX_STEAM_TRIES is 0, so steamcmd would never run.
+    set "CFGBAD=1"
+)
+
+if defined CFGBAD (
+    echo [%date% %time%] ================================================
+    echo [%date% %time%] Section 1 has a setting that cannot work.
+    echo [%date% %time%] Not starting. Fix the lines named above.
+    echo [%date% %time%] ================================================
+    pause & exit /b 1
+)
+
+
 :start
 
 REM ======================================================================
@@ -309,6 +386,9 @@ if !DAYS_SINCE_UPDATE! GEQ %MAX_DAYS_WITHOUT_UPDATE% (
 )
 
 :updatedecided
+
+REM  check mode inspects; it never installs.
+if defined CHECK_ONLY set "DO_UPDATE=0"
 
 if defined HOOK_BEFORE call %HOOK_BEFORE%
 
@@ -866,6 +946,103 @@ REM ----------------------------------------------------------------------
 REM   server.tickrate -- Server ticks per second.
 REM   [int, default 10]
 REM set "ARGS=!ARGS! +server.tickrate VALUE"
+
+REM ======================================================================
+REM  4b. CHECKING THE OPTION LIST
+REM
+REM     Machinery. Nothing in this section is a setting.
+REM
+REM     Rust ignores a convar it does not recognize, and accepts an empty
+REM     value for one it does. Both fail in silence. The second took a
+REM     server down for an afternoon: an empty rcon.password reached
+REM     Bootstrap.Init_Tier0, which redacts the password out of its own
+REM     logged command line and threw "String cannot be of zero length",
+REM     naming no file, no convar and no cause. The launcher is the last
+REM     place that still knows which line the value came from, so the
+REM     check belongs here.
+REM
+REM     What it catches: a convar with no value, an empty value, a value
+REM     that is still an unexpanded variable, the same convar set twice,
+REM     a name with no dot in it, an unbalanced quote, a port that is not
+REM     a number or is out of range or collides with another port, and a
+REM     server.identity that cannot be a folder name.
+REM
+REM     Written in PowerShell because the checks need a real tokenizer,
+REM     and assembled one line at a time so it stays readable. The script
+REM     contains no double quote, percent sign or exclamation mark, so
+REM     nothing in it can be mangled on the way through cmd; where those
+REM     three characters are needed they are built with [char].
+REM
+REM     ARGS reaches it through the environment rather than the command
+REM     line, because it is full of quotes and pipes by design. Not
+REM     through a file: ARGS carries the RCON password, and a file would
+REM     put it on disk where a backup running at the same moment could
+REM     pick it up. RCON_PASSWORD is already in this process environment,
+REM     so this adds no exposure that was not there.
+REM ======================================================================
+
+set "HOTWIRE_ARGS=!ARGS!"
+
+set "PSCHK="
+set "PSCHK=!PSCHK!$Q=[char]34; $PC=[char]37; $EX=[char]33; "
+set "PSCHK=!PSCHK!$p=@(); $s=[string]$env:HOTWIRE_ARGS; "
+set "PSCHK=!PSCHK!$t=@(); $c=[Text.StringBuilder]::new(); $q=$false; $st=$false; "
+set "PSCHK=!PSCHK!foreach($ch in $s.ToCharArray()){ if($ch -eq $Q){ $q=-not $q; $st=$true } elseif((($ch -eq [char]32) -or ($ch -eq [char]9) -or ($ch -eq [char]13) -or ($ch -eq [char]10)) -and (-not $q)){ if($st -or ($c.Length -gt 0)){ $t+=$c.ToString(); $c.Clear() | Out-Null; $st=$false } } else { $c.Append($ch) | Out-Null; $st=$true } } "
+set "PSCHK=!PSCHK!if($st -or ($c.Length -gt 0)){ $t+=$c.ToString() } "
+set "PSCHK=!PSCHK!if($q){ $p+=[string]('unbalanced quote in the option list') } "
+set "PSCHK=!PSCHK!$seen=@{}; $val=@{}; $i=0; "
+set "PSCHK=!PSCHK!while($i -lt $t.Count){ $x=[string]$t[$i]; "
+set "PSCHK=!PSCHK! if($x.StartsWith([string][char]43)){ $n=$x.Substring(1); "
+set "PSCHK=!PSCHK!  if($n.Length -eq 0){ $p+=[string]('a bare plus with no convar after it'); $i++; continue } "
+set "PSCHK=!PSCHK!  if(-not $n.Contains([string][char]46)){ $p+=[string]::Concat($n,[string](' is not a convar name; it needs a dot, and Rust ignores unknown convars in silence')) } "
+set "PSCHK=!PSCHK!  if(($i+1) -ge $t.Count){ $p+=[string]::Concat($n,[string](' has no value; it is the last thing on the line')); $i++; continue } "
+set "PSCHK=!PSCHK!  $v=[string]$t[$i+1]; "
+set "PSCHK=!PSCHK!  if($v.StartsWith([string][char]43) -or ($v.StartsWith([string][char]45) -and ($v -notmatch [string]('^-?\d+(\.\d+)?$')))){ $p+=[string]::Concat($n,[string](' has no value; the next thing is '),$v); $i++; continue } "
+set "PSCHK=!PSCHK!  if($v.Length -eq 0){ $p+=[string]::Concat($n,[string](' is set to an empty value')) } "
+set "PSCHK=!PSCHK!  if(($v -match [string]::Concat($PC,'[A-Za-z_][A-Za-z0-9_]*',$PC)) -or ($v -match [string]::Concat($EX,'[A-Za-z_][A-Za-z0-9_]*',$EX))){ $p+=[string]::Concat($n,[string](' still contains an unexpanded variable: '),$v) } "
+set "PSCHK=!PSCHK!  if($seen.ContainsKey($n)){ $p+=[string]::Concat($n,[string](' is set twice; whichever line is last wins, silently')) } "
+set "PSCHK=!PSCHK!  $seen[$n]=1; $val[$n]=$v; $i+=2; continue } "
+set "PSCHK=!PSCHK! $i++ } "
+set "PSCHK=!PSCHK!$ports=@([string]('server.port'),[string]('server.queryport'),[string]('rcon.port'),[string]('app.port')); "
+set "PSCHK=!PSCHK!$pn=@{}; "
+set "PSCHK=!PSCHK!foreach($k in $ports){ if($val.ContainsKey($k)){ $v=[string]$val[$k]; "
+set "PSCHK=!PSCHK!  if($v -notmatch [string]('^\d+$')){ $p+=[string]::Concat($k,[string](' is '),$v,[string](', which is not a number')) } "
+set "PSCHK=!PSCHK!  elseif(([int]$v -lt 1) -or ([int]$v -gt 65535)){ $p+=[string]::Concat($k,[string](' is '),$v,[string]('; a port must be 1-65535')) } "
+set "PSCHK=!PSCHK!  else { $pn[$k]=[int]$v } } } "
+set "PSCHK=!PSCHK!foreach($a in $pn.Keys){ foreach($b in $pn.Keys){ if(([string]::CompareOrdinal($a,$b) -lt 0) -and ($pn[$a] -eq $pn[$b])){ $p+=[string]::Concat($a,[string](' and '),$b,[string](' are both '),[string]$pn[$a],[string]('; they must differ')) } } } "
+set "PSCHK=!PSCHK!if($val.ContainsKey([string]('server.identity'))){ $v=[string]$val[[string]('server.identity')]; "
+set "PSCHK=!PSCHK! $bad=[char[]]@([char]92,[char]47,[char]58,[char]42,[char]63,[char]34,[char]60,[char]62,[char]124,[char]32); "
+set "PSCHK=!PSCHK! if($v.Length -eq 0){ $p+=[string]('server.identity is empty; it names the save folder') } "
+set "PSCHK=!PSCHK! elseif($v.IndexOfAny($bad) -ge 0){ $p+=[string]::Concat([string]('server.identity is '),$v,[string]('; it names a folder, so no spaces and no path characters')) } } "
+set "PSCHK=!PSCHK!foreach($m in $p){ Write-Output ([string]::Concat([string]('  '),$m)) } "
+set "PSCHK=!PSCHK!if($p.Count -gt 0){ exit 1 } else { exit 0 } "
+
+powershell -NoProfile -Command "!PSCHK!"
+set "ARGCHECK=!errorlevel!"
+set "HOTWIRE_ARGS="
+
+REM  9009 is "command not found". A missing PowerShell costs the check,
+REM  not the server -- failing the other way would stop a working install
+REM  over a tool that is only used for diagnostics.
+if "!ARGCHECK!"=="9009" (
+    echo [%date% %time%] PowerShell not found -- option check skipped.
+    set "ARGCHECK=0"
+)
+
+if not "!ARGCHECK!"=="0" (
+    echo [%date% %time%] ================================================
+    echo [%date% %time%] The option list has problems, listed above.
+    echo [%date% %time%] Not starting. They are set in section 4.
+    echo [%date% %time%] ================================================
+    pause & exit /b 1
+)
+
+if defined CHECK_ONLY (
+    echo [%date% %time%] Settings and option list checked. No problems.
+    echo [%date% %time%] check mode -- not starting the server.
+    exit /b 0
+)
+
 
 REM ======================================================================
 REM  5. LAUNCH

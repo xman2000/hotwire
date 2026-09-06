@@ -842,3 +842,47 @@ if support ever needs it echoed at startup. The version worth quoting in a bug r
 Rejected: strict lockstep, which forces empty releases; and fully independent
 versioning, which loses the one guarantee a user actually needs, that the two
 halves in front of them are a matched pair.
+
+## ADR-0027 — The launcher validates the option list before the engine sees it
+
+**Date:** 2026-09-05 · **Status:** ACCEPTED · **Extends ADR-0025**
+
+ADR-0025 checked one value, the RCON password, because that was the one that
+had just cost an afternoon. The same failure exists for every other option:
+Rust ignores a convar it does not recognize, and accepts an empty value for one
+it does. Both are silent. A typo in section 4 produces a server that starts
+happily with the setting absent, and nothing anywhere says so.
+
+Chosen: **tokenize the composed `ARGS` and check it before launch**, and check
+the section 1 settings before that. Every problem is reported, not just the
+first, and the launcher refuses to start.
+
+Three decisions inside that are worth recording.
+
+**The check is written in PowerShell, and the script contains no double quote,
+percent sign or exclamation mark.** Those are the three characters cmd would
+rewrite on the way through; where the script needs them it builds them with
+`[char]`. The script is assembled one readable line at a time into a variable
+rather than written as one enormous line. This file has been bitten twice by
+clever quoting, and the answer is to make the clever part unreachable by the
+parser rather than to escape it correctly.
+
+**`ARGS` reaches PowerShell through the environment, not a file and not the
+command line.** The command line is out because `ARGS` is full of quotes and
+pipes by design. A file is out because `ARGS` carries the RCON password, and a
+file puts it on disk where a backup running at that moment can capture it —
+which is exactly how a scrubbed mirror of this project's own launcher ended up
+in a git repository. `RCON_PASSWORD` is already in the process environment, so
+the environment adds no exposure that did not exist.
+
+**A missing PowerShell skips the check rather than blocking the launch.** The
+check is a diagnostic. Losing a diagnostic must not cost a working server —
+rule 2 points one way here and it is not the strict one.
+
+Deliberately not attempted: type and range checking against the game's own
+convar metadata. That needs a real `Assembly-CSharp.dll`, which is what
+`tools/convars.py --check` is for and what it already reads. The launcher
+checks what can be known from the option list alone — structure, emptiness,
+duplication, ports, and a name that cannot be a convar. Guessing a range for a
+convar whose bounds nobody has read out of a build would be rule 6 all over
+again.

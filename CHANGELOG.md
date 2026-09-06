@@ -22,6 +22,29 @@ differ; that is the design, not drift.
 at the top of the file — it is a comment, not something it echoes, so read it
 rather than watch for it.
 
+## 1.1.4 — launcher — 2026-09-05
+
+**The launcher now checks its own settings and its option list, and refuses to
+start when they cannot work.** `hotwire.bat check` runs the same checks and
+exits without updating or starting anything.
+
+Rust ignores a convar it does not recognize and accepts an empty value for one
+it does, both without a word. The option list is tokenized and checked for a
+convar with no value, an empty value, a value still holding an unexpanded
+`%VAR%` or `!VAR!`, the same convar set twice, a name with no dot in it, an
+unbalanced quote, a port that is not a number or is out of range or collides
+with another port, and a `server.identity` that cannot be a folder name.
+
+Section 1 is checked too: non-numeric counts and delays, `LOG_KEEP=0` (which
+would have made the cull delete every rotated log rather than keep none), a
+misspelled `UPDATE_MODE` — anything that is not `always` was silently treated
+as `hotwire` — and an empty `ROOT`. A trailing backslash on `ROOT` or
+`STEAMCMD` is stripped rather than reported; it would otherwise escape the
+closing quote of every path passed to another program.
+
+A missing PowerShell skips the check with a note instead of blocking the
+launch. ADR-0027.
+
 ## 1.1.3 — launcher — 2026-09-05
 
 **The launcher now refuses to start on a password that cannot be right**, and

@@ -119,6 +119,42 @@ venv\Scripts\pip install dnfile
 venv\Scripts\python tools\convars.py "<server>\RustDedicated_Data\Managed\Assembly-CSharp.dll" --bat
 ```
 
+## Checking it before you run it
+
+```
+hotwire.bat check
+```
+
+Reads back everything you set, says what is wrong, and exits without updating
+or starting anything. Run it after editing section 4.
+
+The same checks run on every start, and refuse to launch if they fail. They
+exist because Rust ignores a convar it does not recognize and accepts an empty
+value for one it does — both in silence.
+
+**The settings in section 1** are checked for the mistakes that fail a long way
+from where they were typed: a non-numeric `LOG_KEEP` or `RESTART_DELAY`, a
+`LOG_KEEP` of `0` (which would make the cull delete every rotated log rather
+than keep none), a misspelled `UPDATE_MODE` (anything that is not `always` is
+treated as `hotwire`, so a typo silently picks the other mode), an empty
+`ROOT`. A trailing backslash on `ROOT` or `STEAMCMD` is removed rather than
+reported — it would otherwise escape the closing quote of every path handed to
+another program.
+
+**The option list** is tokenized and checked for:
+
+- a convar with no value, or followed immediately by the next convar
+- an empty value — this is the one that took a server down for an afternoon
+- a value that is still an unexpanded `%VAR%` or `!VAR!`
+- the same convar set twice, where whichever line is last silently wins
+- a name with no dot in it, which Rust would ignore without a word
+- an unbalanced quote anywhere in the list
+- a port that is not a number, is outside 1-65535, or collides with another port
+- a `server.identity` that cannot be a folder name
+
+If PowerShell is missing the check is skipped with a note rather than blocking
+the launch. Losing a diagnostic should not stop a working server.
+
 ## When the server will not start
 
 A run shorter than `CRASH_SECONDS` (60) did not start — a Rust server takes
