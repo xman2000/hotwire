@@ -294,7 +294,7 @@ replaced by the `Status bar` section below.
   "Order": 10,
   "Bar color, hex (blank = inherit)": "",
   "Text color, hex": "#FFFFFF",
-  "Bar fill color, hex": "#E74C3C",
+  "Bar fill color, hex": "#C0392B",
   "Icon: built-in sprite path": "assets/icons/stopwatch.png",
   "Icon: local name in oxide/data/AdvancedStatus/Images": "",
   "Icon: URL (used only when the other two are blank)": "",

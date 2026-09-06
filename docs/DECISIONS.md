@@ -232,6 +232,17 @@ design for: tier 2 is mostly one class, tier 3 is where the many one-off
 classes live — and it is generated and grouped by class automatically, so it
 never needs hand-splitting at all.
 
+## ADR-0011 — Withdrawn
+
+**Date:** 2026-09-04 · **Status:** WITHDRAWN 2026-09-05
+
+Recorded how the project's brief was split into a public version and a private
+one. Both of those documents are untracked, so the decision governs nothing in
+this repository, and it left with the rest of the working notes.
+
+The number is not reused. A list with a gap in it is honest; a renumbered one
+quietly rewrites what was decided when.
+
 ## ADR-0012 — Two schedule lists, not one typed list
 
 **Date:** 2026-09-04 · **Status:** ACCEPTED
@@ -674,6 +685,12 @@ Chosen: **track success explicitly** — `STEAM_OK` on the steamcmd path,
 when both are set. When they are not, a banner says the update did not happen,
 that the flag is being kept, and that the clock was not reset.
 
+**Executed 2026-09-05.** A scheduled update fired unattended: the flag was
+consumed, and `logs/last_update.txt` went from 0 bytes to
+`Last update: Sat 09/05/2026 21:10:40.79` — which also settled the redirect bug
+in ADR-0024's neighborhood, since that timestamp ends in the digit that used to
+be read as a file handle.
+
 Failing this way means a server that cannot reach Steam retries on every
 restart forever. That is the correct direction: it is loud, it is visible in
 the console every time, and it errs toward updating rather than toward quietly
@@ -946,3 +963,9 @@ compare equal.
 Written against a captured sample of the real `app_info_print` output rather
 than from the format's documentation, and the walk was tested against it before
 being transcribed.
+
+**Executed 2026-09-05**, first run, reporting
+`Rust build: installed 25129933, public 25129933 -- current.` The framework
+skip is not directly confirmed, but the update that followed took under four
+seconds between the pre-update backup and the stamp write, and a 30 MB download
+plus an archive extract does not fit in four seconds.

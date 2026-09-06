@@ -18,6 +18,9 @@ So "Hotwire 1.1" names the pair and is the version worth quoting. A full
 `1.1.3` names one half, and every entry below says which. They are expected to
 differ; that is the design, not drift.
 
+Entries are newest first, so the two halves interleave: a plugin `1.1.2` can
+sit above a launcher `1.1.7`. Read the label, not the number.
+
 `hotwire check` prints the plugin's version. The launcher's is in the banner
 at the top of the file — it is a comment, not something it echoes, so read it
 rather than watch for it.
@@ -255,8 +258,10 @@ backs off 15/30/60/120/300, and after `MAX_CRASH_STREAK` (10) it stops and says
 why rather than looping forever. Set `MAX_CRASH_STREAK=0` for the old behavior.
 ADR-0023.
 
-Read-verified, not executed. The crash-loop path in particular only runs on
-a genuine boot failure.
+**The flag and stamp half was executed 2026-09-05**, by a scheduled update
+firing unattended: the flag was consumed only after both steps succeeded, and
+the stamp was written. The crash-loop path still has not run — it needs a
+server that genuinely fails to boot.
 
 ## 1.1.0 — plugin and launcher — 2026-09-05
 
