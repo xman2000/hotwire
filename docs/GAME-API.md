@@ -90,10 +90,40 @@ parameter — you get seconds on the bar for the whole countdown and no way to
 change it. Rendering `SubText` yourself is the only way to control the format,
 which also matters for the rect bug below.
 
-The timestamps are compared against `Network.TimeEx.currentTimestamp`, i.e.
-Unix epoch seconds. Hotwire computes that from `DateTime.UtcNow` rather than
-calling the Facepunch property, to keep its status code free of Facepunch
-types — **assumed to be the same epoch, not verified.**
+The timestamps are compared against `Network.TimeEx.currentTimestamp`, in
+three places. **Verified 2026-09-05 in the installed 0.1.26 by the session
+working on the sibling event plugin**, which read the line numbers out:
+
+```
+1198  double timeLeft = bar.TimeStamp - Network.TimeEx.currentTimestamp;
+2012  double currentTimestamp = Network.TimeEx.currentTimestamp;
+2034  if (bar.TimeStamp <= currentTimestamp || ...)   -> deletes the bar
+2044  bar.Progress = (float)((currentTimestamp - bar.TimeStampStart)
+                             / (bar.TimeStamp - bar.TimeStampStart));
+```
+
+AdvancedStatus never computes an epoch of its own, so whatever that clock is,
+both ends of the span have to be on it.
+
+**What `currentTimestamp` actually is remains unverified.** Hotwire computes
+Unix epoch seconds from `DateTime.UtcNow` rather than calling the Facepunch
+property, to keep the status code free of Facepunch types (ADR-0014) — so the
+two being the same clock is an assumption, and it is the last one left in this
+section.
+
+**The failure is silent in one direction.** If the epochs differ with ours the
+larger, line 2034 is never satisfied and the bar simply never expires, with
+`Progress` pinned near zero. A bar sitting there looking empty is far easier to
+miss than one that vanishes.
+
+**And the assumption is avoidable**, by reading the clock instead of
+reconstructing it: anchor both ends as `currentTimestamp - elapsed` and
+`currentTimestamp + remaining`. That trades an unverifiable correctness
+assumption for a Facepunch type in the status path, which is the trade
+ADR-0014 exists to refuse — a renamed Facepunch member stops the whole plugin
+compiling, and a plugin that does not compile schedules no restarts at all.
+That is a worse failure than a cosmetic bar, so the assumption stays for now
+and is recorded here rather than resolved.
 
 ### Three things that will bite you
 
