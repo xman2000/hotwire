@@ -8,7 +8,7 @@ set "CHECK_ONLY="
 if /i "%~1"=="check" set "CHECK_ONLY=1"
 
 REM ==[ H O T W I R E ]===================================================
-REM  Version 1.1.4   2026-09-05
+REM  Version 1.1.5   2026-09-05
 REM  Built by xman2000 and Claude.  MIT License.
 REM
 REM  The launcher. Starts a Rust dedicated server, relaunches it when it
@@ -164,6 +164,75 @@ set /a CRASH_STREAK=0
 
 
 REM ======================================================================
+REM  1b. CHECKING THE SETTINGS ABOVE
+REM
+REM     Section 1 is numbers and paths, and a wrong one there fails a long
+REM     way from where it was typed. LOG_KEEP=0 makes the log cull delete
+REM     every rotated log rather than none. A trailing backslash on ROOT
+REM     turns +force_install_dir "C:\rustserver\" into a quoted string
+REM     steamcmd never closes. A misspelled UPDATE_MODE silently selects
+REM     the mode you did not want, because anything that is not "always"
+REM     is treated as "hotwire".
+REM ======================================================================
+
+set "CFGBAD="
+
+REM  A trailing backslash escapes the closing quote of every path we
+REM  hand to another program. Take it off rather than complain about it.
+if "!ROOT:~-1!"=="\" set "ROOT=!ROOT:~0,-1!"
+if "!STEAMCMD:~-1!"=="\" set "STEAMCMD=!STEAMCMD:~0,-1!"
+
+if not defined ROOT (
+    echo [%date% %time%] ROOT is empty. Set it in section 1.
+    set "CFGBAD=1"
+)
+
+if /i not "%UPDATE_MODE%"=="always" if /i not "%UPDATE_MODE%"=="hotwire" (
+    echo [%date% %time%] UPDATE_MODE is [%UPDATE_MODE%]. It must be
+    echo [%date% %time%] exactly "always" or "hotwire" -- anything else is
+    echo [%date% %time%] treated as hotwire, which is probably not what
+    echo [%date% %time%] you meant.
+    set "CFGBAD=1"
+)
+
+REM  Numeric test with no echo and no pipe. Digits are the delimiters,
+REM  so an all-digit value produces no tokens and the inner loop never
+REM  runs; one non-digit produces a token and clears the flag. An empty
+REM  value produces no tokens either, so it is ruled out first.
+for %%V in (MAX_DAYS_WITHOUT_UPDATE MAX_STEAM_TRIES LOG_KEEP RESTART_DELAY CRASH_SECONDS MAX_CRASH_STREAK) do (
+    set "CFGVAL=!%%V!"
+    set "CFGNUM=1"
+    if not defined CFGVAL set "CFGNUM="
+    for /f "delims=0123456789" %%X in ("!CFGVAL!") do set "CFGNUM="
+    if not defined CFGNUM (
+        echo [%date% %time%] %%V must be a whole number. It is [!CFGVAL!].
+        set "CFGBAD=1"
+    )
+)
+
+REM  Skip 0 keeps nothing back, so the cull would remove every rotated
+REM  log including the one just written.
+if "%LOG_KEEP%"=="0" (
+    echo [%date% %time%] LOG_KEEP is 0, which would delete every rotated
+    echo [%date% %time%] log rather than keep none. Use 1 or more.
+    set "CFGBAD=1"
+)
+
+if "%MAX_STEAM_TRIES%"=="0" (
+    echo [%date% %time%] MAX_STEAM_TRIES is 0, so steamcmd would never run.
+    set "CFGBAD=1"
+)
+
+if defined CFGBAD (
+    echo [%date% %time%] ================================================
+    echo [%date% %time%] Section 1 has a setting that cannot work.
+    echo [%date% %time%] Not starting. Fix the lines named above.
+    echo [%date% %time%] ================================================
+    pause & exit /b 1
+)
+
+
+REM ======================================================================
 REM  2. SECRETS
 REM
 REM     Copy secrets.example.bat to secrets.bat and set RCON_PASSWORD
@@ -253,77 +322,18 @@ if not exist "%ROOT%\RustDedicated.exe" (
 )
 
 cd /d "%ROOT%" || (echo Cannot cd to %ROOT% & pause & exit /b 1)
-if not exist "%ROOT%\logs" mkdir "%ROOT%\logs"
-
-
-
-REM ======================================================================
-REM  2b. CHECKING THE SETTINGS ABOVE
-REM
-REM     Section 1 is numbers and paths, and a wrong one there fails a long
-REM     way from where it was typed. LOG_KEEP=0 makes the log cull delete
-REM     every rotated log rather than none. A trailing backslash on ROOT
-REM     turns +force_install_dir "C:\rustserver\" into a quoted string
-REM     steamcmd never closes. A misspelled UPDATE_MODE silently selects
-REM     the mode you did not want, because anything that is not "always"
-REM     is treated as "hotwire".
-REM ======================================================================
-
-set "CFGBAD="
-
-REM  A trailing backslash escapes the closing quote of every path we
-REM  hand to another program. Take it off rather than complain about it.
-if "!ROOT:~-1!"=="\" set "ROOT=!ROOT:~0,-1!"
-if "!STEAMCMD:~-1!"=="\" set "STEAMCMD=!STEAMCMD:~0,-1!"
-
-if not defined ROOT (
-    echo [%date% %time%] ROOT is empty. Set it in section 1.
-    set "CFGBAD=1"
-)
-
-if /i not "%UPDATE_MODE%"=="always" if /i not "%UPDATE_MODE%"=="hotwire" (
-    echo [%date% %time%] UPDATE_MODE is [%UPDATE_MODE%]. It must be
-    echo [%date% %time%] exactly "always" or "hotwire" -- anything else is
-    echo [%date% %time%] treated as hotwire, which is probably not what
-    echo [%date% %time%] you meant.
-    set "CFGBAD=1"
-)
-
-REM  Numeric test with no echo and no pipe. Digits are the delimiters,
-REM  so an all-digit value produces no tokens and the inner loop never
-REM  runs; one non-digit produces a token and clears the flag. An empty
-REM  value produces no tokens either, so it is ruled out first.
-for %%V in (MAX_DAYS_WITHOUT_UPDATE MAX_STEAM_TRIES LOG_KEEP RESTART_DELAY CRASH_SECONDS MAX_CRASH_STREAK) do (
-    set "CFGVAL=!%%V!"
-    set "CFGNUM=1"
-    if not defined CFGVAL set "CFGNUM="
-    for /f "delims=0123456789" %%X in ("!CFGVAL!") do set "CFGNUM="
-    if not defined CFGNUM (
-        echo [%date% %time%] %%V must be a whole number. It is [!CFGVAL!].
-        set "CFGBAD=1"
-    )
-)
-
-REM  Skip 0 keeps nothing back, so the cull would remove every rotated
-REM  log including the one just written.
-if "%LOG_KEEP%"=="0" (
-    echo [%date% %time%] LOG_KEEP is 0, which would delete every rotated
-    echo [%date% %time%] log rather than keep none. Use 1 or more.
-    set "CFGBAD=1"
-)
-
-if "%MAX_STEAM_TRIES%"=="0" (
-    echo [%date% %time%] MAX_STEAM_TRIES is 0, so steamcmd would never run.
-    set "CFGBAD=1"
-)
-
-if defined CFGBAD (
+if not exist "%ROOT%\logs" mkdir "%ROOT%\logs" >nul 2>&1
+if not exist "%ROOT%\logs" (
     echo [%date% %time%] ================================================
-    echo [%date% %time%] Section 1 has a setting that cannot work.
-    echo [%date% %time%] Not starting. Fix the lines named above.
+    echo [%date% %time%] Cannot create %ROOT%\logs
+    echo [%date% %time%] The rotated logs and the update backstop stamp
+    echo [%date% %time%] both live there. Without it a crash leaves no
+    echo [%date% %time%] log to read and the backstop never fires.
+    echo [%date% %time%] Check permissions on ROOT.
     echo [%date% %time%] ================================================
     pause & exit /b 1
 )
+
 
 
 :start
@@ -414,7 +424,11 @@ goto framework
 :steamfailed
 echo [%date% %time%] steamcmd error (attempt !STEAM_TRIES! of %MAX_STEAM_TRIES%).
 if !STEAM_TRIES! GEQ %MAX_STEAM_TRIES% goto steamgaveup
-timeout /t 60 /nobreak >nul
+REM  timeout refuses to run when stdin is redirected, which is how this
+REM  launcher behaves under a scheduler. Without the fallback the retry
+REM  would return instantly and hammer steamcmd.
+timeout /t 60 /nobreak >nul 2>&1
+if errorlevel 1 ping -n 61 127.0.0.1 >nul 2>&1
 goto steamupdate
 
 :steamgaveup
@@ -999,7 +1013,7 @@ set "PSCHK=!PSCHK!  if(($i+1) -ge $t.Count){ $p+=[string]::Concat($n,[string](' 
 set "PSCHK=!PSCHK!  $v=[string]$t[$i+1]; "
 set "PSCHK=!PSCHK!  if($v.StartsWith([string][char]43) -or ($v.StartsWith([string][char]45) -and ($v -notmatch [string]('^-?\d+(\.\d+)?$')))){ $p+=[string]::Concat($n,[string](' has no value; the next thing is '),$v); $i++; continue } "
 set "PSCHK=!PSCHK!  if($v.Length -eq 0){ $p+=[string]::Concat($n,[string](' is set to an empty value')) } "
-set "PSCHK=!PSCHK!  if(($v -match [string]::Concat($PC,'[A-Za-z_][A-Za-z0-9_]*',$PC)) -or ($v -match [string]::Concat($EX,'[A-Za-z_][A-Za-z0-9_]*',$EX))){ $p+=[string]::Concat($n,[string](' still contains an unexpanded variable: '),$v) } "
+set "PSCHK=!PSCHK!  if(($n -ne [string]('rcon.password')) -and (($v -match [string]::Concat($PC,'[A-Za-z_][A-Za-z0-9_]*',$PC)) -or ($v -match [string]::Concat($EX,'[A-Za-z_][A-Za-z0-9_]*',$EX)))){ $p+=[string]::Concat($n,[string](' still contains an unexpanded variable: '),$v) } "
 set "PSCHK=!PSCHK!  if($seen.ContainsKey($n)){ $p+=[string]::Concat($n,[string](' is set twice; whichever line is last wins, silently')) } "
 set "PSCHK=!PSCHK!  $seen[$n]=1; $val[$n]=$v; $i+=2; continue } "
 set "PSCHK=!PSCHK! $i++ } "
@@ -1011,30 +1025,35 @@ set "PSCHK=!PSCHK!  elseif(([int]$v -lt 1) -or ([int]$v -gt 65535)){ $p+=[string
 set "PSCHK=!PSCHK!  else { $pn[$k]=[int]$v } } } "
 set "PSCHK=!PSCHK!foreach($a in $pn.Keys){ foreach($b in $pn.Keys){ if(([string]::CompareOrdinal($a,$b) -lt 0) -and ($pn[$a] -eq $pn[$b])){ $p+=[string]::Concat($a,[string](' and '),$b,[string](' are both '),[string]$pn[$a],[string]('; they must differ')) } } } "
 set "PSCHK=!PSCHK!if($val.ContainsKey([string]('server.identity'))){ $v=[string]$val[[string]('server.identity')]; "
-set "PSCHK=!PSCHK! $bad=[char[]]@([char]92,[char]47,[char]58,[char]42,[char]63,[char]34,[char]60,[char]62,[char]124,[char]32); "
+set "PSCHK=!PSCHK! $bad=[char[]]@([char]92,[char]47,[char]58,[char]42,[char]63,[char]34,[char]60,[char]62,[char]124); "
 set "PSCHK=!PSCHK! if($v.Length -eq 0){ $p+=[string]('server.identity is empty; it names the save folder') } "
-set "PSCHK=!PSCHK! elseif($v.IndexOfAny($bad) -ge 0){ $p+=[string]::Concat([string]('server.identity is '),$v,[string]('; it names a folder, so no spaces and no path characters')) } } "
+set "PSCHK=!PSCHK! elseif($v.IndexOfAny($bad) -ge 0){ $p+=[string]::Concat([string]('server.identity is '),$v,[string]('; it names a folder, so no path characters')) } } "
 set "PSCHK=!PSCHK!foreach($m in $p){ Write-Output ([string]::Concat([string]('  '),$m)) } "
-set "PSCHK=!PSCHK!if($p.Count -gt 0){ exit 1 } else { exit 0 } "
+set "PSCHK=!PSCHK!if($p.Count -gt 0){ exit 2 } else { exit 0 } "
 
-powershell -NoProfile -Command "!PSCHK!"
+powershell -NoProfile -NonInteractive -Command "!PSCHK!"
 set "ARGCHECK=!errorlevel!"
 set "HOTWIRE_ARGS="
 
-REM  9009 is "command not found". A missing PowerShell costs the check,
-REM  not the server -- failing the other way would stop a working install
-REM  over a tool that is only used for diagnostics.
-if "!ARGCHECK!"=="9009" (
-    echo [%date% %time%] PowerShell not found -- option check skipped.
-    set "ARGCHECK=0"
-)
-
-if not "!ARGCHECK!"=="0" (
+REM  Exactly 2 means the check ran and found problems. 0 means it ran
+REM  and found none. ANYTHING ELSE means the check itself did not run --
+REM  9009 for no PowerShell, 1 for an error inside the script.
+REM
+REM  Those are separated on purpose. If this script is ever wrong, it
+REM  exits 1, and treating that as "problems found" would refuse to start
+REM  a server whose settings are perfectly fine. A diagnostic that breaks
+REM  must cost the diagnostic and nothing else.
+if "!ARGCHECK!"=="2" (
     echo [%date% %time%] ================================================
     echo [%date% %time%] The option list has problems, listed above.
     echo [%date% %time%] Not starting. They are set in section 4.
     echo [%date% %time%] ================================================
     pause & exit /b 1
+)
+
+if not "!ARGCHECK!"=="0" (
+    echo [%date% %time%] Option check did not run ^(exit !ARGCHECK!^).
+    echo [%date% %time%] Continuing without it.
 )
 
 if defined CHECK_ONLY (
@@ -1080,7 +1099,7 @@ REM  timestamp.
 set "RUN_START=0"
 for /f %%t in ('powershell -NoProfile -Command "[int]((Get-Date).ToUniversalTime() - (Get-Date '1970-01-01')).TotalSeconds"') do set "RUN_START=%%t"
 
-RustDedicated.exe !ARGS! -logfile "!LOGFILE!"
+"%ROOT%\RustDedicated.exe" !ARGS! -logfile "!LOGFILE!"
 
 set "RUN_END=0"
 for /f %%t in ('powershell -NoProfile -Command "[int]((Get-Date).ToUniversalTime() - (Get-Date '1970-01-01')).TotalSeconds"') do set "RUN_END=%%t"
@@ -1110,7 +1129,13 @@ if !CRASH_STREAK! GTR 0 (
 ) else (
     echo [%date% %time%] Server exited. Restarting in !DELAY!s. Ctrl+C to stop.
 )
+REM  Same fallback as the steamcmd retry: no stdin, no timeout, and
+REM  without this the relaunch loop would spin with no delay at all.
 timeout /t !DELAY! /nobreak
+if errorlevel 1 (
+    set /a PINGWAIT=!DELAY!+1
+    ping -n !PINGWAIT! 127.0.0.1 >nul 2>&1
+)
 goto start
 
 :crashstop
@@ -1123,7 +1148,9 @@ echo [%date% %time%] The log from the first crash is kept as
 echo [%date% %time%]   %ROOT%\logs\server_crash_*.txt
 echo [%date% %time%] and is the one worth reading. Usual causes: a bad
 echo [%date% %time%] convar in section 4, a port already in use, or a
-echo [%date% %time%] corrupt save.
+echo [%date% %time%] corrupt save. Another copy of this launcher
+echo [%date% %time%] already running would do it too -- the second one
+echo [%date% %time%] cannot bind the port.
 echo [%date% %time%]
 echo [%date% %time%] Set MAX_CRASH_STREAK=0 to loop forever instead.
 echo [%date% %time%] ====================================================

@@ -152,8 +152,10 @@ another program.
 - a port that is not a number, is outside 1-65535, or collides with another port
 - a `server.identity` that cannot be a folder name
 
-If PowerShell is missing the check is skipped with a note rather than blocking
-the launch. Losing a diagnostic should not stop a working server.
+If the check cannot run — no PowerShell, or an error inside it — the launcher
+says so and starts anyway. Only "the check ran and found problems" refuses to
+launch. Losing a diagnostic must not cost a working server, and that includes
+the case where the diagnostic itself is the thing that is broken.
 
 ## When the server will not start
 

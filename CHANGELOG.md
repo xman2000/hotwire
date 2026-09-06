@@ -22,6 +22,42 @@ differ; that is the design, not drift.
 at the top of the file — it is a comment, not something it echoes, so read it
 rather than watch for it.
 
+## 1.1.5 — launcher — 2026-09-05
+
+Hardening found by reviewing 1.1.4 line by line. Most of these were defects in
+1.1.4 itself, written the same day.
+
+**A broken option check can no longer stop a working server.** PowerShell exits
+`2` for "ran, found problems" and `0` for "ran, found none"; anything else means
+the check did not run — no PowerShell, or an error inside the script — and the
+launcher says so and continues. Previously any non-zero exit was read as
+"problems found", so a mistake in the check would have refused to start a server
+whose settings were fine.
+
+**`timeout` refuses to run when stdin is redirected**, which is how the launcher
+behaves under a scheduler. It returned immediately, so the relaunch loop would
+have spun with no delay at all and the steamcmd retry would have hammered Steam.
+Both now fall back to `ping` when `timeout` fails.
+
+**Two of 1.1.4's own checks could have blocked a working server** and were
+softened. A space in `server.identity` is legal in a folder name and is allowed
+again; only genuinely illegal path characters are refused. And `rcon.password`
+is exempt from the unexpanded-variable heuristic, since a password may
+legitimately contain `%word%` — it is validated in full separately.
+
+**The settings check now runs before anything uses `ROOT`.** It strips a
+trailing backslash, and it was running after `cd /d "%ROOT%"` had already used
+the unstripped value.
+
+**A `logs` directory that cannot be created is now fatal and says so.** The
+rotated logs and the update backstop stamp both live there; without it a crash
+leaves nothing to read and the backstop never fires.
+
+Also: the server is launched by full path rather than relying on the working
+directory; the crash-loop message names "another copy of this launcher already
+running" as a cause, since the second one cannot bind the port; and 32 lines had
+picked up doubled carriage returns.
+
 ## 1.1.4 — launcher — 2026-09-05
 
 **The launcher now checks its own settings and its option list, and refuses to
