@@ -37,6 +37,29 @@ Parameter keys used, from the bar's own constructor:
 | `Progress` | **float** | 0–1 |
 | `Main_Color`, `Text_Color`, `Progress_Color` | string | hex; omit to inherit the server's theme |
 
+### CreateBar rebuilds; UpdateContent does not
+
+`CreateBar` tears down and rebuilds that bar's CUI. Re-sending it with
+identical parameters is **not** free — Hotwire's bar visibly blinked while it
+was being re-pushed, and stopped when it was not.
+
+`UpdateContent(userIdStr, { Plugin, Id, ...fields })` resolves the bar by
+`Plugin` + `Id` and calls `DrawText` only, with no rebuild. So a countdown that
+needs its own text should push `SubText` through `UpdateContent` and never
+through `CreateBar`.
+
+**Verified 2026-09-05 against the same installed 0.1.26, by the session working
+on the sibling event plugin** — not by this project, which had only the
+behavioral evidence that re-pushing blinked and not re-pushing did not.
+
+Push only when the rendered string actually changes. Hotwire keeps the last
+`SubText` and compares. Worth saying how that rule goes wrong at scale: the
+sibling plugin draws one bar per live zone and tracked *one* signature across
+all of them, so a single zone entering its final minute — where the format
+switches to per-second — re-pushed every bar every tick. The guard has to be
+per bar, and splitting "shape" (text, colors, icon) from "countdown" lets the
+first use `CreateBar` and the second `UpdateContent`.
+
 ### Bar types and the countdown
 
 `BarType` is a string parsed into `Default | Timed | TimeCounter | TimeProgress
@@ -54,6 +77,12 @@ Both `TimeProgress` and `TimeProgressCounter` compute `Progress` as
 `(now - TimeStampStart) / (TimeStamp - TimeStampStart)` on AdvancedStatus's own
 tick, and **delete the bar when `TimeStamp` passes**. So neither the fill nor
 the removal ever needs pushing.
+
+**Only the timed types expire.** A `Default` bar stays until something deletes
+it. If you ever move off `TimeProgress`, the cleanup becomes yours, and a
+crashed or unloaded plugin leaves a bar on someone's screen with no way to
+remove itself. Hotwire's `Unload` calls `DeleteAllPluginBars` regardless of
+what state it thinks it is in, for that reason.
 
 **Hotwire uses `TimeProgress`, not `TimeProgressCounter`.** The Counter variants
 additionally build their own countdown string, in code, with no format
