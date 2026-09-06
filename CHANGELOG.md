@@ -22,6 +22,24 @@ differ; that is the design, not drift.
 at the top of the file — it is a comment, not something it echoes, so read it
 rather than watch for it.
 
+## 1.1.2 — plugin — 2026-09-05
+
+**The in-game panel never refreshed itself.** It is static text, drawn once and
+redrawn only when you click something, so a panel left open through a countdown
+kept showing whatever was true when it opened. Caught on a live server with the
+panel reading *"update and restart in 12 minutes"* beside a status bar reading
+`5m` — the bar counts itself down, the panel did not.
+
+That is worse than cosmetic. The banner that goes stale is the one offering
+**Cancel the restart**, so the number an admin is deciding on could be minutes
+out of date.
+
+Open menus now refresh on a timer: every five seconds while a countdown is
+running, every thirty otherwise, and the timer stops itself when the last menu
+closes. Only the content is replaced — the root panel, which owns the cursor,
+is left alone, because recreating that per redraw is what used to throw the
+cursor back to the middle of the screen.
+
 ## 1.1.1 — plugin — 2026-09-05
 
 **One red instead of four.** The panel had `ColOff` at `0.42 0.22 0.22`,

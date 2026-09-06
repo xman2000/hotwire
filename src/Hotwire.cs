@@ -13,7 +13,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Hotwire", "xman2000", "1.1.1")]
+    [Info("Hotwire", "xman2000", "1.1.2")]
     [Description("Scheduled restarts and updates. Announces, counts down, writes a flag, quits.")]
     internal class Hotwire : CovalencePlugin
     {
@@ -1796,6 +1796,14 @@ namespace Oxide.Plugins
 
         private readonly Dictionary<string, MenuState> _menus = new Dictionary<string, MenuState>();
 
+        // The panel is static text. Without this it shows whatever was true
+        // when it was drawn, forever -- a menu left open through a countdown
+        // read "in 12 minutes" while the status bar, which counts itself down,
+        // read 5m. The banner that goes stale is the one offering to cancel
+        // the restart, so the number an admin is deciding on was the wrong one.
+        private Timer _menuTimer;
+        private int _menuTick;
+
         // Colors are space-separated floats, not hex, and they must be
         // formatted with the invariant culture: on a server whose locale uses a
         // comma decimal separator, "0.35" becomes "0,35" and the whole panel
@@ -1850,6 +1858,7 @@ namespace Oxide.Plugins
             if (ToBasePlayer(player) == null) { Reply(player, "MenuNeedsPlayer"); return; }
 
             _menus[player.Id] = new MenuState();
+            EnsureMenuTimer();
             DrawMenu(player);
         }
 
@@ -1870,6 +1879,42 @@ namespace Oxide.Plugins
             // No DestroyUi: they are gone, and the panel goes with them.
         }
 
+        // Five seconds while something is counting down, because that is the
+        // number being acted on. Thirty otherwise, where the text moves a
+        // minute at a time and a redraw is just churn.
+        //
+        // Only MenuContent is replaced on a redraw -- MenuRoot, which owns the
+        // cursor, is left alone. Recreating it per redraw is what used to throw
+        // the cursor back to the middle of the screen on a fast click.
+        private void EnsureMenuTimer()
+        {
+            if (_menuTimer != null) return;
+            _menuTick = 0;
+            _menuTimer = timer.Every(5f, RefreshOpenMenus);
+        }
+
+        private void RefreshOpenMenus()
+        {
+            if (_menus.Count == 0)
+            {
+                _menuTimer?.Destroy();
+                _menuTimer = null;
+                return;
+            }
+
+            _menuTick++;
+            if (!_countdownActive && (_menuTick % 6) != 0) return;
+
+            // Keys copied first: DrawMenu drops anyone whose BasePlayer has
+            // gone, and that mutates the dictionary underneath us.
+            foreach (var id in _menus.Keys.ToArray())
+            {
+                var player = players.FindPlayerById(id);
+                if (player == null || !player.IsConnected) { _menus.Remove(id); continue; }
+                DrawMenu(player);
+            }
+        }
+
         private void CloseAllMenus()
         {
             foreach (var id in _menus.Keys.ToArray())
@@ -1886,6 +1931,8 @@ namespace Oxide.Plugins
                 }
             }
             _menus.Clear();
+            _menuTimer?.Destroy();
+            _menuTimer = null;
         }
 
         private void DrawMenu(IPlayer player)
