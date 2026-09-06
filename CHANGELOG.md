@@ -22,6 +22,42 @@ differ; that is the design, not drift.
 at the top of the file — it is a comment, not something it echoes, so read it
 rather than watch for it.
 
+## 1.1.7 — launcher — 2026-09-05
+
+**The launcher now knows which Rust build is current, and says so.** Steam
+publishes it and `steamapps\appmanifest_258550.acf` records the installed one,
+so the comparison costs nothing but a steamcmd launch — cached for
+`BUILD_CHECK_HOURS` (6), which means a daily restart pays for it once a day and
+a crash loop never pays at all. Every start now prints one of:
+
+```
+Rust build: installed 25129933, public 25129933 -- current.
+```
+
+or a banner saying a newer build is available and that clients update
+themselves, so the server will eventually stop accepting connections.
+
+Three things follow from having that number:
+
+**`UPDATE_ON_NEW_BUILD` (on) makes the backstop fire on evidence.** A build that
+has actually changed is a better reason to update than fourteen days having
+passed, and a server that is current is now left alone however long it has been.
+The calendar backstop remains as a fallback for when Steam cannot be reached.
+
+**`SKIP_UNCHANGED_FRAMEWORK` (on) stops needless re-extracts.** Writing the
+framework over a working install is the riskiest thing this file does. It is now
+skipped when the game did not move *and* the framework's own version matches its
+feed. The game check matters: a Rust update rewrites the managed assemblies, so
+the framework must go back over the top regardless of its version.
+
+**`FRAMEWORK_VERSION_FILE` and `FRAMEWORK_FEED`** are settings rather than
+assumptions, so nothing here hard-codes a path that might not be yours.
+
+Every failure path falls through to the old behavior: no steamcmd, no network,
+a hang (180s timeout, then the process is killed), an unreadable manifest or a
+missing version file all leave the launcher doing exactly what it did before.
+None of this can decide not to start the server. ADR-0028.
+
 ## 1.1.6 — launcher — 2026-09-05
 
 **The update stamp was written with the redirect last**, so the character

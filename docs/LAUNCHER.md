@@ -24,6 +24,37 @@ restart daily to shed the memory a busy modded server accumulates:
 - **The file is frightening to edit.** Comment out one line in the middle of a
   `^`-continued command and you silently take the rest of the launch with it.
 
+## Knowing whether you are behind
+
+Every start prints where the install stands against Steam:
+
+```
+Rust build: installed 25129933, public 25129933 -- current.
+```
+
+If a newer build exists you get a banner instead, saying so and reminding you
+that clients update themselves — so the server will eventually stop accepting
+connections whether or not you act.
+
+That costs one steamcmd launch, cached for `BUILD_CHECK_HOURS` (6), so a daily
+restart pays for it once a day and a crash loop never pays at all. Set it to
+`0` to turn the whole thing off.
+
+Two settings use that number:
+
+- **`UPDATE_ON_NEW_BUILD`** — in `hotwire` mode, update when the build has
+  actually changed rather than waiting for `MAX_DAYS_WITHOUT_UPDATE`. The
+  calendar rule stays as a fallback for when Steam cannot be reached.
+- **`SKIP_UNCHANGED_FRAMEWORK`** — do not re-extract the framework when
+  neither it nor the game has changed. Writing it over a working install is
+  the riskiest thing this file does, and doing it for no reason is pure risk.
+  `FRAMEWORK_VERSION_FILE` says where to read the installed version and
+  `FRAMEWORK_FEED` where to read the published one.
+
+If any of it fails — no steamcmd, no network, a hang, an unreadable manifest —
+the launcher reports that and carries on under the ordinary rules. None of it
+can stop a server starting.
+
 ## Update modes
 
 `UPDATE_MODE` decides whether a restart is also an update.

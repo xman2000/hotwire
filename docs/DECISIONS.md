@@ -891,3 +891,58 @@ checks what can be known from the option list alone — structure, emptiness,
 duplication, ports, and a name that cannot be a convar. Guessing a range for a
 convar whose bounds nobody has read out of a build would be rule 6 all over
 again.
+
+## ADR-0028 — Compare the installed build against Steam's before deciding
+
+**Date:** 2026-09-05 · **Status:** ACCEPTED
+
+The launcher had no idea whether an update was worth doing. `always` mode
+updated regardless; `hotwire` mode waited for a flag or for fourteen days to
+pass. Neither is a statement about whether anything had actually changed.
+
+Steam will tell you, without installing anything:
+`steamcmd +app_info_update 1 +app_info_print 258550` carries the current public
+build id, and `steamapps/appmanifest_<appid>.acf` records the one installed.
+
+Chosen: **read both, report the comparison on every start, and use it.**
+
+**Reporting is the point, and it came first.** The question it answers is the
+one that is actually hard on patch day — am I behind, and is it worth the
+downtime — and answering it previously took a human running steamcmd by hand
+and reading VDF. It now costs a line of console output.
+
+**It gates the backstop.** `UPDATE_ON_NEW_BUILD` makes a changed build a
+trigger, ahead of the day count. The calendar rule stays as the fallback for
+when Steam cannot be reached, because a server that never updates eventually
+refuses every connection and that failure must not depend on a network call
+succeeding.
+
+**It gates the framework extract.** Writing the framework over a working
+install is the riskiest single act in this file, and it was unconditional. It
+is now skipped when the game did not move and the framework version matches its
+feed. The game check is not optional: a Rust update rewrites the managed
+assemblies underneath the framework, so after one the framework must be
+re-extracted whatever its version says. Comparing the manifest before and
+after steamcmd is what makes that reliable.
+
+**Costs and how they are paid.** A steamcmd launch is ten to thirty seconds, so
+the answer is cached for `BUILD_CHECK_HOURS`. A daily restart pays once a day;
+a crash loop, relaunching every few seconds, never pays at all.
+
+**Every failure falls through to the previous behavior.** No steamcmd, no
+network, a hang, an unreadable manifest, a missing version file — each leaves
+both numbers unknown and the launcher doing what it did before. Nothing here
+can decide not to start a server. The one place it may act on its own is
+updating when it should not have, which is the same direction the rest of this
+file already errs in.
+
+**Two parsing traps, both real.** `buildid` appears under every depot as well
+as under `branches`, so the walk is `branches` then `public` then `buildid` —
+taking the first match reads a depot's id and compares the wrong numbers
+silently. And the framework's file version reads `2.0.7683.0` while its feed
+publishes `2.0.7683`, so both are normalized to three components or they never
+compare equal.
+
+Written against a captured sample of the real `app_info_print` output rather
+than from the format's documentation, and the walk was tested against it before
+being transcribed.

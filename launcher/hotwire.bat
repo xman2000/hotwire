@@ -8,7 +8,7 @@ set "CHECK_ONLY="
 if /i "%~1"=="check" set "CHECK_ONLY=1"
 
 REM ==[ H O T W I R E ]===================================================
-REM  Version 1.1.6   2026-09-05
+REM  Version 1.1.7   2026-09-05
 REM  Built by xman2000 and Claude.  MIT License.
 REM
 REM  The launcher. Starts a Rust dedicated server, relaunches it when it
@@ -149,6 +149,34 @@ set "CRASH_SECONDS=60"
 REM   Consecutive crashes before the launcher stops instead of looping
 REM     forever. Set to 0 to never stop.
 set "MAX_CRASH_STREAK=10"
+
+REM   Ask Steam what the current Rust build is, and say on every start
+REM     whether this install is behind. Costs one steamcmd launch, so the
+REM     answer is cached for this many hours -- a daily restart pays for
+REM     it once a day, a crash loop never pays at all. 0 disables it.
+set "BUILD_CHECK_HOURS=6"
+
+REM   hotwire mode only. Update when Steam has a build newer than the one
+REM     installed, instead of waiting for MAX_DAYS_WITHOUT_UPDATE. A build
+REM     that has actually changed is a better reason than a calendar.
+REM     Needs BUILD_CHECK_HOURS above. 0 leaves the calendar in charge.
+set "UPDATE_ON_NEW_BUILD=1"
+
+REM   Skip re-extracting the framework when neither it nor the game has
+REM     changed. The extract writes over a working install, which is the
+REM     single riskiest thing this file does, so not doing it needlessly
+REM     is the point. 0 always extracts.
+set "SKIP_UNCHANGED_FRAMEWORK=1"
+
+REM   Where the framework's own version can be read. Any file carrying a
+REM     Windows file version works. If it is blank, missing, or carries no
+REM     version, the comparison cannot be made and the framework is
+REM     extracted as before -- the safe direction.
+set "FRAMEWORK_VERSION_FILE=%ROOT%\RustDedicated_Data\Managed\Oxide.Rust.dll"
+
+REM   Where that framework publishes its current version. Note this is the
+REM     assets host: umod.org/games/rust.json answers 301 to it.
+set "FRAMEWORK_FEED=https://assets.umod.org/games/rust.json"
 
 REM   Optional commands run before and after an update, for backups or
 REM     notifications. Leave empty to do nothing.
@@ -339,6 +367,106 @@ if not exist "%ROOT%\logs" (
 :start
 
 REM ======================================================================
+REM  3a. WHAT BUILD IS OUT THERE
+REM
+REM     Machinery. Nothing here is a setting -- those are in section 1.
+REM
+REM     Steam knows the current Rust build, and steamapps\appmanifest tells
+REM     us which one is installed. Comparing the two answers the question
+REM     that actually matters on patch day -- am I behind, and is it worth
+REM     the downtime -- without installing anything.
+REM
+REM     One steamcmd launch, so the answer is cached for BUILD_CHECK_HOURS.
+REM     A daily restart pays for it once a day; a crash loop, which relaunches
+REM     every few seconds, never pays at all.
+REM
+REM     Note the walk in the script: buildid appears under every depot as
+REM     well, so it looks for branches, then public inside it, then buildid
+REM     inside that. Taking the first buildid in the file reads a depot's
+REM     and silently compares the wrong numbers.
+REM
+REM     If anything here fails -- no steamcmd, Steam unreachable, a hang --
+REM     both numbers come back as ? and the launcher carries on under the
+REM     ordinary rules. This decides nothing on its own.
+REM ======================================================================
+
+set "INSTALLED_BUILD="
+set "PUBLIC_BUILD="
+if "%BUILD_CHECK_HOURS%"=="0" goto :buildcheckdone
+
+set "HOTWIRE_ACF=%ROOT%\steamapps\appmanifest_%APPID%.acf"
+set "HOTWIRE_BUILDCACHE=%ROOT%\logs\build_check.txt"
+set "HOTWIRE_APPINFO=%ROOT%\logs\.appinfo.tmp"
+set "HOTWIRE_STEAMCMD=%STEAMCMD%"
+set "HOTWIRE_APPID=%APPID%"
+set "HOTWIRE_BUILDHOURS=%BUILD_CHECK_HOURS%"
+
+set "PSBUILD="
+set "PSBUILD=!PSBUILD!$ErrorActionPreference='SilentlyContinue'; $q=[char]34; "
+set "PSBUILD=!PSBUILD!$acf=$env:HOTWIRE_ACF; $cache=$env:HOTWIRE_BUILDCACHE; $out=$env:HOTWIRE_APPINFO; "
+set "PSBUILD=!PSBUILD!$sc=$env:HOTWIRE_STEAMCMD; $app=$env:HOTWIRE_APPID; $hours=0; "
+set "PSBUILD=!PSBUILD![void][int]::TryParse([string]$env:HOTWIRE_BUILDHOURS, [ref]$hours); "
+set "PSBUILD=!PSBUILD!$inst='?'; "
+set "PSBUILD=!PSBUILD!if(Test-Path -LiteralPath $acf){ $t=[IO.File]::ReadAllText($acf); "
+set "PSBUILD=!PSBUILD!  $m=[regex]::Match($t, $q+'buildid'+$q+'\s+'+$q+'(\d+)'+$q); if($m.Success){ $inst=$m.Groups[1].Value } } "
+set "PSBUILD=!PSBUILD!$pub='?'; "
+set "PSBUILD=!PSBUILD!$fresh=$false; "
+set "PSBUILD=!PSBUILD!if(Test-Path -LiteralPath $cache){ $age=((Get-Date)-(Get-Item -LiteralPath $cache).LastWriteTime).TotalHours; "
+set "PSBUILD=!PSBUILD!  if($age -lt $hours){ $fresh=$true; $pub=([IO.File]::ReadAllText($cache)).Trim() } } "
+set "PSBUILD=!PSBUILD!if(-not $fresh){ "
+set "PSBUILD=!PSBUILD!  if(Test-Path -LiteralPath $sc){ "
+set "PSBUILD=!PSBUILD!    $p=Start-Process -FilePath $sc -ArgumentList @('+login','anonymous','+app_info_update','1','+app_info_print',$app,'+quit') -RedirectStandardOutput $out -NoNewWindow -PassThru; "
+set "PSBUILD=!PSBUILD!    if($p.WaitForExit(180000)){ "
+set "PSBUILD=!PSBUILD!      if(Test-Path -LiteralPath $out){ $t=[IO.File]::ReadAllText($out); "
+set "PSBUILD=!PSBUILD!        $i=$t.IndexOf($q+'branches'+$q); "
+set "PSBUILD=!PSBUILD!        if($i -ge 0){ $j=$t.IndexOf($q+'public'+$q,$i); "
+set "PSBUILD=!PSBUILD!          if($j -ge 0){ $m=[regex]::Match($t.Substring($j), $q+'buildid'+$q+'\s+'+$q+'(\d+)'+$q); "
+set "PSBUILD=!PSBUILD!            if($m.Success){ $pub=$m.Groups[1].Value; [IO.File]::WriteAllText($cache,$pub) } } } } "
+set "PSBUILD=!PSBUILD!    } else { try{ $p.Kill() } catch {} } "
+set "PSBUILD=!PSBUILD!    Remove-Item -LiteralPath $out -Force -ErrorAction SilentlyContinue "
+set "PSBUILD=!PSBUILD!  } "
+set "PSBUILD=!PSBUILD!} "
+set "PSBUILD=!PSBUILD!Write-Output ($inst+' '+$pub) "
+
+for /f "usebackq tokens=1,2" %%A in (`powershell -NoProfile -NonInteractive -Command "!PSBUILD!"`) do (
+    set "INSTALLED_BUILD=%%A"
+    set "PUBLIC_BUILD=%%B"
+)
+
+set "HOTWIRE_ACF="
+set "HOTWIRE_BUILDCACHE="
+set "HOTWIRE_APPINFO="
+set "HOTWIRE_STEAMCMD="
+set "HOTWIRE_APPID="
+set "HOTWIRE_BUILDHOURS="
+
+if "!INSTALLED_BUILD!"=="?" set "INSTALLED_BUILD="
+if "!PUBLIC_BUILD!"=="?" set "PUBLIC_BUILD="
+
+if not defined INSTALLED_BUILD (
+    echo [%date% %time%] Rust build: cannot read the installed build from
+    echo [%date% %time%]   %ROOT%\steamapps\appmanifest_%APPID%.acf
+) else if not defined PUBLIC_BUILD (
+    echo [%date% %time%] Rust build: installed !INSTALLED_BUILD!, and Steam did
+    echo [%date% %time%] not answer. Carrying on under the usual rules.
+) else if "!INSTALLED_BUILD!"=="!PUBLIC_BUILD!" (
+    echo [%date% %time%] Rust build: installed !INSTALLED_BUILD!, public !PUBLIC_BUILD! -- current.
+) else (
+    echo [%date% %time%] ================================================
+    echo [%date% %time%] Rust build: installed !INSTALLED_BUILD!
+    echo [%date% %time%]             public    !PUBLIC_BUILD!
+    echo [%date% %time%] A NEWER BUILD IS AVAILABLE.
+    echo [%date% %time%] Clients update themselves, so once the protocol
+    echo [%date% %time%] moves this server stops accepting connections.
+    echo [%date% %time%] Check the framework has released for it, then
+    echo [%date% %time%] create UPDATE.flag in %ROOT%.
+    echo [%date% %time%] ================================================
+)
+
+:buildcheckdone
+
+
+REM ======================================================================
 REM  3. UPDATE OR RESTART
 REM
 REM     The two flag files, and what each one costs:
@@ -378,6 +506,20 @@ REM  stamp counts as forever, so a fresh install updates once on its first
 REM  start rather than waiting a fortnight to find out it is out of date.
 if /i "%UPDATE_MODE%"=="always" goto :updatedecided
 if "%DO_UPDATE%"=="1" goto :updatedecided
+REM  A build that has actually changed beats a calendar. This runs before
+REM  the day count, so a server that is behind updates today rather than
+REM  on day fourteen -- and one that is current is left alone no matter
+REM  how long it has been.
+if not "%UPDATE_ON_NEW_BUILD%"=="1" goto :nobuildtrigger
+if not defined INSTALLED_BUILD goto :nobuildtrigger
+if not defined PUBLIC_BUILD goto :nobuildtrigger
+if "!INSTALLED_BUILD!"=="!PUBLIC_BUILD!" goto :nobuildtrigger
+set "DO_UPDATE=1"
+echo [%date% %time%] Updating: installed build !INSTALLED_BUILD! is behind
+echo [%date% %time%] Steam's !PUBLIC_BUILD!.
+goto :updatedecided
+:nobuildtrigger
+
 if "%MAX_DAYS_WITHOUT_UPDATE%"=="0" goto :updatedecided
 
 set "DAYS_SINCE_UPDATE=9999"
@@ -439,6 +581,70 @@ REM  Oxide/uMod. Comment this whole block out for a vanilla server.
 REM  -f makes curl fail on an HTTP error instead of saving the error page,
 REM  which would otherwise be force-extracted over a working install.
 set "FRAMEWORK_OK=0"
+
+REM  Re-read the installed build. If steamcmd changed it, the game's own
+REM  managed assemblies were just rewritten and the framework has to go
+REM  back over the top of them whatever its version says. Only when the
+REM  game did NOT move is skipping the extract safe.
+REM  Read with the same [char]-built regex as section 3a rather than with
+REM  findstr and escaped quotes. cmd has no backslash escape, and quoting a
+REM  quote inside a for/f is how this file has gone wrong before.
+set "BUILD_AFTER="
+set "HOTWIRE_ACF2=%ROOT%\steamapps\appmanifest_%APPID%.acf"
+for /f %%B in ('powershell -NoProfile -NonInteractive -Command "$q=[char]34; $t=[IO.File]::ReadAllText($env:HOTWIRE_ACF2); $m=[regex]::Match($t, $q+'buildid'+$q+'\s+'+$q+'(\d+)'+$q); if($m.Success){ $m.Groups[1].Value }"') do set "BUILD_AFTER=%%B"
+set "HOTWIRE_ACF2="
+
+set "FWSKIP=0"
+if not "%SKIP_UNCHANGED_FRAMEWORK%"=="1" goto :frameworkextract
+if not defined INSTALLED_BUILD goto :frameworkextract
+if not defined BUILD_AFTER goto :frameworkextract
+if not "!INSTALLED_BUILD!"=="!BUILD_AFTER!" (
+    echo [%date% %time%] The game moved from !INSTALLED_BUILD! to !BUILD_AFTER!,
+    echo [%date% %time%] so the framework is going back over it.
+    goto :frameworkextract
+)
+
+set "HOTWIRE_FWFILE=%FRAMEWORK_VERSION_FILE%"
+set "HOTWIRE_FWFEED=%FRAMEWORK_FEED%"
+set "PSFW="
+set "PSFW=!PSFW!$ErrorActionPreference='SilentlyContinue'; "
+set "PSFW=!PSFW!$f=$env:HOTWIRE_FWFILE; $u=$env:HOTWIRE_FWFEED; "
+set "PSFW=!PSFW!if([string]::IsNullOrWhiteSpace($f)){ exit 2 } "
+set "PSFW=!PSFW!if(-not (Test-Path -LiteralPath $f)){ exit 2 } "
+set "PSFW=!PSFW!$v=[string](Get-Item -LiteralPath $f).VersionInfo.FileVersion; "
+set "PSFW=!PSFW!if([string]::IsNullOrWhiteSpace($v)){ exit 2 } "
+set "PSFW=!PSFW!$vn=(($v.Trim() -split '\.') + @('0','0','0'))[0..2] -join '.'; "
+set "PSFW=!PSFW!try{ [Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12 } catch {} "
+set "PSFW=!PSFW!$r=Invoke-RestMethod -Uri $u -TimeoutSec 25; "
+set "PSFW=!PSFW!$l=[string]$r.latest_release_version; "
+set "PSFW=!PSFW!if([string]::IsNullOrWhiteSpace($l)){ exit 2 } "
+set "PSFW=!PSFW!$ln=(($l.Trim() -split '\.') + @('0','0','0'))[0..2] -join '.'; "
+set "PSFW=!PSFW!Write-Output ('Framework: installed '+$vn+', latest '+$ln) "
+set "PSFW=!PSFW!if($vn -eq $ln){ exit 0 } else { exit 1 } "
+powershell -NoProfile -NonInteractive -Command "!PSFW!"
+set "FWSAME=!errorlevel!"
+set "HOTWIRE_FWFILE="
+set "HOTWIRE_FWFEED="
+
+REM  0 means the versions matched. 1 means they did not. Anything else
+REM  means the comparison could not be made -- no version file, no feed,
+REM  no network -- and the extract happens, which is what used to happen
+REM  every time anyway.
+if "!FWSAME!"=="0" (
+    echo [%date% %time%] Game and framework both unchanged. Skipping the
+    echo [%date% %time%] extract rather than writing over a working install.
+    set "FWSKIP=1"
+) else if not "!FWSAME!"=="1" (
+    echo [%date% %time%] Could not compare framework versions ^(exit !FWSAME!^).
+    echo [%date% %time%] Extracting, as before.
+)
+
+if "!FWSKIP!"=="1" (
+    set "FRAMEWORK_OK=1"
+    goto :frameworkdone
+)
+
+:frameworkextract
 curl -fSL -A "Mozilla/5.0" "https://umod.org/games/rust/download" --output "%ROOT%\OxideMod.zip"
 if errorlevel 1 (
     echo [%date% %time%] Framework download failed. Keeping the install.
@@ -451,6 +657,8 @@ if errorlevel 1 (
     )
 )
 if exist "%ROOT%\OxideMod.zip" del "%ROOT%\OxideMod.zip"
+
+:frameworkdone
 
 REM  The flag is consumed and the backstop clock reset ONLY when the
 REM  update actually happened.
