@@ -724,7 +724,8 @@ noticing.
 the server running. Erring the other way would stop a working server over a
 failed clock read, which is the failure this project exists to prevent.
 
-**Not executed.** Read-verified only, like everything else in this file.
+**Not executed when written.** The crash path still is not — it needs a
+genuine boot failure to exercise.
 
 ## ADR-0024 — The RCON password is read with delayed expansion off, and quoted
 
@@ -776,7 +777,11 @@ above are real, and were found by comparing the two launchers against each
 other; the invented one came from trusting a derived file. Verify against the
 thing that runs.
 
-**Not executed.** Read-verified.
+**Executed 2026-09-05**, on the reference server, after being written blind.
+A clean option list passes; a query port set equal to the game port is caught
+by name and refuses the launch. The negative path was tested deliberately —
+a validator that has only ever returned "no problems" has not been tested at
+all, and the two paths are different code.
 
 ## ADR-0025 — Validate what fails opaquely, at the layer that knows the answer
 

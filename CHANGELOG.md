@@ -102,6 +102,10 @@ closing quote of every path passed to another program.
 A missing PowerShell skips the check with a note instead of blocking the
 launch. ADR-0027.
 
+**Executed on a real server 2026-09-05**, after 1.1.6. Both directions: a
+clean option list passes in 0.7s, and a deliberately broken one — the query
+port set equal to the game port — is caught, named, and refuses to start.
+
 ## 1.1.3 — launcher — 2026-09-05
 
 **The launcher now refuses to start on a password that cannot be right**, and
@@ -175,7 +179,8 @@ backs off 15/30/60/120/300, and after `MAX_CRASH_STREAK` (10) it stops and says
 why rather than looping forever. Set `MAX_CRASH_STREAK=0` for the old behavior.
 ADR-0023.
 
-Read-verified, not executed.
+Read-verified, not executed. The crash-loop path in particular only runs on
+a genuine boot failure.
 
 ## 1.1.0 — plugin and launcher — 2026-09-05
 
