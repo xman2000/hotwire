@@ -969,3 +969,64 @@ being transcribed.
 skip is not directly confirmed, but the update that followed took under four
 seconds between the pre-update backup and the stamp write, and a 30 MB download
 plus an archive extract does not fit in four seconds.
+
+
+## ADR-0029 — Hotwire runs wherever Rust runs, and connecting is a guest in someone else's house
+
+**Date:** 2026-09-12 · **Status:** ACCEPTED · `connect/hotwire-connect.sh`
+
+Two decisions the owner made together, because the second is what makes the first safe to ship.
+
+### Cross-platform
+
+Hotwire is Windows-only today: `launcher/hotwire.bat` is batch and PowerShell. **It should run anywhere
+Rust runs**, which in practice means adding Linux.
+
+The cost is smaller than it sounds. `src/Hotwire.cs` is C# inside the game process and already runs
+on Linux unchanged, so this is one bash sibling to the launcher, not a second product. And the
+harder half of the reporting work is already solved next door: `../warrenmonthly/bin/report.sh`
+implements `sha256_hex` and `hmac_hex` with openssl and uses them for AWS SigV4 — a materially
+harder canonicalisation than the panel's — behind pluggable `send_*` adapters.
+
+**The connect-and-report half must work without our launcher.** An admin running systemd, Docker,
+Pterodactyl or LinuxGSM has already chosen a supervisor, and displacing a working one would cost us
+the install and deserve to. So connect, spool and send are separable from the supervise-and-relaunch
+loop, and "connect-only" is a first-class path rather than a fallback. That is a constraint on the
+code, not a line in a README.
+
+### Polite to a fault
+
+The owner's words: *"it shouldn't replace anything that currently exists without explicit permission.
+We are not going to be popular if we walk into someone's house and shoot the dog."*
+
+This is the safety envelope (rule 2) pointed at the filesystem instead of the schedule, and it is
+continuous with what this repo already does — ADR-0025 validates what fails opaquely at the layer
+that knows, ADR-0027 checks the option list before the engine sees it. *Validate before the server
+goes down, not after* is already a commit message here. Concretely:
+
+- **Nothing existing is overwritten without a yes.** Detect it, back it up, print the backup path,
+  ask. Silence is never consent, which is why unattended runs need `--yes` rather than a timeout.
+- **Measure twice.** `doctor` is read-only and checks everything `connect` depends on, so a failure
+  is reported by a command that cannot have caused it. `connect` re-runs those checks before it
+  writes a byte: a half-connected server is worse than an unconnected one.
+- **Refuse rather than guess.** No RustDedicated binary found means stop and name the paths searched.
+  A wrong guess about the server root writes keys into a stranger's unrelated directory.
+- **Every error names three things** — what was tried, what was found, what to do about it. `die()`
+  takes exactly those three arguments and cannot be called without them.
+- **A manifest at the end**, listing every file changed, which is what makes the politeness
+  verifiable rather than claimed.
+- **`detach` is real.** It removes what `connect` wrote and nothing else. The server keeps running,
+  because it never needed a panel to run.
+
+### Where the secrets go
+
+The launcher's key beside its other secrets; the plugin's in **`oxide/data/`, never
+`oxide/config/Hotwire.json`**. The plugin rewrites its config from a dozen paths and the README tells
+people to delete it to regenerate defaults — so a credential there would be destroyed by our own
+documented advice, silently unenrolling the server. Both files are `chmod 600`.
+
+### What is still open
+
+`launcher/hotwire.sh` — the bash sibling of the launcher itself — is not written yet. This ADR covers
+the connect-and-report half, which is the part that must work regardless of who supervises the
+server.
