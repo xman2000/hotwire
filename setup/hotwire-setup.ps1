@@ -53,6 +53,11 @@ function Resolve-FullPath([string]$Path) {
     return $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Path).TrimEnd('\')
 }
 $AppId = '258550'
+# The Steam branch is asked for, kept in the install record, named on every download and written into
+# hotwire.bat. Steam otherwise keeps an install on whatever branch that machine last used: a real test
+# install came out on staging with nothing here asking for it. Facepunch's wiki: once an install is on a
+# newer build, name public to get back to it. public is only the suggestion.
+$DefaultBranch = 'public'
 $DefaultPanel = 'https://hotpanel.on-forge.com'
 
 # Every URL below was checked on 2026-09-13. umod.org/games/rust/download answers 301 to
@@ -376,6 +381,7 @@ function Update-Record([string]$d, [scriptblock]$Change) {
         created    = [string[]](Get-RecordList $record 'created')
     }
     if ($record -and $record.started_at) { $data.started_at = [string]$record.started_at }
+    if ($record -and ($record.PSObject.Properties.Name -contains 'branch') -and $record.branch) { $data.branch = [string]$record.branch }
     & $Change $data
     $f = Get-RecordFile $d
     $isNew = -not (Test-Path -LiteralPath $f)
@@ -386,6 +392,13 @@ function Update-Record([string]$d, [scriptblock]$Change) {
 function Save-Record([string]$d, [string]$Step) {
     Update-Record $d { param($r) if ($Step -and $r.done -notcontains $Step) { $r.done = [string[]]($r.done + $Step) } }
 }
+
+function Get-ChosenBranch([string]$d) {
+    $record = Read-Record $d
+    if ($record -and ($record.PSObject.Properties.Name -contains 'branch') -and $record.branch) { return [string]$record.branch }
+    return $null
+}
+function Set-ChosenBranch([string]$d, [string]$Branch) { Update-Record $d { param($r) $r.branch = $Branch } }
 
 function Test-Done([string]$d, [string]$Step) { return (Get-RecordList (Read-Record $d) 'done') -contains $Step }
 function Test-Declined([string]$d, [string]$Key) { return (Get-RecordList (Read-Record $d) 'declined') -contains $Key }
@@ -752,6 +765,11 @@ function Get-InstallState([string]$d) {
     $s.HasSteamCmd = Test-Path -LiteralPath $s.SteamCmdExe
     $s.HasRust = Test-Path -LiteralPath (Join-Path $d 'RustDedicated.exe')
     $s.RustBuild = if ($s.HasRust) { Get-InstalledBuild $d } else { $null }
+    $s.RustBranch = if ($s.HasRust) { Get-InstalledBranch $d } else { $null }
+    $s.ChosenBranch = Get-ChosenBranch $d
+    # Not asked about yet, and on something other than public: worth a question. Asked, and not on it: a move.
+    $s.BranchUndecided = $s.RustDone -and -not $s.ChosenBranch -and $s.RustBranch -and $s.RustBranch -ne 'public'
+    $s.BranchMismatch = $s.RustDone -and [bool]$s.ChosenBranch -and $s.RustBranch -and $s.RustBranch -ne $s.ChosenBranch
     $s.RustDone = $s.HasRust -and [bool]$s.RustBuild -and (Test-Done $d 'rust')
     $s.ServerRunning = Get-RunningServer $d
 
@@ -767,6 +785,12 @@ function Get-InstallState([string]$d) {
     $s.LauncherVanilla = $s.HasLauncher -and (Select-String -LiteralPath $launcher -SimpleMatch 'set "INSTALL_FRAMEWORK=0"' -Quiet)
     $s.LauncherDeclined = Test-Declined $d 'launcher'
     $s.LauncherOurs = Test-Created $d $launcher
+    $s.LauncherBranch = $null
+    if ($s.HasLauncher) {
+        $m = [regex]::Match([System.IO.File]::ReadAllText($launcher), '(?m)^set "STEAM_BRANCH=([^"]*)"\r?$')
+        if ($m.Success) { $s.LauncherBranch = $m.Groups[1].Value }
+    }
+    $s.LauncherBranchMismatch = $s.HasLauncher -and [bool]$s.ChosenBranch -and $null -ne $s.LauncherBranch -and $s.LauncherBranch -ne $s.ChosenBranch
     $s.LauncherRunning = $s.HasLauncher -and (Test-LauncherRunning $d)
     $s.LauncherMismatch = $s.HasLauncher -and (($s.OxideComplete -and $s.LauncherVanilla) -or (-not $s.HasOxide -and $s.OxideDeclined -and -not $s.LauncherVanilla))
 
@@ -839,7 +863,9 @@ function Show-InstallState($s, [string]$Title) {
 
     Write-Group "Rust"
     if ($s.HasSteamCmd) { Write-Check ok 'SteamCMD' $s.SteamCmdExe } else { Write-Check no 'SteamCMD' "not installed ($SteamCmd)" }
-    if ($s.RustDone) { Write-Check ok 'Rust server' "build $($s.RustBuild)" }
+    if ($s.BranchUndecided) { Write-Check warn 'Rust server' "build $($s.RustBuild), on Steam's '$($s.RustBranch)' branch -- install asks whether to keep it" }
+    elseif ($s.BranchMismatch) { Write-Check warn 'Rust server' "build $($s.RustBuild), on '$($s.RustBranch)' but chosen '$($s.ChosenBranch)' -- install asks about it" }
+    elseif ($s.RustDone) { Write-Check ok 'Rust server' ("build $($s.RustBuild)" + $(if ($s.RustBranch -and $s.RustBranch -ne 'public') { ", branch '$($s.RustBranch)'" } else { '' })) }
     elseif ($s.HasRust) { Write-Check warn 'Rust server' 'download not finished -- install finishes it' }
     else { Write-Check no 'Rust server' 'not installed' }
     if ($s.ServerRunning -eq 'here') { Write-Check fail 'Running' 'the server in this folder is running -- stop it before installing' }
@@ -858,6 +884,7 @@ function Show-InstallState($s, [string]$Title) {
         $fix = if ($s.LauncherOurs) { 'install fixes it' } else { 'change INSTALL_FRAMEWORK in it' }
         Write-Check warn 'Start script' "hotwire.bat is $what -- $fix"
     } else { Write-Check ok 'Start script' $(if ($s.LauncherVanilla) { 'hotwire.bat (vanilla)' } else { 'hotwire.bat' }) }
+    if ($s.LauncherBranchMismatch) { Write-Check warn 'Start script' "hotwire.bat updates '$($s.LauncherBranch)', not the chosen '$($s.ChosenBranch)'" }
     if ($s.LauncherRunning) { Write-Check warn 'Start script' 'hotwire.bat is running right now' }
     if ($s.HasPlugin) { Write-Check ok 'Plugin' $(if ($s.PluginVersion) { "Hotwire $($s.PluginVersion)" } else { 'Hotwire.cs' }) }
     elseif ($s.PluginDeclined) { Write-Check info 'Plugin' 'not installed -- you said no' }
@@ -892,16 +919,23 @@ function Get-InstallPlan($s) {
     $add = { param($Key, $Title, $Why) $plan.Add([pscustomobject]@{ Key = $Key; Title = $Title; Why = $Why }) }
 
     if ($null -ne $s.ClockSkew -and [math]::Abs($s.ClockSkew) -gt 30) { & $add 'clock' 'Clock' ("{0:N0}s out" -f [math]::Abs($s.ClockSkew)) }
-    if (-not $s.RustDone) {
+    $branchQuestion = $s.BranchUndecided -or $s.BranchMismatch
+    if (-not $s.RustDone -or $branchQuestion) {
         & $add 'steamcmd' 'SteamCMD' $(if ($s.HasSteamCmd) { 'let it update itself before the download' } else { 'install it -- Rust downloads through it' })
+    }
+    if (-not $s.RustDone) {
         & $add 'rust' 'Rust server' $(if ($s.HasRust) { 'finish the download' } else { 'download it, about 12 GB' })
     }
-    # Also when the Rust download is in the plan: downloading puts the game's files back over Oxide.
-    if ((-not $s.OxideComplete -or -not $s.RustDone) -and -not $s.OxideDeclined) {
+    if ($branchQuestion) {
+        & $add 'branch' 'Steam branch' $(if ($s.BranchMismatch) { "on '$($s.RustBranch)', chosen '$($s.ChosenBranch)' -- keep it or move it" } else { "on '$($s.RustBranch)' -- keep it or move it" })
+    }
+    # Also when the Rust download or a branch change is in the plan: downloading puts the game's files back
+    # over Oxide. The Oxide step does nothing if Oxide is still in place.
+    if ((-not $s.OxideComplete -or -not $s.RustDone -or $branchQuestion) -and -not $s.OxideDeclined) {
         & $add 'oxide' 'Oxide' $(if ($s.OxideComplete) { 'put it back on after the download' } elseif ($s.HasOxide) { 'finish installing it' } else { 'install it, or say no for a vanilla server' })
     }
     if (-not $s.HasLauncher -and -not $s.LauncherDeclined) { & $add 'launcher' 'Start script' 'install hotwire.bat, or say no to use your own' }
-    elseif ($s.LauncherMismatch -and $s.LauncherOurs) { & $add 'launcher' 'Start script' 'set INSTALL_FRAMEWORK in hotwire.bat to match Oxide' }
+    elseif (($s.LauncherMismatch -or $s.LauncherBranchMismatch) -and $s.LauncherOurs) { & $add 'launcher' 'Start script' 'bring hotwire.bat in line with this server' }
     if (-not $s.HasPlugin -and -not $s.PluginDeclined -and -not $s.OxideDeclined) { & $add 'plugin' 'Hotwire plugin' 'install it -- needs Oxide' }
     if (($s.HasLauncher -and $s.RconProblem) -or (-not $s.HasLauncher -and -not $s.LauncherDeclined)) {
         & $add 'rcon' 'RCON password' $(if ($s.RconProblem) { "fix it: $($s.RconProblem)" } else { 'set it, for hotwire.bat' })
@@ -1058,6 +1092,15 @@ function Install-SteamCmd([string]$d) {
 }
 
 # ---------------------------------------------------------------- 4. rust --
+# The branch Steam has this install on: UserConfig's BetaKey in the app manifest. No key means public.
+function Get-InstalledBranch([string]$d) {
+    $acf = Join-Path $d "steamapps\appmanifest_$AppId.acf"
+    if (-not (Test-Path -LiteralPath $acf)) { return $null }
+    $m = [regex]::Match([IO.File]::ReadAllText($acf), '"UserConfig"\s*\{[^}]*"BetaKey"\s+"([^"]*)"')
+    if ($m.Success -and $m.Groups[1].Value) { return $m.Groups[1].Value }
+    return 'public'
+}
+
 function Get-InstalledBuild([string]$d) {
     $acf = Join-Path $d "steamapps\appmanifest_$AppId.acf"
     if (-not (Test-Path -LiteralPath $acf)) { return $null }
@@ -1080,6 +1123,76 @@ function Test-OxideEntries([string[]]$Names) {
     return $null
 }
 
+# Which branch to install. public is the game everyone plays. staging is Facepunch's test build; the Rust
+# wiki names staging and aux01 as branches a server can install. Asked rather than assumed: an admin may
+# want a test branch, and Steam would otherwise keep whatever branch this machine used last.
+function Test-BranchName([string]$Name) { return $Name -match '^[A-Za-z0-9_.-]{1,64}$' }
+
+function Select-SteamBranch([string]$Current) {
+    $suggest = if ($Current) { $Current } else { $DefaultBranch }
+    $defaultChoice = switch ($suggest) { 'public' { '1' } 'staging' { '2' } default { '3' } }
+    Write-Host ""
+    Write-Host "  Which version of Rust should this server run?" -ForegroundColor Cyan
+    Write-Host "    1  public    the game everyone plays (recommended)"
+    Write-Host "    2  staging   Facepunch's test build: newer and less stable. Oxide is made for public,"
+    Write-Host "                 so plugins may not work on it."
+    Write-Host "    3  another branch, typed by name. A branch that needs a password cannot be installed here."
+    if ($Current) { Write-Note "This server is on '$Current' now. Enter keeps it there." }
+    while ($true) {
+        $answer = ([string](Read-Host "  Choose [$defaultChoice]")).Trim()
+        if (-not $answer) { $answer = $defaultChoice }
+        if ($answer -eq '1') { return 'public' }
+        if ($answer -eq '2') { return 'staging' }
+        if ($answer -eq '3') {
+            $prompt = if ($defaultChoice -eq '3') { "  Branch name [$suggest]" } else { "  Branch name" }
+            $name = ([string](Read-Host $prompt)).Trim()
+            if (-not $name -and $defaultChoice -eq '3') { $name = $suggest }
+            if (Test-BranchName $name) { return $name }
+            Write-Bad "a branch name is letters, digits, dots, dashes or underscores"
+            continue
+        }
+        Write-Bad "type 1, 2 or 3"
+    }
+}
+
+# The download itself, shared by a first install and a change of branch. It resumes, retries on request,
+# and checks what Steam actually installed.
+function Invoke-RustDownload([string]$d, [string]$exe, [string]$Branch) {
+    Show-Countdown 3 'Downloading'
+    while ($true) {
+        Show-SlowWarning 'the download' -Resumes
+        & $exe +force_install_dir $d +login anonymous +app_update $AppId -beta $Branch +quit | Out-Host
+        $code = $LASTEXITCODE
+        Write-Host ""
+
+        # The same test hotwire.bat uses (any non-zero exit is a failure), plus the files themselves.
+        $build = Get-InstalledBuild $d
+        if ($code -eq 0 -and (Test-Path -LiteralPath (Join-Path $d 'RustDedicated.exe')) -and $build) {
+            $onBranch = Get-InstalledBranch $d
+            Write-Ok "Rust server downloaded (build $build, branch '$onBranch')"
+            if ($onBranch -ne $Branch) {
+                Write-Warn "Steam reports this install on '$onBranch', not '$Branch' as asked"
+                Write-Note "Run install again to be asked about the branch."
+            }
+            Add-Change "downloaded the Rust server into $d (build $build, branch '$onBranch')" "delete the server files from $d; its saves are in $d\server if you want to keep them"
+            Save-Record $d 'rust'
+            # A download puts the game's own files back, and with them undoes Oxide. It is marked not done,
+            # so the Oxide step puts it on again instead of taking it as installed.
+            if (Test-Done $d 'oxide') {
+                Update-Record $d { param($r) $r.done = [string[]]@($r.done | Where-Object { $_ -ne 'oxide' }) }
+            }
+            return
+        }
+
+        Write-Bad "SteamCMD did not finish the download (exit code $code)"
+        if (-not (Test-Path -LiteralPath (Join-Path $d 'RustDedicated.exe'))) { Write-Note "RustDedicated.exe is not in $d yet." }
+        Write-Note "The last lines SteamCMD printed above usually say why: disk space, network, a branch name"
+        Write-Note "Steam does not know, or a Steam outage. Trying again resumes the download."
+        Write-Host ""
+        if (-not (Confirm-Step "Try the download again?")) { Write-Summary; exit 1 }
+    }
+}
+
 function Install-Rust([string]$d, [string]$exe) {
     Write-Step "The Rust server"
 
@@ -1090,14 +1203,21 @@ function Install-Rust([string]$d, [string]$exe) {
         return
     }
 
+    $branch = Get-ChosenBranch $d
+    if (-not $branch) {
+        $current = if (Test-Path -LiteralPath (Join-Path $d 'RustDedicated.exe')) { Get-InstalledBranch $d } else { $null }
+        $branch = Select-SteamBranch $current
+        Set-ChosenBranch $d $branch
+    }
+
     Write-Why @(
-        "This downloads the Rust dedicated server -- Steam app $AppId -- into $d.",
+        "This downloads the Rust dedicated server -- Steam app $AppId, branch '$branch' -- into $d.",
         "It is free, and 'anonymous' below is a real Steam login, not a placeholder.",
         "",
         "About 12 GB, usually 10 to 30 minutes.",
         "",
         "The command is:",
-        "  steamcmd +force_install_dir `"$d`" +login anonymous +app_update $AppId +quit",
+        "  steamcmd +force_install_dir `"$d`" +login anonymous +app_update $AppId -beta $branch +quit",
         "",
         "More: $($Docs['Creating a server (Rust)'])"
     )
@@ -1112,35 +1232,42 @@ function Install-Rust([string]$d, [string]$exe) {
         Write-Note "The Rust server is what this installs, so install stops here."
         Write-Summary; exit 0
     }
-    Show-Countdown 3 'Downloading'
+    Invoke-RustDownload $d $exe $branch
+}
 
-    while ($true) {
-        Show-SlowWarning 'the download' -Resumes
-        & $exe +force_install_dir $d +login anonymous +app_update $AppId +quit | Out-Host
-        $code = $LASTEXITCODE
-        Write-Host ""
+# A finished server whose branch was never chosen here, or is not the one chosen. Enter keeps the branch
+# it is on; moving is a separate question that defaults to no, because leaving staging for public is a
+# step back to an older build.
+function Invoke-BranchStep([string]$d, [string]$exe) {
+    Write-Step "Steam branch"
+    $installed = Get-InstalledBranch $d
+    $chosen = Get-ChosenBranch $d
+    $lines = @("This server is on Steam's '$installed' branch.")
+    if ($chosen -and $chosen -ne $installed) { $lines += "Install was last told it should be on '$chosen'." }
+    else { $lines += "Install has not been told which branch it should be on." }
+    $lines += @(
+        "",
+        "Moving to another branch downloads that branch's build over this one. If the saves matter, copy",
+        "the 'server' folder inside $d somewhere safe first."
+    )
+    Write-Why $lines
 
-        # The same test hotwire.bat uses (any non-zero exit is a failure), plus the files themselves.
-        $build = Get-InstalledBuild $d
-        if ($code -eq 0 -and (Test-Path -LiteralPath (Join-Path $d 'RustDedicated.exe')) -and $build) {
-            Write-Ok "Rust server downloaded (build $build)"
-            Add-Change "downloaded the Rust server into $d (build $build)" "delete the server files from $d; its saves are in $d\server if you want to keep them"
-            Save-Record $d 'rust'
-            # A download puts the game's own files back, and with them undoes Oxide. It is marked not done,
-            # so the Oxide step puts it on again instead of taking it as installed.
-            if (Test-Done $d 'oxide') {
-                Update-Record $d { param($r) $r.done = [string[]]@($r.done | Where-Object { $_ -ne 'oxide' }) }
-            }
-            return
-        }
-
-        Write-Bad "SteamCMD did not finish the download (exit code $code)"
-        if (-not (Test-Path -LiteralPath (Join-Path $d 'RustDedicated.exe'))) { Write-Note "RustDedicated.exe is not in $d yet." }
-        Write-Note "The last lines SteamCMD printed above usually say why: disk space, network, or a Steam outage."
-        Write-Note "Trying again resumes the download."
-        Write-Host ""
-        if (-not (Confirm-Step "Try the download again?")) { Write-Summary; exit 1 }
+    $branch = Select-SteamBranch $installed
+    if ($branch -eq $installed) {
+        Set-ChosenBranch $d $branch
+        Write-Ok "staying on '$branch'"
+        Sync-LauncherBranch $d
+        return
     }
+    if (-not (Confirm-Step "Move this server from '$installed' to '$branch'?")) {
+        Set-ChosenBranch $d $installed
+        Write-Note "Left on '$installed'."
+        Sync-LauncherBranch $d
+        return
+    }
+    Set-ChosenBranch $d $branch
+    Invoke-RustDownload $d $exe $branch
+    Sync-LauncherBranch $d
 }
 
 # --------------------------------------------------------------- 5. oxide --
@@ -1258,18 +1385,22 @@ function Install-Oxide([string]$d) {
 # Sets the lines hotwire.bat needs for this install -- ROOT, STEAMCMD and, for a vanilla server,
 # INSTALL_FRAMEWORK -- and returns the file with CRLF line endings. Returns $null when the text is not
 # the launcher this script knows: a changed default, an older launcher, or an error page.
-function Set-LauncherPaths([string]$Text, [string]$RootDir, [string]$SteamCmdExe, [bool]$Vanilla = $false) {
+function Set-LauncherPaths([string]$Text, [string]$RootDir, [string]$SteamCmdExe, [bool]$Vanilla = $false, [string]$Branch = '') {
     $rootLine = 'set "ROOT=C:\rustserver"'
     $steamLine = 'set "STEAMCMD=C:\steamcmd\steamcmd.exe"'
     $frameworkLine = 'set "INSTALL_FRAMEWORK=1"'
+    $branchLine = 'set "STEAM_BRANCH=public"'
+    $setBranch = $Branch -and $Branch -ne 'public'
     $lines = ($Text -replace "`r`n", "`n") -split "`n"
     if (@($lines | Where-Object { $_ -eq $rootLine }).Count -ne 1) { return $null }
     if (@($lines | Where-Object { $_ -eq $steamLine }).Count -ne 1) { return $null }
     if ($Vanilla -and @($lines | Where-Object { $_ -eq $frameworkLine }).Count -ne 1) { return $null }
+    if ($setBranch -and @($lines | Where-Object { $_ -eq $branchLine }).Count -ne 1) { return $null }
     $lines = $lines | ForEach-Object {
         if ($_ -eq $rootLine) { "set `"ROOT=$RootDir`"" }
         elseif ($_ -eq $steamLine) { "set `"STEAMCMD=$SteamCmdExe`"" }
         elseif ($Vanilla -and $_ -eq $frameworkLine) { 'set "INSTALL_FRAMEWORK=0"' }
+        elseif ($setBranch -and $_ -eq $branchLine) { "set `"STEAM_BRANCH=$Branch`"" }
         else { $_ }
     }
     return ($lines -join "`r`n")
@@ -1313,6 +1444,38 @@ function Sync-LauncherFramework([string]$d) {
     Add-Change "set INSTALL_FRAMEWORK=$want in $launcher" "copy $backup back over it"
 }
 
+# Keeps hotwire.bat's STEAM_BRANCH on the branch chosen for this server, on the same terms as
+# INSTALL_FRAMEWORK: only a hotwire.bat install created, never while it runs, and after a copy is kept.
+function Sync-LauncherBranch([string]$d) {
+    $launcher = Join-Path $d 'hotwire.bat'
+    $branch = Get-ChosenBranch $d
+    if (-not $branch -or -not (Test-Path -LiteralPath $launcher)) { return }
+    $lines = ([System.IO.File]::ReadAllText($launcher) -replace "`r`n", "`n") -split "`n"
+    $current = @($lines | Where-Object { $_ -match '^set "STEAM_BRANCH=[^"]*"$' })
+    $wanted = "set `"STEAM_BRANCH=$branch`""
+    if ($current.Count -ne 1) {
+        Write-Warn "this hotwire.bat has no STEAM_BRANCH setting, so its updates stay on whatever branch Steam last used"
+        Write-Note "A newer hotwire.bat names the branch: $($Docs['Hotwire (source)'])"
+        return
+    }
+    if ($current[0] -eq $wanted) { return }
+    if (-not (Test-Created $d $launcher)) {
+        Write-Warn "hotwire.bat updates a different branch than the '$branch' chosen for this server"
+        Write-Note "hotwire.bat was not created by install, so it is left alone. In it, change the line"
+        Write-Note "  $($current[0])   to   $wanted"
+        return
+    }
+    if (Test-LauncherRunning $d) {
+        Write-Warn "hotwire.bat should now update the '$branch' branch, but it is running. Stop it, then run install again."
+        return
+    }
+    $backup = Backup-File $d $launcher 'hotwire.bat'
+    $text = ($lines | ForEach-Object { if ($_ -match '^set "STEAM_BRANCH=[^"]*"$') { $wanted } else { $_ } }) -join "`r`n"
+    Write-FileAtomic $launcher $text
+    Write-Ok "hotwire.bat now updates the '$branch' branch"
+    Add-Change "set STEAM_BRANCH=$branch in $launcher" "copy $backup back over it"
+}
+
 function Install-Launcher([string]$d) {
     Write-Step "Start script"
     $launcher = Join-Path $d 'hotwire.bat'
@@ -1320,6 +1483,7 @@ function Install-Launcher([string]$d) {
     if (Test-Path -LiteralPath $launcher) {
         Write-Ok "hotwire.bat is already here -- kept"
         Sync-LauncherFramework $d
+        Sync-LauncherBranch $d
         Save-Record $d 'launcher'
         return
     }
@@ -1338,6 +1502,8 @@ function Install-Launcher([string]$d) {
         "  STEAMCMD          = $steamCmdExe"
     )
     if ($vanilla) { $why += "  INSTALL_FRAMEWORK = 0     no Oxide here, so it runs a vanilla server" }
+    $chosenBranch = Get-ChosenBranch $d
+    if ($chosenBranch -and $chosenBranch -ne 'public') { $why += "  STEAM_BRANCH      = $chosenBranch   the branch chosen for this server" }
     $why += @("", "Say no to start the server with a script of your own instead.", "", "More: $($Docs['Hotwire (source)'])")
     Write-Why $why
 
@@ -1359,7 +1525,7 @@ function Install-Launcher([string]$d) {
     try { $text = [System.IO.File]::ReadAllText($download) }
     finally { Remove-Item -LiteralPath $download -Force -ErrorAction SilentlyContinue }
 
-    $edited = Set-LauncherPaths $text $d $steamCmdExe $vanilla
+    $edited = Set-LauncherPaths $text $d $steamCmdExe $vanilla (Get-ChosenBranch $d)
     if ($null -eq $edited) {
         Stop-Politely "setting up the downloaded hotwire.bat" "it does not contain the lines this script changes" `
             "nothing was written; download launcher\hotwire.bat by hand from $($Docs['Hotwire (source)']) and set ROOT and STEAMCMD near the top"
@@ -2161,7 +2327,7 @@ function Invoke-Install {
     }
 
     # Nothing is unpacked over a running server: its files are open, and the unpack would fail part-way.
-    $touchesServer = @($plan | Where-Object { $_.Key -in @('rust', 'oxide') }).Count -gt 0
+    $touchesServer = @($plan | Where-Object { $_.Key -in @('rust', 'branch', 'oxide') }).Count -gt 0
     if ($touchesServer -and $state.ServerRunning -eq 'here') {
         Stop-Politely "installing into $serverDir" "the Rust server in this folder is running" `
             "stop the server first: close the hotwire.bat window, or type quit in the server's window. Then run this again."
@@ -2191,6 +2357,7 @@ function Invoke-Install {
             'clock'    { Test-InstallClock }
             'steamcmd' { $null = Install-SteamCmd $serverDir }
             'rust'     { Install-Rust $serverDir (Join-Path $SteamCmd 'steamcmd.exe') }
+            'branch'   { Invoke-BranchStep $serverDir (Join-Path $SteamCmd 'steamcmd.exe') }
             'oxide'    { Install-Oxide $serverDir }
             'launcher' { Install-Launcher $serverDir }
             'plugin'   { Install-Plugin $serverDir }

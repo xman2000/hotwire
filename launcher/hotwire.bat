@@ -8,7 +8,7 @@ set "CHECK_ONLY="
 if /i "%~1"=="check" set "CHECK_ONLY=1"
 
 REM ==[ H O T W I R E ]===================================================
-REM  Version 1.1.9   2026-09-13
+REM  Version 1.1.10  2026-09-13
 REM  Built by xman2000 and Claude.  MIT License.
 REM
 REM  The launcher. Starts a Rust dedicated server, relaunches it when it
@@ -125,6 +125,14 @@ set "STEAMCMD=C:\steamcmd\steamcmd.exe"
 REM   Rust's Steam app id. Do not change this.
 set "APPID=258550"
 
+REM   The Steam branch to install and update. public is the game everyone
+REM     plays. A test branch such as staging is named here instead. Steam
+REM     keeps using the last branch an install was on, so naming public is
+REM     also what brings a server back from a test branch -- which moves it
+REM     to public's build on the next update. Empty lets Steam choose, as
+REM     launchers before 1.1.10 did.
+set "STEAM_BRANCH=public"
+
 REM   When updates happen. Pick the mode that matches who decides when the
 REM     server restarts.
 REM
@@ -134,7 +142,18 @@ REM
 REM     hotwire    Only when a flag file says so. Restarts are quick and
 REM                updates happen when you choose. Use this if anything
 REM                else restarts the server for you.
+REM
+REM     off        Never. Not on start, not for a flag file, not for the
+REM                backstop or a new build. A flag file is left in place and
+REM                the console says so. For a server whose files are
+REM                managed some other way.
 set "UPDATE_MODE=always"
+
+REM   The names of the two flag files, in ROOT. The plugin writes the
+REM     update flag under the name in its own config ("Update flag file name"),
+REM     so change both or neither.
+set "UPDATE_FLAG=UPDATE.flag"
+set "VALIDATE_FLAG=VALIDATE.flag"
 
 REM   hotwire mode only. If this many days pass with no update, one runs
 REM     anyway and says so in the console. Rust clients update themselves,
@@ -147,8 +166,20 @@ REM     already on disk. A stale build is a server; an infinite retry is
 REM     not.
 set "MAX_STEAM_TRIES=5"
 
+REM   Seconds to wait between steamcmd tries.
+set "STEAM_RETRY_SECONDS=60"
+
+REM   Keep the server log from each run. The server empties its log every
+REM     time it starts, so with this at 0 a restart destroys the log of
+REM     whatever went wrong before it. 1 keeps them.
+set "ROTATE_LOGS=1"
+
 REM   Rotated server logs to keep.
 set "LOG_KEEP=14"
+
+REM   Start the server again when it exits. 0 makes the launcher stop when
+REM     the server does, for something else that relaunches it.
+set "RESTART_ON_EXIT=1"
 
 REM   Seconds to wait before relaunching after the server exits. A run
 REM     that crashed backs off from here; see CRASH_SECONDS below.
@@ -162,6 +193,19 @@ set "CRASH_SECONDS=60"
 REM   Consecutive crashes before the launcher stops instead of looping
 REM     forever. Set to 0 to never stop.
 set "MAX_CRASH_STREAK=10"
+
+REM   After repeated crashes, wait longer between tries: 30s after the
+REM     second, then 60, 120 and 300. 0 always waits RESTART_DELAY.
+set "CRASH_BACKOFF=1"
+
+REM   Shortest RCON password the launcher will start with. Rust crashes on
+REM     boot with an empty one, and gives no reason, so this cannot be 0.
+set "RCON_PASSWORD_MIN=8"
+
+REM   Check the option list in section 4 before starting: a convar with no
+REM     value, set twice, a clashing port. Rust ignores all of those in
+REM     silence. 0 skips the check.
+set "CHECK_OPTIONS=1"
 
 REM   Ask Steam what the current Rust build is, and say on every start
 REM     whether this install is behind. Costs one steamcmd launch, so the
@@ -196,6 +240,10 @@ set "FRAMEWORK_VERSION_FILE=%ROOT%\RustDedicated_Data\Managed\Oxide.Rust.dll"
 REM   Where that framework publishes its current version. Note this is the
 REM     assets host: umod.org/games/rust.json answers 301 to it.
 set "FRAMEWORK_FEED=https://assets.umod.org/games/rust.json"
+
+REM   Where the framework itself is downloaded. This answers with the Windows
+REM     build of Oxide for Rust.
+set "FRAMEWORK_URL=https://umod.org/games/rust/download"
 
 REM   Optional commands run before and after an update, for backups or
 REM     notifications. Leave empty to do nothing.
@@ -234,19 +282,33 @@ if not defined ROOT (
     set "CFGBAD=1"
 )
 
-if /i not "%UPDATE_MODE%"=="always" if /i not "%UPDATE_MODE%"=="hotwire" (
+if /i not "%UPDATE_MODE%"=="always" if /i not "%UPDATE_MODE%"=="hotwire" if /i not "%UPDATE_MODE%"=="off" (
     echo [%date% %time%] UPDATE_MODE is [%UPDATE_MODE%]. It must be
-    echo [%date% %time%] exactly "always" or "hotwire" -- anything else is
-    echo [%date% %time%] treated as hotwire, which is probably not what
-    echo [%date% %time%] you meant.
+    echo [%date% %time%] exactly "always", "hotwire" or "off" -- anything
+    echo [%date% %time%] else is treated as hotwire, which is probably not
+    echo [%date% %time%] what you meant.
     set "CFGBAD=1"
 )
+
+if not defined UPDATE_FLAG (
+    echo [%date% %time%] UPDATE_FLAG is empty. It names the update flag file.
+    set "CFGBAD=1"
+)
+if not defined VALIDATE_FLAG (
+    echo [%date% %time%] VALIDATE_FLAG is empty. It names the validate flag file.
+    set "CFGBAD=1"
+)
+
+REM  The branch named in messages. Empty means Steam chooses, which for a
+REM  fresh install is public.
+set "BRANCH_NAME=%STEAM_BRANCH%"
+if not defined BRANCH_NAME set "BRANCH_NAME=public"
 
 REM  Numeric test with no echo and no pipe. Digits are the delimiters,
 REM  so an all-digit value produces no tokens and the inner loop never
 REM  runs; one non-digit produces a token and clears the flag. An empty
 REM  value produces no tokens either, so it is ruled out first.
-for %%V in (MAX_DAYS_WITHOUT_UPDATE MAX_STEAM_TRIES LOG_KEEP RESTART_DELAY CRASH_SECONDS MAX_CRASH_STREAK) do (
+for %%V in (MAX_DAYS_WITHOUT_UPDATE MAX_STEAM_TRIES STEAM_RETRY_SECONDS LOG_KEEP RESTART_DELAY CRASH_SECONDS MAX_CRASH_STREAK RCON_PASSWORD_MIN) do (
     set "CFGVAL=!%%V!"
     set "CFGNUM=1"
     if not defined CFGVAL set "CFGNUM="
@@ -267,6 +329,12 @@ if "%LOG_KEEP%"=="0" (
 
 if "%MAX_STEAM_TRIES%"=="0" (
     echo [%date% %time%] MAX_STEAM_TRIES is 0, so steamcmd would never run.
+    set "CFGBAD=1"
+)
+
+if "%RCON_PASSWORD_MIN%"=="0" (
+    echo [%date% %time%] RCON_PASSWORD_MIN is 0, which would allow an empty
+    echo [%date% %time%] password. Rust crashes on boot with one. Use 1 or more.
     set "CFGBAD=1"
 )
 
@@ -335,13 +403,13 @@ REM  Asked in PowerShell rather than with batch string slicing, because
 REM  the value is untrusted text: a quote or a caret in it would break
 REM  the very comparison meant to catch a bad password.
 set "PWCHECK="
-for /f %%R in ('powershell -NoProfile -Command "$p=$env:RCON_PASSWORD; if (-not $p) {'EMPTY'} elseif ($p.Length -lt 8) {'SHORT'} elseif ($p -eq 'change_me') {'EXAMPLE'} elseif ($p.Contains([char]34)) {'QUOTE'} else {'OK'}"') do set "PWCHECK=%%R"
+for /f %%R in ('powershell -NoProfile -Command "$p=$env:RCON_PASSWORD; if (-not $p) {'EMPTY'} elseif ($p.Length -lt %RCON_PASSWORD_MIN%) {'SHORT'} elseif ($p -eq 'change_me') {'EXAMPLE'} elseif ($p.Contains([char]34)) {'QUOTE'} else {'OK'}"') do set "PWCHECK=%%R"
 if not defined PWCHECK set "PWCHECK=OK"
 
 if not "!PWCHECK!"=="OK" (
     echo [%date% %time%] ================================================
     if "!PWCHECK!"=="EMPTY"   echo [%date% %time%] The RCON password is empty.
-    if "!PWCHECK!"=="SHORT"   echo [%date% %time%] The RCON password is under 8 characters.
+    if "!PWCHECK!"=="SHORT"   echo [%date% %time%] The RCON password is under %RCON_PASSWORD_MIN% characters.
     if "!PWCHECK!"=="EXAMPLE" echo [%date% %time%] The RCON password is still the example value.
     if "!PWCHECK!"=="QUOTE"   echo [%date% %time%] The RCON password contains a double quote.
     echo [%date% %time%] Fix it in:
@@ -419,6 +487,7 @@ set "HOTWIRE_APPINFO=%ROOT%\logs\.appinfo.tmp"
 set "HOTWIRE_STEAMCMD=%STEAMCMD%"
 set "HOTWIRE_APPID=%APPID%"
 set "HOTWIRE_BUILDHOURS=%BUILD_CHECK_HOURS%"
+set "HOTWIRE_BRANCH=%BRANCH_NAME%"
 
 set "PSBUILD="
 set "PSBUILD=!PSBUILD!$ErrorActionPreference='SilentlyContinue'; $q=[char]34; "
@@ -438,7 +507,7 @@ set "PSBUILD=!PSBUILD!    $p=Start-Process -FilePath $sc -ArgumentList @('+login
 set "PSBUILD=!PSBUILD!    if($p.WaitForExit(180000)){ "
 set "PSBUILD=!PSBUILD!      if(Test-Path -LiteralPath $out){ $t=[IO.File]::ReadAllText($out); "
 set "PSBUILD=!PSBUILD!        $i=$t.IndexOf($q+'branches'+$q); "
-set "PSBUILD=!PSBUILD!        if($i -ge 0){ $j=$t.IndexOf($q+'public'+$q,$i); "
+set "PSBUILD=!PSBUILD!        if($i -ge 0){ $j=$t.IndexOf($q+[string]$env:HOTWIRE_BRANCH+$q,$i); "
 set "PSBUILD=!PSBUILD!          if($j -ge 0){ $m=[regex]::Match($t.Substring($j), $q+'buildid'+$q+'\s+'+$q+'(\d+)'+$q); "
 set "PSBUILD=!PSBUILD!            if($m.Success){ $pub=$m.Groups[1].Value; [IO.File]::WriteAllText($cache,$pub) } } } } "
 set "PSBUILD=!PSBUILD!    } else { try{ $p.Kill() } catch {} } "
@@ -458,6 +527,7 @@ set "HOTWIRE_APPINFO="
 set "HOTWIRE_STEAMCMD="
 set "HOTWIRE_APPID="
 set "HOTWIRE_BUILDHOURS="
+set "HOTWIRE_BRANCH="
 
 if "!INSTALLED_BUILD!"=="?" set "INSTALLED_BUILD="
 if "!PUBLIC_BUILD!"=="?" set "PUBLIC_BUILD="
@@ -469,20 +539,21 @@ if not defined INSTALLED_BUILD (
     echo [%date% %time%] Rust build: installed !INSTALLED_BUILD!, and Steam did
     echo [%date% %time%] not answer. Carrying on under the usual rules.
 ) else if "!INSTALLED_BUILD!"=="!PUBLIC_BUILD!" (
-    echo [%date% %time%] Rust build: installed !INSTALLED_BUILD!, public !PUBLIC_BUILD! -- current.
+    echo [%date% %time%] Rust build: installed !INSTALLED_BUILD!, !BRANCH_NAME! !PUBLIC_BUILD! -- current.
 ) else if !INSTALLED_BUILD! GTR !PUBLIC_BUILD! (
-    echo [%date% %time%] Rust build: installed !INSTALLED_BUILD!, public !PUBLIC_BUILD! -- this server
-    echo [%date% %time%] is on a newer build than Steam's public branch, as a test
-    echo [%date% %time%] branch such as staging would be. Nothing to update.
+    echo [%date% %time%] Rust build: installed !INSTALLED_BUILD!, !BRANCH_NAME! !PUBLIC_BUILD! -- this
+    echo [%date% %time%] server is on a newer build than Steam's !BRANCH_NAME! branch, so it
+    echo [%date% %time%] is on another branch, such as staging. The next update
+    echo [%date% %time%] moves it to !BRANCH_NAME!, as STEAM_BRANCH in section 1 says.
 ) else (
     echo [%date% %time%] ================================================
     echo [%date% %time%] Rust build: installed !INSTALLED_BUILD!
-    echo [%date% %time%]             public    !PUBLIC_BUILD!
+    echo [%date% %time%]             !BRANCH_NAME!    !PUBLIC_BUILD!
     echo [%date% %time%] A NEWER BUILD IS AVAILABLE.
     echo [%date% %time%] Clients update themselves, so once the protocol
     echo [%date% %time%] moves this server stops accepting connections.
     echo [%date% %time%] Check the framework has released for it, then
-    echo [%date% %time%] create UPDATE.flag in %ROOT%.
+    echo [%date% %time%] create %UPDATE_FLAG% in %ROOT%.
     echo [%date% %time%] ================================================
 )
 
@@ -508,19 +579,26 @@ REM ======================================================================
 set "DO_UPDATE=0"
 set "DO_VALIDATE=0"
 
+if /i "%UPDATE_MODE%"=="off" (
+    echo [%date% %time%] UPDATE_MODE is off -- not updating.
+    if exist "%ROOT%\%UPDATE_FLAG%" echo [%date% %time%] %UPDATE_FLAG% is being left in place, not acted on.
+    if exist "%ROOT%\%VALIDATE_FLAG%" echo [%date% %time%] %VALIDATE_FLAG% is being left in place, not acted on.
+    goto :updatedecided
+)
+
 if /i "%UPDATE_MODE%"=="always" (
     set "DO_UPDATE=1"
     echo [%date% %time%] UPDATE_MODE is always -- updating before launch.
 )
 
-if exist "%ROOT%\UPDATE.flag" (
+if exist "%ROOT%\%UPDATE_FLAG%" (
     set "DO_UPDATE=1"
-    echo [%date% %time%] UPDATE.flag found -- this pass will update.
+    echo [%date% %time%] %UPDATE_FLAG% found -- this pass will update.
 )
-if exist "%ROOT%\VALIDATE.flag" (
+if exist "%ROOT%\%VALIDATE_FLAG%" (
     set "DO_UPDATE=1"
     set "DO_VALIDATE=1"
-    echo [%date% %time%] VALIDATE.flag found -- update and validate.
+    echo [%date% %time%] %VALIDATE_FLAG% found -- update and validate.
 )
 
 REM  The backstop. Only in hotwire mode, only when nothing has already
@@ -578,13 +656,15 @@ if "%DO_UPDATE%"=="0" (
 
 set /a STEAM_TRIES=0
 set "STEAM_OK=0"
+set "BRANCH_ARG="
+if defined STEAM_BRANCH set "BRANCH_ARG=-beta %STEAM_BRANCH%"
 
 :steamupdate
 set /a STEAM_TRIES+=1
 if "%DO_VALIDATE%"=="1" (
-    "%STEAMCMD%" +force_install_dir "%ROOT%" +login anonymous +app_update %APPID% validate +quit
+    "%STEAMCMD%" +force_install_dir "%ROOT%" +login anonymous +app_update %APPID% %BRANCH_ARG% validate +quit
 ) else (
-    "%STEAMCMD%" +force_install_dir "%ROOT%" +login anonymous +app_update %APPID% +quit
+    "%STEAMCMD%" +force_install_dir "%ROOT%" +login anonymous +app_update %APPID% %BRANCH_ARG% +quit
 )
 if errorlevel 1 goto steamfailed
 set "STEAM_OK=1"
@@ -596,8 +676,9 @@ if !STEAM_TRIES! GEQ %MAX_STEAM_TRIES% goto steamgaveup
 REM  timeout refuses to run when stdin is redirected, which is how this
 REM  launcher behaves under a scheduler. Without the fallback the retry
 REM  would return instantly and hammer steamcmd.
-timeout /t 60 /nobreak >nul 2>&1
-if errorlevel 1 ping -n 61 127.0.0.1 >nul 2>&1
+set /a PINGWAIT=%STEAM_RETRY_SECONDS%+1
+timeout /t %STEAM_RETRY_SECONDS% /nobreak >nul 2>&1
+if errorlevel 1 ping -n !PINGWAIT! 127.0.0.1 >nul 2>&1
 goto steamupdate
 
 :steamgaveup
@@ -677,7 +758,7 @@ if "!FWSKIP!"=="1" (
 )
 
 :frameworkextract
-curl -fSL -A "Mozilla/5.0" "https://umod.org/games/rust/download" --output "%ROOT%\OxideMod.zip"
+curl -fSL -A "Mozilla/5.0" "%FRAMEWORK_URL%" --output "%ROOT%\OxideMod.zip"
 if errorlevel 1 (
     echo [%date% %time%] Framework download failed. Keeping the install.
 ) else (
@@ -722,13 +803,13 @@ REM  This comment sits outside the block below on purpose. REM does not
 REM  neutralize a redirect, so an arrow inside a comment inside a block
 REM  creates a file.
 if "!UPDATE_OK!"=="1" (
-    if exist "%ROOT%\UPDATE.flag"   del "%ROOT%\UPDATE.flag"
-    if exist "%ROOT%\VALIDATE.flag" del "%ROOT%\VALIDATE.flag"
+    if exist "%ROOT%\%UPDATE_FLAG%"   del "%ROOT%\%UPDATE_FLAG%"
+    if exist "%ROOT%\%VALIDATE_FLAG%" del "%ROOT%\%VALIDATE_FLAG%"
     >"%UPDATE_STAMP%" echo Last update: %date% %time%
 ) else (
     echo [%date% %time%] ================================================
     echo [%date% %time%] The update did NOT complete.
-    echo [%date% %time%] Any UPDATE.flag or VALIDATE.flag is being KEPT,
+    echo [%date% %time%] Any %UPDATE_FLAG% or %VALIDATE_FLAG% is being KEPT,
     echo [%date% %time%] and the backstop clock has NOT been reset, so
     echo [%date% %time%] the next start will try again.
     echo [%date% %time%] ================================================
@@ -741,14 +822,14 @@ REM  restart from now updates, forever, in silence. A stamp that will
 REM  not write means the backstop believes no update has ever
 REM  happened and fires on every start. Warnings, not failures --
 REM  the update itself succeeded.
-if "!UPDATE_OK!"=="1" if exist "%ROOT%\UPDATE.flag" (
-    echo [%date% %time%] WARNING: UPDATE.flag is still present after a
+if "!UPDATE_OK!"=="1" if exist "%ROOT%\%UPDATE_FLAG%" (
+    echo [%date% %time%] WARNING: %UPDATE_FLAG% is still present after a
     echo [%date% %time%] successful update. It could not be deleted, so
     echo [%date% %time%] every restart from now will update. Check the
     echo [%date% %time%] permissions on ROOT.
 )
-if "!UPDATE_OK!"=="1" if exist "%ROOT%\VALIDATE.flag" (
-    echo [%date% %time%] WARNING: VALIDATE.flag is still present after a
+if "!UPDATE_OK!"=="1" if exist "%ROOT%\%VALIDATE_FLAG%" (
+    echo [%date% %time%] WARNING: %VALIDATE_FLAG% is still present after a
     echo [%date% %time%] successful update, so every restart will
     echo [%date% %time%] validate. That is slow, and unintended.
 )
@@ -796,7 +877,7 @@ REM ----------------------------------------------------------------------
 
 REM   server.identity -- Save folder name. Short, lower case, no spaces.
 REM   [string, default "my_server_identity"]
-set "ARGS=!ARGS! +server.identity my_server"
+REM set "ARGS=!ARGS! +server.identity VALUE"
 
 REM   server.level -- Leave as-is for a generated map. For a custom map
 REM     use server.levelurl instead.
@@ -1281,6 +1362,12 @@ REM     pick it up. RCON_PASSWORD is already in this process environment,
 REM     so this adds no exposure that was not there.
 REM ======================================================================
 
+if "%CHECK_OPTIONS%"=="0" (
+    echo [%date% %time%] CHECK_OPTIONS is 0 -- the option list is not checked.
+    set "ARGCHECK=0"
+    goto :optionschecked
+)
+
 set "HOTWIRE_ARGS=!ARGS!"
 
 set "PSCHK="
@@ -1321,6 +1408,7 @@ powershell -NoProfile -NonInteractive -Command "!PSCHK!"
 set "ARGCHECK=!errorlevel!"
 set "HOTWIRE_ARGS="
 
+:optionschecked
 REM  Exactly 2 means the check ran and found problems. 0 means it ran
 REM  and found none. ANYTHING ELSE means the check itself did not run --
 REM  9009 for no PowerShell, 1 for an error inside the script.
@@ -1366,7 +1454,7 @@ REM  So the first log of a crash streak goes to server_crash_*, which the
 REM  cull never matches. Later crashes in the same streak rotate normally:
 REM  they say the same thing as the first, and keeping every one of them
 REM  is how a crash loop fills a disk.
-if exist "%LOGFILE%" (
+if not "%ROTATE_LOGS%"=="0" if exist "%LOGFILE%" (
     set "LOGSTAMP="
     for /f %%i in ('powershell -NoProfile -Command "Get-Date -Format yyyyMMdd-HHmmss"') do set "LOGSTAMP=%%i"
     if not defined LOGSTAMP set "LOGSTAMP=unstamped-!RANDOM!"
@@ -1398,16 +1486,21 @@ if !RUN_SECONDS! LSS %CRASH_SECONDS% (
     set /a CRASH_STREAK=0
 )
 
+if "%RESTART_ON_EXIT%"=="0" (
+    echo [%date% %time%] Server exited after !RUN_SECONDS!s. RESTART_ON_EXIT is 0 -- not relaunching.
+    exit /b 0
+)
+
 if not "%MAX_CRASH_STREAK%"=="0" if !CRASH_STREAK! GEQ %MAX_CRASH_STREAK% goto crashstop
 
 REM  Back off, so a permanently broken config does not relaunch four
 REM  times a minute forever -- and does not run HOOK_BEFORE that often
 REM  either, which for anyone hooking a backup in is the expensive part.
 set "DELAY=%RESTART_DELAY%"
-if !CRASH_STREAK! GEQ 2 set "DELAY=30"
-if !CRASH_STREAK! GEQ 3 set "DELAY=60"
-if !CRASH_STREAK! GEQ 4 set "DELAY=120"
-if !CRASH_STREAK! GEQ 5 set "DELAY=300"
+if not "%CRASH_BACKOFF%"=="0" if !CRASH_STREAK! GEQ 2 set "DELAY=30"
+if not "%CRASH_BACKOFF%"=="0" if !CRASH_STREAK! GEQ 3 set "DELAY=60"
+if not "%CRASH_BACKOFF%"=="0" if !CRASH_STREAK! GEQ 4 set "DELAY=120"
+if not "%CRASH_BACKOFF%"=="0" if !CRASH_STREAK! GEQ 5 set "DELAY=300"
 
 if !CRASH_STREAK! GTR 0 (
     echo [%date% %time%] Server exited after !RUN_SECONDS!s -- that is a crash, not a restart.

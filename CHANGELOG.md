@@ -25,6 +25,36 @@ sit above a launcher `1.1.7`. Read the label, not the number.
 at the top of the file — it is a comment, not something it echoes, so read it
 rather than watch for it.
 
+## 1.1.10 — launcher — 2026-09-13
+
+**Every behaviour is a setting, and updates can be switched off.** What the launcher does was partly
+settings and partly fixed in the code. All of it is in section 1 now, with the same values as before:
+
+| setting | default | what it does |
+|---|---|---|
+| `UPDATE_MODE` | `always` | now also `off`: never update, not even for a flag file, which is left in place |
+| `STEAM_BRANCH` | `public` | the Steam branch installed and updated; empty lets Steam choose |
+| `UPDATE_FLAG`, `VALIDATE_FLAG` | `UPDATE.flag`, `VALIDATE.flag` | the flag file names, to match the plugin's |
+| `STEAM_RETRY_SECONDS` | `60` | wait between steamcmd tries |
+| `ROTATE_LOGS` | `1` | keep each run's log; `0` lets the server empty it every start |
+| `RESTART_ON_EXIT` | `1` | `0` stops the launcher when the server exits |
+| `CRASH_BACKOFF` | `1` | `0` always waits `RESTART_DELAY`, however many crashes |
+| `RCON_PASSWORD_MIN` | `8` | the shortest password it starts with; never `0` |
+| `CHECK_OPTIONS` | `1` | `0` skips the section 4 check |
+| `FRAMEWORK_URL` | umod.org's download | where Oxide is downloaded from |
+
+**The branch is named on every update.** Steam keeps using whatever branch an install was last on. A
+test install built by `hotwire-setup` turned out to be on `staging`, with nothing in either script asking
+for it, and SteamCMD kept it there. The update line now passes `-beta public` unless `STEAM_BRANCH` says
+otherwise, and the build check compares against that branch rather than always public. **A server on a
+test branch moves to public on its next update**, which is a downgrade of the game build. Set
+`STEAM_BRANCH` first if that server is meant to stay where it is.
+
+**`server.identity` is the game's default.** Setting it to `my_server` was our choice. **If a server has
+already run under 1.1.9 or earlier, its saves are in `server\my_server`.** Put `+server.identity
+my_server` back in section 4.1, or it starts a new map in the game's default folder and the old one
+looks lost. Nothing is deleted.
+
 ## 1.1.9 — launcher — 2026-09-13
 
 **The server never started with the shipped settings.** The default server

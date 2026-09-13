@@ -120,13 +120,17 @@ It runs in four parts, and only the third one changes anything:
 | 1 | Windows, PowerShell 5.1, Administrator, memory, **the clock** | only if the clock is out and you say yes (`w32tm /resync`) |
 | 2 | Where the server goes: **this folder unless you say otherwise** | nothing yet |
 | 3 | SteamCMD into `C:\steamcmd`, where `hotwire.bat` looks for it | reuses one already there |
-| 4 | The Rust server, app 258550, about 12 GB. Defaults to yes | the server folder |
+| 4 | The Rust server, app 258550, about 12 GB. **Asks which branch first:** public (the game everyone plays), staging (Facepunch's test build), or a branch typed by name. The choice is kept, used for every download, and written into `hotwire.bat` as `STEAM_BRANCH` | the server folder |
 | 5 | Oxide, checked to be the Windows build and a real archive before it is unpacked. Defaults to yes; no leaves a vanilla server, and the start script is set up to stay vanilla | the server folder |
 | 6 | **Start script**: `hotwire.bat`, with `ROOT` and `STEAMCMD` set for this folder, `INSTALL_FRAMEWORK=0` when there is no Oxide, and Windows line endings. Defaults to yes; no means you use your own start script, and step 8 is skipped | `hotwire.bat`; an existing one is left alone |
 | 7 | **Hotwire plugin**, asked separately, defaults to yes. Scheduled, announced restarts. Skipped without Oxide | `oxide\plugins\Hotwire.cs` |
 | 8 | **RCON password**, walked through: type your own (hidden, twice, checked against the launcher's rules), or press Enter for 32 random letters and digits, shown once and copied to the clipboard | `secrets.bat`, readable only by Administrators and you; an existing valid one is left alone, an invalid one replaced only if you say yes |
 | 9 | **Windows Firewall**: reports what is already open or blocked, then opens UDP 28015 and 28017; TCP 28083 (Rust+) only if asked | rules in the group `Hotwire` |
 | 10 | **Hotwire Panel**, asked last, defaults to yes. Yes runs `connect`; no changes nothing | only if yes: the three files under *doctor and connect* |
+
+**A server already on another branch** — Steam keeps an install on the last branch that machine used —
+gets a *Steam branch* step: Enter keeps the branch it is on, and moving to another is a separate question
+that defaults to no, because leaving staging for public goes back to an older build.
 
 It never opens RCON (TCP 28016), and warns if something else has. It never touches a Rust server it
 did not install: a folder with `RustDedicated.exe` and no `hotwire\install.json` is refused. It does

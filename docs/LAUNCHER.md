@@ -24,6 +24,37 @@ restart daily to shed the memory a busy modded server accumulates:
 - **The file is frightening to edit.** Comment out one line in the middle of a
   `^`-continued command and you silently take the rest of the launch with it.
 
+## Every behaviour is a setting
+
+Section 1 holds every choice the launcher makes. The defaults are ours, and every one can be changed:
+
+| setting | default | what it does |
+|---|---|---|
+| `UPDATE_MODE` | `always` | `always` updates every start; `hotwire` only for a flag file, the backstop or a new build; `off` never |
+| `STEAM_BRANCH` | `public` | the Steam branch; empty lets Steam choose, which keeps an install on whatever branch it was last on |
+| `UPDATE_FLAG`, `VALIDATE_FLAG` | `UPDATE.flag`, `VALIDATE.flag` | the flag file names, which must match the plugin's |
+| `MAX_DAYS_WITHOUT_UPDATE` | `14` | `hotwire` mode's backstop; `0` turns it off |
+| `UPDATE_ON_NEW_BUILD` | `1` | `hotwire` mode updates when Steam's build is ahead |
+| `BUILD_CHECK_HOURS` | `6` | how long Steam's answer is cached; `0` turns the check off |
+| `MAX_STEAM_TRIES` | `5` | steamcmd attempts before launching what is on disk |
+| `STEAM_RETRY_SECONDS` | `60` | wait between those attempts |
+| `INSTALL_FRAMEWORK` | `1` | `0` is a vanilla server |
+| `SKIP_UNCHANGED_FRAMEWORK` | `1` | `0` re-extracts Oxide on every update |
+| `FRAMEWORK_URL`, `FRAMEWORK_FEED`, `FRAMEWORK_VERSION_FILE` | uMod's | where Oxide comes from and how its version is read |
+| `ROTATE_LOGS` | `1` | keep each run's log; `0` lets the server empty it each start |
+| `LOG_KEEP` | `14` | rotated logs kept |
+| `RESTART_ON_EXIT` | `1` | `0` stops the launcher when the server exits |
+| `RESTART_DELAY` | `15` | seconds before relaunching |
+| `CRASH_SECONDS` | `60` | a run shorter than this is a crash |
+| `MAX_CRASH_STREAK` | `10` | crashes in a row before stopping; `0` never stops |
+| `CRASH_BACKOFF` | `1` | wait 30, 60, 120, then 300 seconds after repeated crashes; `0` always waits `RESTART_DELAY` |
+| `RCON_PASSWORD_MIN` | `8` | shortest RCON password it starts with; `0` is refused, because an empty one crashes Rust |
+| `CHECK_OPTIONS` | `1` | `0` skips the section 4 check |
+| `HOOK_BEFORE`, `HOOK_AFTER` | empty | commands to run around updates |
+
+A value that cannot work — a letter where a number goes, an unknown `UPDATE_MODE`, `LOG_KEEP=0` — stops
+the launcher at start with the line to fix, rather than failing somewhere later.
+
 ## Knowing whether you are behind
 
 Every start prints where the install stands against Steam:
@@ -31,6 +62,9 @@ Every start prints where the install stands against Steam:
 ```
 Rust build: installed 25129933, public 25129933 -- current.
 ```
+
+The branch named there is `STEAM_BRANCH`. A server on a newer build than that branch is on another branch,
+such as staging, and the next update moves it back.
 
 If a newer build exists you get a banner instead, saying so and reminding you
 that clients update themselves — so the server will eventually stop accepting
