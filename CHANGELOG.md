@@ -25,6 +25,21 @@ sit above a launcher `1.1.7`. Read the label, not the number.
 at the top of the file — it is a comment, not something it echoes, so read it
 rather than watch for it.
 
+## 1.1.7 — plugin — 2026-09-13
+
+**The map image arrives by itself.** No console command, no upload.
+
+- The picture Rust draws of the map for the Rust+ app at startup is sent to the panel once per map.
+  The panel is asked first, so a restart on the same map sends nothing.
+- With Rust+ off, the plugin asks the game to draw the same picture, once per map, two minutes after
+  startup. It takes the game a few seconds.
+- Read by name like the rest of the map. If the game's renderer changes shape, the image is not sent,
+  with a warning, and everything else carries on.
+- A panel whose web server refuses a large upload is told plainly in the console, and the image is
+  tried again in an hour. Heartbeats are never held up.
+- New `Panel` settings: `Send the map image` and `Render the map image if Rust+ has not`, both on.
+  `hotwire check` shows the map image state.
+
 ## 1.1.6 — plugin — 2026-09-13
 
 **The panel can show the map.**

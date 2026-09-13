@@ -17,7 +17,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Hotwire", "xman2000", "1.1.6")]
+    [Info("Hotwire", "xman2000", "1.1.7")]
     [Description("Scheduled restarts and updates. Announces, counts down, writes a flag, quits.")]
     internal class Hotwire : CovalencePlugin
     {
@@ -147,6 +147,19 @@ namespace Oxide.Plugins
 
             [JsonProperty("Send map markers at most every this many seconds")]
             public int MarkerSeconds = 60;
+
+            // The map image itself: the one Rust renders for the Rust+ app when
+            // the server starts. Sent once per map, only when the panel does not
+            // already have it.
+            [JsonProperty("Send the map image")]
+            public bool SendMapImage = true;
+
+            // When Rust+ is turned off (app.port -1) the game renders no image,
+            // so the plugin renders the same one itself, once per map. It takes
+            // the game a few seconds; the plugin waits until the server has been
+            // up for two minutes.
+            [JsonProperty("Render the map image if Rust+ has not")]
+            public bool RenderMapImage = true;
         }
 
         // Recurrence is stored as explicit fields rather than as a cron
@@ -2002,6 +2015,11 @@ namespace Oxide.Plugins
                 if (now >= _mapCheckDue) { _mapCheckDue = now.AddSeconds(30); RefreshMap(); }
                 if (_worldJson != null && _worldJson != _worldSentJson) { SendWorld(); return; }
                 if (_markersJson != null && _markersJson != _markersSentJson && now >= _markersDue) { SendMarkers(); return; }
+                if (_config.Panel.SendMapImage && _worldSentJson != null && _worldSentJson == _worldJson && now >= _imageDue && MapKey() != _imageDoneKey)
+                {
+                    CheckMapImage();
+                    return;
+                }
             }
 
             if (_config.Panel.AcceptCommands && now >= _commandsDue) { PollCommands(); return; }
@@ -2040,6 +2058,8 @@ namespace Oxide.Plugins
             _bansListHash = null;
             _worldSentJson = null;
             _markersSentJson = null;
+            _imageDoneKey = null;
+            _imageDue = DateTime.MinValue;
 
             JObject file;
             try
@@ -2130,7 +2150,7 @@ namespace Oxide.Plugins
         // understood the request and said no to its content (400, 413, 422): the
         // same bytes would be refused again, so the caller lets it go rather than
         // letting it block everything behind it.
-        private void PanelRequest(string method, string path, string body, Action<string> onAccepted, Action onRefused = null)
+        private void PanelRequest(string method, string path, string body, Action<string> onAccepted, Action onRefused = null, float timeoutSeconds = 20f)
         {
             var link = _panel;
             var timestamp = ((long)(DateTime.UtcNow - UnixEpoch).TotalSeconds).ToString(CultureInfo.InvariantCulture);
@@ -2173,7 +2193,7 @@ namespace Oxide.Plugins
                 {
                     PanelProblem($"the panel's answer could not be used: {ex.Message}");
                 }
-            }, this, verb, headers, 20f);
+            }, this, verb, headers, timeoutSeconds);
         }
 
         private void PanelFailed(int code, string response)
@@ -2196,6 +2216,9 @@ namespace Oxide.Plugins
                 problem = $"the panel refused the signature ({message}). This is a bug; please report it with Hotwire {Version}.";
             else if (code == 422)
                 problem = $"the panel refused a report as malformed ({message}). This is a bug; please report it with Hotwire {Version}.";
+            else if (code == 413)
+                problem = "the panel's web server refused a request as too large (its upload limit is lower than the map image). " +
+                          "The server is unaffected; the map image is tried again in an hour.";
             else if (code == 429)
                 problem = "the panel is asking this server to slow down. It backs off and retries.";
             else
@@ -2631,6 +2654,156 @@ namespace Oxide.Plugins
                 _markersSentJson = json;
                 _mapState = $"map sent; {count} marker(s), last sent {DateTime.Now:HH:mm:ss}";
             }, () => { _markersSentJson = json; });
+        }
+
+        // ---------------------------------------------------------- map image
+
+        // The image Rust renders of this map for the Rust+ app at startup
+        // (CompanionServer.Handlers.Map.ImageData: MapImageRenderer.Render at
+        // scale 0.5, JPEG, 500 px of ocean around the world). The panel is asked
+        // first whether it already holds this map's image, so a restart sends
+        // nothing. Looked up by name, like the rest of the map.
+
+        private const string MapRenderPath = "/api/v1/map-render";
+
+        private DateTime _imageDue = DateTime.MinValue;
+        private string _imageDoneKey;
+        private string _imageState = "not checked yet";
+
+        private string MapKey()
+        {
+            try
+            {
+                var world = JObject.Parse(_worldJson ?? "{}");
+                if (world["seed"] == null || world["size"] == null) return null;
+                return (string)world["seed"] + "/" + (string)world["size"];
+            }
+            catch { return null; }
+        }
+
+        private void CheckMapImage()
+        {
+            var key = MapKey();
+            if (key == null) { _imageDue = DateTime.UtcNow.AddMinutes(10); return; }
+            var parts = key.Split('/');
+            long seed = long.Parse(parts[0], CultureInfo.InvariantCulture);
+            long size = long.Parse(parts[1], CultureInfo.InvariantCulture);
+
+            _imageDue = DateTime.UtcNow.AddMinutes(10);
+            PanelRequest("GET", MapRenderPath, null, response =>
+            {
+                var held = PanelData(response)["render"] as JObject;
+                if (held != null && (long?)held["seed"] == seed && (long?)held["size"] == size)
+                {
+                    _imageDoneKey = key;
+                    _imageState = "the panel has this map's image";
+                    return;
+                }
+
+                string source;
+                var bytes = MapImageBytes(out source);
+                if (bytes == null) return;   // said why in MapImageBytes; tried again later
+
+                SendMapImage(key, seed, size, bytes, source);
+            });
+        }
+
+        private byte[] MapImageBytes(out string source)
+        {
+            source = null;
+            try
+            {
+                var game = AppDomain.CurrentDomain.GetAssemblies().FirstOrDefault(a => a.GetName().Name == "Assembly-CSharp");
+                if (game == null) throw new InvalidOperationException("the game assembly is not loaded");
+
+                var cache = game.GetType("CompanionServer.Handlers.Map", false);
+                var imageData = cache?.GetProperty("ImageData", BindingFlags.Public | BindingFlags.Static);
+                var cached = imageData?.GetValue(null, null) as byte[];
+                if (cached != null && cached.Length > 0) { source = "rust_plus"; return cached; }
+
+                if (!_config.Panel.RenderMapImage)
+                {
+                    _imageState = "Rust+ has no map image (is app.port -1?) and rendering it is off in the config";
+                    _imageDue = DateTime.UtcNow.AddHours(6);
+                    return null;
+                }
+
+                if (Time.realtimeSinceStartup < 120f)
+                {
+                    _imageState = "waiting for the server to settle before rendering the map image";
+                    _imageDue = DateTime.UtcNow.AddSeconds(Math.Max(10, 120 - Time.realtimeSinceStartup));
+                    return null;
+                }
+
+                var renderer = GameType(game, "MapImageRenderer");
+                var render = renderer.GetMethods(BindingFlags.Public | BindingFlags.Static)
+                    .FirstOrDefault(m => m.Name == "Render" && RenderSignatureMatches(m.GetParameters()));
+                if (render == null) throw new InvalidOperationException("the game's MapImageRenderer.Render has a different shape now");
+
+                // out width, out height, out background, scale, lossy, transparent, oceanMargin:
+                // the same arguments Rust+ uses, so the image is framed the same way.
+                var args = new object[] { 0, 0, new Color(), 0.5f, true, false, 500 };
+                var started = DateTime.UtcNow;
+                var rendered = render.Invoke(null, args) as byte[];
+                if (rendered == null || rendered.Length == 0)
+                {
+                    _imageState = "the game could not render the map image yet";
+                    _imageDue = DateTime.UtcNow.AddMinutes(30);
+                    return null;
+                }
+
+                Puts($"Rendered the map image for the panel ({args[0]} x {args[1]} px, {(DateTime.UtcNow - started).TotalSeconds:0.0}s).");
+                source = "plugin_render";
+                return rendered;
+            }
+            catch (Exception ex)
+            {
+                var why = ex is TargetInvocationException && ex.InnerException != null ? ex.InnerException.Message : ex.Message;
+                _imageState = "OFF until the plugin reloads -- " + why;
+                _imageDoneKey = MapKey();   // not again for this map this session
+                PrintWarning($"The map image is not sent: {why}. Everything else carries on.");
+                return null;
+            }
+        }
+
+        private static bool RenderSignatureMatches(ParameterInfo[] p)
+        {
+            return p.Length == 7
+                && p[0].ParameterType == typeof(int).MakeByRefType()
+                && p[1].ParameterType == typeof(int).MakeByRefType()
+                && p[2].ParameterType == typeof(Color).MakeByRefType()
+                && p[3].ParameterType == typeof(float)
+                && p[4].ParameterType == typeof(bool)
+                && p[5].ParameterType == typeof(bool)
+                && p[6].ParameterType == typeof(int);
+        }
+
+        private void SendMapImage(string key, long seed, long size, byte[] bytes, string source)
+        {
+            string hash;
+            using (var sha = SHA256.Create()) hash = "sha256:" + Hex(sha.ComputeHash(bytes));
+
+            var body = JsonConvert.SerializeObject(new JObject
+            {
+                ["seed"] = seed,
+                ["size"] = size,
+                ["sha256"] = hash,
+                ["source"] = source,
+                ["image_base64"] = Convert.ToBase64String(bytes)
+            }, Formatting.None);
+
+            var kilobytes = bytes.Length / 1024;
+            _imageState = $"sending the map image ({kilobytes} KB)";
+            PanelRequest("POST", MapRenderPath, body, response =>
+            {
+                _imageDoneKey = key;
+                _imageState = $"sent the map image {DateTime.Now:HH:mm:ss} ({kilobytes} KB, {(source == "rust_plus" ? "from Rust+" : "rendered")})";
+                Puts($"Sent the map image to the panel ({kilobytes} KB).");
+            }, () =>
+            {
+                _imageState = "the panel refused the map image -- see the console; tried again in an hour";
+                _imageDue = DateTime.UtcNow.AddHours(1);
+            }, 120f);
         }
 
         // ---------------------------------------------------------- commands
@@ -4089,6 +4262,7 @@ namespace Oxide.Plugins
                 lines.Add($"  commands     : {_commandsState}");
                 lines.Add($"  ban list     : {_bansState}");
                 lines.Add($"  map          : {_mapState}");
+                lines.Add($"  map image    : {_imageState}");
             }
 
             player.Reply(string.Join("\n", lines.ToArray()));

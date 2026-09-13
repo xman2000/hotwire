@@ -297,7 +297,9 @@ replaced by the `Status bar` section below.
   "Enforce the panel's ban list": true,
   "Check the ban list every this many seconds": 120,
   "Report the map and its markers": true,
-  "Send map markers at most every this many seconds": 60
+  "Send map markers at most every this many seconds": 60,
+  "Send the map image": true,
+  "Render the map image if Rust+ has not": true
 }
 ```
 
@@ -339,6 +341,14 @@ this section says.
   it runs rather than naming in its code. If a Rust update moves one, map
   reporting turns itself off with a console warning until the plugin reloads,
   and restarts, commands, bans and heartbeats carry on.
+
+- **Send the map image** — sends the picture of the map Rust draws for the
+  Rust+ app when the server starts, once per map. The panel is asked first, so
+  a restart on the same map sends nothing. The image is a few megabytes.
+- **Render the map image if Rust+ has not** — with Rust+ turned off
+  (`app.port -1`) the game draws no picture, so the plugin asks the game to draw
+  the same one, once per map, after the server has been up for two minutes. It
+  takes the game a few seconds.
 
 Commands already carried out are recorded in
 `oxide/data/Hotwire/panel_commands.json` before they run, for two days. A
