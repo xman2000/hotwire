@@ -30,8 +30,11 @@ Section 1 holds every choice the launcher makes. The defaults are ours, and ever
 
 | setting | default | what it does |
 |---|---|---|
-| `UPDATE_MODE` | `always` | `always` updates every start; `hotwire` only for a flag file, the backstop or a new build; `off` never |
+| `ROOT` | `%~dp0` | the server's folder: by default the folder `hotwire.bat` is in |
+| `STEAMCMD` | `C:\steamcmd\steamcmd.exe` | SteamCMD; several servers may share one |
+| `STEAMCMD_WAIT_MINUTES` | `60` | how long to wait for another server's SteamCMD run before starting as-is |
 | `STEAM_BRANCH` | `public` | the Steam branch; empty lets Steam choose, which keeps an install on whatever branch it was last on |
+| `UPDATE_MODE` | `always` | `always` updates every start; `hotwire` for a flag file, a newer build or the backstop; `off` never |
 | `UPDATE_FLAG`, `VALIDATE_FLAG` | `UPDATE.flag`, `VALIDATE.flag` | the flag file names, which must match the plugin's |
 | `MAX_DAYS_WITHOUT_UPDATE` | `14` | `hotwire` mode's backstop; `0` turns it off |
 | `UPDATE_ON_NEW_BUILD` | `1` | `hotwire` mode updates when Steam's build is ahead |
@@ -52,8 +55,13 @@ Section 1 holds every choice the launcher makes. The defaults are ours, and ever
 | `CHECK_OPTIONS` | `1` | `0` skips the section 4 check |
 | `HOOK_BEFORE`, `HOOK_AFTER` | empty | commands to run around updates |
 
-A value that cannot work — a letter where a number goes, an unknown `UPDATE_MODE`, `LOG_KEEP=0` — stops
-the launcher at start with the line to fix, rather than failing somewhere later.
+A value that cannot work stops the launcher at start with the line to fix, rather than failing somewhere
+later: a non-number in `MAX_DAYS_WITHOUT_UPDATE`, `MAX_STEAM_TRIES`, `STEAM_RETRY_SECONDS`,
+`STEAMCMD_WAIT_MINUTES`, `LOG_KEEP`, `RESTART_DELAY`, `CRASH_SECONDS`, `MAX_CRASH_STREAK` or
+`RCON_PASSWORD_MIN`; an `UPDATE_MODE` other than `always`, `hotwire` or `off`; `LOG_KEEP=0`;
+`MAX_STEAM_TRIES=0`; `RCON_PASSWORD_MIN=0`; an empty `ROOT` or flag name; or a `ROOT` that is another
+folder with a `hotwire.bat` of its own (see *Several servers*). The `0`/`1` switches are not checked: anything
+but `0` counts as on.
 
 ## Knowing whether you are behind
 
@@ -64,7 +72,7 @@ Rust build: installed 25129933, public 25129933 -- current.
 ```
 
 The branch named there is `STEAM_BRANCH`. A server on a newer build than that branch is on another branch,
-such as staging, and the next update moves it back.
+such as staging, and the next update moves it to `STEAM_BRANCH`.
 
 If a newer build exists you get a banner instead, saying so and reminding you
 that clients update themselves — so the server will eventually stop accepting
@@ -72,13 +80,15 @@ connections whether or not you act.
 
 That costs one steamcmd launch, cached for `BUILD_CHECK_HOURS` (6), so a daily
 restart pays for it once a day and a crash loop never pays at all. Set it to
-`0` to turn the whole thing off.
+`0` to turn the whole thing off. If another server is using SteamCMD at that
+moment, the question is skipped for that start rather than waited for.
 
-Two settings use that number:
+`UPDATE_ON_NEW_BUILD` uses that number: in `hotwire` mode, update when the build has actually changed
+rather than waiting for `MAX_DAYS_WITHOUT_UPDATE`. The calendar rule stays as a fallback for when Steam
+cannot be reached.
 
-- **`UPDATE_ON_NEW_BUILD`** — in `hotwire` mode, update when the build has
-  actually changed rather than waiting for `MAX_DAYS_WITHOUT_UPDATE`. The
-  calendar rule stays as a fallback for when Steam cannot be reached.
+Two more settings govern the framework on an update:
+
 - **`INSTALL_FRAMEWORK`** — `1` (the default) installs Oxide with the server and
   puts it back after every update. `0` is a vanilla server: the framework is
   never downloaded or extracted, and an update is complete once steamcmd is.
@@ -100,14 +110,15 @@ can stop a server starting.
 updates on every start. That is the right policy while you are the one
 deciding when the server restarts.
 
-**`hotwire`** separates the two. A restart is only a restart, and an update
-happens when a flag file is present in the server root:
+**`hotwire`** separates the two. A restart is only a restart, and an update happens when a flag file is
+present in the server folder, when Steam has a newer build (`UPDATE_ON_NEW_BUILD`), or when the backstop
+fires. The flag files are named by `UPDATE_FLAG` and `VALIDATE_FLAG`:
 
-| File in the server root | The next launch |
+| File in the server folder | The next launch |
 |---|---|
 | `UPDATE.flag` | `steamcmd app_update`, then the framework, then launch |
 | `VALIDATE.flag` | the same plus `validate`, which re-checksums everything |
-| neither | straight to launch |
+| neither | straight to launch, unless a newer build or the backstop says otherwise |
 
 The flag is deleted **once the update has actually completed**, so one flag
 buys one update rather than one attempt. If steamcmd exhausts its retries, or
@@ -116,7 +127,7 @@ reset — the console says so in a banner, and the next start tries again.
 Anything can create a flag — you, a scheduled task, or the plugin:
 
 ```powershell
-New-Item -ItemType File C:\rustserver\UPDATE.flag
+New-Item -ItemType File UPDATE.flag     # in the server's folder
 ```
 
 That mode is opt-in because Rust clients update themselves: a server that
@@ -130,6 +141,28 @@ in the console. Fourteen days never fires on a monthly cycle that is working,
 and it turns "my server is dead and I do not know why" into a line of log. A missing stamp file
 counts as forever, so a fresh install updates on its first start rather than
 waiting a fortnight to discover it is out of date. Set it to `0` to disable.
+
+**`off`** never updates: not on start, not for a flag file, not for the backstop or a new build. A flag file
+is left where it is and the console says so. It is for a server whose files are managed some other way.
+
+## Several servers on one machine
+
+A production and a dev server side by side, often on different branches, is normal. What each needs:
+
+- **Its own folder, with its own `hotwire.bat` and `secrets.bat`.** `ROOT` defaults to the launcher's own
+  folder, so a copied server folder runs *its* server, not the original's. A launcher whose `ROOT` names a
+  different folder that has its own `hotwire.bat` refuses to start, because starting it would update and
+  run that other server.
+- **Its own ports**, in section 4.2 (`server.port`, `server.queryport`, `rcon.port`). Two servers on one
+  port crash-loop, and the crash-loop stop says so. `hotwire-setup` suggests a free set for each server.
+- **Its own `STEAM_BRANCH`**, if they differ.
+
+They may share one SteamCMD. Only one server runs it at a time: each run holds `hotwire-steamcmd.lock` beside
+`steamcmd.exe`, opened unshared, and `hotwire-setup` takes the same lock. Another server waits, and says
+so, for up to `STEAMCMD_WAIT_MINUTES`, then gives up on updating this start and runs the server as it is.
+Windows releases the lock when the process holding it ends, however it ends, so a crash cannot leave it
+stuck. Whether SteamCMD itself is safe to run twice at once is undocumented by Valve; taking turns avoids
+the question.
 
 ## One option, one line
 
@@ -151,14 +184,17 @@ copied from a guide, and they are re-checked against a new build after every
 Rust update. A comment claiming a default that has quietly moved is worse than
 no comment, because someone will believe it.
 
-**Out of the box it sets almost nothing.** Only the ports are set, because they have to match
-the firewall. Everything else, including seed, world size, save interval and player count, is the
-game's own default until you choose otherwise.
+**Out of the box it sets only what it must.** That is the ports, because they have to match the
+firewall, and what the server cannot run without: `-batchmode -nographics`, `server.level`, the RCON
+password and `rcon.web`. Everything else — seed, world size, save interval, player count, the save folder
+— is the game's own default until you choose otherwise.
 
-**The server's name, description, tags and player count have their own settings**, `SERVER_HOSTNAME`
-and friends, because a `|`, `&`, `<` or `>` typed straight into a `set "ARGS=..."` line splits the
-line and the server never starts. In those settings they are safe. `!` and `"` are not safe
-anywhere, and a web address containing `&` needs `^&` in its `ARGS` line.
+**The server's name, description, tags and player count have their own settings**, filled in rather than
+switched on with `REM`: `SERVER_HOSTNAME` and `SERVER_DESCRIPTION` in section 4.3, `SERVER_TAGS` beside
+them, `SERVER_MAXPLAYERS` in 4.2. Left empty, the game's default is used. They are separate because a
+`|`, `&`, `<` or `>` typed straight into a `set "ARGS=..."` line splits the line and the server never
+starts; in those settings they are safe. `!` and `"` are not safe anywhere, a percent sign is written
+`%%`, and a web address containing `&` needs `^&` in its `ARGS` line.
 
 That checking is maintenance work, not yours: nothing here needs Python, and
 the launcher never asks you to run anything. See `tools/` if you are curious
@@ -166,22 +202,22 @@ how it is done.
 
 ## Requirements
 
-Windows, a Rust dedicated server, and steamcmd. That is all — it is a batch
-file.
+Windows, a Rust dedicated server, and steamcmd. PowerShell and curl, both of which ship with Windows 10
+and later, are used for dates, downloads, the SteamCMD lock and the checks.
 
 ## Setup
 
-1. Copy `launcher/hotwire.bat` and `launcher/secrets.example.bat` next to your
-   server install.
-2. Rename `secrets.example.bat` to `secrets.bat` and put your RCON password in
-   it. **Change it from the example** — RCON is remote code execution on that
-   machine, and the launcher does not check the value. `!`, `%`, `^` and
-   spaces are all read exactly as written; a double quote, or a leading
-   semicolon, is refused at startup with a message rather than silently
-   changing the password.
-3. Open `hotwire.bat`, set `ROOT` and `STEAMCMD` at the top, then work down the
-   options.
-4. Run it.
+`hotwire-setup` does all of this for you; see `setup/README.md`. By hand:
+
+1. Copy `launcher/hotwire.bat` and `launcher/secrets.example.bat` into your server's folder, beside
+   `RustDedicated.exe`.
+2. Rename `secrets.example.bat` to `secrets.bat` and put your RCON password in it. **Change it from the
+   example** — RCON is remote code execution on that machine. The launcher refuses a password that is
+   empty, shorter than `RCON_PASSWORD_MIN` (8), still the example value, or has a double quote in it, and
+   one that starts with a semicolon does not survive being read. Write a percent sign as `%%`.
+3. Open `hotwire.bat`. Check `STEAMCMD` at the top; `ROOT` is already the file's own folder. Fill in
+   `SERVER_HOSTNAME` and `SERVER_DESCRIPTION`, then work down the other options.
+4. Run `hotwire.bat check`, then run `hotwire.bat`.
 
 To have the plugin drive the updates, set `UPDATE_MODE=hotwire` once the
 plugin is installed and you have a schedule you trust.
@@ -203,23 +239,18 @@ venv\Scripts\python tools\convars.py "<server>\RustDedicated_Data\Managed\Assemb
 hotwire.bat check
 ```
 
-Reads back everything you set, says what is wrong, and exits without updating
-or starting anything. Run it after editing section 4.
+Reads back everything you set, says what is wrong, and exits without updating or starting the server. It
+does ask Steam for the current build, and it does not run `HOOK_BEFORE`. Run it after editing section 4.
 
 The same checks run on every start, and refuse to launch if they fail. They
 exist because Rust ignores a convar it does not recognize and accepts an empty
 value for one it does — both in silence.
 
-**The settings in section 1** are checked for the mistakes that fail a long way
-from where they were typed: a non-numeric `LOG_KEEP` or `RESTART_DELAY`, a
-`LOG_KEEP` of `0` (which would make the cull delete every rotated log rather
-than keep none), a misspelled `UPDATE_MODE` (anything that is not `always` is
-treated as `hotwire`, so a typo silently picks the other mode), an empty
-`ROOT`. A trailing backslash on `ROOT` or `STEAMCMD` is removed rather than
-reported — it would otherwise escape the closing quote of every path handed to
-another program.
+**The settings in section 1** are checked for the mistakes listed under *Every behaviour is a setting*. A
+trailing backslash on `ROOT` or `STEAMCMD` is removed rather than reported — it would otherwise escape the
+closing quote of every path handed to another program.
 
-**The option list** is tokenized and checked for:
+**The option list** is tokenized and checked, unless `CHECK_OPTIONS=0`, for:
 
 - a convar with no value, or followed immediately by the next convar
 - an empty value — this is the one that took a server down for an afternoon
@@ -227,13 +258,14 @@ another program.
 - the same convar set twice, where whichever line is last silently wins
 - a name with no dot in it, which Rust would ignore without a word
 - an unbalanced quote anywhere in the list
-- a port that is not a number, is outside 1-65535, or collides with another port
+- a port that is not a number, is outside 1-65535, or collides with another port in this list
 - a `server.identity` that cannot be a folder name
 
 If the check cannot run — no PowerShell, or an error inside it — the launcher
 says so and starts anyway. Only "the check ran and found problems" refuses to
 launch. Losing a diagnostic must not cost a working server, and that includes
-the case where the diagnostic itself is the thing that is broken.
+the case where the diagnostic itself is the thing that is broken. `check` says which of those happened
+rather than reporting "no problems" for a check that did not run.
 
 ## When the server will not start
 
@@ -246,11 +278,12 @@ and treats them differently from restarts:
   `logs/server_crash_<stamp>.txt`, which the `LOG_KEEP` cull never matches.
   Later crashes in the same streak rotate normally, since they say the same
   thing and keeping every one is how a crash loop fills a disk.
-- **The delay backs off** — 15s, 30, 60, 120, then 300 — so a permanently
-  broken config does not relaunch four times a minute, and does not run
-  `HOOK_BEFORE` that often either.
+- **The delay backs off** — `RESTART_DELAY` (15s), then 30, 60, 120 and 300 with `CRASH_BACKOFF=1` — so a
+  permanently broken config does not relaunch four times a minute, and does not run `HOOK_BEFORE` that
+  often either.
 - **After `MAX_CRASH_STREAK` (10) it stops**, prints why, names the crash log
-  and waits. Set it to `0` to loop forever instead.
+  and waits. Set it to `0` to loop forever instead. On a machine with more than one server, the message
+  points at the likeliest cause: two servers on the same port.
 
 A successful run resets the streak. If the timestamp call it uses ever fails,
 the run is treated as a long one — that keeps the server running, where the
@@ -263,5 +296,5 @@ knowing before you wrap this in a service.
 
 ## What it does not do
 
-Diagnose the crash for you; it only keeps the log that explains it. Run on
-Linux; it is batch, and a shell port does not exist yet.
+Diagnose the crash for you; it only keeps the log that explains it. Start the server when Windows starts.
+Run on Linux; it is batch, and a shell port does not exist yet.

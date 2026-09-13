@@ -227,7 +227,7 @@ Every field, with its reasoning, is in [`docs/CONFIG.md`](docs/CONFIG.md).
 
 ## The launcher
 
-The other half of the project, and the half that consumes the flag: a Windows batch launcher that starts the server, relaunches it when it exits, and — in `hotwire` mode — updates only when the plugin has asked it to. Every option in it is one independent line you can comment out without breaking the launch, and every default printed beside an option was read out of a real Rust build rather than copied from a guide.
+The other half of the project, and the half that consumes the flag: a Windows batch launcher that starts the server, relaunches it when it exits, and — in `hotwire` mode — updates only for a flag file the plugin writes, a newer Steam build, or a backstop after 14 days quiet, while `off` never updates. Out of the box it leaves the game's own defaults alone, and several servers can share one machine. Every option in it is one independent line you can comment out without breaking the launch, and every default printed beside an option was read out of a real Rust build rather than copied from a guide.
 
 You do not need it. The plugin restarts a server perfectly well on its own, and the launcher runs perfectly well without the plugin.
 

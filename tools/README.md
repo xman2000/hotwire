@@ -45,11 +45,6 @@ move more often than their names do. A launcher documenting a default that has
 quietly changed is worse than one documenting nothing, because someone reads
 the comment and believes it. The assembly on your server is the only authority.
 
-**Defaults come back `UNKNOWN` rather than guessed** when a convar is
-initialized in a static constructor: the value is in IL, not metadata. Walking
-those `.cctor` assignments would close most of the gap, and is the obvious next
-step.
-
 It finds on the order of sixteen hundred convars in a current build and reads
 almost all of their defaults out of static-constructor IL. The ones it cannot
 are properties, which have a getter rather than a constant and so have nothing

@@ -478,4 +478,5 @@ after installing, after moving the server, and after any Oxide update.
 5. Runs `quit`, which saves the world on the way out.
 
 Then the launcher takes over: it sees the process exit, acts on the flag if
-there is one, and starts the server again.
+there is one (not when its `UPDATE_MODE` is `off`), deletes the flag once the
+update completes, and starts the server again.

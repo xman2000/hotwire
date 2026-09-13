@@ -37,15 +37,14 @@ not a file to paste.
 DEFAULTS ARE REPORTED AS UNKNOWN RATHER THAN GUESSED
 
 Many convars are initialized in a static constructor rather than as a
-compile-time constant, so the value lives in IL, not metadata. Walking those
-.cctor assignments would close most of the gap and is the obvious next step.
-A comment claiming a default that has quietly moved is worse than no comment,
-because somebody reads it and believes it.
+compile-time constant, so the value lives in IL, not metadata; the .cctor
+assignments are walked to recover them. What still cannot be read -- a
+property with a getter -- is reported as UNKNOWN. A comment claiming a default
+that has quietly moved is worse than no comment, because somebody reads it and
+believes it.
 
-STATUS: written against the metadata tables dnfile exposes, and NOT yet run
-against a real Assembly-CSharp.dll. Treat its output as unverified until it
-has been. See docs/OPEN-QUESTIONS.md.
-"""
+STATUS: run against a real Assembly-CSharp.dll on 2026-09-05 (1,623 convars),
+and used to curate launcher/hotwire.bat. Re-run --check after every Rust update.
 
 import re
 import struct

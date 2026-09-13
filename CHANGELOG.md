@@ -54,7 +54,8 @@ update completes, and not at all when its `UPDATE_MODE` is `off`.
 ## 1.1.10 — launcher — 2026-09-13
 
 **Every behaviour is a setting, and updates can be switched off.** What the launcher does was partly
-settings and partly fixed in the code. All of it is in section 1 now, with the same values as before:
+settings and partly fixed in the code. All of it is in section 1 now, with the same values as before,
+except `STEAM_BRANCH` (below):
 
 | setting | default | what it does |
 |---|---|---|

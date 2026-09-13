@@ -103,14 +103,12 @@ to the panel later.
 
 ```bash
 cd /home/rust/server
-curl -fSL -A "Mozilla/5.0" "https://umod.org/games/rust/download?tag=public" -o oxide.zip
+curl -fSL "https://github.com/OxideMod/Oxide.Rust/releases/latest/download/Oxide.Rust-linux.zip" -o oxide.zip
 unzip -o oxide.zip && rm oxide.zip
 ```
 
-> **Check this one yourself.** uMod serves a different bundle for Linux than for Windows. If `unzip`
-> produces a `RustDedicated_Data` folder and a `CSharpCompiler`, you have the right one. If anything
-> looks wrong, take the Linux bundle straight from **https://umod.org/games/rust** rather than
-> guessing — a half-installed framework is worse than none.
+That is Oxide's own release, the **Linux** build. `umod.org/games/rust/download` serves the **Windows**
+build, and the two unpack to the same file names, so the wrong one cannot be spotted by looking.
 
 Now a start script. Create `/home/rust/server/start.sh`:
 
@@ -124,7 +122,6 @@ source /home/rust/server/secrets.env
 
 while true; do
     ./RustDedicated -batchmode -nographics \
-        +server.identity   "myserver" \
         +server.hostname   "Change this to your server's name" \
         +server.description "Change this to what your server is about" \
         +server.port       28015 \
@@ -140,9 +137,10 @@ done
 ```
 
 Set the name and description to your own. Everything not on that list, including player count, map
-seed, world size and how often it saves, is left to the game's own defaults. To choose one yourself,
-add it as another line, for example `+server.maxplayers 100 \`. Only the ports are set here, because
-they have to match the firewall in step 4.
+seed, world size, how often it saves and the save folder, is left to the game's own defaults. To choose
+one yourself, add it as another line, for example `+server.maxplayers 100 \`. The ports are set because
+they have to match the firewall in step 4. On a machine with a second server, give that one different
+ports — for example 28115, 28117 and 28116 — and open them too.
 
 Then:
 

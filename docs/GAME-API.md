@@ -23,7 +23,7 @@ BarExists(ulong userID, string barId, string pluginName)
 ```
 
 Hotwire uses the **string** user-id overloads, so nothing in the integration
-needs a `BasePlayer` and the plugin still names no Facepunch type.
+needs a `BasePlayer`: the scheduler and status code name no Facepunch type, and the admin menu is the one confined exception.
 
 Parameter keys used, from the bar's own constructor:
 
@@ -116,7 +116,7 @@ That is wider than it was assumed to be, not narrower.
 `Timed` also computes no `Progress`, so a too-large epoch has nothing that
 looks wrong: the bar neither expires nor animates, it simply sits there.
 
-**Hotwire uses `TimeProgress`, not `TimeProgressCounter`.** The Counter variants
+**The `Fills` and `Drains` styles use `TimeProgress`, not `TimeProgressCounter`.** The Counter variants
 additionally build their own countdown string, in code, with no format
 parameter — you get seconds on the bar for the whole countdown and no way to
 change it. Rendering `SubText` yourself is the only way to control the format,
@@ -223,20 +223,21 @@ repository — the same rule the project applies to SmoothRestarter. Most
 servers will not have it, which is why the integration is optional and chat
 carries the countdown by itself.
 
-## Rust assembly: nothing read yet
+## Rust assembly
 
-No assembly has been inspected yet — `tools/convars.py` is written and unrun.
+`tools/convars.py` reads convar names and defaults out of a server's `Assembly-CSharp.dll`; the launcher's
+option list and the defaults beside it come from that. Nothing else in the plugin depends on the assembly.
 
-More usefully: **`src/Hotwire.cs` does not reference a single Facepunch type.**
+More usefully: **the scheduler and status code in `src/Hotwire.cs` reference no Facepunch type**; the
+admin menu, confined to one region, is the exception.
 Everything goes through Covalence and `Oxide.Core`, because a
 wrong guess at a Facepunch signature is a compile error, and a plugin that
 does not compile is a plugin that never restarts the server. So this file
 being empty costs the plugin nothing.
 
 What remains assumed is all runtime, all wrapped, and each tagged `// VERIFY:`
-in the source: the uMod release-feed shape, `Interface.Oxide.RootDirectory` as
-the server root, and the name of the extension carrying the framework
-version.
+in the source: the clock the status bar compares against, the uMod release-feed
+shape, and the name of the extension carrying the framework version.
 
 This file becomes load-bearing the moment something here needs a game type —
 event-aware deferral is the likely first case.

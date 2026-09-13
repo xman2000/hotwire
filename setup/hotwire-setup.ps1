@@ -1161,8 +1161,8 @@ function Show-Finish([string]$d, $s) {
     Write-Host ""
     if ($s.HasLauncher) {
         Write-Host "  Next:" -ForegroundColor Cyan
-        Write-Host "    1. Open hotwire.bat in Notepad and set your server's name and description."
-        Write-Host "       The top of the file explains every option."
+        Write-Host "    1. Open hotwire.bat in Notepad. In section 4.3 fill in SERVER_HOSTNAME and SERVER_DESCRIPTION,"
+        Write-Host "       and in 4.2 SERVER_MAXPLAYERS if you want. Each option is explained beside it."
         Write-Host "    2. Start the server: double-click hotwire.bat."
         Write-Host ""
         Write-Note "The first start takes several minutes while the map generates."
@@ -1717,7 +1717,7 @@ function Install-Launcher([string]$d) {
     $edited = Set-LauncherPaths $text $d $steamCmdExe $vanilla (Get-ChosenBranch $d) $ports
     if ($null -eq $edited) {
         Stop-Politely "setting up the downloaded hotwire.bat" "it does not contain the lines this script changes" `
-            "nothing was written; download launcher\hotwire.bat by hand from $($Docs['Hotwire (source)']) and set ROOT and STEAMCMD near the top"
+            "nothing was written; download launcher\hotwire.bat by hand from $($Docs['Hotwire (source)']) put it beside RustDedicated.exe and check STEAMCMD near the top"
     }
     Write-FileAtomic $launcher $edited
     Add-Created $d $launcher
