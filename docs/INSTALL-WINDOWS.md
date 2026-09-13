@@ -8,6 +8,11 @@ administer, about **20 GB free**, and **8 GB of RAM** as a realistic floor for a
 Every command below is run in **PowerShell as Administrator** unless it says otherwise. You can
 stop after step 6 and have a perfectly good server; steps 7-9 add the panel, which is optional.
 
+> **Rather not type steps 1–4?** [`install/hotwire-install.ps1`](../install/README.md) does them one
+> confirmed step at a time: clock, SteamCMD, Rust, Oxide, then the firewall. Put
+> `hotwire-install.bat` and `hotwire-install.ps1` in the folder you want the server in, right-click the
+> `.bat` and choose **Run as administrator**, then carry on here from step 5.
+
 > **What this never does:** nothing here, and nothing Hotwire does later, can stop your server
 > starting. If the panel is slow, unreachable or gone, your server still boots, restarts and
 > updates. That is a design rule, not a hope.

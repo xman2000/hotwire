@@ -1030,3 +1030,75 @@ documented advice, silently unenrolling the server. Both files are `chmod 600`.
 `launcher/hotwire.sh` — the bash sibling of the launcher itself — is not written yet. This ADR covers
 the connect-and-report half, which is the part that must work regardless of who supervises the
 server.
+
+## ADR-0030 — A Windows installer that asks before every step, and stops at a server ready to configure
+
+**Date:** 2026-09-13 · **Status:** ACCEPTED · `install/hotwire-install.ps1`
+
+The owner asked for a Windows script that does the basic install — SteamCMD, the Rust server, Oxide —
+assuming the current directory but asking, holding the user's hand, linking the documentation, and
+confirming before acting. Firewall rules and a clock check were added to the same request.
+
+### What it covers, and where it stops
+
+Steps 1–4 of `docs/INSTALL-WINDOWS.md`, plus two checks: **the clock** (compared with the `Date`
+header of Valve's SteamCMD host, fixed with `w32tm /resync` only on a yes), and **Windows Firewall**
+(UDP 28015 and 28017 opened, TCP 28083 for Rust+ only on a separate yes).
+
+It stops before the RCON password, `hotwire.bat` and the first start. Those stay in the guide. That
+answers one of the open questions in the panel's `INSTALL-PATHS.md` for Windows — how far a guided
+install goes — with "the framework, and no opinions about convars or plugins". That was the scope
+asked for, not a decision against going further.
+
+### The rules it follows, all inherited
+
+- **Silence is never consent** (ADR-0029). Every prompt is `[y/N]`; Enter is no. There is no `-Yes`,
+  because nobody asked for unattended installs.
+- **A guest does not touch the resident's server** (ADR-0029). A folder containing `RustDedicated.exe`
+  without the script's own `hotwire-install.json` is refused, not updated. The record is also what
+  makes a second run resume rather than refuse.
+- **RCON is never opened.** It is reported if something else has opened it, including a program rule
+  for `RustDedicated.exe`, which covers every port it does not restrict. Whether that is what Windows'
+  "allow this app" prompt creates is not verified (see below). Block rules are reported too, because in Windows Firewall a block beats every allow.
+- **Validate before extracting over a server.** The Oxide download must come from the Windows bundle
+  (the Linux bundle has identical entry names, so the redirect target is checked) and must be a zip
+  containing `RustDedicated_Data/Managed/Oxide.Rust.dll`. This is the same hazard `hotwire.bat` guards
+  with `curl -f`.
+- **Warn, don't enforce, on the published floor** (15 GB disk, 12 GB RAM from the Facepunch wiki). A
+  small test server runs on less, and refusing would mean guessing what the user wants.
+- Every rule it adds is in the firewall group `Hotwire`, so `Remove-NetFirewallRule -Group Hotwire`
+  undoes it completely.
+
+### Started by a `.bat`, so nobody types an execution policy
+
+The first draft told people to run `powershell -ExecutionPolicy Bypass -File .\hotwire-install.ps1`.
+The owner: *"that command is daunting. bypass is a scary word. make it easier."*
+
+Windows' default execution policy is **Restricted** on client editions (no script files at all) and
+**RemoteSigned** on servers (downloaded scripts must be signed or unblocked) — Microsoft's
+`about_execution_policies`. Batch files are not subject to it, so `install/hotwire-install.bat` starts
+the script with a process-scoped policy: double-click, or right-click → *Run as administrator*.
+No registry setting is changed.
+
+Rejected: `Set-ExecutionPolicy` (a permanent change to someone else's machine, against ADR-0029);
+`Unblock-File` (does nothing on a client, where the default refuses every script); signing (costs a
+certificate yearly and still refuses on a client default); `irm | iex` (pipes a stranger's code into a
+shell, the habit this product exists to discourage).
+
+The wrapper carries two guards. An elevated `.bat` starts in `System32`, so it moves to its own folder
+first, and the script separately refuses any folder under `%SystemRoot%`. And it `pause`s at the end,
+because a double-clicked window otherwise closes before the summary can be read. It has no labels or
+`goto`, which are what break when a `.bat` arrives with LF line endings — a real risk until releases
+exist (panel GAP 1.1) and people download single files from GitHub.
+
+### What is not verified
+
+**It has never run on Windows.** It parses under PowerShell 7.6 on Linux, and its pure helpers were
+exercised there. The Windows-only parts are unproven until someone runs it on a real machine: the
+`NetSecurity` cmdlets against the active store, `w32tm`, SteamCMD's first-run behaviour, and
+`ResponseUri` under 5.1, and the `.bat` wrapper, including whether a
+downloaded `.bat` raises a SmartScreen warning. This is the same state as `hotwire-connect.ps1` (panel GAP 2.3).
+
+The Windows Firewall "allow this app?" prompt at the server's first start is not handled. What each
+answer creates on current Windows builds has not been checked, so the script tells the user nothing
+about it rather than guess.
