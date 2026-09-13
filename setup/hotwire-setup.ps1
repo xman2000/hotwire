@@ -877,8 +877,9 @@ function Get-InstallPlan($s) {
         & $add 'steamcmd' 'SteamCMD' $(if ($s.HasSteamCmd) { 'let it update itself before the download' } else { 'install it -- Rust downloads through it' })
         & $add 'rust' 'Rust server' $(if ($s.HasRust) { 'finish the download' } else { 'download it, about 12 GB' })
     }
-    if (-not $s.OxideComplete -and -not $s.OxideDeclined) {
-        & $add 'oxide' 'Oxide' $(if ($s.HasOxide) { 'finish installing it' } else { 'install it, or say no for a vanilla server' })
+    # Also when the Rust download is in the plan: downloading puts the game's files back over Oxide.
+    if ((-not $s.OxideComplete -or -not $s.RustDone) -and -not $s.OxideDeclined) {
+        & $add 'oxide' 'Oxide' $(if ($s.OxideComplete) { 'put it back on after the download' } elseif ($s.HasOxide) { 'finish installing it' } else { 'install it, or say no for a vanilla server' })
     }
     if (-not $s.HasLauncher -and -not $s.LauncherDeclined) { & $add 'launcher' 'Start script' 'install hotwire.bat, or say no to use your own' }
     elseif ($s.LauncherMismatch -and $s.LauncherOurs) { & $add 'launcher' 'Start script' 'set INSTALL_FRAMEWORK in hotwire.bat to match Oxide' }
@@ -1063,7 +1064,8 @@ function Test-OxideEntries([string[]]$Names) {
 function Install-Rust([string]$d, [string]$exe) {
     Write-Step "The Rust server"
 
-    if (Test-Done $d 'rust') {
+    # The record alone is not enough: files deleted since would otherwise never be downloaded again.
+    if ((Test-Done $d 'rust') -and (Test-Path -LiteralPath (Join-Path $d 'RustDedicated.exe')) -and (Get-InstalledBuild $d)) {
         Write-Ok "already downloaded (build $(Get-InstalledBuild $d))"
         Write-Note "Updating it later is the launcher's job, not this script's."
         return
@@ -1106,6 +1108,11 @@ function Install-Rust([string]$d, [string]$exe) {
             Write-Ok "Rust server downloaded (build $build)"
             Add-Change "downloaded the Rust server into $d (build $build)" "delete the server files from $d; its saves are in $d\server if you want to keep them"
             Save-Record $d 'rust'
+            # A download puts the game's own files back, and with them undoes Oxide. It is marked not done,
+            # so the Oxide step puts it on again instead of taking it as installed.
+            if (Test-Done $d 'oxide') {
+                Update-Record $d { param($r) $r.done = [string[]]@($r.done | Where-Object { $_ -ne 'oxide' }) }
+            }
             return
         }
 
@@ -1720,8 +1727,15 @@ function Find-Root {
         if ($parent -eq $dir) { break }
         $dir = $parent
     }
+    # Setup is usually double-clicked from Downloads and installs somewhere else, so the folder install
+    # last used is the next place to look -- said out loud, so nobody wonders which server is meant.
+    $last = Get-LastInstall
+    if ($last -and ((Test-Path -LiteralPath (Join-Path $last 'RustDedicated.exe')) -or (Test-Path -LiteralPath (Join-Path $last 'RustDedicated')))) {
+        Write-Note "No Rust server in $((Get-Location).Path) -- using the one installed in $last."
+        return $last
+    }
     Stop-Politely "finding your Rust server directory" `
-        "no RustDedicated.exe in $((Get-Location).Path) or its parents" `
+        "no RustDedicated.exe in $((Get-Location).Path), its parents, or the last install folder" `
         "run this from the server directory, or pass -Root C:\rustserver"
 }
 
@@ -1938,13 +1952,15 @@ function Invoke-Connect {
         $response = Invoke-RestMethod -Method Post -Uri "$url/api/v1/enroll" -TimeoutSec 30 `
             -ContentType 'application/json' -Headers @{ Accept = 'application/json' } -Body $payload
     } catch {
+        # Saved first: inside a switch, $_ is the value being switched on, not this error.
+        $enrollError = $_
         $status = $null
-        if ($_.Exception.Response) { $status = [int]$_.Exception.Response.StatusCode }
+        if ($enrollError.Exception.Response) { $status = [int]$enrollError.Exception.Response.StatusCode }
         switch ($status) {
             422 { Stop-Politely "enrolling with the code you gave" "the panel refused it as invalid or expired" `
                     "codes are single-use and last 60 minutes -- create a fresh one in the panel" }
             429 { Stop-Politely "enrolling" "the panel is rate-limiting this address" "wait a minute and try again" }
-            default { Stop-Politely "enrolling" "the panel answered: $($_.Exception.Message)" `
+            default { Stop-Politely "enrolling" "the panel answered: $($enrollError.Exception.Message)" `
                     "run 'doctor' to check the connection, then try again" }
         }
     }
@@ -2179,10 +2195,19 @@ function Invoke-Install {
 function Write-No ($m) { Write-Host "  [ no ] $m" -ForegroundColor Gray }
 
 function Invoke-Menu {
-    $here = (Get-Location).Path
+    $here = if ($Root) { Resolve-FullPath $Root } else { (Get-Location).Path }
+
+    # Double-clicked from somewhere else -- Downloads, usually -- after installing into another folder:
+    # show that server, and have Connect, Show and Disconnect act on it.
+    $usingLast = $false
+    if (-not $Root -and -not (Test-Path -LiteralPath (Join-Path $here 'RustDedicated.exe'))) {
+        $last = Get-LastInstall
+        if ($last -and (Test-Path -LiteralPath (Join-Path $last 'RustDedicated.exe'))) { $here = $last; $usingLast = $true }
+    }
 
     Show-Banner
     Write-Host "  Folder: $here"
+    if ($usingLast) { Write-Note "(the server install set up last -- this window was started from $((Get-Location).Path))" }
     Write-Note "Looking around first. Nothing is changed by these checks."
     Write-Host ""
 
@@ -2263,6 +2288,8 @@ function Invoke-Menu {
     Write-Note "Enter on its own leaves without doing anything."
 
     $choice = ([string](Read-Host "  Choose")).Trim()
+    # Install asks about its folder itself; everything else acts on the server shown above.
+    if ($usingLast -and $choice -ne '1') { $script:Root = $here }
     switch ($choice) {
         '1' { return 'install' }
         '2' { return 'doctor' }

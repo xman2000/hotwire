@@ -73,7 +73,11 @@ json_tool() {
 json_get() {  # json_get <json> <dotted.path>   -> value, or empty
     json_tool
     if [ "$JSON_TOOL" = "jq" ]; then
-        printf '%s' "$1" | jq -r "try .$2 // empty" 2>/dev/null
+        # jq indexes arrays as keys[0]; the dotted form keys.0 is a syntax error it reports only to the
+        # stderr hidden below, which made every lookup into an array come back empty.
+        local filter
+        filter="$(printf '%s' "$2" | sed -E 's/\.([0-9]+)(\.|$)/[\1]\2/g; s/\.([0-9]+)(\.|$)/[\1]\2/g')"
+        printf '%s' "$1" | jq -r "try .$filter // empty" 2>/dev/null
     else
         printf '%s' "$1" | python3 -c '
 import json,sys
@@ -113,17 +117,22 @@ done
 # ------------------------------------------------------------ discovery ----
 # A Rust server root holds RustDedicated (Linux) or RustDedicated.exe. We look,
 # we do not assume: a wrong guess here writes keys into the wrong directory.
+# Sets FOUND_ROOT. Always called directly, never inside a command substitution: there its die would end
+# only the subshell, and the command would carry on with an empty root -- writing keys under / if run
+# with sudo.
+FOUND_ROOT=""
 find_root() {
     if [ -n "$ROOT" ]; then
         [ -d "$ROOT" ] || die "using the directory you gave with --root" \
             "'$ROOT' is not a directory" "check the path and try again"
-        printf '%s' "$(cd "$ROOT" && pwd)"
+        FOUND_ROOT="$(cd "$ROOT" && pwd)"
+        [ -n "$FOUND_ROOT" ] || die "using the directory you gave with --root" "'$ROOT' could not be entered" "check its permissions"
         return 0
     fi
     local d; d="$(pwd)"
     for _ in 1 2 3 4 5; do
         if [ -f "$d/RustDedicated" ] || [ -f "$d/RustDedicated.exe" ]; then
-            printf '%s' "$d"; return 0
+            FOUND_ROOT="$d"; return 0
         fi
         [ "$d" = "/" ] && break
         d="$(dirname "$d")"
@@ -299,7 +308,7 @@ check_signing() {
 # failure is reported by a command that cannot have caused it.
 cmd_doctor() {
     local root url rc=0
-    root="$(find_root)"; url="$(panel_url "$root")"
+    find_root; root="$FOUND_ROOT"; url="$(panel_url "$root")"
 
     say "hotwire-setup $VERSION -- checking this machine"
     note "Nothing is written by this command."
@@ -333,7 +342,7 @@ cmd_doctor() {
 # anything it would replace, and prints a manifest of what it changed.
 cmd_connect() {
     local root url install_id body resp http
-    root="$(find_root)"; url="$(panel_url "$root")"
+    find_root; root="$FOUND_ROOT"; url="$(panel_url "$root")"
 
     # Asked for rather than demanded on the command line. A code typed as an argument ends up in
     # shell history and in the scrollback of whoever is watching; and making someone re-run a
@@ -514,7 +523,7 @@ back_up() {
 
 # -------------------------------------------------------------- status ----
 cmd_status() {
-    local root state; root="$(find_root)"; state="$(read_state "$root")"
+    local root state; find_root; root="$FOUND_ROOT"; state="$(read_state "$root")"
 
     if [ ! -f "$(state_file "$root")" ]; then
         say "Not connected."
@@ -536,7 +545,7 @@ cmd_status() {
 # Reversible means reversible. This removes what connect wrote and nothing else;
 # the server keeps running, and the launcher and plugin carry on without a panel.
 cmd_detach() {
-    local root; root="$(find_root)"
+    local root; find_root; root="$FOUND_ROOT"
 
     local leftovers
     leftovers="$(ls -1 "$(state_file "$root")" "$(keys_file "$root")" "$(plugin_file "$root")" \
