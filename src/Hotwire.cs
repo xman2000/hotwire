@@ -17,7 +17,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Hotwire", "xman2000", "1.1.7")]
+    [Info("Hotwire", "xman2000", "1.1.8")]
     [Description("Scheduled restarts and updates. Announces, counts down, writes a flag, quits.")]
     internal class Hotwire : CovalencePlugin
     {
@@ -160,6 +160,18 @@ namespace Oxide.Plugins
             // up for two minutes.
             [JsonProperty("Render the map image if Rust+ has not")]
             public bool RenderMapImage = true;
+
+            // The restart and update schedule, as it stands, with when each
+            // entry next fires. Sent when it changes.
+            [JsonProperty("Report the schedule")]
+            public bool ReportSchedule = true;
+
+            // Adding, editing, enabling, disabling and removing schedule entries
+            // from the panel. They are checked exactly as the chat commands check
+            // them, and refused if the schedule changed here since the panel
+            // last saw it. Off leaves the schedule editable only in game.
+            [JsonProperty("Accept schedule changes from the panel")]
+            public bool AcceptScheduleChanges = true;
         }
 
         // Recurrence is stored as explicit fields rather than as a cron
@@ -173,6 +185,12 @@ namespace Oxide.Plugins
         // schedule from weekly to monthly and back without retyping it.
         private class ScheduleEntry
         {
+            // A stable name for the entry, so the panel can say "change this
+            // one" even after someone reorders or removes entries in game.
+            // Written the first time the config is saved; never reused.
+            [JsonProperty("Id")]
+            public string Id = "";
+
             [JsonProperty("Time")]
             public string Time = "05:00";
 
@@ -470,7 +488,33 @@ namespace Oxide.Plugins
                              "put back. Check the file is what you meant.");
         }
 
-        protected override void SaveConfig() => Config.WriteObject(_config, true);
+        protected override void SaveConfig()
+        {
+            EnsureEntryIds();
+            Config.WriteObject(_config, true);
+        }
+
+        private void EnsureEntryIds()
+        {
+            if (_config == null) return;
+            var seen = new HashSet<string>();
+            foreach (var entry in AllEntries())
+            {
+                if (entry == null) continue;
+                if (string.IsNullOrWhiteSpace(entry.Id) || !seen.Add(entry.Id))
+                {
+                    entry.Id = NewEntryId();
+                    seen.Add(entry.Id);
+                }
+            }
+        }
+
+        private static string NewEntryId()
+        {
+            var bytes = new byte[6];
+            using (var rng = RandomNumberGenerator.Create()) rng.GetBytes(bytes);
+            return Hex(bytes);
+        }
 
         #endregion
 
@@ -2022,6 +2066,12 @@ namespace Oxide.Plugins
                 }
             }
 
+            if (_config.Panel.ReportSchedule)
+            {
+                if (now >= _scheduleCheckDue) { _scheduleCheckDue = now.AddSeconds(30); RefreshSchedule(); }
+                if (_scheduleJson != null && _scheduleJson != _scheduleSentJson) { SendSchedule(); return; }
+            }
+
             if (_config.Panel.AcceptCommands && now >= _commandsDue) { PollCommands(); return; }
             if (_config.Panel.EnforceBans && now >= _bansDue) { PollBans(); }
         }
@@ -2060,6 +2110,7 @@ namespace Oxide.Plugins
             _markersSentJson = null;
             _imageDoneKey = null;
             _imageDue = DateTime.MinValue;
+            _scheduleSentJson = null;
 
             JObject file;
             try
@@ -2806,6 +2857,294 @@ namespace Oxide.Plugins
             }, 120f);
         }
 
+        // ---------------------------------------------------------- schedule
+
+        // The restart and update schedule is Hotwire's own, so it is reported
+        // as it stands and can be changed from the panel -- through the same
+        // checks the chat commands use, never by writing the config file from
+        // outside. A change is refused if the schedule moved here since the
+        // panel last saw it, so an edit made in game is never silently undone.
+
+        private DateTime _scheduleCheckDue = DateTime.MinValue;
+        private string _scheduleJson;
+        private string _scheduleSentJson;
+        private string _scheduleState = "not sent yet";
+
+        private static bool BoolArg(JObject args, string name)
+        {
+            var token = args[name];
+            if (token == null) return false;
+            if (token.Type == JTokenType.Boolean) return (bool)token;
+            var text = token.ToString().Trim();
+            return text == "1" || text.Equals("true", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private JObject EntryState(ScheduleEntry e, string list)
+        {
+            var o = new JObject
+            {
+                ["list"] = list,
+                ["id"] = e.Id ?? "",
+                ["time"] = e.Time ?? "",
+                ["repeat"] = Normalize(e.Repeat),
+                ["days"] = new JArray((e.Days ?? new List<string>()).Select(d => (object)d).ToArray()),
+                ["ordinal"] = e.Ordinal ?? "",
+                ["day_of_month"] = e.DayOfMonth,
+                ["interval_days"] = e.IntervalDays,
+                ["anchor_date"] = e.AnchorDate ?? "",
+                ["date"] = e.Date ?? "",
+                ["enabled"] = e.Enabled
+            };
+            if (e is UpdateEntry) o["validate"] = ((UpdateEntry)e).Validate;
+            return o;
+        }
+
+        // Every stored field of every entry, in a fixed order: what a schedule
+        // change is checked against.
+        private string ScheduleHash()
+        {
+            var all = new JArray();
+            foreach (var e in _config.Restarts) all.Add(EntryState(e, "restarts"));
+            foreach (var e in _config.Updates) all.Add(EntryState(e, "updates"));
+            return "sha256:" + Sha256Hex(JsonConvert.SerializeObject(all, Formatting.None));
+        }
+
+        private void RefreshSchedule()
+        {
+            try
+            {
+                var now = DateTime.Now;
+                Func<ScheduleEntry, string, JObject> row = (e, list) =>
+                {
+                    var o = EntryState(e, list);
+                    o.Remove("list");
+                    string description;
+                    try { description = Describe(e, null); } catch { description = null; }
+                    o["description"] = description;
+                    var problem = ValidationError(e);
+                    o["problem"] = problem == null ? null : Text(problem, null);
+                    DateTime? next = null;
+                    if (e.Enabled && problem == null) { try { next = NextOccurrence(e, now); } catch { next = null; } }
+                    o["next_at"] = next == null ? null : next.Value.ToUniversalTime().ToString("yyyy'-'MM'-'dd'T'HH':'mm':'ss'Z'", CultureInfo.InvariantCulture);
+                    return o;
+                };
+
+                var payload = new JObject
+                {
+                    ["schedule_hash"] = ScheduleHash(),
+                    ["timezone"] = TimeZoneInfo.Local.Id,
+                    ["restarts"] = new JArray(_config.Restarts.Select(e => (object)row(e, "restarts")).ToArray()),
+                    ["updates"] = new JArray(_config.Updates.Select(e => (object)row(e, "updates")).ToArray()),
+                    ["countdown"] = new JObject
+                    {
+                        ["start_seconds"] = _config.Countdown.StartSeconds,
+                        ["announce_at"] = new JArray(_config.Countdown.AnnounceAt.Select(x => (object)x).ToArray())
+                    },
+                    ["framework_check"] = new JObject
+                    {
+                        ["enabled"] = _config.Framework.Enabled,
+                        ["check_every_minutes"] = _config.Framework.CheckIntervalMinutes,
+                        ["update_at"] = _config.Framework.UpdateAt,
+                        ["validate"] = _config.Framework.Validate
+                    },
+                    ["active"] = !_countdownActive ? null : new JObject
+                    {
+                        ["kind"] = _countdownIsValidate ? "validate" : _countdownIsUpdate ? "update" : "restart",
+                        ["at"] = _countdownTarget.ToUniversalTime().ToString("yyyy'-'MM'-'dd'T'HH':'mm':'ss'Z'", CultureInfo.InvariantCulture),
+                        ["entry_id"] = _countdownEntry == null ? null : _countdownEntry.Id,
+                        ["shutting_down"] = _shuttingDown
+                    }
+                };
+                _scheduleJson = JsonConvert.SerializeObject(payload, Formatting.None);
+            }
+            catch (Exception ex)
+            {
+                _scheduleState = "could not be read: " + ex.Message;
+            }
+        }
+
+        private void SendSchedule()
+        {
+            var json = _scheduleJson;
+            var payload = JObject.Parse(json);
+            var offset = TimeZoneInfo.Local.GetUtcOffset(DateTime.Now);
+            payload["utc_offset_minutes"] = (int)offset.TotalMinutes;
+            payload["server_time"] = DateTime.Now.ToString("yyyy'-'MM'-'dd'T'HH':'mm':'ss", CultureInfo.InvariantCulture);
+            PanelRequest("POST", PanelReportPath, PanelEnvelope("schedule", payload), response =>
+            {
+                _scheduleSentJson = json;
+                _scheduleState = $"sent {DateTime.Now:HH:mm:ss}";
+            }, () => { _scheduleSentJson = json; });
+        }
+
+        private void RunScheduleCommand(string verb, JObject args, out string status, out string result)
+        {
+            if (!_config.Panel.AcceptScheduleChanges)
+            {
+                status = "refused";
+                result = "schedule changes from the panel are off in this server's Hotwire config";
+                return;
+            }
+
+            var expected = (string)args["schedule_hash"];
+            if (!string.IsNullOrEmpty(expected) && expected != ScheduleHash())
+            {
+                _scheduleCheckDue = DateTime.MinValue;
+                status = "refused";
+                result = "the schedule changed on the server since the panel last saw it; the panel now has the current one, so check it and try again";
+                return;
+            }
+
+            if (verb == "schedule.add")
+            {
+                var listName = ((string)args["list"] ?? "").ToLowerInvariant();
+                if (listName != "restarts" && listName != "updates") { status = "refused"; result = "list must be restarts or updates"; return; }
+                string problem;
+                var entry = BuildEntry(null, listName == "updates", args["entry"] as JObject, out problem);
+                if (entry == null) { status = "refused"; result = problem; return; }
+                entry.Id = NewEntryId();
+                if (listName == "updates") _config.Updates.Add((UpdateEntry)entry); else _config.Restarts.Add(entry);
+                SaveConfig();
+                _scheduleCheckDue = DateTime.MinValue;
+                status = "done"; result = "added: " + Describe(entry, null);
+                Puts($"The panel added a schedule entry: {Describe(entry, null)}.");
+                return;
+            }
+
+            var id = ((string)args["id"] ?? "").Trim();
+            ScheduleEntry target = null;
+            var inUpdates = false;
+            foreach (var e in _config.Restarts) if (e.Id == id) target = e;
+            foreach (var e in _config.Updates) if (e.Id == id) { target = e; inUpdates = true; }
+            if (id.Length == 0 || target == null) { status = "refused"; result = "there is no schedule entry with that id here"; return; }
+
+            switch (verb)
+            {
+                case "schedule.update":
+                {
+                    string problem;
+                    var draft = BuildEntry(target, inUpdates, args["entry"] as JObject, out problem);
+                    if (draft == null) { status = "refused"; result = problem; return; }
+                    CancelCountdownFor(target, "the panel");
+                    target.Time = draft.Time;
+                    target.Repeat = draft.Repeat;
+                    target.Days = draft.Days;
+                    target.Ordinal = draft.Ordinal;
+                    target.DayOfMonth = draft.DayOfMonth;
+                    target.IntervalDays = draft.IntervalDays;
+                    target.AnchorDate = draft.AnchorDate;
+                    target.Date = draft.Date;
+                    target.Enabled = draft.Enabled;
+                    if (target is UpdateEntry && draft is UpdateEntry) ((UpdateEntry)target).Validate = ((UpdateEntry)draft).Validate;
+                    status = "done"; result = "changed: " + Describe(target, null);
+                    break;
+                }
+                case "schedule.remove":
+                    CancelCountdownFor(target, "the panel");
+                    if (inUpdates) _config.Updates.Remove((UpdateEntry)target); else _config.Restarts.Remove(target);
+                    status = "done"; result = "removed: " + Describe(target, null);
+                    break;
+                case "schedule.enable":
+                {
+                    var problem = ValidationError(target);
+                    if (problem != null) { status = "refused"; result = "it cannot be enabled: " + Text(problem, null); return; }
+                    target.Enabled = true;
+                    status = "done"; result = "enabled: " + Describe(target, null);
+                    break;
+                }
+                default: // schedule.disable
+                    CancelCountdownFor(target, "the panel");
+                    target.Enabled = false;
+                    status = "done"; result = "disabled: " + Describe(target, null);
+                    break;
+            }
+
+            ValidateSchedule();
+            SaveConfig();
+            _scheduleCheckDue = DateTime.MinValue;
+            Puts($"The panel changed the schedule ({verb}): {result}.");
+        }
+
+        // A checked copy of an entry with the given fields applied, or null and
+        // why not. Each field is validated the way the chat commands validate
+        // it, then the whole entry by ValidationError.
+        private ScheduleEntry BuildEntry(ScheduleEntry from, bool isUpdate, JObject fields, out string problem)
+        {
+            problem = null;
+            if (fields == null) { problem = "no entry was given"; return null; }
+
+            ScheduleEntry draft = isUpdate ? new UpdateEntry() : new ScheduleEntry();
+            if (from != null)
+            {
+                draft.Time = from.Time; draft.Repeat = from.Repeat;
+                draft.Days = from.Days == null ? new List<string>() : new List<string>(from.Days);
+                draft.Ordinal = from.Ordinal; draft.DayOfMonth = from.DayOfMonth; draft.IntervalDays = from.IntervalDays;
+                draft.AnchorDate = from.AnchorDate; draft.Date = from.Date; draft.Enabled = from.Enabled;
+                if (isUpdate && from is UpdateEntry) ((UpdateEntry)draft).Validate = ((UpdateEntry)from).Validate;
+            }
+            else
+            {
+                draft.Enabled = true;
+            }
+
+            if (fields["time"] != null)
+            {
+                var time = ((string)fields["time"] ?? "").Trim();
+                if (ParseTime(time) == null) { problem = $"{time} is not a time; use HH:mm, 24-hour"; return null; }
+                draft.Time = time;
+            }
+            if (fields["repeat"] != null)
+            {
+                var repeat = Normalize((string)fields["repeat"]);
+                if (!RepeatModes.Contains(repeat)) { problem = $"{fields["repeat"]} is not a repeat; use one of {string.Join(", ", RepeatModes)}"; return null; }
+                var wasEveryN = Normalize(draft.Repeat) == RepeatEveryNDays;
+                draft.Repeat = repeat;
+                if (repeat == RepeatEveryNDays && !wasEveryN && fields["anchor_date"] == null) draft.AnchorDate = DateTime.Now.ToString("yyyy-MM-dd");
+            }
+            if (fields["days"] is JArray)
+            {
+                var days = new List<string>();
+                foreach (var token in (JArray)fields["days"])
+                {
+                    var day = ParseDay(token.ToString());
+                    if (day == null) { problem = $"{token} is not a day"; return null; }
+                    if (!days.Contains(day.Value.ToString())) days.Add(day.Value.ToString());
+                }
+                draft.Days = days;
+            }
+            if (fields["ordinal"] != null)
+            {
+                var ordinal = Ordinals.FirstOrDefault(o => string.Equals(o, (string)fields["ordinal"], StringComparison.OrdinalIgnoreCase));
+                if (ordinal == null) { problem = $"{fields["ordinal"]} is not one of {string.Join(", ", Ordinals)}"; return null; }
+                draft.Ordinal = ordinal;
+            }
+            if (fields["day_of_month"] != null)
+            {
+                int dom;
+                if (!int.TryParse(fields["day_of_month"].ToString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out dom)) { problem = "day_of_month is not a whole number"; return null; }
+                draft.DayOfMonth = dom;
+            }
+            if (fields["interval_days"] != null)
+            {
+                int interval;
+                if (!int.TryParse(fields["interval_days"].ToString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out interval)) { problem = "interval_days is not a whole number"; return null; }
+                draft.IntervalDays = interval;
+            }
+            if (fields["date"] != null) draft.Date = ((string)fields["date"] ?? "").Trim();
+            if (fields["anchor_date"] != null)
+            {
+                var anchor = ((string)fields["anchor_date"] ?? "").Trim();
+                if (anchor.Length > 0 && ParseDate(anchor) == null) { problem = $"{anchor} is not a date; use yyyy-MM-dd"; return null; }
+                draft.AnchorDate = anchor;
+            }
+            if (fields["enabled"] != null) draft.Enabled = BoolArg(fields, "enabled");
+            if (isUpdate && fields["validate"] != null) ((UpdateEntry)draft).Validate = BoolArg(fields, "validate");
+
+            var invalid = ValidationError(draft);
+            if (invalid != null) { problem = Text(invalid, null); return null; }
+            return draft;
+        }
+
         // ---------------------------------------------------------- commands
 
         private void PollCommands()
@@ -2924,13 +3263,33 @@ namespace Oxide.Plugins
                     if (delayToken != null) int.TryParse(delayToken.ToString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out asked);
                     var minimum = Math.Max(10, _config.Panel.MinimumRestartSeconds);
                     var seconds = Math.Max(asked, minimum);
-                    BeginCountdown(DateTime.Now.AddSeconds(seconds), false, false, null, "");
+                    // Optional, as "hotwire now update" / "now validate" in game: the
+                    // restart also writes the update flag the launcher acts on.
+                    var validate = BoolArg(args, "validate");
+                    var update = validate || BoolArg(args, "update");
+                    BeginCountdown(DateTime.Now.AddSeconds(seconds), update, validate, null, "");
+                    _scheduleCheckDue = DateTime.MinValue;
+                    var what = validate ? "validate" : update ? "update" : "restart";
                     status = "done";
                     result = asked < minimum
-                        ? $"countdown started: {seconds}s (raised from {asked}s so players are warned)"
-                        : $"countdown started: {seconds}s";
+                        ? $"{what} countdown started: {seconds}s (raised from {asked}s so players are warned)"
+                        : $"{what} countdown started: {seconds}s";
                     return;
                 }
+                case "countdown.cancel":
+                    if (_shuttingDown) { status = "refused"; result = "too late: the server is already shutting down"; return; }
+                    if (!_countdownActive) { status = "done"; result = "no countdown was running"; return; }
+                    CancelCountdown("the panel");
+                    _scheduleCheckDue = DateTime.MinValue;
+                    status = "done"; result = "countdown canceled";
+                    return;
+                case "schedule.add":
+                case "schedule.update":
+                case "schedule.remove":
+                case "schedule.enable":
+                case "schedule.disable":
+                    RunScheduleCommand(verb, args, out status, out result);
+                    return;
                 default:
                     status = "refused";
                     result = verb == "update"
@@ -4263,6 +4622,7 @@ namespace Oxide.Plugins
                 lines.Add($"  ban list     : {_bansState}");
                 lines.Add($"  map          : {_mapState}");
                 lines.Add($"  map image    : {_imageState}");
+                lines.Add($"  schedule     : {_scheduleState}");
             }
 
             player.Reply(string.Join("\n", lines.ToArray()));

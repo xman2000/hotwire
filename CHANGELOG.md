@@ -25,6 +25,21 @@ sit above a launcher `1.1.7`. Read the label, not the number.
 at the top of the file — it is a comment, not something it echoes, so read it
 rather than watch for it.
 
+## 1.1.8 — plugin — 2026-09-13
+
+**The schedule can be run from the panel.**
+
+- **Reported:** every restart and update entry, with its description, when it next fires, and any problem.
+  Also the countdown settings, the framework check, and a countdown running now. Sent when it changes.
+- **Changed from the panel:** add, edit, enable, disable and remove entries. Checked exactly like the chat
+  commands. A change made against a schedule that has since changed in game is refused, never applied over
+  it.
+- **Run now:** an announced restart can also be an update or a validate, and a running countdown can be
+  canceled from the panel.
+- Every schedule entry gets a stable `Id` in the config, so the panel can name it after entries move.
+- New `Panel` settings: `Report the schedule` and `Accept schedule changes from the panel`, both on.
+  `hotwire check` shows the schedule report's state.
+
 ## 1.1.12 — launcher — 2026-09-13
 
 **Its own map, not everyone's.**

@@ -299,7 +299,9 @@ replaced by the `Status bar` section below.
   "Report the map and its markers": true,
   "Send map markers at most every this many seconds": 60,
   "Send the map image": true,
-  "Render the map image if Rust+ has not": true
+  "Render the map image if Rust+ has not": true,
+  "Report the schedule": true,
+  "Accept schedule changes from the panel": true
 }
 ```
 
@@ -349,6 +351,23 @@ this section says.
   (`app.port -1`) the game draws no picture, so the plugin asks the game to draw
   the same one, once per map, after the server has been up for two minutes. It
   takes the game a few seconds.
+
+- **Report the schedule** — sends every restart and update entry as it stands,
+  with a plain description, when it next fires, anything wrong with it, the
+  countdown settings, the framework check, and any countdown running now. Sent
+  when anything in it changes.
+- **Accept schedule changes from the panel** — lets the panel add, edit,
+  enable, disable and remove entries. Each change is checked exactly as the chat
+  commands check it. The panel sends the version of the schedule it was looking
+  at; if the schedule has changed here since, the change is refused, so an edit
+  made in game is never silently undone. `false` keeps the schedule editable only
+  in game. The panel can also run a restart, update or validate now (always with
+  the countdown) and cancel a running countdown; those follow **Accept commands
+  from the panel**.
+
+Every schedule entry now carries an `Id`, written the first time the config is
+saved. It lets the panel name an entry that has since moved in the list. Leave
+it alone; a missing or duplicated one is replaced.
 
 Commands already carried out are recorded in
 `oxide/data/Hotwire/panel_commands.json` before they run, for two days. A
