@@ -25,6 +25,20 @@ sit above a launcher `1.1.7`. Read the label, not the number.
 at the top of the file — it is a comment, not something it echoes, so read it
 rather than watch for it.
 
+## 1.1.9 — plugin — 2026-09-13
+
+**Player data sharing, applied on the server.**
+
+- Asks the panel every two minutes for the account's sharing level: counts only, anonymous, pseudonymous or
+  identified. Applied here, before anything is sent.
+- Fails closed. No answer yet, an unreadable answer, an unknown level, or pseudonymous without its salt all
+  mean counts only. A request that simply fails keeps the level in force.
+- The last answer is kept in `oxide/data/Hotwire/panel_sharing.json` with the key it came from. A different
+  key starts again at counts only.
+- `hotwire check` shows the level in force and where it came from.
+- Nothing sent today carries a player's identity. This is in place before the log and event senders that
+  will use it.
+
 ## 1.1.8 — plugin — 2026-09-13
 
 **The schedule can be run from the panel.**

@@ -17,7 +17,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Hotwire", "xman2000", "1.1.8")]
+    [Info("Hotwire", "xman2000", "1.1.9")]
     [Description("Scheduled restarts and updates. Announces, counts down, writes a flag, quits.")]
     internal class Hotwire : CovalencePlugin
     {
@@ -2054,6 +2054,9 @@ namespace Oxide.Plugins
 
             if (!_panelReporting) return;   // nothing else until the panel has accepted a heartbeat
 
+            // How much player data may leave this machine, before anything that could carry any.
+            if (now >= _sharingDue) { PollSharing(); return; }
+
             if (_config.Panel.ReportMap && !_mapOff)
             {
                 if (now >= _mapCheckDue) { _mapCheckDue = now.AddSeconds(30); RefreshMap(); }
@@ -2111,6 +2114,7 @@ namespace Oxide.Plugins
             _imageDoneKey = null;
             _imageDue = DateTime.MinValue;
             _scheduleSentJson = null;
+            _sharingDue = DateTime.MinValue;
 
             JObject file;
             try
@@ -3323,6 +3327,111 @@ namespace Oxide.Plugins
             var cutoff = DateTime.UtcNow.AddDays(-2);
             foreach (var key in _handledCommands.Where(kv => kv.Value == null || kv.Value.HandledUtc < cutoff).Select(kv => kv.Key).ToList())
                 _handledCommands.Remove(key);
+        }
+
+        // ---------------------------------------------------------- player data
+
+        // The account's sharing level decides how much player data leaves this
+        // machine, and it is applied here, before anything is sent. It fails
+        // CLOSED: with no answer, an unreadable one, an unknown level, or level 2
+        // without a salt, the level is 0 -- no player fields at all. Not the
+        // default, and not the last answer that worked. A poll that simply fails
+        // (unreachable, 401, 5xx) is not an answer and keeps the level in force.
+        //
+        // The last answer is kept on disk with the key it came from, so a reload
+        // does not fall silent; an answer for a different key is not used.
+        // Nothing the plugin sends today carries a player's identity -- the log
+        // and events senders that will read this come later.
+
+        private const string SharingPath = "/api/v1/sharing";
+        private const string SharingDataFile = "Hotwire/panel_sharing";
+        private const int SharingPollSeconds = 120;
+
+        private sealed class SharingAnswer
+        {
+            public string KeyId;
+            public int Level;
+            public string LevelHash;
+            public string Salt;
+            public DateTime ReceivedUtc;
+        }
+
+        private SharingAnswer _sharing;
+        private bool _sharingLoaded;
+        private DateTime _sharingDue = DateTime.MinValue;
+
+        // 0 counts only, 1 anonymous, 2 pseudonymous, 3 identified.
+        private int EffectiveSharingLevel()
+        {
+            LoadSharingAnswer();
+            var a = _sharing;
+            if (a == null || _panel == null || a.KeyId != _panel.KeyId) return 0;
+            if (a.Level < 0 || a.Level > 3) return 0;
+            if (a.Level == 2 && !IsSalt(a.Salt)) return 0;
+            return a.Level;
+        }
+
+        private string SharingDescription()
+        {
+            var level = EffectiveSharingLevel();
+            var names = new[] { "counts only (0)", "anonymous (1)", "pseudonymous (2)", "identified (3)" };
+            if (_sharing == null || _panel == null || _sharing.KeyId != _panel.KeyId)
+                return names[0] + " until the panel answers";
+            return $"{names[level]}, from the panel {_sharing.ReceivedUtc.ToLocalTime():yyyy-MM-dd HH:mm}";
+        }
+
+        private static bool IsSalt(string salt)
+        {
+            return salt != null && Regex.IsMatch(salt, "^[0-9a-f]{64}$");
+        }
+
+        private void LoadSharingAnswer()
+        {
+            if (_sharingLoaded) return;
+            _sharingLoaded = true;
+            _sharing = ReadData<SharingAnswer>(SharingDataFile);
+        }
+
+        private void PollSharing()
+        {
+            _sharingDue = DateTime.UtcNow.AddSeconds(SharingPollSeconds);
+            var link = _panel;
+            PanelRequest("GET", SharingPath, null, response =>
+            {
+                LoadSharingAnswer();
+                SharingAnswer answer;
+                try
+                {
+                    var envelope = JObject.Parse(response);
+                    var data = envelope["data"] as JObject;
+                    var ok = envelope["ok"] != null && envelope["ok"].Type == JTokenType.Boolean && (bool)envelope["ok"];
+                    var levelToken = data == null ? null : data["sharing_level"];
+                    var level = levelToken != null && levelToken.Type == JTokenType.Integer ? (int)levelToken : -1;
+                    answer = new SharingAnswer
+                    {
+                        KeyId = link.KeyId,
+                        // Anything but exactly 0-3 is recorded as 0, so a bad answer lowers, never raises.
+                        Level = ok && level >= 0 && level <= 3 ? level : 0,
+                        LevelHash = data == null ? null : (string)data["level_hash"],
+                        Salt = data == null ? null : (string)data["salt"],
+                        ReceivedUtc = DateTime.UtcNow
+                    };
+                    if (answer.Level == 2 && !IsSalt(answer.Salt)) answer.Level = 0;
+                }
+                catch
+                {
+                    answer = new SharingAnswer { KeyId = link.KeyId, Level = 0, ReceivedUtc = DateTime.UtcNow };
+                }
+
+                var changed = _sharing == null || _sharing.KeyId != answer.KeyId || _sharing.LevelHash != answer.LevelHash || _sharing.Level != answer.Level;
+                if (!changed) { _sharing.ReceivedUtc = answer.ReceivedUtc; return; }
+
+                var before = _sharing == null || _sharing.KeyId != link.KeyId ? -1 : _sharing.Level;
+                _sharing = answer;
+                WriteData(SharingDataFile, _sharing);
+                if (before != answer.Level)
+                    Puts($"Player data sharing level from the panel: {SharingDescription()}.");
+            });
         }
 
         // ---------------------------------------------------------- ban list
@@ -4623,6 +4732,7 @@ namespace Oxide.Plugins
                 lines.Add($"  map          : {_mapState}");
                 lines.Add($"  map image    : {_imageState}");
                 lines.Add($"  schedule     : {_scheduleState}");
+                lines.Add($"  player data  : {SharingDescription()}");
             }
 
             player.Reply(string.Join("\n", lines.ToArray()));

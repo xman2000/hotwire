@@ -365,6 +365,19 @@ this section says.
   the countdown) and cancel a running countdown; those follow **Accept commands
   from the panel**.
 
+**Player data.** The account owner chooses, in the panel, how much player data
+the account's servers send: counts only, anonymous (the default), pseudonymous, or
+identified. The plugin asks the panel every two minutes and applies the level on
+this machine before anything is sent. It fails closed: until the panel has
+answered, or if an answer cannot be read, names a level that does not exist, or
+is pseudonymous without its salt, the level is counts only. A request that simply
+fails keeps the level already in force. The last answer is kept in
+`oxide/data/Hotwire/panel_sharing.json` with the key it came from, so a reload
+does not start from nothing; a different panel key starts again at counts only.
+There is no setting for this in the config: the choice belongs to the account, in
+the panel. Nothing the plugin sends yet carries a player's identity; this is in
+place before anything that would.
+
 Every schedule entry now carries an `Id`, written the first time the config is
 saved. It lets the panel name an entry that has since moved in the list. Leave
 it alone; a missing or duplicated one is replaced.
@@ -571,7 +584,8 @@ Answers the questions you would otherwise spend a real restart to answer:
   framework check is on.
 - **Whether it is reporting to a panel**, and if not, why not; when the plugin
   list was last sent, when commands and the ban list were last checked, and
-  whether the map is being reported.
+  whether the map is being reported, and the player data sharing level in
+  force.
 
 It changes nothing except the probe file it cleans up after itself. Run it
 after installing, after moving the server, and after any Oxide update.
