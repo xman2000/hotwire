@@ -10,7 +10,7 @@ stop after step 6 and have a perfectly good server; steps 7-9 add the panel, whi
 
 > **Rather not type steps 1–6?** [`setup/hotwire-setup.bat`](../setup/README.md) does them one
 > confirmed step at a time: clock, SteamCMD, Rust, Oxide, the start script, an RCON password and the
-> firewall. The Hotwire plugin and the panel are offered, and optional. Put `hotwire-setup.bat` and `hotwire-setup.ps1` in the folder you want the server in,
+> firewall. Then the Hotwire plugin and connecting to the panel. Put `hotwire-setup.bat` and `hotwire-setup.ps1` in the folder you want the server in,
 > right-click the `.bat`, choose **Run as administrator** and pick **Install**. When it finishes, set
 > your server's name in `hotwire.bat` (step 6, item 4) and start it.
 

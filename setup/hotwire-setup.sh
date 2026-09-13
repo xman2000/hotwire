@@ -154,6 +154,16 @@ read_tty() {
     { read -r __tty_line </dev/tty && printf '%s' "$__tty_line"; } 2>/dev/null || true
 }
 
+# For installing or connecting what someone downloaded this for: Enter means yes. No terminal at all
+# means no, so a cron or a pipe never connects anything by default.
+confirm_default_yes() {
+    [ "$ASSUME_YES" = "1" ] && { note "  (--yes) $1"; return 0; }
+    printf '  %s [Y/n] ' "$1"
+    local a
+    if ! { read -r a </dev/tty; } 2>/dev/null; then say ""; return 1; fi
+    case "$a" in [nN]*) return 1 ;; *) return 0 ;; esac
+}
+
 confirm() {  # never proceed on silence; an unattended run must pass --yes
     [ "$ASSUME_YES" = "1" ] && { note "  (--yes) $1"; return 0; }
     printf '  %s [y/N] ' "$1"
@@ -375,7 +385,7 @@ cmd_connect() {
     say "                 $(keys_file "$root")   (secrets, chmod 600)"
     say "                 $(plugin_file "$root")   (secrets, chmod 600)"
     say ""
-    confirm "Connect this server to the panel?" || { say "  Nothing was changed."; exit 0; }
+    confirm_default_yes "Connect this server to the panel?" || { say "  Nothing was changed."; exit 0; }
 
     body="$(printf '{"token":"%s","install_id":"%s","identity":"%s","name":"%s","components":["plugin","script"]}' \
         "$(json_escape "$CODE")" "$install_id" "$(json_escape "$NAME")" "$(json_escape "$NAME")")"

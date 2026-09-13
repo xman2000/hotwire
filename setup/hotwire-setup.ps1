@@ -13,7 +13,7 @@
 
     THIS SCRIPT IS A GUEST ON SOMEONE ELSE'S MACHINE.
 
-    Every step says what it is about to do and waits for a yes; Enter on its own is always no. It
+    Every step says what it is about to do and waits for an answer; Enter takes the one in capitals. It
     never overwrites what it did not create without asking, never touches a Rust server it did not
     install, and stops to explain rather than guess. Every error names three things: what was tried,
     what was found, and what to do about it.
@@ -123,11 +123,17 @@ function Stop-Politely {
     exit 1
 }
 
-# Silence is never consent: Enter on its own is a no. -Yes answers for connect and detach, which are
-# run unattended; install never takes it, because every step of an install is worth reading.
+# Enter takes the answer shown in capitals. -DefaultYes is for installing what someone downloaded this
+# to install -- SteamCMD, Oxide, the plugin -- and connecting to the panel, each asked only when it is
+# not already there. Everything that replaces, removes or goes beyond that defaults to no.
+# -Yes answers for connect and detach, which are run unattended; install never takes it.
 $script:YesAllowed = $false
-function Confirm-Step([string]$Question) {
+function Confirm-Step([string]$Question, [switch]$DefaultYes) {
     if ($Yes -and $script:YesAllowed) { Write-Note "(-Yes) $Question"; return $true }
+    if ($DefaultYes) {
+        $answer = Read-Host "  $Question [Y/n]"
+        return $answer -notmatch '^\s*[nN]'
+    }
     $answer = Read-Host "  $Question [y/N]"
     return $answer -match '^\s*[yY]'
 }
@@ -417,10 +423,10 @@ function Show-Plan([string]$d) {
     Write-Host "  4. Download the Rust server    about 12 GB, usually 10-30 minutes"
     Write-Host "  5. Install Oxide               about 13 MB"
     Write-Host "  6. Start script                hotwire.bat; every schedule ships switched off"
-    Write-Host "  7. Hotwire plugin              optional -- asked separately"
+    Write-Host "  7. Hotwire plugin              asked separately"
     Write-Host "  8. RCON password               generated into secrets.bat, shown to you once"
     Write-Host "  9. Firewall                    UDP $GamePort and $QueryPort; Rust+ only if you say so; never RCON"
-    Write-Host " 10. Hotwire Panel               optional -- asked at the end; nothing needs it"
+    Write-Host " 10. Hotwire Panel               connect this server, asked at the end"
     Write-Host ""
     Write-Note "Each step asks before it does anything. Saying no to one stops there; run the script"
     Write-Note "again whenever you like and it carries on."
@@ -462,7 +468,10 @@ function Install-SteamCmd([string]$d) {
         "",
         "More: $($Docs['SteamCMD (Valve)'])"
     )
-    if (-not (Confirm-Step "Install SteamCMD into $SteamCmd?")) { Write-Summary; exit 0 }
+    if (-not (Confirm-Step "Install SteamCMD into $SteamCmd?" -DefaultYes)) {
+        Write-Note "The Rust server is downloaded through SteamCMD, so install stops here."
+        Write-Summary; exit 0
+    }
 
     $zip = Join-Path $env:TEMP 'hotwire-steamcmd.zip'
     [void](Invoke-Download $SteamCmdZipUrl $zip 'SteamCMD')
@@ -571,7 +580,13 @@ function Install-Oxide([string]$d) {
         "",
         "More: $($Docs['Oxide (uMod)'])"
     )
-    if (-not (Confirm-Step "Install Oxide now?")) { Write-Summary; exit 0 }
+    if (-not (Confirm-Step "Install Oxide?" -DefaultYes)) {
+        Write-Warn "Skipped: this is a vanilla server, and it cannot run plugins."
+        Write-Note "hotwire.bat installs Oxide every time it updates the server, so a server started with it"
+        Write-Note "will not stay vanilla. To keep it vanilla, comment out the Oxide section in hotwire.bat --"
+        Write-Note "the file marks it. Run install again any time to add Oxide."
+        return
+    }
 
     $zip = Join-Path $env:TEMP 'hotwire-oxide.zip'
     $response = Invoke-Download $OxideZipUrl $zip 'Oxide for Rust'
@@ -676,9 +691,9 @@ function Install-Launcher([string]$d) {
 }
 
 # ----------------------------------------------------------- 7. the plugin --
-# Optional. Saying no carries on with the install: the server starts and runs without it.
+# Asked, defaulting to yes. No carries on with the install; it is skipped when Oxide was declined.
 function Install-Plugin([string]$d) {
-    Write-Head "7. Hotwire plugin (optional)"
+    Write-Head "7. Hotwire plugin"
     $pluginDir = Join-Path $d 'oxide\plugins'
     $plugin = Join-Path $pluginDir 'Hotwire.cs'
 
@@ -687,16 +702,17 @@ function Install-Plugin([string]$d) {
         Save-Record $d 'plugin'
         return
     }
+    if (-not (Test-Path -LiteralPath (Join-Path $d 'RustDedicated_Data\Managed\Oxide.Rust.dll'))) {
+        Write-Note "Skipped: the plugin runs on Oxide, which is not installed."
+        return
+    }
 
     Write-Why @(
         "The Hotwire plugin adds scheduled, announced restarts: it counts down in game, kicks with a",
-        "reason, saves, and hands over to hotwire.bat. Every schedule ships switched off.",
-        "",
-        "It is optional. hotwire.bat starts the server and brings it back without it, and you can add",
-        "it later by running install again."
+        "reason, saves, and hands over to hotwire.bat. Every schedule ships switched off."
     )
-    if (-not (Confirm-Step "Install the Hotwire plugin?")) {
-        Write-Note "Skipped. The server does not need it."
+    if (-not (Confirm-Step "Install the Hotwire plugin?" -DefaultYes)) {
+        Write-Note "Skipped. Run install again any time to add it."
         return
     }
 
@@ -1193,7 +1209,7 @@ function Invoke-Connect {
     Write-Host "               $(Get-KeysFile $r)   (secret)"
     Write-Host "               $(Get-PluginFile $r)   (secret)"
     Write-Host ""
-    if (-not (Confirm-Step "Connect this server to the panel?")) { Write-Host "  Nothing was changed."; return 0 }
+    if (-not (Confirm-Step "Connect this server to the panel?" -DefaultYes)) { Write-Host "  Nothing was changed."; return 0 }
 
     $payload = @{
         token = $Code; install_id = $installId; identity = $Name; name = $Name
@@ -1304,23 +1320,20 @@ function Invoke-Detach {
 }
 
 # ----------------------------------------------------------- 10. the panel --
-# Optional, and asked last: the server is complete before our website is mentioned, and saying no
-# changes nothing about it. Saying yes runs exactly what 'connect' runs.
+# Asked last, once the server is complete. Yes runs exactly what 'connect' runs; no changes nothing.
 function Invoke-PanelOffer([string]$d) {
-    Write-Head "10. Hotwire Panel (optional)"
+    Write-Head "10. Hotwire Panel"
     if (Test-Path -LiteralPath (Get-StateFile $d)) {
         Write-Ok "this server is already connected -- 'Show the connection' in the menu says where"
         return
     }
     Write-Why @(
-        "Hotwire Panel is our website for managing servers. It is optional: nothing installed above",
-        "needs it, and you can connect later from the menu, or never.",
-        "",
-        "Connecting needs an account and a code from the panel. It writes three small files in this",
-        "folder, and 'Disconnect' in the menu removes them."
+        "Hotwire Panel is our web panel for managing Rust servers. Connecting needs an account and a",
+        "code from the panel, writes three small files in this folder, and 'Disconnect' in the menu",
+        "removes them."
     )
-    if (-not (Confirm-Step "Connect this server to Hotwire Panel now?")) {
-        Write-Note "Not connected. Everything above works without it."
+    if (-not (Confirm-Step "Connect this server to Hotwire Panel?" -DefaultYes)) {
+        Write-Note "Not connected. Connect any time from the menu."
         return
     }
     $script:Root = $d
@@ -1336,7 +1349,7 @@ function Invoke-Install {
     Write-Host ""
     Write-Why @(
         "This walks through installing a Rust dedicated server, one step at a time. Every step says",
-        "what it is about to do and waits for a yes. Enter on its own always means no.",
+        "what it is about to do and waits for an answer. Enter takes the one in capitals.",
         "",
         "It does not start the server or connect to anything of ours. When it finishes, the server",
         "is ready to name and start.",
@@ -1417,7 +1430,7 @@ function Invoke-Menu {
         if (Test-Path -LiteralPath $candidate) { $plugin = "$dir\Hotwire.cs"; break }
     }
     if ($launcher) { Write-Ok "Hotwire launcher: hotwire.bat" } else { Write-No "Hotwire launcher: no hotwire.bat in this folder" }
-    if ($plugin) { Write-Ok "Hotwire plugin: $plugin" } else { Write-No "Hotwire plugin: no Hotwire.cs in oxide\plugins (optional)" }
+    if ($plugin) { Write-Ok "Hotwire plugin: $plugin" } else { Write-No "Hotwire plugin: no Hotwire.cs in oxide\plugins" }
 
     # 4. Connected
     $connected = Test-Path -LiteralPath (Get-StateFile $here)
@@ -1426,7 +1439,7 @@ function Invoke-Menu {
         try { $state = Read-State $here } catch { }
         if ($state) { Write-Ok "connected to $($state.panel_url) as '$($state.identity)'" }
         else { Write-Warn "connected, but hotwire\connect.json could not be read" }
-    } else { Write-No "not connected to Hotwire Panel (optional)" }
+    } else { Write-No "not connected to Hotwire Panel" }
 
     Write-Host ""
     Write-Host "  1  Install a Rust server in this folder"
@@ -1444,7 +1457,7 @@ function Invoke-Menu {
             Write-Note "  $($Docs['This guide, step by step'])"
         }
     }
-    elseif (-not $connected) { Write-Note "Suggested: 2, then 3 -- only if you want the panel. Everything works without it." }
+    elseif (-not $connected) { Write-Note "Suggested: 3, connect to Hotwire Panel." }
     else { Write-Note "Suggested: 4." }
     Write-Note "Enter on its own leaves without doing anything."
 

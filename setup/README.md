@@ -1,7 +1,8 @@
 # hotwire-setup
 
 Installs a Rust server with Oxide, and connects it to [Hotwire Panel](https://hotpanel.on-forge.com)
-if you want that. **Both halves ask before every step**, and neither is required to run a server.
+as well. **Every step asks first.** Installing something that is not there yet defaults to yes; replacing
+or removing anything defaults to no.
 
 | file | platform |
 |---|---|
@@ -30,8 +31,8 @@ setting, and is short enough to read first.
 ## Commands
 
 ```
-install   Rust with Oxide, a start script, an RCON password, the firewall   (Windows)
-          our plugin and Hotwire Panel only if you say yes
+install   SteamCMD, Rust, Oxide, the start script, an RCON password, the firewall,
+          the Hotwire plugin, and connecting to Hotwire Panel               (Windows)
 doctor    check this machine is ready to connect. read-only, changes nothing
 connect   connect to the panel. asks for the code; nothing is written until you confirm
 status    what this server is connected to
@@ -48,12 +49,12 @@ Linux: `./hotwire-setup.sh doctor` and so on. It needs bash, curl, openssl, and 
 | 2 | Where the server goes: **this folder unless you say otherwise** | nothing yet |
 | 3 | SteamCMD into `C:\steamcmd`, where `hotwire.bat` looks for it | reuses one already there |
 | 4 | The Rust server, app 258550, about 12 GB | the server folder |
-| 5 | Oxide, checked to be the Windows build and a real archive before it is unpacked | the server folder |
+| 5 | Oxide, checked to be the Windows build and a real archive before it is unpacked. Defaults to yes; no leaves a vanilla server — but `hotwire.bat` installs Oxide whenever it updates, unless its Oxide section is commented out | the server folder |
 | 6 | **Start script**: `hotwire.bat` from the public repository's `main`, with `ROOT` and `STEAMCMD` set for this folder and Windows line endings. Every schedule ships switched off | `hotwire.bat`; an existing one is left alone |
-| 7 | **Hotwire plugin — optional, asked separately.** Scheduled, announced restarts. No carries on with the install | `oxide\plugins\Hotwire.cs` |
+| 7 | **Hotwire plugin**, asked separately, defaults to yes. Scheduled, announced restarts. Skipped without Oxide | `oxide\plugins\Hotwire.cs` |
 | 8 | **RCON password**: 32 random letters and digits into `secrets.bat`, shown once and copied to the clipboard | `secrets.bat`, readable only by Administrators and you; an existing one is never replaced |
 | 9 | **Windows Firewall**: reports what is already open or blocked, then opens UDP 28015 and 28017; TCP 28083 (Rust+) only if asked | rules in the group `Hotwire` |
-| 10 | **Hotwire Panel — optional, asked last.** Yes runs `connect`; no changes nothing | only if yes: the three files under *doctor and connect* |
+| 10 | **Hotwire Panel**, asked last, defaults to yes. Yes runs `connect`; no changes nothing | only if yes: the three files under *doctor and connect* |
 
 It never opens RCON (TCP 28016), and warns if something else has. It never touches a Rust server it
 did not install: a folder with `RustDedicated.exe` and no `hotwire\install.json` is refused. It does
