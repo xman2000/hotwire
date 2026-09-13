@@ -25,6 +25,18 @@ sit above a launcher `1.1.7`. Read the label, not the number.
 at the top of the file — it is a comment, not something it echoes, so read it
 rather than watch for it.
 
+## 1.1.12 — launcher — 2026-09-13
+
+**Its own map, not everyone's.**
+
+- **`SERVER_SEED`** in section 4.1. Empty means the game's own seed, and Rust's own default is **1337**, so
+  every server left to it plays the same map. `hotwire-setup` now writes a random seed there when it builds
+  a new server. It picks once, so restarts keep the map. A server that already has a save gets no seed,
+  because a new seed on a played server starts a new map.
+- The option check refuses a `server.seed` that is not a whole number from 0 to 2147483647.
+- `server.randomize_seed` is deliberately not used: it picks a new seed on every start, and so a new map on
+  every restart.
+
 ## 1.1.7 — plugin — 2026-09-13
 
 **The map image arrives by itself.** No console command, no upload.

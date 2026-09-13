@@ -9,7 +9,7 @@ set "CHECK_ONLY="
 if /i "%~1"=="check" set "CHECK_ONLY=1"
 
 REM ==[ H O T W I R E ]===================================================
-REM  Version 1.1.11  2026-09-13
+REM  Version 1.1.12  2026-09-13
 REM  Built by xman2000 and Claude.  MIT License.
 REM
 REM  The launcher. Starts a Rust dedicated server, relaunches it when it
@@ -957,10 +957,17 @@ REM     use server.levelurl instead.
 REM   [string, default "Procedural Map"]
 set "ARGS=!ARGS! +server.level "Procedural Map""
 
-REM   server.seed -- Any integer. The same seed and worldsize always give
-REM     the same map.
+REM   server.seed -- The map. The same seed and worldsize always give the
+REM     same map, so left empty every server gets the game's own map, 1337.
+REM     hotwire-setup writes a random seed here when it builds a new
+REM     server. Changing it on a server that has been played starts a new
+REM     map, which wipes everything built on the old one. A whole number,
+REM     0 to 2147483647. (server.randomize_seed picks a new seed on every
+REM     start, and so a new map on every restart: that belongs in a wipe
+REM     script, never here.)
 REM   [int, default 1337]
-REM set "ARGS=!ARGS! +server.seed VALUE"
+set "SERVER_SEED="
+if defined SERVER_SEED set "ARGS=!ARGS! +server.seed !SERVER_SEED!"
 
 REM   server.worldsize -- Metres across, 1000-6000. Memory and boot time
 REM     climb faster than the number does.
@@ -1474,6 +1481,8 @@ set "PSCHK=!PSCHK!if($val.ContainsKey([string]('server.identity'))){ $v=[string]
 set "PSCHK=!PSCHK! $bad=[char[]]@([char]92,[char]47,[char]58,[char]42,[char]63,[char]34,[char]60,[char]62,[char]124); "
 set "PSCHK=!PSCHK! if($v.Length -eq 0){ $p+=[string]('server.identity is empty; it names the save folder') } "
 set "PSCHK=!PSCHK! elseif($v.IndexOfAny($bad) -ge 0){ $p+=[string]::Concat([string]('server.identity is '),$v,[string]('; it names a folder, so no path characters')) } } "
+set "PSCHK=!PSCHK!if($val.ContainsKey([string]('server.seed'))){ $v=[string]$val[[string]('server.seed')]; $sn=[long]0; "
+set "PSCHK=!PSCHK! if((-not [long]::TryParse($v,[ref]$sn)) -or ($sn -lt 0) -or ($sn -gt 2147483647)){ $p+=[string]::Concat([string]('server.seed is '),$v,[string]('; it must be a whole number from 0 to 2147483647')) } } "
 set "PSCHK=!PSCHK!foreach($m in $p){ Write-Output ([string]::Concat([string]('  '),$m)) } "
 set "PSCHK=!PSCHK!if($p.Count -gt 0){ exit 2 } else { exit 0 } "
 

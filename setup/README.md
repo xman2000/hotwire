@@ -163,6 +163,9 @@ that defaults to no, because leaving staging for public goes back to an older bu
 It never opens RCON, and warns if something else has. It never touches a Rust server it did not install:
 a folder with `RustDedicated.exe` and no `hotwire\install.json` is refused. It does not start the server.
 When it finishes, fill in `SERVER_HOSTNAME` and `SERVER_DESCRIPTION` in `hotwire.bat` and double-click it.
+Install writes a random `SERVER_SEED` into a new `hotwire.bat`, so the server gets its own map (Rust's default,
+1337, is the same for everyone); restarts keep it. A server that already has a save keeps its map and gets no
+seed.
 
 Stopped halfway? Run it again. From the server's folder it carries on there; from anywhere else it lists
 the servers it knows. SteamCMD resumes a partial download, and Oxide puts every file in place again.

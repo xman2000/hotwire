@@ -136,9 +136,15 @@ while true; do
 done
 ```
 
-Set the name and description to your own. Everything not on that list, including player count, map
-seed, world size, how often it saves and the save folder, is left to the game's own defaults. To choose
-one yourself, add it as another line, for example `+server.maxplayers 100 \`. The ports are set because
+Set the name and description to your own. Everything not on that list, including player count, world
+size, how often it saves and the save folder, is left to the game's own defaults. To choose one yourself,
+add it as another line, for example `+server.maxplayers 100 \`.
+
+**Pick a seed before the first start.** Rust's default seed is 1337, so without one your server plays the
+same map as every other server left at the default. Choose a random one once with
+`shuf -i 1-2147483647 -n 1` and add `+server.seed <that number> \`. Keep it: a different seed on a server
+that has been played is a new map. (`+server.randomize_seed true` picks a new seed on every start, so never
+put it in the start script.) The ports are set because
 they have to match the firewall in step 4. On a machine with a second server, give that one different
 ports — for example 28115, 28117 and 28116 — and open them too.
 

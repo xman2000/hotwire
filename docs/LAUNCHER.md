@@ -186,8 +186,16 @@ no comment, because someone will believe it.
 
 **Out of the box it sets only what it must.** That is the ports, because they have to match the
 firewall, and what the server cannot run without: `-batchmode -nographics`, `server.level`, the RCON
-password and `rcon.web`. Everything else — seed, world size, save interval, player count, the save folder
-— is the game's own default until you choose otherwise.
+password and `rcon.web`. Everything else — world size, save interval, player count, the save folder — is
+the game's own default until you choose otherwise.
+
+**The seed is the exception, and why.** Rust's own default seed is **1337** (read from the build), so a
+server left to the default plays the same map as every other one. `SERVER_SEED` in section 4.1 sets it;
+empty means the game's 1337. `hotwire-setup` writes a random one there when it builds a new server — once,
+so every restart keeps the same map — and leaves it empty for a server that already has a save, because a
+new seed on a played server starts a new map. Change it only before the first start, or as a deliberate
+wipe. `server.randomize_seed` is not used: it picks a new seed on every start, which on a restart means a
+new map.
 
 **The server's name, description, tags and player count have their own settings**, filled in rather than
 switched on with `REM`: `SERVER_HOSTNAME` and `SERVER_DESCRIPTION` in section 4.3, `SERVER_TAGS` beside

@@ -126,6 +126,8 @@ becoming a disk full of logs.
    yet — Oxide makes it on the first start.
 4. Open `hotwire.bat` in Notepad. In section 4.3 fill in `SERVER_HOSTNAME` and `SERVER_DESCRIPTION`; in
    section 4.2, `SERVER_MAXPLAYERS` if you want a number other than the game's. `SERVER_TAGS` is optional.
+   `SERVER_SEED` in section 4.1 is the map: install picked a random one. Change it now if you want a
+   particular map — after the server has been played, a new seed is a new map.
    Each option is explained beside it. Anything left empty is the game's own default. The plugin's
    **schedules all ship disabled**, so installing it cannot restart anything by surprise.
 

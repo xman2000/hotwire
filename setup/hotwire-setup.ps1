@@ -1558,7 +1558,7 @@ function Install-Oxide([string]$d) {
 # Sets the lines hotwire.bat needs for this install -- ROOT, STEAMCMD and, for a vanilla server,
 # INSTALL_FRAMEWORK -- and returns the file with CRLF line endings. Returns $null when the text is not
 # the launcher this script knows: a changed default, an older launcher, or an error page.
-function Set-LauncherPaths([string]$Text, [string]$RootDir, [string]$SteamCmdExe, [bool]$Vanilla = $false, [string]$Branch = '', $Ports = $null) {
+function Set-LauncherPaths([string]$Text, [string]$RootDir, [string]$SteamCmdExe, [bool]$Vanilla = $false, [string]$Branch = '', $Ports = $null, [string]$Seed = '') {
     $rootLine = 'set "ROOT=C:\rustserver"'
     # From 1.1.11 ROOT is the launcher's own folder, which is exactly right for a launcher written beside its
     # server, and stays right when the folder is copied. That line is left as it is.
@@ -1569,6 +1569,7 @@ function Set-LauncherPaths([string]$Text, [string]$RootDir, [string]$SteamCmdExe
     $gameLine = 'set "ARGS=!ARGS! +server.port 28015"'
     $queryLine = 'set "ARGS=!ARGS! +server.queryport 28017"'
     $rconLine = 'set "ARGS=!ARGS! +rcon.port 28016"'
+    $seedLine = 'set "SERVER_SEED="'
     $setBranch = $Branch -and $Branch -ne 'public'
     $setPorts = $Ports -and -not ($Ports.Game -eq 28015 -and $Ports.Query -eq 28017 -and $Ports.Rcon -eq 28016)
     $lines = ($Text -replace "`r`n", "`n") -split "`n"
@@ -1580,6 +1581,7 @@ function Set-LauncherPaths([string]$Text, [string]$RootDir, [string]$SteamCmdExe
     if (@($lines | Where-Object { $_ -eq $steamLine }).Count -ne 1) { return $null }
     if ($Vanilla -and @($lines | Where-Object { $_ -eq $frameworkLine }).Count -ne 1) { return $null }
     if ($setBranch -and @($lines | Where-Object { $_ -eq $branchLine }).Count -ne 1) { return $null }
+    if ($Seed -and @($lines | Where-Object { $_ -eq $seedLine }).Count -ne 1) { return $null }
     $lines = $lines | ForEach-Object {
         if ($_ -eq $rootLine) { "set `"ROOT=$RootDir`"" }
         elseif ($setPorts -and $_ -eq $gameLine) { "set `"ARGS=!ARGS! +server.port $($Ports.Game)`"" }
@@ -1588,6 +1590,7 @@ function Set-LauncherPaths([string]$Text, [string]$RootDir, [string]$SteamCmdExe
         elseif ($_ -eq $steamLine) { "set `"STEAMCMD=$SteamCmdExe`"" }
         elseif ($Vanilla -and $_ -eq $frameworkLine) { 'set "INSTALL_FRAMEWORK=0"' }
         elseif ($setBranch -and $_ -eq $branchLine) { "set `"STEAM_BRANCH=$Branch`"" }
+        elseif ($Seed -and $_ -eq $seedLine) { "set `"SERVER_SEED=$Seed`"" }
         else { $_ }
     }
     return ($lines -join "`r`n")
@@ -1663,6 +1666,31 @@ function Sync-LauncherBranch([string]$d) {
     Add-Change "set STEAM_BRANCH=$branch in $launcher" "copy $backup back over it"
 }
 
+# A random map for a new server. Rust's own default seed is 1337, so a server left to the default
+# plays the same map as every other one. The seed is picked once, here, and written into
+# hotwire.bat; server.randomize_seed would pick a new one on every start, which is a new map on
+# every restart. 1 to 2147483647, the range server.seed accepts, every value equally likely.
+function New-MapSeed {
+    $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+    try {
+        $bytes = [byte[]]::new(4)
+        do {
+            $rng.GetBytes($bytes)
+            $value = [BitConverter]::ToUInt32($bytes, 0) -band 0x7FFFFFFF
+        } while ($value -eq 0)
+        return [long]$value
+    } finally { $rng.Dispose() }
+}
+
+# The saved maps and saves already under server\, in any identity folder. A server that has them has
+# been played: giving it a seed now would start a different map on its next start, which is a wipe.
+function Get-ExistingSaves([string]$d) {
+    $serverDir = Join-Path $d 'server'
+    if (-not (Test-Path -LiteralPath $serverDir)) { return @() }
+    return @(Get-ChildItem -LiteralPath $serverDir -Recurse -File -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -like '*.sav' -or $_.Name -like '*.sav.*' -or $_.Name -like '*.map' })
+}
+
 function Install-Launcher([string]$d) {
     Write-Step "Start script"
     $launcher = Join-Path $d 'hotwire.bat'
@@ -1691,6 +1719,14 @@ function Install-Launcher([string]$d) {
     if ($vanilla) { $why += "  INSTALL_FRAMEWORK = 0     no Oxide here, so it runs a vanilla server" }
     $chosenBranch = Get-ChosenBranch $d
     if ($chosenBranch -and $chosenBranch -ne 'public') { $why += "  STEAM_BRANCH      = $chosenBranch   the branch chosen for this server" }
+    $saves = @(Get-ExistingSaves $d)
+    $seed = ''
+    if ($saves.Count -eq 0) {
+        $seed = [string](New-MapSeed)
+        $why += "  SERVER_SEED       = $seed   a random map, picked once; restarts keep it"
+    } else {
+        $why += "  SERVER_SEED       = left empty: this server already has a saved map, and a seed would start a new one"
+    }
     $why += @("", "Say no to start the server with a script of your own instead.", "", "More: $($Docs['Hotwire (source)'])")
     Write-Why $why
 
@@ -1714,19 +1750,32 @@ function Install-Launcher([string]$d) {
     try { $text = [System.IO.File]::ReadAllText($download) }
     finally { Remove-Item -LiteralPath $download -Force -ErrorAction SilentlyContinue }
 
-    $edited = Set-LauncherPaths $text $d $steamCmdExe $vanilla (Get-ChosenBranch $d) $ports
+    $edited = Set-LauncherPaths $text $d $steamCmdExe $vanilla (Get-ChosenBranch $d) $ports $seed
+    if ($null -eq $edited -and $seed) {
+        # A hotwire.bat from before SERVER_SEED existed: set up everything else, and say what that means.
+        $edited = Set-LauncherPaths $text $d $steamCmdExe $vanilla (Get-ChosenBranch $d) $ports
+        if ($null -ne $edited) {
+            Write-Warn "this hotwire.bat has no SERVER_SEED setting, so the server plays the game's default map, seed 1337"
+            $seed = ''
+        }
+    }
     if ($null -eq $edited) {
         Stop-Politely "setting up the downloaded hotwire.bat" "it does not contain the lines this script changes" `
             "nothing was written; download launcher\hotwire.bat by hand from $($Docs['Hotwire (source)']) put it beside RustDedicated.exe and check STEAMCMD near the top"
     }
     Write-FileAtomic $launcher $edited
     Add-Created $d $launcher
+    if ($seed) {
+        Write-Ok "the map is seed $seed, picked at random for this server"
+        Write-Note "To play a particular map instead, change SERVER_SEED in hotwire.bat BEFORE the first start."
+        Write-Note "Changing it after the server has been played starts a new map."
+    }
     if ($vanilla) {
         Write-Ok "hotwire.bat written for a vanilla server, with ROOT and STEAMCMD set for this install"
-        Add-Change "created $launcher (ROOT, STEAMCMD, INSTALL_FRAMEWORK=0)" "delete hotwire.bat"
+        Add-Change "created $launcher (ROOT, STEAMCMD, INSTALL_FRAMEWORK=0$(if ($seed) { ", SERVER_SEED=$seed" }))" "delete hotwire.bat"
     } else {
         Write-Ok "hotwire.bat written, with ROOT and STEAMCMD set for this install"
-        Add-Change "created $launcher (ROOT and STEAMCMD set)" "delete hotwire.bat"
+        Add-Change "created $launcher (ROOT and STEAMCMD set$(if ($seed) { ", SERVER_SEED=$seed" }))" "delete hotwire.bat"
     }
     Save-Record $d 'launcher'
 }
