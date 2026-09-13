@@ -45,6 +45,7 @@ believes it.
 
 STATUS: run against a real Assembly-CSharp.dll on 2026-09-05 (1,623 convars),
 and used to curate launcher/hotwire.bat. Re-run --check after every Rust update.
+"""
 
 import re
 import struct
