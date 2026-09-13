@@ -30,7 +30,8 @@ setting, and is short enough to read first.
 ## Commands
 
 ```
-install   SteamCMD, the Rust server and Oxide, then the firewall        (Windows)
+install   Rust with Oxide, a start script, an RCON password, the firewall   (Windows)
+          our plugin and Hotwire Panel only if you say yes
 doctor    check this machine is ready to connect. read-only, changes nothing
 connect   connect to the panel. asks for the code; nothing is written until you confirm
 status    what this server is connected to
@@ -48,11 +49,15 @@ Linux: `./hotwire-setup.sh doctor` and so on. It needs bash, curl, openssl, and 
 | 3 | SteamCMD into `C:\steamcmd`, where `hotwire.bat` looks for it | reuses one already there |
 | 4 | The Rust server, app 258550, about 12 GB | the server folder |
 | 5 | Oxide, checked to be the Windows build and a real archive before it is unpacked | the server folder |
-| 6 | **Windows Firewall**: reports what is already open or blocked, then opens UDP 28015 and 28017; TCP 28083 (Rust+) only if asked | rules in the group `Hotwire` |
+| 6 | **Start script**: `hotwire.bat` from the public repository's `main`, with `ROOT` and `STEAMCMD` set for this folder and Windows line endings. Every schedule ships switched off | `hotwire.bat`; an existing one is left alone |
+| 7 | **Hotwire plugin — optional, asked separately.** Scheduled, announced restarts. No carries on with the install | `oxide\plugins\Hotwire.cs` |
+| 8 | **RCON password**: 32 random letters and digits into `secrets.bat`, shown once and copied to the clipboard | `secrets.bat`, readable only by Administrators and you; an existing one is never replaced |
+| 9 | **Windows Firewall**: reports what is already open or blocked, then opens UDP 28015 and 28017; TCP 28083 (Rust+) only if asked | rules in the group `Hotwire` |
+| 10 | **Hotwire Panel — optional, asked last.** Yes runs `connect`; no changes nothing | only if yes: the three files under *doctor and connect* |
 
 It never opens RCON (TCP 28016), and warns if something else has. It never touches a Rust server it
 did not install: a folder with `RustDedicated.exe` and no `hotwire\install.json` is refused. It does
-not start the server or choose a password.
+not start the server. When it finishes, set the server's name in `hotwire.bat` and double-click it.
 
 Stopped halfway? Run it again. `hotwire\install.json` records the finished steps, and SteamCMD
 resumes a partial download. `Remove-NetFirewallRule -Group Hotwire` removes the rules it added.
