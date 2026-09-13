@@ -429,7 +429,15 @@ function Install-SteamCmd([string]$d) {
     $exe = Join-Path $SteamCmd 'steamcmd.exe'
 
     if (Test-Path -LiteralPath $exe) {
-        Write-Ok "SteamCMD is already at $exe -- using it as it is"
+        Write-Ok "SteamCMD is already at $exe -- reusing it"
+        # A SteamCMD that was unpacked but never run updates itself the first time it is asked to do
+        # anything, and on a real Windows machine that run exited (code 7) before downloading Rust. So
+        # it gets its self-update run here, on its own, whether or not it has had one before. Already
+        # current, this takes a few seconds. Its exit code is not judged: the download step is.
+        Write-Note "letting SteamCMD update itself first..."
+        Write-Host ""
+        & $exe +quit | Out-Host
+        Write-Host ""
         Save-Record $d 'steamcmd'
         return $exe
     }
