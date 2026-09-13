@@ -58,6 +58,9 @@ $AppId = '258550'
 # install came out on staging with nothing here asking for it. Facepunch's wiki: once an install is on a
 # newer build, name public to get back to it. public is only the suggestion.
 $DefaultBranch = 'public'
+
+# How long to wait for another server's SteamCMD run before giving up. See Invoke-SteamCmdLocked.
+$SteamCmdWaitMinutes = 60
 $DefaultPanel = 'https://hotpanel.on-forge.com'
 
 # Every URL below was checked on 2026-09-13. umod.org/games/rust/download answers 301 to
@@ -381,7 +384,10 @@ function Update-Record([string]$d, [scriptblock]$Change) {
         created    = [string[]](Get-RecordList $record 'created')
     }
     if ($record -and $record.started_at) { $data.started_at = [string]$record.started_at }
-    if ($record -and ($record.PSObject.Properties.Name -contains 'branch') -and $record.branch) { $data.branch = [string]$record.branch }
+    # Anything else the record holds -- the branch, the ports -- is carried over as it is.
+    if ($record) { foreach ($property in $record.PSObject.Properties) { if (-not $data.Contains($property.Name)) { $data[$property.Name] = $property.Value } } }
+    # Where the record is, so a copied server folder can be told from the original.
+    $data.folder = $d
     & $Change $data
     $f = Get-RecordFile $d
     $isNew = -not (Test-Path -LiteralPath $f)
@@ -429,18 +435,176 @@ function Confirm-Offer([string]$d, [string]$Key, [string]$Question) {
     return $yes
 }
 
-# The last install folder, remembered per Windows user, so running setup again from anywhere offers to
-# carry on with it rather than starting over somewhere new.
-function Get-LastInstallFile { if ($env:LOCALAPPDATA) { return (Join-Path $env:LOCALAPPDATA 'Hotwire\setup.json') }; return $null }
-function Get-LastInstall {
-    $f = Get-LastInstallFile
-    if (-not $f -or -not (Test-Path -LiteralPath $f)) { return $null }
-    try { return [string](Get-Content -LiteralPath $f -Raw | ConvertFrom-Json).last_install } catch { return $null }
+# Every folder install has set up for this Windows user, newest first, in %LOCALAPPDATA%\Hotwire\setup.json.
+# Several servers on one machine are normal -- a production and a dev server, often on different branches --
+# so no tool ever picks one of them silently. They are listed, and the owner chooses.
+function Get-SetupStateFile { if ($env:LOCALAPPDATA) { return (Join-Path $env:LOCALAPPDATA 'Hotwire\setup.json') }; return $null }
+
+function Get-KnownInstalls {
+    $f = Get-SetupStateFile
+    if (-not $f -or -not (Test-Path -LiteralPath $f)) { return @() }
+    try { $json = Get-Content -LiteralPath $f -Raw | ConvertFrom-Json } catch { return @() }
+    $names = @($json.PSObject.Properties.Name)
+    $list = @()
+    if ($names -contains 'installs') { $list += @($json.installs | Where-Object { $_ } | ForEach-Object { [string]$_ }) }
+    if ($names -contains 'last_install' -and $json.last_install) { $list = @([string]$json.last_install) + $list }
+    $seen = @{}
+    $known = @()
+    foreach ($folder in $list) {
+        $key = $folder.TrimEnd('\').ToLowerInvariant()
+        if ($seen.ContainsKey($key)) { continue }
+        $seen[$key] = $true
+        if ((Test-Path -LiteralPath (Get-RecordFile $folder)) -or (Test-Path -LiteralPath (Join-Path $folder 'RustDedicated.exe'))) { $known += $folder }
+    }
+    return $known
 }
-function Save-LastInstall([string]$d) {
-    $f = Get-LastInstallFile
+
+function Save-KnownInstall([string]$d) {
+    $f = Get-SetupStateFile
     if (-not $f) { return }
-    try { Write-FileAtomic $f ([ordered]@{ last_install = $d } | ConvertTo-Json) } catch { }
+    $known = @($d) + @(Get-KnownInstalls | Where-Object { $_.TrimEnd('\') -ine $d.TrimEnd('\') })
+    try { Write-FileAtomic $f ([ordered]@{ installs = [string[]]$known } | ConvertTo-Json) } catch { }
+}
+
+# A server as a person would tell it apart from another: its folder, branch, game port and panel name.
+function Get-ServerLabel([string]$d) {
+    $bits = @()
+    try { $branch = Get-InstalledBranch $d; if ($branch) { $bits += "branch $branch" } } catch { }
+    try { $ports = Get-ServerPorts $d; if ($ports) { $bits += "game port $($ports.Game)" } } catch { }
+    try { $state = Read-State $d; if ($state -and $state.identity) { $bits += "panel name $($state.identity)" } } catch { }
+    if ($bits.Count -gt 0) { return "$d   (" + ($bits -join ', ') + ")" }
+    return $d
+}
+
+# Lists known servers by number and returns the one chosen, or $null. Enter on its own chooses none.
+function Select-KnownServer([string]$Question, [string]$Exclude = '', [switch]$IncludeUnfinished) {
+    $known = @(Get-KnownInstalls | Where-Object {
+        ($_.TrimEnd('\') -ine $Exclude.TrimEnd('\')) -and ($IncludeUnfinished -or (Test-Path -LiteralPath (Join-Path $_ 'RustDedicated.exe')))
+    })
+    if ($known.Count -eq 0) { return $null }
+    Write-Host ""
+    Write-Host "  $Question" -ForegroundColor Cyan
+    for ($i = 0; $i -lt $known.Count; $i++) { Write-Host ("    {0}  {1}" -f ($i + 1), (Get-ServerLabel $known[$i])) }
+    Write-Note "Enter on its own chooses none of them."
+    $answer = ([string](Read-Host "  Choose")).Trim()
+    $n = 0
+    if ([int]::TryParse($answer, [ref]$n) -and $n -ge 1 -and $n -le $known.Count) { return $known[$n - 1] }
+    return $null
+}
+
+# ------------------------------------------------------------------ ports
+# Each server on a machine needs its own ports. The layout is hotwire.bat's: game, RCON one above it,
+# query two above; Rust+ is the larger of game and RCON plus 67 (Rust wiki). A server's ports come from its
+# record, then from its hotwire.bat, and are chosen once, when first needed.
+function New-PortSet([int]$Game, [int]$Query, [int]$Rcon) {
+    return [pscustomobject]@{ Game = $Game; Query = $Query; Rcon = $Rcon; App = ([math]::Max($Game, $Rcon) + 67) }
+}
+
+function Get-LauncherPorts([string]$d) {
+    $launcher = Join-Path $d 'hotwire.bat'
+    if (-not (Test-Path -LiteralPath $launcher)) { return $null }
+    $text = [System.IO.File]::ReadAllText($launcher)
+    $game = [regex]::Match($text, '(?m)^set "ARGS=!ARGS! \+server\.port (\d+)"\r?$')
+    $query = [regex]::Match($text, '(?m)^set "ARGS=!ARGS! \+server\.queryport (\d+)"\r?$')
+    $rcon = [regex]::Match($text, '(?m)^set "ARGS=!ARGS! \+rcon\.port (\d+)"\r?$')
+    if (-not ($game.Success -and $query.Success -and $rcon.Success)) { return $null }
+    return New-PortSet ([int]$game.Groups[1].Value) ([int]$query.Groups[1].Value) ([int]$rcon.Groups[1].Value)
+}
+
+function Get-ServerPorts([string]$d) {
+    $record = Read-Record $d
+    if ($record -and ($record.PSObject.Properties.Name -contains 'ports') -and $record.ports -and $record.ports.game) {
+        return New-PortSet ([int]$record.ports.game) ([int]$record.ports.query) ([int]$record.ports.rcon)
+    }
+    return (Get-LauncherPorts $d)
+}
+
+function Set-ServerPorts([string]$d, $Ports) {
+    Update-Record $d { param($r) $r.ports = [ordered]@{ game = $Ports.Game; query = $Ports.Query; rcon = $Ports.Rcon } }
+}
+
+# Ports already taken on this machine: every other known server's, and anything listening right now.
+function Get-PortsInUse([string]$d) {
+    $used = New-Object 'System.Collections.Generic.HashSet[int]'
+    foreach ($other in @(Get-KnownInstalls | Where-Object { $_.TrimEnd('\') -ine $d.TrimEnd('\') })) {
+        $p = $null
+        try { $p = Get-ServerPorts $other } catch { }
+        if ($p) { foreach ($n in @($p.Game, $p.Query, $p.Rcon, $p.App)) { [void]$used.Add([int]$n) } }
+    }
+    try { Get-NetUDPEndpoint -ErrorAction Stop | ForEach-Object { [void]$used.Add([int]$_.LocalPort) } } catch { }
+    try { Get-NetTCPConnection -State Listen -ErrorAction Stop | ForEach-Object { [void]$used.Add([int]$_.LocalPort) } } catch { }
+    return ,$used
+}
+
+function Test-PortSetFree($Set, $Used) {
+    foreach ($n in @($Set.Game, $Set.Query, $Set.Rcon, $Set.App)) { if ($Used.Contains([int]$n)) { return $false } }
+    return $true
+}
+
+# The first free set in steps of 100 from 28015. A step of 100 keeps one server's Rust+ port (+68) clear of
+# the next server's game port.
+function Find-FreePortSet($Used) {
+    for ($game = 28015; $game -le 65400; $game += 100) {
+        $set = New-PortSet $game ($game + 2) ($game + 1)
+        if (Test-PortSetFree $set $Used) { return $set }
+    }
+    return (New-PortSet 28015 28017 28016)
+}
+
+function Select-ServerPorts([string]$d) {
+    $existing = Get-ServerPorts $d
+    if ($existing) { return $existing }
+    $used = Get-PortsInUse $d
+    $suggest = Find-FreePortSet $used
+    Write-Host ""
+    Write-Host "  Ports for this server" -ForegroundColor Cyan
+    if ($suggest.Game -ne 28015) { Write-Note "The usual ports are taken on this machine, by another server or another program." }
+    Write-Host ("    game UDP {0}    query UDP {1}    RCON TCP {2}    Rust+ TCP {3}" -f $suggest.Game, $suggest.Query, $suggest.Rcon, $suggest.App)
+    Write-Note "Every server on one machine needs its own. Enter uses these, or type a game port and the rest follow it."
+    while ($true) {
+        $answer = ([string](Read-Host "  Game port [$($suggest.Game)]")).Trim()
+        if (-not $answer) { $set = $suggest }
+        else {
+            $n = 0
+            if (-not [int]::TryParse($answer, [ref]$n) -or $n -lt 1024 -or $n -gt 65400) { Write-Bad "a game port is a whole number from 1024 to 65400"; continue }
+            $set = New-PortSet $n ($n + 2) ($n + 1)
+            if (-not (Test-PortSetFree $set $used)) {
+                $taken = @(@($set.Game, $set.Query, $set.Rcon, $set.App) | Where-Object { $used.Contains([int]$_) })
+                Write-Bad ("already in use on this machine: " + ($taken -join ', '))
+                continue
+            }
+        }
+        Set-ServerPorts $d $set
+        Write-Ok ("ports: game {0}, query {1}, RCON {2}, Rust+ {3}" -f $set.Game, $set.Query, $set.Rcon, $set.App)
+        return $set
+    }
+}
+
+# ------------------------------------------------------------------ one SteamCMD run at a time
+# Several servers on one machine share one SteamCMD, and nothing says two runs of it at once are safe. So
+# every run -- setup's, and every hotwire.bat's -- first holds hotwire-steamcmd.lock beside steamcmd.exe,
+# open and unshared. Windows lets go of an open file when its process ends, however it ends, so the lock can
+# never be left stuck by a crash. A second server waits, and says so, for up to $SteamCmdWaitMinutes.
+function Invoke-SteamCmdLocked([string]$exe, [string[]]$Arguments) {
+    $lock = Join-Path (Split-Path $exe -Parent) 'hotwire-steamcmd.lock'
+    $handle = $null
+    $said = $false
+    $deadline = (Get-Date).AddMinutes($SteamCmdWaitMinutes)
+    while (-not $handle) {
+        try { $handle = [System.IO.File]::Open($lock, [System.IO.FileMode]::OpenOrCreate, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None) }
+        catch {
+            if ((Get-Date) -gt $deadline) {
+                Stop-Politely "waiting to use SteamCMD" "another server has been using it for over $SteamCmdWaitMinutes minutes" `
+                    "let that server's update finish, or check its window for a download that is stuck, then run install again"
+            }
+            if (-not $said) { Write-Warn "another server is using SteamCMD right now -- waiting for it to finish"; $said = $true }
+            Start-Sleep -Seconds 5
+        }
+    }
+    try {
+        & $exe @Arguments | Out-Host
+        return $LASTEXITCODE
+    } finally { $handle.Dispose() }
 }
 
 # ---------------------------------------------------------------- helpers --
@@ -586,27 +750,27 @@ function Select-Directory {
     $defaultDir = 'C:\rustserver'
 
     $d = $Root
+    # The folder this window is in comes first: its own install, before any other server on the machine.
+    if (-not $d -and (Test-Path -LiteralPath (Get-RecordFile $here))) {
+        Write-Host "  This folder has an install to carry on with: $(Get-ServerLabel $here)" -ForegroundColor Cyan
+        if (Confirm-Step "Carry on here?" -DefaultYes) { $d = $here }
+    }
+    # Then the servers install set up before, listed by name -- never one picked for you.
     if (-not $d) {
-        $last = Get-LastInstall
-        if ($last -and ($last -ine $here) -and (Test-Path -LiteralPath (Get-RecordFile $last))) {
-            Write-Host "  An install was started in: $last" -ForegroundColor Cyan
-            if (Confirm-Step "Carry on with that one?" -DefaultYes) { $d = $last }
-        }
+        $d = Select-KnownServer "Carry on with a server install set up before? Enter on its own sets up a new one." -Exclude $here -IncludeUnfinished
     }
     if (-not $d) {
         Write-Why @(
             "The Rust server is about 12 GB of files, plus its saves and logs. It gets a folder of its own,",
-            "and everything install adds for the server goes inside it."
+            "and everything install adds for the server goes inside it. Another server on this machine needs",
+            "a different folder."
         )
         $risky = Get-RiskyFolder $here
-        if (Test-Path -LiteralPath (Get-RecordFile $here)) {
-            Write-Host "  This folder has an install to carry on with: $here" -ForegroundColor Cyan
-            if (Confirm-Step "Carry on here?" -DefaultYes) { $d = $here }
-        } elseif ($risky) {
+        if ($risky) {
             Write-Warn "this window was started from $risky ($here)"
             Write-Note "That is not a good place for a server: some of these folders are synced to the cloud or"
             Write-Note "cleaned out by Windows. Choose a folder of its own below."
-        } else {
+        } elseif (-not (Test-Path -LiteralPath (Get-RecordFile $here))) {
             Write-Host "  This folder: $here"
             if (Confirm-Step "Install the Rust server here?") { $d = $here }
         }
@@ -666,6 +830,10 @@ function Select-Directory {
     }
 
     if ($record) {
+        if (($record.PSObject.Properties.Name -contains 'folder') -and $record.folder -and ([string]$record.folder).TrimEnd('\') -ine $d.TrimEnd('\')) {
+            Write-Warn "this install record was made in $($record.folder) -- this looks like a copy of that server"
+            Write-Note "It is carried on as a separate server, here. Nothing in $($record.folder) is touched."
+        }
         Write-Ok "carrying on with an install started here on $($record.started_at)"
         $finished = Get-RecordList $record 'done'
         if ($finished.Count -gt 0) { Write-Note ("already finished: " + ($finished -join ', ')) }
@@ -813,6 +981,9 @@ function Get-InstallState([string]$d) {
     $s.Identity = $null
     if ($s.Connected) { try { $s.Identity = [string](Read-State $d).identity } catch { } }
 
+    $s.Ports = Get-ServerPorts $d
+    $s.PortsChosen = [bool]$s.Ports
+    if (-not $s.Ports) { $s.Ports = New-PortSet 28015 28017 28016 }
     $s.FirewallError = $null; $s.ActiveProfiles = $null; $s.FirewallOn = $null
     $s.Game = $null; $s.Query = $null; $s.RconOpen = @(); $s.ProgramRules = @()
     try {
@@ -820,9 +991,9 @@ function Get-InstallState([string]$d) {
         $profiles = @(Get-NetFirewallProfile -PolicyStore ActiveStore)
         $relevant = if ($s.ActiveProfiles) { @($profiles | Where-Object { $s.ActiveProfiles -contains $_.Name }) } else { $profiles }
         $s.FirewallOn = @($relevant | Where-Object { $_.Enabled -eq 'True' }).Count -gt 0
-        $s.Game = Get-PortState 'UDP' $GamePort $s.ActiveProfiles
-        $s.Query = Get-PortState 'UDP' $QueryPort $s.ActiveProfiles
-        $s.RconOpen = @((Get-PortState 'TCP' $RconPort $s.ActiveProfiles).Allows)
+        $s.Game = Get-PortState 'UDP' $s.Ports.Game $s.ActiveProfiles
+        $s.Query = Get-PortState 'UDP' $s.Ports.Query $s.ActiveProfiles
+        $s.RconOpen = @((Get-PortState 'TCP' $s.Ports.Rcon $s.ActiveProfiles).Allows)
         $active = $s.ActiveProfiles
         $s.ProgramRules = @(Get-NetFirewallApplicationFilter -PolicyStore ActiveStore |
             Where-Object { $_.Program -like '*\RustDedicated.exe' } | Get-NetFirewallRule |
@@ -903,10 +1074,12 @@ function Show-InstallState($s, [string]$Title) {
         $network = if ($s.ActiveProfiles) { ($s.ActiveProfiles -join ', ') + ' network' } else { 'network type unknown' }
         if ($s.FirewallOn) { Write-Check ok 'Windows Firewall' "on ($network)" }
         else { Write-Check warn 'Windows Firewall' "OFF ($network) -- every port is reachable, RCON included" }
-        Write-PortCheck "Game  UDP $GamePort" $s.Game $s.FirewallOn
-        Write-PortCheck "Query UDP $QueryPort" $s.Query $s.FirewallOn
-        if ($s.RconOpen.Count -gt 0) { Write-Check warn "RCON  TCP $RconPort" "OPEN: '$($s.RconOpen[0].DisplayName)' $(Get-RemoteText $s.RconOpen[0])" }
-        elseif ($s.FirewallOn) { Write-Check ok "RCON  TCP $RconPort" 'closed, as it should be' }
+        if ($s.PortsChosen) { Write-Check ok 'Ports' ("game {0}, query {1}, RCON {2}" -f $s.Ports.Game, $s.Ports.Query, $s.Ports.Rcon) }
+        else { Write-Check info 'Ports' 'not chosen yet -- install suggests free ones; checked here at the usual ones' }
+        Write-PortCheck "Game  UDP $($s.Ports.Game)" $s.Game $s.FirewallOn
+        Write-PortCheck "Query UDP $($s.Ports.Query)" $s.Query $s.FirewallOn
+        if ($s.RconOpen.Count -gt 0) { Write-Check warn "RCON  TCP $($s.Ports.Rcon)" "OPEN: '$($s.RconOpen[0].DisplayName)' $(Get-RemoteText $s.RconOpen[0])" }
+        elseif ($s.FirewallOn) { Write-Check ok "RCON  TCP $($s.Ports.Rcon)" 'closed, as it should be' }
         foreach ($r in $s.ProgramRules) {
             if ($r.Action -eq 'Allow') { Write-Check warn 'RustDedicated' "'$($r.DisplayName)' allows the program $(Get-RemoteText $r) -- RCON too, if it names no port" }
             else { Write-Check fail 'RustDedicated' "'$($r.DisplayName)' blocks the program -- players cannot connect" }
@@ -942,7 +1115,7 @@ function Get-InstallPlan($s) {
         & $add 'rcon' 'RCON password' $(if ($s.RconProblem) { "fix it: $($s.RconProblem)" } else { 'set it, for hotwire.bat' })
     }
     $portsShut = $s.FirewallError -or ($s.FirewallOn -and ($s.Game.Allows.Count -eq 0 -or $s.Query.Allows.Count -eq 0 -or $s.Game.Blocks.Count -gt 0 -or $s.Query.Blocks.Count -gt 0))
-    if ($portsShut) { & $add 'firewall' 'Firewall' "open UDP $GamePort and $QueryPort" }
+    if ($portsShut) { & $add 'firewall' 'Firewall' "open this server's game and query ports" }
     if (-not $s.Connected -and -not $s.PanelDeclined) { & $add 'panel' 'Hotwire Panel' 'connect this server' }
     return $plan.ToArray()
 }
@@ -1014,7 +1187,7 @@ function Install-SteamCmd([string]$d) {
         # current, this takes a few seconds. Its exit code is not judged: the download step is.
         Write-Note "letting SteamCMD update itself first..."
         Show-SlowWarning 'SteamCMD updating itself'
-        & $exe +quit | Out-Host
+        [void](Invoke-SteamCmdLocked $exe @('+quit'))
         Write-Host ""
         Save-Record $d 'steamcmd'
         return $exe
@@ -1083,7 +1256,7 @@ function Install-SteamCmd([string]$d) {
     Write-Note "running SteamCMD once so it can update itself..."
     Show-SlowWarning 'SteamCMD installing itself'
     # Out-Host, so SteamCMD's output is shown rather than returned from this function.
-    & $exe +quit | Out-Host
+    [void](Invoke-SteamCmdLocked $exe @('+quit'))
     # Its exit code on this first run is not something this script relies on: whether SteamCMD
     # works is proven by the next step, which checks for the files it was asked to download.
     Write-Host ""
@@ -1162,8 +1335,7 @@ function Invoke-RustDownload([string]$d, [string]$exe, [string]$Branch) {
     Show-Countdown 3 'Downloading'
     while ($true) {
         Show-SlowWarning 'the download' -Resumes
-        & $exe +force_install_dir $d +login anonymous +app_update $AppId -beta $Branch +quit | Out-Host
-        $code = $LASTEXITCODE
+        $code = Invoke-SteamCmdLocked $exe @('+force_install_dir', $d, '+login', 'anonymous', '+app_update', $AppId, '-beta', $Branch, '+quit')
         Write-Host ""
 
         # The same test hotwire.bat uses (any non-zero exit is a failure), plus the files themselves.
@@ -1386,19 +1558,33 @@ function Install-Oxide([string]$d) {
 # Sets the lines hotwire.bat needs for this install -- ROOT, STEAMCMD and, for a vanilla server,
 # INSTALL_FRAMEWORK -- and returns the file with CRLF line endings. Returns $null when the text is not
 # the launcher this script knows: a changed default, an older launcher, or an error page.
-function Set-LauncherPaths([string]$Text, [string]$RootDir, [string]$SteamCmdExe, [bool]$Vanilla = $false, [string]$Branch = '') {
+function Set-LauncherPaths([string]$Text, [string]$RootDir, [string]$SteamCmdExe, [bool]$Vanilla = $false, [string]$Branch = '', $Ports = $null) {
     $rootLine = 'set "ROOT=C:\rustserver"'
+    # From 1.1.11 ROOT is the launcher's own folder, which is exactly right for a launcher written beside its
+    # server, and stays right when the folder is copied. That line is left as it is.
+    $ownFolderRoot = 'set "ROOT=%~dp0"'
     $steamLine = 'set "STEAMCMD=C:\steamcmd\steamcmd.exe"'
     $frameworkLine = 'set "INSTALL_FRAMEWORK=1"'
     $branchLine = 'set "STEAM_BRANCH=public"'
+    $gameLine = 'set "ARGS=!ARGS! +server.port 28015"'
+    $queryLine = 'set "ARGS=!ARGS! +server.queryport 28017"'
+    $rconLine = 'set "ARGS=!ARGS! +rcon.port 28016"'
     $setBranch = $Branch -and $Branch -ne 'public'
+    $setPorts = $Ports -and -not ($Ports.Game -eq 28015 -and $Ports.Query -eq 28017 -and $Ports.Rcon -eq 28016)
     $lines = ($Text -replace "`r`n", "`n") -split "`n"
-    if (@($lines | Where-Object { $_ -eq $rootLine }).Count -ne 1) { return $null }
+    $hasOwnFolderRoot = @($lines | Where-Object { $_ -eq $ownFolderRoot }).Count -eq 1
+    if (-not $hasOwnFolderRoot -and @($lines | Where-Object { $_ -eq $rootLine }).Count -ne 1) { return $null }
+    if ($setPorts) {
+        foreach ($line in @($gameLine, $queryLine, $rconLine)) { if (@($lines | Where-Object { $_ -eq $line }).Count -ne 1) { return $null } }
+    }
     if (@($lines | Where-Object { $_ -eq $steamLine }).Count -ne 1) { return $null }
     if ($Vanilla -and @($lines | Where-Object { $_ -eq $frameworkLine }).Count -ne 1) { return $null }
     if ($setBranch -and @($lines | Where-Object { $_ -eq $branchLine }).Count -ne 1) { return $null }
     $lines = $lines | ForEach-Object {
         if ($_ -eq $rootLine) { "set `"ROOT=$RootDir`"" }
+        elseif ($setPorts -and $_ -eq $gameLine) { "set `"ARGS=!ARGS! +server.port $($Ports.Game)`"" }
+        elseif ($setPorts -and $_ -eq $queryLine) { "set `"ARGS=!ARGS! +server.queryport $($Ports.Query)`"" }
+        elseif ($setPorts -and $_ -eq $rconLine) { "set `"ARGS=!ARGS! +rcon.port $($Ports.Rcon)`"" }
         elseif ($_ -eq $steamLine) { "set `"STEAMCMD=$SteamCmdExe`"" }
         elseif ($Vanilla -and $_ -eq $frameworkLine) { 'set "INSTALL_FRAMEWORK=0"' }
         elseif ($setBranch -and $_ -eq $branchLine) { "set `"STEAM_BRANCH=$Branch`"" }
@@ -1521,12 +1707,14 @@ function Install-Launcher([string]$d) {
             "install into a folder without those characters, for example C:\rustserver"
     }
 
+    $ports = Select-ServerPorts $d
+
     $download = "$launcher.hotwire-tmp"
     [void](Invoke-Download $LauncherUrl $download 'the Hotwire launcher')
     try { $text = [System.IO.File]::ReadAllText($download) }
     finally { Remove-Item -LiteralPath $download -Force -ErrorAction SilentlyContinue }
 
-    $edited = Set-LauncherPaths $text $d $steamCmdExe $vanilla (Get-ChosenBranch $d)
+    $edited = Set-LauncherPaths $text $d $steamCmdExe $vanilla (Get-ChosenBranch $d) $ports
     if ($null -eq $edited) {
         Stop-Politely "setting up the downloaded hotwire.bat" "it does not contain the lines this script changes" `
             "nothing was written; download launcher\hotwire.bat by hand from $($Docs['Hotwire (source)']) and set ROOT and STEAMCMD near the top"
@@ -1757,8 +1945,8 @@ function Get-RemoteText($Rule) {
     return "from $remote"
 }
 
-function Open-Port([string]$Protocol, [int]$Port, [string]$Label) {
-    try { Open-PortUnguarded $Protocol $Port $Label }
+function Open-Port([string]$Protocol, [int]$Port, [string]$Label, [string]$Server) {
+    try { Open-PortUnguarded $Protocol $Port $Label $Server }
     catch {
         # The last step, and the server is already installed: a firewall error is reported, not fatal.
         Write-Bad "could not check or open $Protocol $Port ($Label): $($_.Exception.Message)"
@@ -1766,7 +1954,7 @@ function Open-Port([string]$Protocol, [int]$Port, [string]$Label) {
     }
 }
 
-function Open-PortUnguarded([string]$Protocol, [int]$Port, [string]$Label) {
+function Open-PortUnguarded([string]$Protocol, [int]$Port, [string]$Label, [string]$Server) {
     $port = Get-PortState $Protocol $Port (Get-ActiveFirewallProfiles)
 
     foreach ($b in $port.Blocks) {
@@ -1783,21 +1971,25 @@ function Open-PortUnguarded([string]$Protocol, [int]$Port, [string]$Label) {
         Write-Note "'$($e.DisplayName)' allows $Protocol $Port, but only on $($e.Profile) networks, which this machine is not on."
     }
 
-    New-NetFirewallRule -DisplayName "Rust $Label (Hotwire)" -Group 'Hotwire' -Direction Inbound `
+    # Named for its port and its server's folder, so each server's rules can be removed without touching
+    # another's. The group is shared, and removing by group removes every server's.
+    $ruleName = "Rust $Label $Protocol $Port (Hotwire, $Server)"
+    New-NetFirewallRule -DisplayName $ruleName -Group 'Hotwire' -Direction Inbound `
         -Protocol $Protocol -LocalPort $Port -Action Allow | Out-Null
     Write-Ok "opened $Protocol $Port ($Label)"
-    Add-Change "firewall: allowed inbound $Protocol $Port, rule 'Rust $Label (Hotwire)'" "Remove-NetFirewallRule -DisplayName 'Rust $Label (Hotwire)'  (as Administrator)"
+    Add-Change "firewall: allowed inbound $Protocol $Port, rule '$ruleName'" ("Remove-NetFirewallRule -DisplayName '" + ($ruleName -replace "'", "''") + "'  (as Administrator)")
 }
 
 function Set-Firewall([string]$d) {
     Write-Step "Firewall"
+    $ports = Select-ServerPorts $d
     Write-Why @(
-        "A Rust server uses four ports. These numbers match hotwire.bat's defaults:",
+        "A Rust server uses four ports. This server's:",
         "",
-        "  UDP $GamePort   game         players connect here            opened",
-        "  UDP $QueryPort   query        the in-game server browser      opened -- without it the server is invisible",
-        "  TCP $AppPort   Rust+        the phone companion app         only if you want it",
-        "  TCP $RconPort   RCON         remote control of the server    NEVER opened here",
+        "  UDP $($ports.Game)   game         players connect here            opened",
+        "  UDP $($ports.Query)   query        the in-game server browser      opened -- without it the server is invisible",
+        "  TCP $($ports.App)   Rust+        the phone companion app         only if you want it",
+        "  TCP $($ports.Rcon)   RCON         remote control of the server    NEVER opened here",
         "",
         "RCON is a remote console: anyone who reaches it and guesses the password runs commands on",
         "your server. Reach it from this machine or over a VPN.",
@@ -1812,16 +2004,16 @@ function Set-Firewall([string]$d) {
         return
     }
 
-    if (-not (Confirm-Step "Open UDP $GamePort and UDP $QueryPort in Windows Firewall?")) { Write-Note "No rules were added."; return }
-    Open-Port 'UDP' $GamePort 'game'
-    Open-Port 'UDP' $QueryPort 'query'
+    if (-not (Confirm-Step "Open UDP $($ports.Game) and UDP $($ports.Query) in Windows Firewall?")) { Write-Note "No rules were added."; return }
+    Open-Port 'UDP' $ports.Game 'game' $d
+    Open-Port 'UDP' $ports.Query 'query' $d
 
     Write-Host ""
     Write-Note "Rust+ lets players pair their phone with your server. More: $($Docs['Rust+ companion (Rust)'])"
-    if (Confirm-Step "Also open TCP $AppPort for Rust+?") { Open-Port 'TCP' $AppPort 'Rust+' }
+    if (Confirm-Step "Also open TCP $($ports.App) for Rust+?") { Open-Port 'TCP' $ports.App 'Rust+' $d }
 
-    Write-Note "Every rule this script adds is in the group 'Hotwire'. To remove them all:"
-    Write-Note "  Remove-NetFirewallRule -Group Hotwire"
+    Write-Note "Each rule is named for its port and this server's folder, so one server's rules can be removed"
+    Write-Note "without touching another's. hotwire\changes.log has the exact command for each."
     Save-Record $d 'firewall'
 }
 
@@ -1912,16 +2104,15 @@ function Find-Root {
         if ($parent -eq $dir) { break }
         $dir = $parent
     }
-    # Setup is usually double-clicked from Downloads and installs somewhere else, so the folder install
-    # last used is the next place to look -- said out loud, so nobody wonders which server is meant.
-    $last = Get-LastInstall
-    if ($last -and ((Test-Path -LiteralPath (Join-Path $last 'RustDedicated.exe')) -or (Test-Path -LiteralPath (Join-Path $last 'RustDedicated')))) {
-        Write-Note "No Rust server in $((Get-Location).Path) -- using the one installed in $last."
-        return $last
+    # Run from somewhere else -- Downloads, usually. The servers install set up are listed and one is chosen
+    # by number. Never picked silently, and never under -Yes: acting on the wrong server is worse than stopping.
+    if (-not ($Yes -and $script:YesAllowed)) {
+        $chosen = Select-KnownServer "There is no Rust server in $((Get-Location).Path). Which server do you mean?"
+        if ($chosen) { return $chosen }
     }
     Stop-Politely "finding your Rust server directory" `
-        "no RustDedicated.exe in $((Get-Location).Path), its parents, or the last install folder" `
-        "run this from the server directory, or pass -Root C:\rustserver"
+        "no RustDedicated.exe in $((Get-Location).Path) or its parents, and no server was chosen" `
+        "run this from the server's folder, or pass -Root C:\rustserver"
 }
 
 function Get-StateFile ($r)  { Join-Path $r 'hotwire\connect.json' }
@@ -2057,6 +2248,14 @@ function Set-SecretAcl([string]$Path) {
     Set-Acl -LiteralPath $Path -AclObject $acl
 }
 
+# The name a server gets in the panel unless one is given: the computer's name and the server's folder,
+# because two servers on one machine are otherwise indistinguishable there.
+function Get-DefaultServerName([string]$r) {
+    $leaf = Split-Path $r.TrimEnd('\') -Leaf
+    if ($leaf) { return "$($env:COMPUTERNAME)-$leaf" }
+    return $env:COMPUTERNAME
+}
+
 function Invoke-Connect {
     $r = Find-Root
     $url = Get-PanelUrl $r
@@ -2098,7 +2297,29 @@ function Invoke-Connect {
     $state = Read-State $r
     $idFile = Join-Path $r 'hotwire\install_id'
     $parsed = [guid]::Empty
-    $saved = if (Test-Path -LiteralPath $idFile) { ([System.IO.File]::ReadAllText($idFile)).Trim() } else { '' }
+    # A connection belongs to the folder it was made in. A copied server folder carries the original's, and
+    # reusing it would take over the original's place in the panel and leave the original silent.
+    $copied = $false
+    $madeIn = if ($state -and ($state.PSObject.Properties.Name -contains 'folder')) { [string]$state.folder } else { '' }
+    if ($madeIn -and ($madeIn.TrimEnd('\') -ine $r.TrimEnd('\'))) {
+        Write-Warn "this folder's panel connection was made in $madeIn"
+        Write-Note "It looks like a copy of that server. Reusing the connection would take over that server's"
+        Write-Note "place in the panel, and that server would stop reporting."
+        if (-not (Confirm-Step "Connect this folder as a new, separate server?")) {
+            Stop-Politely "connecting $r" "its panel connection belongs to $madeIn" `
+                "connect from $madeIn instead, or run connect here again and answer yes"
+        }
+        $state = $null
+        $copied = $true
+    }
+    $saved = ''
+    if (-not $copied -and (Test-Path -LiteralPath $idFile)) {
+        $raw = ([System.IO.File]::ReadAllText($idFile)).Trim()
+        try {
+            $idRecord = $raw | ConvertFrom-Json
+            if (-not $idRecord.folder -or ([string]$idRecord.folder).TrimEnd('\') -ieq $r.TrimEnd('\')) { $saved = [string]$idRecord.install_id }
+        } catch { $saved = $raw }
+    }
     if ($state -and $state.install_id) {
         $installId = [string]$state.install_id
         Write-Note "This install is already known to the panel -- reconnecting will adopt it."
@@ -2111,7 +2332,7 @@ function Invoke-Connect {
         Write-Note "This install has no id yet; a new one was generated."
     }
 
-    if (-not $Name) { $Name = $env:COMPUTERNAME }
+    if (-not $Name) { $Name = Get-DefaultServerName $r }
 
     Write-Head "About to do this"
     Write-Host "  Panel      : $url"
@@ -2126,7 +2347,7 @@ function Invoke-Connect {
     # Kept before the request: a connect interrupted after the panel has answered then adopts the same
     # server on the next try, instead of making a second one.
     $script:JournalDir = $r
-    Write-FileAtomic $idFile $installId
+    Write-FileAtomic $idFile ([ordered]@{ install_id = $installId; folder = $r } | ConvertTo-Json)
 
     $payload = @{
         token = $Code; install_id = $installId; identity = $Name; name = $Name
@@ -2168,12 +2389,12 @@ function Invoke-Connect {
         # constantly and the documented way to reset it is to delete it, which would silently
         # disconnect the server.
         Write-JsonFile (Get-PluginFile $r) ([ordered]@{
-            key_id = $plugin.key_id; secret = $plugin.secret; panel_url = $url
+            key_id = $plugin.key_id; secret = $plugin.secret; panel_url = $url; folder = $r
         }) -Secret
     }
     Write-JsonFile (Get-KeysFile $r) ([ordered]@{ key_id = $scriptKey.key_id; secret = $scriptKey.secret }) -Secret
     Write-JsonFile (Get-StateFile $r) ([ordered]@{
-        install_id = $installId; server_id = $server.id; identity = $Name
+        install_id = $installId; server_id = $server.id; identity = $Name; folder = $r
         panel_url = $url; connected_at = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
     })
     Add-Change "connected $r to $url as '$Name'" "hotwire-setup.bat detach, then revoke the keys in the panel"
@@ -2199,6 +2420,7 @@ function Invoke-Connect {
 function Invoke-Status {
     $r = Find-Root
     $state = Read-State $r
+    Write-Host "Server folder: $r"
     if (-not $state) {
         Write-Host "Not connected."
         Write-Note "Run 'doctor' to check this machine, then 'connect'."
@@ -2210,6 +2432,11 @@ function Invoke-Status {
     Write-Host "  Server id  : $($state.server_id)"
     Write-Host "  Install id : $($state.install_id)"
     Write-Host "  Since      : $($state.connected_at)"
+    if (($state.PSObject.Properties.Name -contains 'folder') -and $state.folder -and ([string]$state.folder).TrimEnd('\') -ine $r.TrimEnd('\')) {
+        Write-Host ""
+        Write-Warn "this connection was made in $($state.folder), so this folder looks like a copy of that server"
+        Write-Note "Running 'connect' here offers to connect this folder as a new, separate server."
+    }
     Write-Host ""
     Write-Note "'detach' disconnects and leaves this server running exactly as it is."
     return 0
@@ -2348,7 +2575,7 @@ function Invoke-Install {
         Add-Change "created $serverDir" "delete the folder, once nothing in it is wanted"
     }
     Save-Record $serverDir $null
-    Save-LastInstall $serverDir
+    Save-KnownInstall $serverDir
 
     Show-Countdown 5 'Starting'
     $script:StepTotal = $plan.Count
@@ -2382,18 +2609,18 @@ function Write-No ($m) { Write-Host "  [ no ] $m" -ForegroundColor Gray }
 
 function Invoke-Menu {
     $here = if ($Root) { Resolve-FullPath $Root } else { (Get-Location).Path }
+    Show-Banner
 
-    # Double-clicked from somewhere else -- Downloads, usually -- after installing into another folder:
-    # show that server, and have Connect, Show and Disconnect act on it.
-    $usingLast = $false
+    # Double-clicked from somewhere else -- Downloads, usually. With servers installed elsewhere, they are
+    # listed and one is chosen; everything the menu then does acts on that one. Nothing is assumed.
+    $pickedFrom = $null
     if (-not $Root -and -not (Test-Path -LiteralPath (Join-Path $here 'RustDedicated.exe'))) {
-        $last = Get-LastInstall
-        if ($last -and (Test-Path -LiteralPath (Join-Path $last 'RustDedicated.exe'))) { $here = $last; $usingLast = $true }
+        $chosen = Select-KnownServer "There is no Rust server in this folder. Look at one of these? Enter on its own stays here."
+        if ($chosen) { $pickedFrom = $here; $here = $chosen }
     }
 
-    Show-Banner
-    Write-Host "  Folder: $here"
-    if ($usingLast) { Write-Note "(the server install set up last -- this window was started from $((Get-Location).Path))" }
+    Write-Host "  Folder: $(Get-ServerLabel $here)"
+    if ($pickedFrom) { Write-Note "(chosen from the list -- this window was started from $pickedFrom)" }
     Write-Note "Looking around first. Nothing is changed by these checks."
     Write-Host ""
 
@@ -2445,7 +2672,10 @@ function Invoke-Menu {
     if ($connected) {
         $state = $null
         try { $state = Read-State $here } catch { }
-        if ($state) { Write-Ok "connected to $($state.panel_url) as '$($state.identity)'" }
+        if ($state -and ($state.PSObject.Properties.Name -contains 'folder') -and $state.folder -and ([string]$state.folder).TrimEnd('\') -ine $here.TrimEnd('\')) {
+            Write-Warn "this folder's panel connection was copied from $($state.folder) -- connect again to make it its own"
+        }
+        elseif ($state) { Write-Ok "connected to $($state.panel_url) as '$($state.identity)'" }
         else { Write-Warn "connected, but hotwire\connect.json could not be read" }
     } else { Write-No "not connected to Hotwire Panel" }
 
@@ -2475,7 +2705,7 @@ function Invoke-Menu {
 
     $choice = ([string](Read-Host "  Choose")).Trim()
     # Install asks about its folder itself; everything else acts on the server shown above.
-    if ($usingLast -and $choice -ne '1') { $script:Root = $here }
+    if ($pickedFrom) { $script:Root = $here }
     switch ($choice) {
         '1' { return 'install' }
         '2' { return 'doctor' }

@@ -376,11 +376,29 @@ cmd_connect() {
     # The stable key for this install. Minted once and kept: re-running connect
     # from the same box adopts its existing server rather than creating a second
     # one, so a rename or a repair never splits its history.
-    install_id="$(json_get "$(read_state "$root")" install_id)"
+    # A connection belongs to the folder it was made in. A copied server folder carries the original's,
+    # and reusing it would take over the original's place in the panel and leave the original silent.
+    local made_in copied=0 id_json id_folder
+    made_in="$(json_get "$(read_state "$root")" folder)"
+    if [ -n "$made_in" ] && [ "${made_in%/}" != "${root%/}" ]; then
+        warn "this folder's panel connection was made in $made_in"
+        note "        It looks like a copy of that server. Reusing the connection would take over that"
+        note "        server's place in the panel, and that server would stop reporting."
+        confirm "Connect this folder as a new, separate server?" || die "connecting $root" \
+            "its panel connection belongs to $made_in" "connect from $made_in instead, or run connect here again and answer yes"
+        copied=1
+    fi
+    install_id=""
+    [ "$copied" = 1 ] || install_id="$(json_get "$(read_state "$root")" install_id)"
     # A connect that stopped after the panel answered left its install id behind; using it again makes
-    # the panel adopt that server rather than create a second one.
-    if [ -z "$install_id" ] && [ -f "$(state_dir "$root")/install_id" ]; then
-        install_id="$(tr -d '[:space:]' < "$(state_dir "$root")/install_id")"
+    # the panel adopt that server rather than create a second one -- unless it was made in another folder.
+    if [ -z "$install_id" ] && [ "$copied" = 0 ] && [ -f "$(state_dir "$root")/install_id" ]; then
+        id_json="$(cat "$(state_dir "$root")/install_id")"
+        id_folder="$(json_get "$id_json" folder)"
+        if [ -z "$id_folder" ] || [ "${id_folder%/}" = "${root%/}" ]; then
+            install_id="$(json_get "$id_json" install_id)"
+            [ -n "$install_id" ] || install_id="$(printf '%s' "$id_json" | tr -d '[:space:]')"
+        fi
         case "$install_id" in *[!0-9a-fA-F-]*) install_id="" ;; esac
         [ -n "$install_id" ] && note "  An earlier connect did not finish; the same install id is used."
     fi
@@ -391,7 +409,8 @@ cmd_connect() {
         note "  This install is already known to the panel -- reconnecting will adopt it."
     fi
 
-    [ -n "$NAME" ] || NAME="$(hostname 2>/dev/null || echo 'rust-server')"
+    # The machine's name and the server's folder: two servers on one machine are otherwise identical in the panel.
+    [ -n "$NAME" ] || NAME="$(hostname 2>/dev/null || echo 'rust-server')-$(basename "$root")"
 
     head_ "About to do this"
     say "  Panel        : $url"
@@ -404,7 +423,8 @@ cmd_connect() {
     confirm_default_yes "Connect this server to the panel?" || { say "  Nothing was changed."; exit 0; }
 
     # Kept before the request, so an interrupted connect adopts the same server on the next try.
-    mkdir -p "$(state_dir "$root")" && write_atomic "$(state_dir "$root")/install_id" "$install_id"$'\n' \
+    mkdir -p "$(state_dir "$root")" && write_atomic "$(state_dir "$root")/install_id" \
+        "$(printf '{"install_id": "%s", "folder": "%s"}' "$install_id" "$(json_escape "$root")")"$'\n' \
         || die "saving the install id in $(state_dir "$root")" "the write failed" "check permissions on $root"
 
     body="$(printf '{"token":"%s","install_id":"%s","identity":"%s","name":"%s","components":["plugin","script"]}' \
@@ -498,7 +518,7 @@ write_files() {
         mkdir -p "$(dirname "$(plugin_file "$root")")"
         back_up "$(plugin_file "$root")"
         write_atomic "$(plugin_file "$root")" \
-            "$(printf '{\n  "key_id": "%s",\n  "secret": "%s",\n  "panel_url": "%s"\n}' "$pkey" "$psec" "$url")"$'\n' secret \
+            "$(printf '{\n  "key_id": "%s",\n  "secret": "%s",\n  "panel_url": "%s",\n  "folder": "%s"\n}' "$pkey" "$psec" "$url" "$(json_escape "$root")")"$'\n' secret \
             || die "writing $(plugin_file "$root")" "the write failed" "check free space and permissions on $root"
     fi
 
@@ -509,8 +529,8 @@ write_files() {
 
     back_up "$(state_file "$root")"
     write_atomic "$(state_file "$root")" \
-        "$(printf '{\n  "install_id": "%s",\n  "server_id": "%s",\n  "identity": "%s",\n  "panel_url": "%s",\n  "connected_at": "%s"\n}' \
-            "$install_id" "$server_id" "$(json_escape "$NAME")" "$url" "$(date -u '+%Y-%m-%dT%H:%M:%SZ')")"$'\n' \
+        "$(printf '{\n  "install_id": "%s",\n  "server_id": "%s",\n  "identity": "%s",\n  "panel_url": "%s",\n  "connected_at": "%s",\n  "folder": "%s"\n}' \
+            "$install_id" "$server_id" "$(json_escape "$NAME")" "$url" "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$(json_escape "$root")")"$'\n' \
         || die "writing $(state_file "$root")" "the write failed" "check free space and permissions on $root"
 }
 
