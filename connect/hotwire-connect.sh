@@ -238,6 +238,50 @@ check_install() {
     fi
 }
 
+# ------------------------------------------------------------ selftest ----
+# The published conformance vector, copied from the panel's
+# tests/Fixtures/contract/signature/conformance.json. If this machine cannot reproduce the
+# signature below, its canonicalisation is wrong -- not the panel's. Sends nothing, writes nothing.
+cmd_selftest() {
+    local secret body expected_hash expected_sig got_hash got_sig rc=0
+    secret='hotwire-conformance-secret-do-not-use-in-production'
+    body='{"contract":1,"report_id":"0193f2c1-8a4e-7c1a-9f3b-2d5e6a7b8c9d","sent_at":"2026-09-09T18:42:11Z","source":"plugin","source_version":"1.1.2","kind":"heartbeat","payload":{"players":34,"max_players":50}}'
+    expected_hash='980c7522d9ba59d5fe8e677984234ef8eb9f48e8811bf4880c735ba21c4edb67'
+    expected_sig='0018750ad887b85034deee8237784a18fc46f5bf3da6610ccab4794a696c5bb4'
+
+    say "hotwire-connect $VERSION -- checking this machine can sign correctly"
+    note "Nothing is sent and nothing is written."
+    head_ "Signing"
+
+    got_hash="$(sha256_hex "$body")"
+    if [ "$got_hash" = "$expected_hash" ]; then
+        ok "the body hashes correctly"
+    else
+        bad "the body hash does not match"
+        note "        expected $expected_hash"
+        note "        got      $got_hash"
+        rc=1
+    fi
+
+    got_sig="$(sign_request "$secret" POST /api/v1/report 1757533331 3f9a1c7e2b5d4086 "$body")"
+    if [ "$got_sig" = "$expected_sig" ]; then
+        ok "the signature matches the published vector"
+    else
+        bad "the signature does not match"
+        note "        expected $expected_sig"
+        note "        got      $got_sig"
+        rc=1
+    fi
+
+    head_ ""
+    if [ "$rc" = "0" ]; then
+        say "${C_GRN}This machine signs correctly.${C_OFF}"
+    else
+        say "${C_RED}This machine cannot sign correctly. Do not connect it yet -- please report this.${C_OFF}"
+    fi
+    return $rc
+}
+
 # ------------------------------------------------------------- doctor ----
 # Read-only. Touches nothing, changes nothing, and is safe to run at any time
 # on any machine. Everything `connect` depends on is checked here first, so a
@@ -458,6 +502,7 @@ cmd_help() {
     cat <<'HELP'
 hotwire-connect -- connect a Rust server to Hotwire Panel
 
+  selftest  Prove this machine signs requests correctly. Sends nothing, writes nothing.
   doctor    Check this machine. Read-only, changes nothing, safe any time.
   connect   Connect to the panel.   --code HW-XXXX-XXXX [--name "My server"]
   status    Show what this server is connected to.
@@ -473,6 +518,7 @@ HELP
 }
 
 case "$CMD" in
+    selftest) cmd_selftest ;;
     doctor)  cmd_doctor ;;
     connect) cmd_connect ;;
     status)  cmd_status ;;

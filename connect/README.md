@@ -5,15 +5,35 @@ not. **Optional and reversible** — your server does not need a panel to run, a
 machine exactly as it was found.
 
 ```
-hotwire-connect.sh doctor     # check this machine. read-only, changes nothing, safe any time
-hotwire-connect.sh connect    # --code HW-XXXX-XXXX [--name "My server"]
-hotwire-connect.sh status     # what this server is connected to
-hotwire-connect.sh detach     # disconnect. the server keeps running
+hotwire-connect selftest   # prove this machine signs correctly. sends nothing, writes nothing
+hotwire-connect doctor     # check this machine. read-only, changes nothing, safe any time
+hotwire-connect connect    # --code HW-XXXX-XXXX
+hotwire-connect status     # what this server is connected to
+hotwire-connect detach     # disconnect. the server keeps running
 ```
 
-Requires `bash`, `curl`, `openssl`, and either `jq` or `python3`.
+`hotwire-connect.ps1` on Windows (PowerShell 5.1, which ships with the OS) and
+`hotwire-connect.sh` on Linux (bash, curl, openssl, and either jq or python3). Same commands, same
+behaviour; PowerShell takes `-Code`, bash takes `--code`.
 
-## Start with `doctor`
+**Starting from a blank machine?** [Windows](../docs/INSTALL-WINDOWS.md) ·
+[Ubuntu](../docs/INSTALL-LINUX.md) walk the whole way from a fresh OS to a connected server.
+
+## Run `selftest` first
+
+It proves this machine reproduces the panel's published signature vector. Signing is the one thing
+that fails invisibly -- a canonicalisation that is one byte out produces a 401 with no useful
+message, on a machine nobody can reach inbound -- so it is worth ten seconds to rule out:
+
+```
+Signing
+  [ ok ] the body hashes correctly
+  [ ok ] the signature matches the published vector
+
+This machine signs correctly.
+```
+
+## Then `doctor`
 
 It writes nothing, and it checks the things that otherwise fail in ways nobody can diagnose:
 
