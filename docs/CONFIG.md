@@ -290,7 +290,12 @@ replaced by the `Status bar` section below.
 ```json
 "Panel": {
   "Report to the panel when connected": true,
-  "Heartbeat every this many seconds": 30
+  "Heartbeat every this many seconds": 30,
+  "Accept commands from the panel": true,
+  "Check for commands every this many seconds": 30,
+  "Shortest restart countdown from the panel (seconds)": 60,
+  "Enforce the panel's ban list": true,
+  "Check the ban list every this many seconds": 120
 }
 ```
 
@@ -304,6 +309,25 @@ this section says.
 - **Heartbeat every this many seconds** — how often the server says it is up.
   The panel counts a server as silent after ten minutes without one. The
   minimum is 10.
+- **Accept commands from the panel** — `false` means the panel's command
+  buttons do nothing on this server; what is queued there expires unanswered.
+  Commands the plugin carries out: a message to players, a save, a plugin
+  reload, a kick, and an announced restart. Anything else is refused and the
+  panel is told why.
+- **Shortest restart countdown from the panel** — a restart from the panel goes
+  through the same countdown as `hotwire now`, and never with less warning than
+  this, whatever the panel asked for. The minimum is 10.
+- **Enforce the panel's ban list** — writes the account's bans into this
+  server's own ban list, so they hold when the panel is unreachable. A ban the
+  panel lifts is lifted here only if the panel added it; a ban made on this
+  server stays. Mutes are not enforced by the plugin. If the account's plan does
+  not include ban sync, nothing is added and bans added earlier stay in place.
+  What the panel added is recorded in `oxide/data/Hotwire/panel_bans.json`.
+
+Commands already carried out are recorded in
+`oxide/data/Hotwire/panel_commands.json` before they run, for two days. A
+command the panel sends again, because it did not hear back, is answered from
+that record instead of being carried out a second time.
 
 The plugin re-reads `panel.json` whenever it changes, so connecting,
 reconnecting and detaching take effect without a reload. It refuses to report
@@ -500,7 +524,8 @@ Answers the questions you would otherwise spend a real restart to answer:
 - Schedule counts, what is next, the countdown shape, how many entries the
   DST guard is holding, whether a status plugin is present, and whether the
   framework check is on.
-- **Whether it is reporting to a panel**, and if not, why not.
+- **Whether it is reporting to a panel**, and if not, why not; when the plugin
+  list was last sent, when commands and the ban list were last checked.
 
 It changes nothing except the probe file it cleans up after itself. Run it
 after installing, after moving the server, and after any Oxide update.

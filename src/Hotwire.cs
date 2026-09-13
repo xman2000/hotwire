@@ -16,7 +16,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Hotwire", "xman2000", "1.1.4")]
+    [Info("Hotwire", "xman2000", "1.1.5")]
     [Description("Scheduled restarts and updates. Announces, counts down, writes a flag, quits.")]
     internal class Hotwire : CovalencePlugin
     {
@@ -113,6 +113,29 @@ namespace Oxide.Plugins
             // server as silent after ten minutes without one.
             [JsonProperty("Heartbeat every this many seconds")]
             public int HeartbeatSeconds = 30;
+
+            // Messages, saves, plugin reloads, kicks and announced restarts
+            // queued in the panel. Off means the panel's buttons do nothing on
+            // this server; queued commands expire there unanswered.
+            [JsonProperty("Accept commands from the panel")]
+            public bool AcceptCommands = true;
+
+            [JsonProperty("Check for commands every this many seconds")]
+            public int CommandSeconds = 30;
+
+            // A restart from the panel always goes through the countdown, and
+            // never with less warning than this, whatever the panel asked for.
+            [JsonProperty("Shortest restart countdown from the panel (seconds)")]
+            public int MinimumRestartSeconds = 60;
+
+            // The account's ban list, written into this server's own ban list so
+            // it is enforced locally and a panel outage never affects logins.
+            // Only bans the panel added are ever lifted; a ban made here stays.
+            [JsonProperty("Enforce the panel's ban list")]
+            public bool EnforceBans = true;
+
+            [JsonProperty("Check the ban list every this many seconds")]
+            public int BanSeconds = 120;
         }
 
         // Recurrence is stored as explicit fields rather than as a cron
@@ -1788,20 +1811,29 @@ namespace Oxide.Plugins
 
         #region Panel reporting
 
-        // Sends a signed heartbeat to the panel this server was connected to.
+        // Talks to the Hotwire panel this server was connected to: a heartbeat,
+        // the plugin list, commands queued in the panel, and the account's ban
+        // list.
         //
-        // Everything here is on the side of the game, never in its way: the
-        // request is queued and answered later, every failure is caught and
-        // logged once, and nothing in the schedule, the countdown or the flags
-        // waits on it or reads from it. A panel that is down, slow or wrong
-        // changes what this server reports, never what it does.
+        // Everything here is beside the game, never in its way. One request is
+        // out at a time; answers are handled when they arrive; every failure is
+        // caught and logged once. Nothing in the schedule, the countdown or the
+        // flags waits on it. A panel that is down, slow or wrong changes what
+        // this server reports, never what it does -- the one exception is a
+        // command an admin queued, which is carried out the way the same chat
+        // command would be, announced restarts included.
         //
-        // Heartbeats are not kept and resent after an outage. A heartbeat says
-        // "alive now"; ten of them delivered late say nothing the next one does
-        // not, and saving them would only grow a file on the admin's disk.
+        // Heartbeats are not kept and resent after an outage: a heartbeat says
+        // "alive now", and late ones say nothing the next one does not. The
+        // plugin list is state, not history, so the latest one is simply sent
+        // until the panel accepts it.
 
         private const string PanelReportPath = "/api/v1/report";
+        private const string PanelCommandsPath = "/api/v1/commands";
+        private const string PanelBansPath = "/api/v1/bans";
         private const string BuildManifest = "appmanifest_258550.acf";
+        private const string CommandsDataFile = "Hotwire/panel_commands";
+        private const string BansDataFile = "Hotwire/panel_bans";
 
         private sealed class PanelLink
         {
@@ -1810,21 +1842,79 @@ namespace Oxide.Plugins
             public string Url;
         }
 
+        private sealed class HandledCommand
+        {
+            public string Status;
+            public string Result;
+            public DateTime HandledUtc;
+        }
+
+        private sealed class AppliedBan
+        {
+            public long Expiry;
+            public string Reason;
+        }
+
+        private sealed class InventoryItem
+        {
+            public string Name = "";
+            public string Author = "";
+            public string Version = "";
+            public string Sha256Hex = "";
+            public long Size;
+            public bool Loaded;
+            public string Error;
+        }
+
+        private sealed class HashedFile
+        {
+            public DateTime Stamp;
+            public long Size;
+            public string Sha256Hex;
+        }
+
         private PanelLink _panel;
         private DateTime _panelFileStamp = DateTime.MinValue;
         private string _panelState = "not started";
         private string _panelProblem;
         private bool _panelReporting;
-        private bool _panelInFlight;
+        private bool _panelBusy;
         private int _panelFailures;
         private DateTime _panelNextAttempt = DateTime.MinValue;
+
+        private DateTime _heartbeatDue = DateTime.MinValue;
+        private DateTime _commandsDue = DateTime.MinValue;
+        private DateTime _bansDue = DateTime.MinValue;
+        private DateTime _inventoryCheckDue = DateTime.MinValue;
+
+        private int _fpsFrames = -1;
+        private float _fpsAt;
+
         private DateTime _manifestStamp = DateTime.MinValue;
         private string _buildId;
+
+        private readonly Dictionary<string, HashedFile> _fileHashes = new Dictionary<string, HashedFile>(StringComparer.OrdinalIgnoreCase);
+        private List<InventoryItem> _inventory;
+        private string _inventoryHash;
+        private string _inventorySentHash;
+        private string _inventoryState = "not sent yet";
+
+        private readonly Queue<JObject> _commandResults = new Queue<JObject>();
+        private Dictionary<string, HandledCommand> _handledCommands = new Dictionary<string, HandledCommand>();
+        private string _commandsState = "not checked yet";
+
+        private Dictionary<string, AppliedBan> _appliedBans = new Dictionary<string, AppliedBan>();
+        private string _bansListHash;
+        private string _bansState = "not checked yet";
+        private string _bansNotice;
 
         private string PanelFile() => Path.Combine(Interface.Oxide.DataDirectory, "Hotwire", "panel.json");
 
         private void StartPanelReporting()
         {
+            _handledCommands = ReadData<Dictionary<string, HandledCommand>>(CommandsDataFile) ?? new Dictionary<string, HandledCommand>();
+            _appliedBans = ReadData<Dictionary<string, AppliedBan>>(BansDataFile) ?? new Dictionary<string, AppliedBan>();
+
             if (!_config.Panel.Enabled)
             {
                 _panelState = "off in the config";
@@ -1832,26 +1922,72 @@ namespace Oxide.Plugins
                 return;
             }
 
-            var seconds = Math.Max(10, _config.Panel.HeartbeatSeconds);
-            _panelTimer = timer.Every(seconds, PanelTick);
+            _panelTimer = timer.Every(5f, PanelTick);
             timer.Once(5f, PanelTick);
         }
+
+        private T ReadData<T>(string name) where T : class
+        {
+            try { return Interface.Oxide.DataFileSystem.ReadObject<T>(name); }
+            catch (Exception ex)
+            {
+                PrintWarning($"Could not read oxide/data/{name}.json ({ex.Message}). Starting it empty.");
+                return null;
+            }
+        }
+
+        private void WriteData(string name, object value)
+        {
+            try { Interface.Oxide.DataFileSystem.WriteObject(name, value); }
+            catch (Exception ex) { PrintWarning($"Could not write oxide/data/{name}.json: {ex.Message}"); }
+        }
+
+        private void OnPluginLoaded(Plugin plugin) => _inventoryCheckDue = DateTime.UtcNow.AddSeconds(3);
+
+        private void OnPluginUnloaded(Plugin plugin) => _inventoryCheckDue = DateTime.UtcNow.AddSeconds(3);
 
         private void PanelTick()
         {
             try
             {
-                if (!_config.Panel.Enabled || _shuttingDown) return;
+                if (!_config.Panel.Enabled) return;
 
                 RefreshPanelLink();
-                if (_panel == null || _panelInFlight || DateTime.UtcNow < _panelNextAttempt) return;
+                if (_panel == null || _panelBusy || DateTime.UtcNow < _panelNextAttempt) return;
 
-                SendHeartbeat();
+                PanelPump();
             }
             catch (Exception ex)
             {
+                _panelBusy = false;
                 PanelProblem($"reporting stopped for this tick after an error: {ex.Message}");
             }
+        }
+
+        // Sends the most urgent thing that is due, one request at a time.
+        private void PanelPump()
+        {
+            if (_panel == null || _panelBusy) return;
+            var now = DateTime.UtcNow;
+
+            if (_commandResults.Count > 0) { SendCommandResult(); return; }
+
+            // The game is going down. Only acknowledgements still go out.
+            if (_shuttingDown) return;
+
+            if (now >= _inventoryCheckDue)
+            {
+                _inventoryCheckDue = now.AddSeconds(60);
+                RefreshInventory();
+            }
+            if (_panelReporting && _inventoryHash != null && _inventoryHash != _inventorySentHash) { SendInventory(); return; }
+
+            if (now >= _heartbeatDue) { SendHeartbeat(); return; }
+
+            if (!_panelReporting) return;   // nothing else until the panel has accepted a heartbeat
+
+            if (_config.Panel.AcceptCommands && now >= _commandsDue) { PollCommands(); return; }
+            if (_config.Panel.EnforceBans && now >= _bansDue) { PollBans(); }
         }
 
         // Reads panel.json again only when it changes, so connecting, detaching
@@ -1881,6 +2017,9 @@ namespace Oxide.Plugins
             _panelFailures = 0;
             _panelProblem = null;
             _panelNextAttempt = DateTime.MinValue;
+            _heartbeatDue = DateTime.MinValue;
+            _inventorySentHash = null;
+            _bansListHash = null;
 
             JObject file;
             try
@@ -1963,56 +2102,62 @@ namespace Oxide.Plugins
             return p.TrimEnd('\\', '/');
         }
 
-        private void SendHeartbeat()
+        // ---------------------------------------------------------- transport
+
+        // One signed request. body is null for a GET, and an empty body is
+        // what gets signed. onAccepted runs only for a 2xx answer from the link
+        // that was current when the request left. onRefused runs when the panel
+        // understood the request and said no to its content (400, 413, 422): the
+        // same bytes would be refused again, so the caller lets it go rather than
+        // letting it block everything behind it.
+        private void PanelRequest(string method, string path, string body, Action<string> onAccepted, Action onRefused = null)
         {
             var link = _panel;
-            var body = PanelEnvelope("heartbeat", HeartbeatPayload());
             var timestamp = ((long)(DateTime.UtcNow - UnixEpoch).TotalSeconds).ToString(CultureInfo.InvariantCulture);
             var nonce = PanelNonce();
 
             var headers = new Dictionary<string, string>
             {
-                { "Content-Type", "application/json" },
                 { "Accept", "application/json" },
                 { "X-Hotwire-Key", link.KeyId },
                 { "X-Hotwire-Timestamp", timestamp },
                 { "X-Hotwire-Nonce", nonce },
-                { "X-Hotwire-Signature", PanelSign(link.Secret, "POST", PanelReportPath, timestamp, nonce, body) }
+                { "X-Hotwire-Signature", PanelSign(link.Secret, method, path, timestamp, nonce, body ?? "") }
             };
+            if (body != null) headers["Content-Type"] = "application/json";
 
-            _panelInFlight = true;
-            webrequest.Enqueue(link.Url + PanelReportPath, body, (code, response) =>
+            _panelBusy = true;
+            var verb = method == "POST" ? Oxide.Core.Libraries.RequestMethod.POST : Oxide.Core.Libraries.RequestMethod.GET;
+            webrequest.Enqueue(link.Url + path, body, (code, response) =>
             {
-                _panelInFlight = false;
+                _panelBusy = false;
                 try
                 {
                     if (!ReferenceEquals(link, _panel)) return;   // panel.json changed while this was out
-                    HeartbeatAnswered(code, response);
+
+                    if (code >= 200 && code < 300)
+                    {
+                        if (_panelProblem != null) Puts("Reporting to the panel again.");
+                        _panelProblem = null;
+                        _panelFailures = 0;
+                        _panelNextAttempt = DateTime.MinValue;
+                        onAccepted(response);
+                        PanelPump();
+                        return;
+                    }
+
+                    if (onRefused != null && (code == 400 || code == 413 || code == 422)) onRefused();
+                    PanelFailed(code, response);
                 }
                 catch (Exception ex)
                 {
-                    PanelProblem($"the panel's answer could not be read: {ex.Message}");
+                    PanelProblem($"the panel's answer could not be used: {ex.Message}");
                 }
-            }, this, Oxide.Core.Libraries.RequestMethod.POST, headers, 20f);
+            }, this, verb, headers, 20f);
         }
 
-        private void HeartbeatAnswered(int code, string response)
+        private void PanelFailed(int code, string response)
         {
-            if (code >= 200 && code < 300)
-            {
-                if (!_panelReporting)
-                    Puts(_panelProblem == null
-                        ? "The panel accepted the first heartbeat. This server is reporting."
-                        : "Reporting to the panel again.");
-                _panelReporting = true;
-                _panelProblem = null;
-                _panelFailures = 0;
-                _panelNextAttempt = DateTime.MinValue;
-                _panelState = $"reporting to {_panel.Url} (last heartbeat accepted {DateTime.Now:HH:mm:ss})";
-                return;
-            }
-
-            _panelReporting = false;
             var message = PanelMessage(response);
             string problem;
 
@@ -2030,18 +2175,19 @@ namespace Oxide.Plugins
             else if (code == 401)
                 problem = $"the panel refused the signature ({message}). This is a bug; please report it with Hotwire {Version}.";
             else if (code == 422)
-                problem = $"the panel refused the report as malformed ({message}). This is a bug; please report it with Hotwire {Version}.";
+                problem = $"the panel refused a report as malformed ({message}). This is a bug; please report it with Hotwire {Version}.";
             else if (code == 429)
                 problem = "the panel is asking this server to slow down. It backs off and retries.";
             else
                 problem = $"the panel answered HTTP {code}{(message.Length > 0 ? " (" + message + ")" : "")}. It keeps trying.";
 
+            if (code == 401 || code == 0) _panelReporting = false;
             PanelProblem(problem);
         }
 
-        // Logs a problem once, not every thirty seconds, and waits longer
-        // between tries each time: 1, 2, 4... intervals, never more than ten
-        // minutes. A change to panel.json starts again at once.
+        // Logs a problem once, not on every try, and waits longer between tries
+        // each time: 1, 2, 4... heartbeat intervals, never more than ten minutes.
+        // A change to panel.json starts again at once.
         private void PanelProblem(string problem)
         {
             _panelFailures++;
@@ -2066,6 +2212,30 @@ namespace Oxide.Plugins
             return response.Length > 120 ? response.Substring(0, 120) : response;
         }
 
+        private static JObject PanelData(string response)
+        {
+            return JObject.Parse(response)["data"] as JObject ?? new JObject();
+        }
+
+        private string PanelEnvelope(string kind, JObject payload)
+        {
+            return PanelBody(NewReportId(), DateTime.UtcNow, Version.ToString(), kind, payload);
+        }
+
+        // ---------------------------------------------------------- heartbeat
+
+        private void SendHeartbeat()
+        {
+            _heartbeatDue = DateTime.UtcNow.AddSeconds(Math.Max(10, _config.Panel.HeartbeatSeconds));
+            PanelRequest("POST", PanelReportPath, PanelEnvelope("heartbeat", HeartbeatPayload()), response =>
+            {
+                if (!_panelReporting)
+                    Puts("The panel accepted a heartbeat. This server is reporting.");
+                _panelReporting = true;
+                _panelState = $"reporting to {_panel.Url} (last heartbeat accepted {DateTime.Now:HH:mm:ss})";
+            });
+        }
+
         private JObject HeartbeatPayload()
         {
             // Each fact is optional in the contract. One that cannot be read
@@ -2074,10 +2244,27 @@ namespace Oxide.Plugins
             try { payload["players"] = players.Connected.Count(); } catch { }
             try { payload["max_players"] = server.MaxPlayers; } catch { }
             try { payload["uptime_seconds"] = (long)Time.realtimeSinceStartup; } catch { }
+            try { var fps = AverageFps(); if (fps >= 0) payload["fps"] = fps; } catch { }
             try { var v = InstalledFrameworkVersion(); if (v != null) payload["oxide_version"] = v; } catch { }
             try { var p = server.Protocol; if (!string.IsNullOrEmpty(p)) payload["rust_protocol"] = p; } catch { }
             try { var b = InstalledBuildId(); if (b != null) payload["rust_build_id"] = b; } catch { }
+            if (_inventoryHash != null) payload["inventory_hash"] = _inventoryHash;
             return payload;
+        }
+
+        // Frames the engine actually ran since the last heartbeat, divided by the
+        // time between them: the average, not a sample. The first heartbeat has
+        // nothing to compare with and leaves it out.
+        private int AverageFps()
+        {
+            var frames = Time.frameCount;
+            var at = Time.realtimeSinceStartup;
+            var result = -1;
+            if (_fpsFrames >= 0 && at - _fpsAt >= 1f)
+                result = (int)Math.Round((frames - _fpsFrames) / (at - _fpsAt));
+            _fpsFrames = frames;
+            _fpsAt = at;
+            return result;
         }
 
         // The build Steam installed, from the same manifest the launcher reads.
@@ -2099,9 +2286,397 @@ namespace Oxide.Plugins
             return _buildId;
         }
 
-        private string PanelEnvelope(string kind, JObject payload)
+        // ---------------------------------------------------------- plugin list
+
+        // What is installed: every .cs file in the plugins folder, with its hash
+        // and size, whether it loaded, and Oxide's error if it did not. The
+        // plugin's own [Info] line names it, taken as written. Only these facts
+        // leave the machine; the file itself never does.
+        private void RefreshInventory()
         {
-            return PanelBody(NewReportId(), DateTime.UtcNow, Version.ToString(), kind, payload);
+            var dir = Interface.Oxide.PluginDirectory;
+            if (string.IsNullOrEmpty(dir) || !Directory.Exists(dir)) return;
+
+            var loaded = new Dictionary<string, Plugin>(StringComparer.OrdinalIgnoreCase);
+            foreach (var p in plugins.GetAll())
+                if (p != null && !p.IsCorePlugin && !string.IsNullOrEmpty(p.Filename))
+                    loaded[NormalizeFolder(p.Filename)] = p;
+
+            Dictionary<string, string> errors = null;
+            try { errors = Loader?.PluginErrors; } catch { }
+
+            var items = new List<InventoryItem>();
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var path in Directory.GetFiles(dir, "*.cs"))
+            {
+                seen.Add(path);
+                var info = new FileInfo(path);
+                HashedFile hashed;
+                if (!_fileHashes.TryGetValue(path, out hashed) || hashed.Stamp != info.LastWriteTimeUtc || hashed.Size != info.Length)
+                {
+                    byte[] bytes;
+                    try { bytes = File.ReadAllBytes(path); }
+                    catch { continue; }   // being written right now; the next check has it
+                    using (var sha = SHA256.Create())
+                        hashed = new HashedFile { Stamp = info.LastWriteTimeUtc, Size = bytes.LongLength, Sha256Hex = Hex(sha.ComputeHash(bytes)) };
+                    _fileHashes[path] = hashed;
+                }
+
+                var item = new InventoryItem { Sha256Hex = hashed.Sha256Hex, Size = hashed.Size };
+                var fileName = Path.GetFileNameWithoutExtension(path);
+
+                Plugin plugin;
+                item.Loaded = loaded.TryGetValue(NormalizeFolder(path), out plugin) && plugin.IsLoaded;
+
+                string title, author, version;
+                if (ReadInfoAttribute(path, out title, out author, out version))
+                {
+                    item.Name = title; item.Author = author; item.Version = version;
+                }
+                else if (plugin != null)
+                {
+                    item.Name = plugin.Title ?? fileName;
+                    item.Author = plugin.Author ?? "";
+                    item.Version = plugin.Version.ToString();
+                }
+                else
+                {
+                    item.Name = fileName;
+                }
+
+                if (!item.Loaded)
+                {
+                    string error;
+                    if (errors != null && errors.TryGetValue(fileName, out error) && !string.IsNullOrEmpty(error))
+                        item.Error = error.Length > 2000 ? error.Substring(0, 2000) : error;
+                }
+
+                items.Add(item);
+            }
+
+            foreach (var stale in _fileHashes.Keys.Where(k => !seen.Contains(k)).ToList())
+                _fileHashes.Remove(stale);
+
+            _inventory = items;
+            _inventoryHash = InventoryHash(items.Select(i => new[] { i.Name, i.Author, i.Version, i.Sha256Hex }));
+            if (_inventorySentHash == _inventoryHash)
+                _inventoryState = $"{items.Count} plugin(s), unchanged since last sent";
+        }
+
+        private static readonly Regex InfoAttribute = new Regex(
+            "\\[\\s*Info\\s*\\(\\s*\"((?:[^\"\\\\]|\\\\.)*)\"\\s*,\\s*\"((?:[^\"\\\\]|\\\\.)*)\"\\s*,\\s*\"?([0-9][0-9A-Za-z.\\-+]*)\"?",
+            RegexOptions.Compiled);
+
+        private static bool ReadInfoAttribute(string path, out string title, out string author, out string version)
+        {
+            title = author = version = null;
+            try
+            {
+                var match = InfoAttribute.Match(File.ReadAllText(path));
+                if (!match.Success) return false;
+                title = Regex.Unescape(match.Groups[1].Value);
+                author = Regex.Unescape(match.Groups[2].Value);
+                version = match.Groups[3].Value;
+                return title.Length > 0;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private void SendInventory()
+        {
+            var hash = _inventoryHash;
+            var list = new JArray();
+            foreach (var i in _inventory)
+                list.Add(new JObject
+                {
+                    ["name"] = i.Name,
+                    ["author"] = i.Author,
+                    ["version"] = i.Version,
+                    ["sha256"] = "sha256:" + i.Sha256Hex,
+                    ["size"] = i.Size,
+                    ["loaded"] = i.Loaded,
+                    ["error"] = i.Error
+                });
+            var count = _inventory.Count;
+
+            PanelRequest("POST", PanelReportPath, PanelEnvelope("inventory", new JObject { ["inventory_hash"] = hash, ["plugins"] = list }), response =>
+            {
+                var first = _inventorySentHash == null;
+                _inventorySentHash = hash;
+                _inventoryState = $"{count} plugin(s), sent {DateTime.Now:HH:mm:ss}";
+                Puts(first ? $"Sent the plugin list to the panel ({count} plugins)." : $"The plugin list changed; sent it to the panel ({count} plugins).");
+            }, () =>
+            {
+                _inventorySentHash = hash;   // not again until the list changes
+                _inventoryState = $"{count} plugin(s), REFUSED by the panel -- see the console";
+            });
+        }
+
+        // ---------------------------------------------------------- commands
+
+        private void PollCommands()
+        {
+            _commandsDue = DateTime.UtcNow.AddSeconds(Math.Max(10, _config.Panel.CommandSeconds));
+            PanelRequest("GET", PanelCommandsPath, null, response =>
+            {
+                var commands = PanelData(response)["commands"] as JArray;
+                _commandsState = $"checked {DateTime.Now:HH:mm:ss}";
+                if (commands == null) return;
+                foreach (var c in commands.OfType<JObject>()) ReceiveCommand(c);
+            });
+        }
+
+        private void ReceiveCommand(JObject command)
+        {
+            var id = (string)command["id"];
+            if (string.IsNullOrEmpty(id)) return;
+
+            // Already carried out: the panel did not hear back and sent it again.
+            // Say what happened instead of doing it twice. A restart that is
+            // repeated after the server came back up is exactly the harm this
+            // stops.
+            HandledCommand done;
+            if (_handledCommands.TryGetValue(id, out done))
+            {
+                QueueCommandResult(id, "received", null);
+                QueueCommandResult(id, done.Status, done.Result);
+                return;
+            }
+
+            var verb = ((string)command["verb"] ?? "").ToLowerInvariant();
+            var args = command["args"] as JObject ?? new JObject();
+
+            // Recorded on disk before anything is done, so a command that ends
+            // with the server quitting is known about when it comes back.
+            var record = new HandledCommand { Status = "failed", Result = "interrupted before it finished", HandledUtc = DateTime.UtcNow };
+            _handledCommands[id] = record;
+            PruneHandledCommands();
+            WriteData(CommandsDataFile, _handledCommands);
+            QueueCommandResult(id, "received", null);
+
+            string status, result;
+            try
+            {
+                RunCommand(verb, args, out status, out result);
+            }
+            catch (Exception ex)
+            {
+                status = "failed";
+                result = ex.Message;
+            }
+
+            record.Status = status;
+            record.Result = result;
+            WriteData(CommandsDataFile, _handledCommands);
+            QueueCommandResult(id, status, result);
+            Puts($"Panel command {id} ({verb}): {status}{(string.IsNullOrEmpty(result) ? "" : " -- " + result)}");
+        }
+
+        private void RunCommand(string verb, JObject args, out string status, out string result)
+        {
+            switch (verb)
+            {
+                case "message":
+                {
+                    var text = ((string)args["text"] ?? "").Trim();
+                    if (text.Length == 0 || text.Length > 500) { status = "refused"; result = "the message is empty or longer than 500 characters"; return; }
+                    var sent = 0;
+                    foreach (var p in players.Connected.ToArray())
+                    {
+                        if (p == null || !p.IsConnected) continue;
+                        p.Message(Prefix() + text);
+                        sent++;
+                    }
+                    status = "done"; result = $"sent to {sent} player(s)";
+                    return;
+                }
+                case "save":
+                    server.Save();
+                    status = "done"; result = "saved";
+                    return;
+                case "reload":
+                {
+                    var name = ((string)args["plugin"] ?? "").Trim();
+                    if (!Regex.IsMatch(name, "^[A-Za-z0-9_]{1,64}$")) { status = "refused"; result = "not a plugin name"; return; }
+                    if (!File.Exists(Path.Combine(Interface.Oxide.PluginDirectory, name + ".cs"))) { status = "failed"; result = $"there is no {name}.cs in the plugins folder"; return; }
+                    // Reloading this plugin ends this plugin; let the answer go first.
+                    if (string.Equals(name, Name, StringComparison.OrdinalIgnoreCase))
+                    {
+                        timer.Once(10f, () => Interface.Oxide.ReloadPlugin(name));
+                        status = "done"; result = "reloading in 10 seconds";
+                        return;
+                    }
+                    var ok = Interface.Oxide.ReloadPlugin(name);
+                    status = ok ? "done" : "failed"; result = ok ? "reloaded" : "Oxide could not reload it; see the server console";
+                    return;
+                }
+                case "kick":
+                {
+                    var steamId = ((string)args["steamid"] ?? "").Trim();
+                    if (!Regex.IsMatch(steamId, "^[0-9]{17}$")) { status = "refused"; result = "not a SteamID64"; return; }
+                    var player = players.FindPlayerById(steamId);
+                    if (player == null || !player.IsConnected) { status = "done"; result = "the player was not connected"; return; }
+                    var reason = ((string)args["reason"] ?? "").Trim();
+                    player.Kick(reason.Length > 0 ? reason : "Kicked by an admin");
+                    status = "done"; result = "kicked";
+                    return;
+                }
+                case "restart":
+                {
+                    if (_shuttingDown) { status = "refused"; result = "the server is already shutting down"; return; }
+                    if (_countdownActive) { status = "refused"; result = $"a countdown is already running ({FormatRemaining(RemainingSeconds())} left)"; return; }
+                    var asked = 0;
+                    var delayToken = args["delay"];
+                    if (delayToken != null) int.TryParse(delayToken.ToString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out asked);
+                    var minimum = Math.Max(10, _config.Panel.MinimumRestartSeconds);
+                    var seconds = Math.Max(asked, minimum);
+                    BeginCountdown(DateTime.Now.AddSeconds(seconds), false, false, null, "");
+                    status = "done";
+                    result = asked < minimum
+                        ? $"countdown started: {seconds}s (raised from {asked}s so players are warned)"
+                        : $"countdown started: {seconds}s";
+                    return;
+                }
+                default:
+                    status = "refused";
+                    result = verb == "update"
+                        ? "updates are carried out by the launcher, not the plugin"
+                        : $"this plugin does not know the command '{verb}'";
+                    return;
+            }
+        }
+
+        private void QueueCommandResult(string id, string status, string result)
+        {
+            long numeric;
+            JToken idToken = long.TryParse(id, NumberStyles.Integer, CultureInfo.InvariantCulture, out numeric) ? (JToken)numeric : id;
+            _commandResults.Enqueue(new JObject { ["id"] = idToken, ["status"] = status, ["result"] = result });
+        }
+
+        private void SendCommandResult()
+        {
+            var payload = _commandResults.Peek();
+            PanelRequest("POST", PanelReportPath, PanelEnvelope("command_result", payload), response =>
+            {
+                if (_commandResults.Count > 0 && ReferenceEquals(_commandResults.Peek(), payload)) _commandResults.Dequeue();
+            }, () =>
+            {
+                if (_commandResults.Count > 0 && ReferenceEquals(_commandResults.Peek(), payload)) _commandResults.Dequeue();
+            });
+        }
+
+        private void PruneHandledCommands()
+        {
+            var cutoff = DateTime.UtcNow.AddDays(-2);
+            foreach (var key in _handledCommands.Where(kv => kv.Value == null || kv.Value.HandledUtc < cutoff).Select(kv => kv.Key).ToList())
+                _handledCommands.Remove(key);
+        }
+
+        // ---------------------------------------------------------- ban list
+
+        private void PollBans()
+        {
+            _bansDue = DateTime.UtcNow.AddSeconds(Math.Max(30, _config.Panel.BanSeconds));
+            PanelRequest("GET", PanelBansPath, null, response =>
+            {
+                var data = PanelData(response);
+                var enforced = data["enforced"] == null || (bool)data["enforced"];
+                if (!enforced)
+                {
+                    _bansState = "this account's plan does not include ban sync; nothing is enforced from the panel";
+                    if (_bansNotice != _bansState)
+                        Puts("The panel's ban list is not enforced on this server: the account's plan does not include ban sync. " +
+                             "Bans the panel added before stay in place.");
+                    _bansNotice = _bansState;
+                    return;
+                }
+                _bansNotice = null;
+
+                var hash = (string)data["list_hash"];
+                if (hash != null && hash == _bansListHash)
+                {
+                    _bansState = $"{_appliedBans.Count} ban(s) from the panel, unchanged (checked {DateTime.Now:HH:mm:ss})";
+                    return;
+                }
+
+                var bans = data["bans"] as JArray;
+                if (bans == null) return;
+                ReconcileBans(bans);
+                _bansListHash = hash;
+            });
+        }
+
+        // Writes the account's bans into this server's own ban list. Only bans
+        // this plugin added are ever changed or lifted: a player banned here by
+        // an admin stays banned whatever the panel says.
+        private void ReconcileBans(JArray bans)
+        {
+            var now = (long)(DateTime.UtcNow - UnixEpoch).TotalSeconds;
+            var wanted = new Dictionary<string, AppliedBan>();
+            var mutes = 0;
+
+            foreach (var b in bans.OfType<JObject>())
+            {
+                var id = ((string)b["steamid"] ?? "").Trim();
+                if (!Regex.IsMatch(id, "^[0-9]{17}$")) continue;
+                if (b["is_mute"] != null && (bool)b["is_mute"]) { mutes++; continue; }
+                long expiry = 0;
+                if (b["expiry"] != null) long.TryParse(b["expiry"].ToString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out expiry);
+                if (expiry != 0 && expiry <= now) continue;
+                wanted[id] = new AppliedBan { Expiry = expiry, Reason = ((string)b["reason"] ?? "").Trim() };
+            }
+
+            int added = 0, updated = 0, lifted = 0, alreadyLocal = 0;
+
+            foreach (var kv in wanted)
+            {
+                AppliedBan ours;
+                var isOurs = _appliedBans.TryGetValue(kv.Key, out ours);
+
+                if (server.IsBanned(kv.Key))
+                {
+                    if (!isOurs) { alreadyLocal++; continue; }
+                    if (ours.Expiry == kv.Value.Expiry) continue;
+                    server.Unban(kv.Key);
+                    ApplyBan(kv.Key, kv.Value, now);
+                    updated++;
+                }
+                else
+                {
+                    ApplyBan(kv.Key, kv.Value, now);
+                    if (isOurs) updated++; else added++;
+                }
+                _appliedBans[kv.Key] = kv.Value;
+            }
+
+            foreach (var id in _appliedBans.Keys.Where(k => !wanted.ContainsKey(k)).ToList())
+            {
+                if (server.IsBanned(id)) { server.Unban(id); lifted++; }
+                _appliedBans.Remove(id);
+            }
+
+            WriteData(BansDataFile, _appliedBans);
+            _bansState = $"{_appliedBans.Count} ban(s) from the panel (checked {DateTime.Now:HH:mm:ss})";
+
+            if (added + updated + lifted > 0)
+                Puts($"Ban list from the panel: {added} added, {updated} changed, {lifted} lifted." +
+                     (alreadyLocal > 0 ? $" {alreadyLocal} were already banned here and are left as they are." : "") +
+                     (mutes > 0 ? $" {mutes} mute(s) are not enforced by the plugin." : ""));
+        }
+
+        private void ApplyBan(string id, AppliedBan ban, long now)
+        {
+            var duration = ban.Expiry == 0 ? TimeSpan.Zero : TimeSpan.FromSeconds(Math.Max(1, ban.Expiry - now));
+            var reason = ban.Reason.Length > 0 ? ban.Reason : "Banned";
+            server.Ban(id, reason, duration);
+
+            // A native ban stops the next join; it does not remove someone who is
+            // already playing.
+            var player = players.FindPlayerById(id);
+            if (player != null && player.IsConnected) player.Kick(reason);
         }
 
         #region Panel signing
@@ -2149,6 +2724,34 @@ namespace Oxide.Plugins
         {
             using (var sha = SHA256.Create())
                 return Hex(sha.ComputeHash(Encoding.UTF8.GetBytes(text)));
+        }
+
+        // The plugin set's merge key, frozen by the contract: for each plugin
+        // name, author, version and sha256 (without the prefix) joined by 0x1F,
+        // the lines sorted byte-wise, joined by 0x1E, then sha256.
+        private static string InventoryHash(IEnumerable<string[]> plugins)
+        {
+            var lines = plugins
+                .Select(p => Encoding.UTF8.GetBytes(string.Join("\u001f", new[] { p[0] ?? "", p[1] ?? "", p[2] ?? "", p[3] ?? "" })))
+                .ToList();
+            lines.Sort(CompareBytes);
+
+            var joined = new List<byte>();
+            for (var i = 0; i < lines.Count; i++)
+            {
+                if (i > 0) joined.Add(0x1E);
+                joined.AddRange(lines[i]);
+            }
+            using (var sha = SHA256.Create())
+                return "sha256:" + Hex(sha.ComputeHash(joined.ToArray()));
+        }
+
+        private static int CompareBytes(byte[] a, byte[] b)
+        {
+            var n = Math.Min(a.Length, b.Length);
+            for (var i = 0; i < n; i++)
+                if (a[i] != b[i]) return a[i].CompareTo(b[i]);
+            return a.Length.CompareTo(b.Length);
         }
 
         private static string Hex(byte[] bytes)
@@ -3262,6 +3865,12 @@ namespace Oxide.Plugins
                 lines.Add("  framework    : checks off");
 
             lines.Add($"  panel        : {_panelState}");
+            if (_panel != null)
+            {
+                lines.Add($"  plugins sent : {_inventoryState}");
+                lines.Add($"  commands     : {_commandsState}");
+                lines.Add($"  ban list     : {_bansState}");
+            }
 
             player.Reply(string.Join("\n", lines.ToArray()));
         }

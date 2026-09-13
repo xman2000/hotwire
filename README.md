@@ -43,13 +43,18 @@ Where **AdvancedStatus** is installed, the countdown also renders as a HUD bar. 
 
 ## Reporting to a panel (optional)
 
-Once a server is connected to a Hotwire panel with `hotwire-setup connect`, the plugin sends it a small signed heartbeat every 30 seconds: player count, max players, uptime, and the Oxide, protocol and Rust build versions. That is what shows the server as up in the panel.
+Once a server is connected to a Hotwire panel with `hotwire-setup connect`, the plugin:
+
+- **sends a signed heartbeat** every 30 seconds: player count, max players, average FPS, uptime, and the Oxide, protocol and Rust build versions. That is what shows the server as up.
+- **sends the plugin list** when it changes: each plugin's name, author and version, its file's hash and size, whether it loaded, and Oxide's error if it did not. The files themselves never leave the machine.
+- **carries out commands queued in the panel**: a message to players, a save, a plugin reload, a kick, and a restart, which always goes through the announced countdown and never with less than a minute's warning. A command is recorded before it runs, so one that ends with the server quitting is never carried out twice.
+- **enforces the account's ban list** by writing it into the server's own ban list, so bans hold even when the panel is unreachable. Only bans the panel added are ever lifted; a ban made on the server stays.
 
 - **Nothing is sent unless the server was connected.** Connecting writes `oxide/data/Hotwire/panel.json`; without that file the plugin says so once in console and sends nothing. `hotwire-setup detach` removes it, and reporting stops without a reload.
 - **Signed, never a password on the wire.** Each request is signed with the server's key; the key itself is never sent.
 - **A copied server folder does not report as the original.** The plugin checks that it is running in the folder that was connected, and refuses to report from any other.
 - **Never in the server's way.** Requests are queued and answered later, and a panel that is down, slow or wrong changes what the server reports, never what it does. Problems are logged once, in plain words, and retried with a growing wait.
-- **Off switch:** `Panel` → `Report to the panel when connected` in the config. `hotwire check` shows whether it is reporting and, if not, why.
+- **Off switches:** `Panel` in the config turns off reporting, commands, or the ban list, each on its own. `hotwire check` shows what is happening and, if something is not, why.
 
 ## Times and DST
 

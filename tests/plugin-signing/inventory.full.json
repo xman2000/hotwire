@@ -1,0 +1,49 @@
+{
+  "contract": 1,
+  "report_id": "0193f2c1-8a4e-7c1a-9f3b-2d5e6a7b8c03",
+  "sent_at": "2026-09-09T18:42:11Z",
+  "source": "plugin",
+  "source_version": "1.1.2",
+  "kind": "inventory",
+  "payload": {
+    "inventory_hash": "sha256:c8a78b94bc8dba775e527ea968663720b826a2c135a42321d90798663f34b9a7",
+    "plugins": [
+      {
+        "name": "Kits",
+        "author": "Mevent",
+        "version": "2.3.11",
+        "sha256": "sha256:1db3c6b0cd43615ba64189ac24eb3b51c72c03af72f19d3e4afbca14587be65d",
+        "size": 481203,
+        "loaded": true,
+        "error": null
+      },
+      {
+        "name": "TruePVE",
+        "author": "nivex",
+        "version": "2.2.4",
+        "sha256": "sha256:71828598141415235e450b06145c68828b05a808949cc617c5d12ed18d598571",
+        "size": 210044,
+        "loaded": true,
+        "error": null
+      },
+      {
+        "name": "Flashpoint",
+        "author": "xman2000",
+        "version": "0.20.1",
+        "sha256": "sha256:d6d3aba427b9c173d1bb6518b7c617480e3214bd6506f6a509b3c083fefe9485",
+        "size": 402881,
+        "loaded": false,
+        "error": "error CS0246: The type or namespace name 'ZoneManager' could not be found"
+      },
+      {
+        "name": "LocalPatch",
+        "author": "",
+        "version": "",
+        "sha256": "sha256:fe6d47c028e0a77a2fe43e76f02c48704d7c549ecd803a9e3a52a2563b4b6340",
+        "size": 1204,
+        "loaded": true,
+        "error": null
+      }
+    ]
+  }
+}

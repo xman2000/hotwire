@@ -49,6 +49,26 @@ namespace PluginSigning
             Check("report id carries the current time", Math.Abs(now - ms) < 5000, ms.ToString());
             Check("report ids differ", Extracted.NewReportId() != Extracted.NewReportId());
 
+            // A GET is signed over an empty body.
+            Check("an empty body hashes as sha256 of nothing",
+                Extracted.Sha256Hex("") == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
+            Check("a GET canonical string ends in the empty-body hash",
+                Extracted.PanelCanonical("get", "/api/v1/commands", ts, nonce, "") == "GET /api/v1/commands\n" + ts + "\n" + nonce + "\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
+
+            // The plugin list hash, against the panel's inventory fixture.
+            var inv = JObject.Parse(File.ReadAllText(Path.Combine(Path.GetDirectoryName(args[0]), "inventory.full.json")))["payload"];
+            var rows = new System.Collections.Generic.List<string[]>();
+            foreach (var p in inv["plugins"])
+                rows.Add(new[] { (string)p["name"], (string)p["author"], (string)p["version"], ((string)p["sha256"]).Substring(7) });
+            var invHash = Extracted.InventoryHash(rows);
+            Check("inventory_hash matches the panel's fixture", invHash == (string)inv["inventory_hash"], invHash);
+            rows.Reverse();
+            Check("inventory_hash does not depend on order", Extracted.InventoryHash(rows) == (string)inv["inventory_hash"]);
+            rows[0][1] = null;
+            var withNull = Extracted.InventoryHash(rows);
+            rows[0][1] = "";
+            Check("a missing author hashes as the empty string", withNull == Extracted.InventoryHash(rows));
+
             var n = Extracted.PanelNonce();
             Check("nonce is 32 lowercase hex characters", Regex.IsMatch(n, "^[0-9a-f]{32}$"), n);
 

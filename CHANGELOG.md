@@ -25,6 +25,32 @@ sit above a launcher `1.1.7`. Read the label, not the number.
 at the top of the file — it is a comment, not something it echoes, so read it
 rather than watch for it.
 
+## 1.1.5 — plugin — 2026-09-13
+
+**The panel can see what is installed, act on the server, and enforce bans.**
+
+- **Plugin list.** Every `.cs` file in the plugins folder, sent when the list changes: name, author and
+  version as written in its `[Info]` line, the file's SHA-256 and size, whether it loaded, and Oxide's
+  compile error if it did not. The heartbeat carries the list's hash. The files are never sent.
+- **Commands.** Checked every 30 seconds. Carried out: message players, save, reload a plugin, kick, and
+  restart. A restart always runs the announced countdown, never shorter than 60 seconds (configurable,
+  minimum 10). Anything else is refused with a reason. Each command is recorded on disk before it runs and
+  acknowledged twice, received and then done, failed or refused, so one the panel resends is answered, not
+  repeated.
+- **Ban list.** Checked every two minutes and written into the server's own ban list, so bans hold without
+  the panel. A player who is online is kicked when banned. Only bans the panel added are changed or lifted.
+  Mutes are not enforced. An account without ban sync gets nothing added, and earlier bans stay.
+- **Heartbeat FPS**: frames actually run since the last heartbeat, averaged over the time between them.
+- **One request at a time**, with a rejected report let go rather than retried forever, so a bad answer
+  can never hold up the heartbeat.
+- New `Panel` settings: `Accept commands from the panel`, `Check for commands every this many seconds`,
+  `Shortest restart countdown from the panel (seconds)`, `Enforce the panel's ban list`, `Check the ban
+  list every this many seconds`. `hotwire check` shows each one's state.
+- `tests/plugin-signing` now also checks the plugin list hash against the panel's fixture, and GET signing.
+
+Not yet: player events and log lines (they wait on the admin's choice of how much player data leaves the
+machine), and the launcher's reports.
+
 ## 1.1.4 — plugin — 2026-09-13
 
 **Reports to a Hotwire panel.** A server connected with `hotwire-setup connect` now shows up as live.
