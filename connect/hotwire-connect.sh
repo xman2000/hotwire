@@ -144,10 +144,17 @@ panel_url() {  # explicit flag > what we recorded at enrollment > the default
     printf '%s' "${recorded:-$DEFAULT_PANEL}"
 }
 
+# Reads one line from the terminal, whatever stdin is doing. Silent when there is no terminal at
+# all (a cron, a pipe, a CI runner): the caller then sees an empty answer and says something useful,
+# rather than bash printing "/dev/tty: No such device or address" at someone.
+read_tty() {
+    { read -r __tty_line </dev/tty && printf '%s' "$__tty_line"; } 2>/dev/null || true
+}
+
 confirm() {  # never proceed on silence; an unattended run must pass --yes
     [ "$ASSUME_YES" = "1" ] && { note "  (--yes) $1"; return 0; }
     printf '  %s [y/N] ' "$1"
-    local a; read -r a </dev/tty 2>/dev/null || a=""
+    local a; a="$(read_tty)"
     case "$a" in [yY]*) return 0 ;; *) return 1 ;; esac
 }
 
@@ -238,26 +245,23 @@ check_install() {
     fi
 }
 
-# ------------------------------------------------------------ selftest ----
 # The published conformance vector, copied from the panel's
 # tests/Fixtures/contract/signature/conformance.json. If this machine cannot reproduce the
-# signature below, its canonicalisation is wrong -- not the panel's. Sends nothing, writes nothing.
-cmd_selftest() {
+# signature below, its canonicalisation is wrong -- not the panel's. Signing is the one thing that
+# fails invisibly: a canonicalisation one byte out is a 401 with no useful message, on a machine
+# nobody can reach inbound. So it is checked here rather than left to be discovered.
+check_signing() {
     local secret body expected_hash expected_sig got_hash got_sig rc=0
     secret='hotwire-conformance-secret-do-not-use-in-production'
     body='{"contract":1,"report_id":"0193f2c1-8a4e-7c1a-9f3b-2d5e6a7b8c9d","sent_at":"2026-09-09T18:42:11Z","source":"plugin","source_version":"1.1.2","kind":"heartbeat","payload":{"players":34,"max_players":50}}'
     expected_hash='980c7522d9ba59d5fe8e677984234ef8eb9f48e8811bf4880c735ba21c4edb67'
     expected_sig='0018750ad887b85034deee8237784a18fc46f5bf3da6610ccab4794a696c5bb4'
 
-    say "hotwire-connect $VERSION -- checking this machine can sign correctly"
-    note "Nothing is sent and nothing is written."
-    head_ "Signing"
-
     got_hash="$(sha256_hex "$body")"
     if [ "$got_hash" = "$expected_hash" ]; then
-        ok "the body hashes correctly"
+        ok "this machine hashes correctly"
     else
-        bad "the body hash does not match"
+        bad "the body hash does not match the published vector"
         note "        expected $expected_hash"
         note "        got      $got_hash"
         rc=1
@@ -265,19 +269,13 @@ cmd_selftest() {
 
     got_sig="$(sign_request "$secret" POST /api/v1/report 1757533331 3f9a1c7e2b5d4086 "$body")"
     if [ "$got_sig" = "$expected_sig" ]; then
-        ok "the signature matches the published vector"
+        ok "this machine signs correctly"
     else
-        bad "the signature does not match"
+        bad "the signature does not match the published vector"
         note "        expected $expected_sig"
         note "        got      $got_sig"
+        note "        Do not connect this machine yet -- please report this."
         rc=1
-    fi
-
-    head_ ""
-    if [ "$rc" = "0" ]; then
-        say "${C_GRN}This machine signs correctly.${C_OFF}"
-    else
-        say "${C_RED}This machine cannot sign correctly. Do not connect it yet -- please report this.${C_OFF}"
     fi
     return $rc
 }
@@ -295,6 +293,7 @@ cmd_doctor() {
 
     head_ "Tools"
     check_deps || rc=1
+    check_signing || rc=1
 
     head_ "This server"
     check_install "$root" || rc=1
@@ -323,8 +322,26 @@ cmd_connect() {
     local root url install_id body resp http
     root="$(find_root)"; url="$(panel_url "$root")"
 
-    [ -n "$CODE" ] || die "connecting this server" "no --code was given" \
-        "get a code from the panel (Servers -> Enroll a server) and pass it as --code HW-XXXX-XXXX"
+    # Asked for rather than demanded on the command line. A code typed as an argument ends up in
+    # shell history and in the scrollback of whoever is watching; and making someone re-run a
+    # command because they did not know a flag existed is a poor welcome.
+    if [ -z "$CODE" ]; then
+        say ""
+        say "To connect this server you need a code from the panel."
+        say ""
+        say "  1. Open ${C_BLD}${url}${C_OFF} and sign in"
+        say "  2. Go to Servers, and press \"Connect a server\""
+        say "  3. Copy the code it shows you -- it looks like HW-4K2P-9XQR"
+        say ""
+        note "  It is good for one hour and one machine. Nothing is written until you confirm."
+        say ""
+        printf "  Paste the code here: "
+        CODE="$(read_tty | tr -d '[:space:]')"
+        say ""
+    fi
+
+    [ -n "$CODE" ] || die "connecting this server" "no code was given" \
+        "run this again and paste the code from Servers -> Connect a server in the panel"
 
     # MEASURE TWICE. Everything connect relies on, verified before a byte is
     # written -- a half-connected server is worse than an unconnected one.
@@ -502,9 +519,9 @@ cmd_help() {
     cat <<'HELP'
 hotwire-connect -- connect a Rust server to Hotwire Panel
 
-  selftest  Prove this machine signs requests correctly. Sends nothing, writes nothing.
-  doctor    Check this machine. Read-only, changes nothing, safe any time.
-  connect   Connect to the panel.   --code HW-XXXX-XXXX [--name "My server"]
+  doctor    Check this machine: tools, signing, your server, the panel, the clock.
+            Read-only, changes nothing, safe any time.
+  connect   Connect to the panel. Asks for the code; no need to type it here.
   status    Show what this server is connected to.
   detach    Disconnect. Leaves the server running exactly as it is.
 
@@ -518,7 +535,6 @@ HELP
 }
 
 case "$CMD" in
-    selftest) cmd_selftest ;;
     doctor)  cmd_doctor ;;
     connect) cmd_connect ;;
     status)  cmd_status ;;

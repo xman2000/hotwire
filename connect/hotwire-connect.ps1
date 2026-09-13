@@ -16,9 +16,8 @@
     Requires Windows PowerShell 5.1, which ships with Windows Server 2016 and later.
 
     Usage:
-        .\hotwire-connect.ps1 selftest
         .\hotwire-connect.ps1 doctor  [-Root DIR] [-Panel URL]
-        .\hotwire-connect.ps1 connect -Code HW-XXXX-XXXX [-Name "My server"] [-Root DIR]
+        .\hotwire-connect.ps1 connect [-Root DIR]          # asks for the code
         .\hotwire-connect.ps1 status  [-Root DIR]
         .\hotwire-connect.ps1 detach  [-Root DIR]
 #>
@@ -74,8 +73,8 @@ function Confirm-Step([string]$Question) {
 #
 # Every byte matters. The body is hashed as the EXACT bytes that go on the wire -- UTF-8, no BOM,
 # no trailing newline -- because a mismatch produces a 401 with no useful message on a machine
-# nobody can reach inbound. `selftest` proves this implementation against the panel's published
-# vector; run it before anything else.
+# nobody can reach inbound. `doctor` proves this implementation against the panel's published
+# vector before anything else it checks.
 function Get-Sha256Hex([string]$Text) {
     $sha = [System.Security.Cryptography.SHA256]::Create()
     try {
@@ -106,25 +105,22 @@ function New-Nonce {
     return -join ($bytes | ForEach-Object { $_.ToString('x2') })
 }
 
-# ---------------------------------------------------------------- selftest --
 # The published conformance vector, copied from the panel's
-# tests/Fixtures/contract/signature/conformance.json. If this implementation cannot reproduce the
-# signature below, its canonicalisation is wrong -- not the panel's.
-function Invoke-SelfTest {
+# tests/Fixtures/contract/signature/conformance.json. If this machine cannot reproduce the signature
+# below, its canonicalisation is wrong -- not the panel's. Signing is the one thing that fails
+# invisibly: a canonicalisation one byte out is a 401 with no useful message, on a machine nobody
+# can reach inbound. So it is checked here rather than left to be discovered.
+function Test-Signing {
     $secret = 'hotwire-conformance-secret-do-not-use-in-production'
     $body = '{"contract":1,"report_id":"0193f2c1-8a4e-7c1a-9f3b-2d5e6a7b8c9d","sent_at":"2026-09-09T18:42:11Z","source":"plugin","source_version":"1.1.2","kind":"heartbeat","payload":{"players":34,"max_players":50}}'
     $expectedBodyHash = '980c7522d9ba59d5fe8e677984234ef8eb9f48e8811bf4880c735ba21c4edb67'
     $expectedSignature = '0018750ad887b85034deee8237784a18fc46f5bf3da6610ccab4794a696c5bb4'
-
-    Write-Host "hotwire-connect $Version -- checking this machine can sign correctly"
-    Write-Note "Nothing is sent and nothing is written."
-    Write-Head "Signing"
-
     $ok = $true
+
     $bodyHash = Get-Sha256Hex $body
-    if ($bodyHash -eq $expectedBodyHash) { Write-Ok "the body hashes correctly" }
+    if ($bodyHash -eq $expectedBodyHash) { Write-Ok "this machine hashes correctly" }
     else {
-        Write-Bad "the body hash does not match"
+        Write-Bad "the body hash does not match the published vector"
         Write-Note "expected $expectedBodyHash"
         Write-Note "got      $bodyHash"
         Write-Note "This usually means the text was encoded with a BOM, or CRLF crept into it."
@@ -132,18 +128,15 @@ function Invoke-SelfTest {
     }
 
     $signature = Get-Signature $secret 'POST' '/api/v1/report' '1757533331' '3f9a1c7e2b5d4086' $body
-    if ($signature -eq $expectedSignature) { Write-Ok "the signature matches the published vector" }
+    if ($signature -eq $expectedSignature) { Write-Ok "this machine signs correctly" }
     else {
-        Write-Bad "the signature does not match"
+        Write-Bad "the signature does not match the published vector"
         Write-Note "expected $expectedSignature"
         Write-Note "got      $signature"
+        Write-Note "Do not connect this machine yet -- please report this."
         $ok = $false
     }
-
-    Write-Host ""
-    if ($ok) { Write-Host "This machine signs correctly." -ForegroundColor Green; return 0 }
-    Write-Host "This machine cannot sign correctly. Do not connect it yet -- please report this." -ForegroundColor Red
-    return 1
+    return $ok
 }
 
 # --------------------------------------------------------------- discovery --
@@ -243,6 +236,9 @@ function Invoke-Doctor {
     Write-Host "hotwire-connect $Version -- checking this machine"
     Write-Note "Nothing is written by this command."
 
+    Write-Head "Tools"
+    if (-not (Test-Signing)) { $ok = $false }
+
     Write-Head "This server"
     if (-not (Test-Install $r)) { $ok = $false }
 
@@ -254,7 +250,7 @@ function Invoke-Doctor {
     if ($ok) {
         Write-Host "Everything needed is in place." -ForegroundColor Green
         if (Test-Path -LiteralPath (Get-StateFile $r)) { Write-Note "This server is already connected. 'detach' disconnects it." }
-        else { Write-Note "Next: .\hotwire-connect.ps1 connect -Code HW-XXXX-XXXX" }
+        else { Write-Note "Next: .\hotwire-connect.ps1 connect" }
         return 0
     }
     Write-Host "Something above needs fixing first." -ForegroundColor Red
@@ -295,9 +291,26 @@ function Invoke-Connect {
     $r = Find-Root
     $url = Get-PanelUrl $r
 
+    # Asked for rather than demanded on the command line. A code typed as an argument ends up in
+    # PowerShell history and in the scrollback of whoever is watching; and making someone re-run a
+    # command because they did not know a parameter existed is a poor welcome.
     if (-not $Code) {
-        Stop-Politely "connecting this server" "no -Code was given" `
-            "get a code from the panel (Servers -> Connect a server) and pass it as -Code HW-XXXX-XXXX"
+        Write-Host ""
+        Write-Host "To connect this server you need a code from the panel."
+        Write-Host ""
+        Write-Host "  1. Open $url and sign in"
+        Write-Host "  2. Go to Servers, and press ""Connect a server"""
+        Write-Host "  3. Copy the code it shows you -- it looks like HW-4K2P-9XQR"
+        Write-Host ""
+        Write-Note "It is good for one hour and one machine. Nothing is written until you confirm."
+        Write-Host ""
+        $Code = (Read-Host "  Paste the code here") -replace '\s', ''
+        Write-Host ""
+    }
+
+    if (-not $Code) {
+        Stop-Politely "connecting this server" "no code was given" `
+            "run this again and paste the code from Servers -> Connect a server in the panel"
     }
 
     # MEASURE TWICE. Everything connect relies on, verified before a byte is written -- a
@@ -441,9 +454,9 @@ function Show-Help {
 @'
 hotwire-connect -- connect a Rust server to Hotwire Panel
 
-  selftest  Prove this machine signs requests correctly. Sends nothing, writes nothing.
-  doctor    Check this machine. Read-only, changes nothing, safe any time.
-  connect   Connect to the panel.   -Code HW-XXXX-XXXX [-Name "My server"]
+  doctor    Check this machine: tools, signing, your server, the panel, the clock.
+            Read-only, changes nothing, safe any time.
+  connect   Connect to the panel. Asks for the code; no need to type it here.
   status    Show what this server is connected to.
   detach    Disconnect. Leaves the server running exactly as it is.
 
@@ -457,7 +470,6 @@ Connecting is optional and reversible. Your server does not need a panel to run.
 }
 
 switch ($Command.ToLowerInvariant()) {
-    'selftest' { exit (Invoke-SelfTest) }
     'doctor'   { exit (Invoke-Doctor) }
     'connect'  { exit (Invoke-Connect) }
     'status'   { exit (Invoke-Status) }

@@ -126,13 +126,12 @@ Rust's server browser under your hostname, you have a working Rust server.
 
 ```powershell
 cd C:\rustserver
-.\hotwire-connect.ps1 selftest
 .\hotwire-connect.ps1 doctor
 ```
 
-`selftest` proves this machine signs requests correctly. `doctor` checks it can reach the panel,
-that its clock is close enough, and that it can find your server. **Neither writes anything**, so
-run them as often as you like.
+`doctor` checks everything in one go: that this machine signs requests correctly, that it can reach
+the panel, that its clock is close enough, and that it can find your server. **It writes nothing**,
+so run it as often as you like.
 
 If `doctor` complains about the clock, fix it before going further — a drifting clock makes every
 later request fail with a message that explains nothing:
@@ -141,13 +140,15 @@ later request fail with a message that explains nothing:
 w32tm /resync
 ```
 
-## 8. Get a code and connect
-
-In the panel: **Servers → Connect a server**. Then:
+## 8. Connect it
 
 ```powershell
-.\hotwire-connect.ps1 connect -Code HW-XXXX-XXXX
+.\hotwire-connect.ps1 connect
 ```
+
+It tells you where to get a code and waits while you fetch it — **Servers → Connect a server** in
+the panel — then asks you to paste it. You never type the code as part of a command, so it does not
+end up in your PowerShell history.
 
 It re-checks everything `doctor` checks, shows you exactly which files it will write, and asks
 before writing any of them.

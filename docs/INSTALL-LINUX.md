@@ -198,20 +198,22 @@ crash streak, `always` would restart it immediately and defeat that protection.
 
 ```bash
 cd /home/rust/server
-./hotwire-connect.sh selftest
 ./hotwire-connect.sh doctor
 ```
 
-`selftest` proves this machine signs requests correctly. `doctor` checks it can reach the panel, that
-its clock is close enough, and that it can find your server. **Neither writes anything.**
+`doctor` checks everything in one go: that this machine signs requests correctly, that it can reach
+the panel, that its clock is close enough, and that it can find your server. **It writes nothing**,
+so run it as often as you like.
 
-## 9. Get a code and connect
-
-In the panel: **Servers → Connect a server**. Then:
+## 9. Connect it
 
 ```bash
-./hotwire-connect.sh connect --code HW-XXXX-XXXX
+./hotwire-connect.sh connect
 ```
+
+It tells you where to get a code and waits while you fetch it — **Servers → Connect a server** in the
+panel — then asks you to paste it. You never type the code as part of a command, so it does not end
+up in your shell history.
 
 It re-checks everything `doctor` checks, shows you exactly which files it will write, and asks before
 writing any of them.
