@@ -765,12 +765,13 @@ function Get-InstallState([string]$d) {
     $s.HasSteamCmd = Test-Path -LiteralPath $s.SteamCmdExe
     $s.HasRust = Test-Path -LiteralPath (Join-Path $d 'RustDedicated.exe')
     $s.RustBuild = if ($s.HasRust) { Get-InstalledBuild $d } else { $null }
+    # Before the branch checks below, which depend on it.
+    $s.RustDone = $s.HasRust -and [bool]$s.RustBuild -and (Test-Done $d 'rust')
     $s.RustBranch = if ($s.HasRust) { Get-InstalledBranch $d } else { $null }
     $s.ChosenBranch = Get-ChosenBranch $d
     # Not asked about yet, and on something other than public: worth a question. Asked, and not on it: a move.
     $s.BranchUndecided = $s.RustDone -and -not $s.ChosenBranch -and $s.RustBranch -and $s.RustBranch -ne 'public'
     $s.BranchMismatch = $s.RustDone -and [bool]$s.ChosenBranch -and $s.RustBranch -and $s.RustBranch -ne $s.ChosenBranch
-    $s.RustDone = $s.HasRust -and [bool]$s.RustBuild -and (Test-Done $d 'rust')
     $s.ServerRunning = Get-RunningServer $d
 
     $oxideDll = Join-Path $d 'RustDedicated_Data\Managed\Oxide.Rust.dll'
