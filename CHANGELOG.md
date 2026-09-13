@@ -25,6 +25,32 @@ sit above a launcher `1.1.7`. Read the label, not the number.
 at the top of the file — it is a comment, not something it echoes, so read it
 rather than watch for it.
 
+## 1.1.11 — launcher — 2026-09-13
+
+**Safe with several servers on one machine.** Admins often run a production and a dev server side by
+side, on different branches.
+
+- **ROOT is this file's own folder** (`%~dp0`) unless set otherwise. Before, a copied server folder
+  kept the original's `ROOT`. Started from the copy, it updated and ran the *original* server. A `ROOT`
+  that is not this file's folder, and has a `hotwire.bat` of its own, is now refused at start.
+- **SteamCMD takes turns.** Every run holds `hotwire-steamcmd.lock` beside `steamcmd.exe`, opened
+  unshared, and `hotwire-setup` takes the same lock. Another server waits, and says so, for up to
+  `STEAMCMD_WAIT_MINUTES` (60), then gives up on updating this pass and starts the server as it is.
+  The lock is released when the process ends however it ends, so it cannot be left stuck. The build
+  check does not wait: if SteamCMD is busy it skips the question for that start.
+- **The crash-loop stop names two servers on one port** as a likely cause, and points at section 4.2.
+
+Also: `hotwire.bat check` no longer runs `HOOK_BEFORE`. It no longer says "No problems" when the
+option check was skipped (`CHECK_OPTIONS=0`) or could not run. Stale comments were corrected: update
+modes, flag file names, the crash back-off, the password rules and the branch the build check reads.
+
+## 1.1.3 — plugin — 2026-09-13
+
+`hotwire check` warned about a flag file by its default name, `UPDATE.flag` or `VALIDATE.flag`, even
+when the config names it something else. It now uses the configured names. The note written with a
+flag no longer promises the launcher "will act on it, then delete it": it deletes the flag once an
+update completes, and not at all when its `UPDATE_MODE` is `off`.
+
 ## 1.1.10 — launcher — 2026-09-13
 
 **Every behaviour is a setting, and updates can be switched off.** What the launcher does was partly

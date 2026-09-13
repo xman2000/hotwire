@@ -13,7 +13,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Hotwire", "xman2000", "1.1.2")]
+    [Info("Hotwire", "xman2000", "1.1.3")]
     [Description("Scheduled restarts and updates. Announces, counts down, writes a flag, quits.")]
     internal class Hotwire : CovalencePlugin
     {
@@ -1345,7 +1345,7 @@ namespace Oxide.Plugins
             try
             {
                 File.WriteAllText(path, $"Written by Hotwire at {DateTime.Now:yyyy-MM-dd HH:mm:ss}{Environment.NewLine}");
-                Puts($"Wrote {path}. The launcher will act on it, then delete it -- one flag buys one update.");
+                Puts($"Wrote {path}. The launcher updates on its next start and deletes the flag once the update completes -- one flag buys one update. (Not if its UPDATE_MODE is off.)");
             }
             catch (Exception ex)
             {
@@ -2785,9 +2785,9 @@ namespace Oxide.Plugins
                 try
                 {
                     if (updatePath != null && File.Exists(updatePath))
-                        lines.Add("  !! UPDATE.flag is present RIGHT NOW. The next restart will update.");
+                        lines.Add($"  !! {_config.General.UpdateFlag} is present RIGHT NOW. The next restart will update.");
                     if (validatePath != null && File.Exists(validatePath))
-                        lines.Add("  !! VALIDATE.flag is present RIGHT NOW. The next restart will validate.");
+                        lines.Add($"  !! {_config.General.ValidateFlag} is present RIGHT NOW. The next restart will validate.");
                 }
                 catch (Exception ex)
                 {

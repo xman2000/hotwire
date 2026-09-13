@@ -2,17 +2,19 @@
 setlocal EnableDelayedExpansion
 
 REM  "hotwire.bat check" validates the settings and the option list,
-REM  says what is wrong, and exits without updating or starting
-REM  anything. Run it after editing section 4.
+REM  says what is wrong, and exits without updating or starting the
+REM  server. It does ask Steam for the current build. Run it after
+REM  editing section 4.
 set "CHECK_ONLY="
 if /i "%~1"=="check" set "CHECK_ONLY=1"
 
 REM ==[ H O T W I R E ]===================================================
-REM  Version 1.1.10  2026-09-13
+REM  Version 1.1.11  2026-09-13
 REM  Built by xman2000 and Claude.  MIT License.
 REM
 REM  The launcher. Starts a Rust dedicated server, relaunches it when it
-REM  exits, and updates it either on every start or on demand.
+REM  exits, and updates it on every start, on demand, or never -- see
+REM  UPDATE_MODE.
 REM
 REM  https://github.com/xman2000/hotwire
 REM ======================================================================
@@ -26,12 +28,13 @@ REM     Nothing else. The plugin described below is optional and this file
 REM     works perfectly well without it.
 REM
 REM  SETUP
-REM     1.  Section 1: set ROOT and STEAMCMD.
+REM     1.  Section 1: check STEAMCMD. ROOT is this file's own folder, so
+REM         keep hotwire.bat beside RustDedicated.exe.
 REM     2.  Copy secrets.example.bat to secrets.bat and set RCON_PASSWORD.
 REM     3.  Section 4: enable the options you need. Anything left disabled
 REM         uses the game's default.
 REM     4.  Run "hotwire.bat check" to have it read back what you set
-REM         and say what is wrong. It does not update or start anything.
+REM         and say what is wrong. It does not update or start the server.
 REM     5.  Run this file. Leave the window open.
 REM
 REM  RUN LOOP
@@ -46,21 +49,32 @@ REM
 REM     always     steamcmd and the mod framework run on every start. This
 REM                is the default and matches most Rust launchers.
 REM
-REM     hotwire    steamcmd and the mod framework run only when
-REM                UPDATE.flag or VALIDATE.flag is present in ROOT. The
-REM                flag is deleted once acted on: one flag, one update.
-REM                All other restarts relaunch and nothing more.
+REM     hotwire    steamcmd and the mod framework run when a flag file is
+REM                present in ROOT (UPDATE_FLAG or VALIDATE_FLAG, by default
+REM                UPDATE.flag and VALIDATE.flag), when Steam has a newer
+REM                build (UPDATE_ON_NEW_BUILD), or when the backstop below
+REM                fires. A flag is deleted only once its update completes:
+REM                one flag, one update. Other restarts just relaunch.
+REM
+REM     off        Never. A flag file is left in place and reported.
 REM
 REM     Use hotwire when restarts are automated. In always mode an
 REM     unattended restart installs whatever build is current at the time,
 REM     with no operator present.
 REM
-REM     Create a flag by hand:
-REM       New-Item -ItemType File C:\rustserver\UPDATE.flag
+REM     Create a flag by hand, in the server's folder:
+REM       New-Item -ItemType File UPDATE.flag
 REM
 REM     In hotwire mode, if MAX_DAYS_WITHOUT_UPDATE days pass without an
 REM     update, one runs regardless. Rust clients update themselves; a
 REM     server that does not eventually refuses every connection.
+REM
+REM  SEVERAL SERVERS ON ONE MACHINE
+REM     Give each its own folder, its own copy of this file and its own
+REM     ports (section 4.2). They may share one SteamCMD: only one of them
+REM     runs it at a time, and the others wait. Copying a whole server
+REM     folder is safe -- ROOT follows this file -- but give the copy
+REM     different ports before starting it.
 REM
 REM  PLUGIN
 REM     Optional. See src\Hotwire.cs at the address above. It schedules
@@ -116,11 +130,20 @@ REM ======================================================================
 REM  1. PATHS AND BEHAVIOR
 REM ======================================================================
 
-REM   Where the server is installed. steamcmd writes here.
-set "ROOT=C:\rustserver"
+REM   Where the server is installed. steamcmd writes here. %~dp0 is the
+REM     folder this file is in, which is right when hotwire.bat sits beside
+REM     RustDedicated.exe, and stays right when that folder is copied. Name
+REM     a folder here only if this file is kept somewhere else.
+set "ROOT=%~dp0"
 
-REM   Where steamcmd itself lives.
+REM   Where steamcmd itself lives. Several servers may share one.
 set "STEAMCMD=C:\steamcmd\steamcmd.exe"
+
+REM   Several servers on one machine can share one SteamCMD, and only one of
+REM     them uses it at a time: the others wait, and say so. This is how many
+REM     minutes a start waits before giving up on updating this time and
+REM     starting the server as it is.
+set "STEAMCMD_WAIT_MINUTES=60"
 
 REM   Rust's Steam app id. Do not change this.
 set "APPID=258550"
@@ -149,9 +172,9 @@ REM                the console says so. For a server whose files are
 REM                managed some other way.
 set "UPDATE_MODE=always"
 
-REM   The names of the two flag files, in ROOT. The plugin writes the
-REM     update flag under the name in its own config ("Update flag file name"),
-REM     so change both or neither.
+REM   The names of the two flag files, in ROOT. The plugin writes them under
+REM     the names in its own config ("Update flag file name" and "Validate
+REM     flag file name"), so change both places or neither.
 set "UPDATE_FLAG=UPDATE.flag"
 set "VALIDATE_FLAG=VALIDATE.flag"
 
@@ -181,8 +204,8 @@ REM   Start the server again when it exits. 0 makes the launcher stop when
 REM     the server does, for something else that relaunches it.
 set "RESTART_ON_EXIT=1"
 
-REM   Seconds to wait before relaunching after the server exits. A run
-REM     that crashed backs off from here; see CRASH_SECONDS below.
+REM   Seconds to wait before relaunching after the server exits. After
+REM     repeated crashes the wait grows; see CRASH_BACKOFF below.
 set "RESTART_DELAY=15"
 
 REM   A run shorter than this counts as a crash rather than a restart.
@@ -282,6 +305,20 @@ if not defined ROOT (
     set "CFGBAD=1"
 )
 
+REM  A copied server folder whose hotwire.bat names the original's folder
+REM  in ROOT would, started from the copy, update and run the ORIGINAL
+REM  server. So a ROOT that is not this file's own folder, and holds a
+REM  hotwire.bat of its own, is refused. ROOT=%~dp0 never trips this.
+set "HW_HERE=%~dp0"
+if "!HW_HERE:~-1!"=="\" set "HW_HERE=!HW_HERE:~0,-1!"
+if defined ROOT if /i not "!ROOT!"=="!HW_HERE!" if exist "!ROOT!\hotwire.bat" (
+    echo [%date% %time%] ROOT is set to !ROOT!, which has a hotwire.bat of its own.
+    echo [%date% %time%] This hotwire.bat is in !HW_HERE!. Started from here it
+    echo [%date% %time%] would update and run the server over there instead.
+    echo [%date% %time%] If this folder is a copy, set ROOT to %%~dp0 in section 1.
+    set "CFGBAD=1"
+)
+
 if /i not "%UPDATE_MODE%"=="always" if /i not "%UPDATE_MODE%"=="hotwire" if /i not "%UPDATE_MODE%"=="off" (
     echo [%date% %time%] UPDATE_MODE is [%UPDATE_MODE%]. It must be
     echo [%date% %time%] exactly "always", "hotwire" or "off" -- anything
@@ -308,7 +345,7 @@ REM  Numeric test with no echo and no pipe. Digits are the delimiters,
 REM  so an all-digit value produces no tokens and the inner loop never
 REM  runs; one non-digit produces a token and clears the flag. An empty
 REM  value produces no tokens either, so it is ruled out first.
-for %%V in (MAX_DAYS_WITHOUT_UPDATE MAX_STEAM_TRIES STEAM_RETRY_SECONDS LOG_KEEP RESTART_DELAY CRASH_SECONDS MAX_CRASH_STREAK RCON_PASSWORD_MIN) do (
+for %%V in (MAX_DAYS_WITHOUT_UPDATE MAX_STEAM_TRIES STEAM_RETRY_SECONDS STEAMCMD_WAIT_MINUTES LOG_KEEP RESTART_DELAY CRASH_SECONDS MAX_CRASH_STREAK RCON_PASSWORD_MIN) do (
     set "CFGVAL=!%%V!"
     set "CFGNUM=1"
     if not defined CFGVAL set "CFGNUM="
@@ -352,8 +389,9 @@ REM  2. SECRETS
 REM
 REM     Copy secrets.example.bat to secrets.bat and set RCON_PASSWORD
 REM     there. secrets.bat is gitignored. This launcher will not start
-REM     without it, but it does not check the value, so change the example
-REM     password.
+REM     without it, and refuses a password that is empty, shorter than
+REM     RCON_PASSWORD_MIN, still the example value, or has a double quote in
+REM     it. Write a percent sign as %%.
 REM ======================================================================
 
 set "SECRETS=%~dp0secrets.bat"
@@ -468,9 +506,13 @@ REM     A daily restart pays for it once a day; a crash loop, which relaunches
 REM     every few seconds, never pays at all.
 REM
 REM     Note the walk in the script: buildid appears under every depot as
-REM     well, so it looks for branches, then public inside it, then buildid
+REM     well, so it looks for branches, then STEAM_BRANCH inside it, then buildid
 REM     inside that. Taking the first buildid in the file reads a depot's
 REM     and silently compares the wrong numbers.
+REM
+REM     If another server is using SteamCMD right now, this does not wait
+REM     for it: the question is skipped for this start, and the update, if
+REM     one is due, waits its turn below.
 REM
 REM     If anything here fails -- no steamcmd, Steam unreachable, a hang --
 REM     both numbers come back as ? and the launcher carries on under the
@@ -502,7 +544,8 @@ set "PSBUILD=!PSBUILD!$fresh=$false; "
 set "PSBUILD=!PSBUILD!if(Test-Path -LiteralPath $cache){ $age=((Get-Date)-(Get-Item -LiteralPath $cache).LastWriteTime).TotalHours; "
 set "PSBUILD=!PSBUILD!  if($age -lt $hours){ $fresh=$true; $pub=([IO.File]::ReadAllText($cache)).Trim() } } "
 set "PSBUILD=!PSBUILD!if(-not $fresh){ "
-set "PSBUILD=!PSBUILD!  if(Test-Path -LiteralPath $sc){ "
+set "PSBUILD=!PSBUILD!  $lk=$null; if(Test-Path -LiteralPath $sc){ try{ $lk=[IO.File]::Open((Join-Path (Split-Path -Parent $sc) 'hotwire-steamcmd.lock'),[IO.FileMode]::OpenOrCreate,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None) } catch {} } "
+set "PSBUILD=!PSBUILD!  if($lk){ "
 set "PSBUILD=!PSBUILD!    $p=Start-Process -FilePath $sc -ArgumentList @('+login','anonymous','+app_info_update','1','+app_info_print',$app,'+quit') -RedirectStandardOutput $out -NoNewWindow -PassThru; "
 set "PSBUILD=!PSBUILD!    if($p.WaitForExit(180000)){ "
 set "PSBUILD=!PSBUILD!      if(Test-Path -LiteralPath $out){ $t=[IO.File]::ReadAllText($out); "
@@ -512,6 +555,7 @@ set "PSBUILD=!PSBUILD!          if($j -ge 0){ $m=[regex]::Match($t.Substring($j)
 set "PSBUILD=!PSBUILD!            if($m.Success){ $pub=$m.Groups[1].Value; [IO.File]::WriteAllText($cache,$pub) } } } } "
 set "PSBUILD=!PSBUILD!    } else { try{ $p.Kill() } catch {} } "
 set "PSBUILD=!PSBUILD!    Remove-Item -LiteralPath $out -Force -ErrorAction SilentlyContinue "
+set "PSBUILD=!PSBUILD!    $lk.Dispose() "
 set "PSBUILD=!PSBUILD!  } "
 set "PSBUILD=!PSBUILD!} "
 set "PSBUILD=!PSBUILD!Write-Output ($inst+' '+$pub) "
@@ -563,7 +607,8 @@ if not defined INSTALLED_BUILD (
 REM ======================================================================
 REM  3. UPDATE OR RESTART
 REM
-REM     The two flag files, and what each one costs:
+REM     The two flag files, named by UPDATE_FLAG and VALIDATE_FLAG in
+REM     section 1, and what each one costs:
 REM
 REM     UPDATE.flag     app_update, then the mod framework, then launch.
 REM     VALIDATE.flag   The same, plus validate, which re-checksums the
@@ -571,9 +616,9 @@ REM                     whole install. Slow. Weekly at most, or after a
 REM                     crash.
 REM
 REM     Anything can create one: you, a scheduled task, or the plugin when
-REM     a scheduled update comes due.
+REM     a scheduled update comes due. UPDATE_MODE=off leaves them unread.
 REM
-REM       New-Item -ItemType File C:\rustserver\UPDATE.flag
+REM       New-Item -ItemType File UPDATE.flag     (in the server's folder)
 REM ======================================================================
 
 set "DO_UPDATE=0"
@@ -647,7 +692,8 @@ if !DAYS_SINCE_UPDATE! GEQ %MAX_DAYS_WITHOUT_UPDATE% (
 REM  check mode inspects; it never installs.
 if defined CHECK_ONLY set "DO_UPDATE=0"
 
-if defined HOOK_BEFORE call %HOOK_BEFORE%
+REM  check mode runs nothing on your behalf, hooks included.
+if not defined CHECK_ONLY if defined HOOK_BEFORE call %HOOK_BEFORE%
 
 if "%DO_UPDATE%"=="0" (
     echo [%date% %time%] Plain restart -- skipping steamcmd and framework.
@@ -656,17 +702,44 @@ if "%DO_UPDATE%"=="0" (
 
 set /a STEAM_TRIES=0
 set "STEAM_OK=0"
-set "BRANCH_ARG="
-if defined STEAM_BRANCH set "BRANCH_ARG=-beta %STEAM_BRANCH%"
+
+REM  One SteamCMD run at a time on this machine. Several servers can share one
+REM  SteamCMD, and nothing says two runs of it at once are safe, so the run
+REM  first holds hotwire-steamcmd.lock beside steamcmd.exe, opened unshared.
+REM  Windows lets go of an open file when its process ends, however it ends,
+REM  so a crash can never leave the lock stuck. hotwire-setup takes the same
+REM  lock. Waiting longer than STEAMCMD_WAIT_MINUTES counts as a failed try.
+REM  The arguments are assembled in PowerShell from the environment, so a
+REM  folder name never passes through cmd's parser on the way.
+set "PSSTEAM="
+set "PSSTEAM=!PSSTEAM!$sc=$env:HOTWIRE_STEAMCMD; $q=[char]34; "
+set "PSSTEAM=!PSSTEAM!$a='+force_install_dir '+$q+$env:HOTWIRE_ROOT+$q+' +login anonymous +app_update '+$env:HOTWIRE_APPID; "
+set "PSSTEAM=!PSSTEAM!if(-not [string]::IsNullOrWhiteSpace($env:HOTWIRE_STEAMBRANCH)){ $a=$a+' -beta '+$env:HOTWIRE_STEAMBRANCH }; "
+set "PSSTEAM=!PSSTEAM!if($env:HOTWIRE_VALIDATE -eq '1'){ $a=$a+' validate' }; $a=$a+' +quit'; "
+set "PSSTEAM=!PSSTEAM!$wait=0; [void][int]::TryParse([string]$env:HOTWIRE_STEAMWAIT, [ref]$wait); $deadline=(Get-Date).AddMinutes($wait); "
+set "PSSTEAM=!PSSTEAM!$lock=Join-Path (Split-Path -Parent $sc) 'hotwire-steamcmd.lock'; $h=$null; $said=$false; "
+set "PSSTEAM=!PSSTEAM!while($null -eq $h){ try{ $h=[IO.File]::Open($lock,[IO.FileMode]::OpenOrCreate,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None) } catch { "
+set "PSSTEAM=!PSSTEAM!  if((Get-Date) -gt $deadline){ Write-Output ('Another server has been using SteamCMD for over '+$wait+' minutes. Not waiting any longer.'); exit 97 }; "
+set "PSSTEAM=!PSSTEAM!  if(-not $said){ Write-Output 'Another server is using SteamCMD right now. Waiting for it to finish...'; $said=$true }; Start-Sleep -Seconds 5 } } "
+set "PSSTEAM=!PSSTEAM!try{ $p=Start-Process -FilePath $sc -ArgumentList $a -NoNewWindow -Wait -PassThru; exit $p.ExitCode } finally { $h.Dispose() } "
 
 :steamupdate
 set /a STEAM_TRIES+=1
-if "%DO_VALIDATE%"=="1" (
-    "%STEAMCMD%" +force_install_dir "%ROOT%" +login anonymous +app_update %APPID% %BRANCH_ARG% validate +quit
-) else (
-    "%STEAMCMD%" +force_install_dir "%ROOT%" +login anonymous +app_update %APPID% %BRANCH_ARG% +quit
-)
-if errorlevel 1 goto steamfailed
+set "HOTWIRE_STEAMCMD=%STEAMCMD%"
+set "HOTWIRE_ROOT=%ROOT%"
+set "HOTWIRE_APPID=%APPID%"
+set "HOTWIRE_STEAMBRANCH=%STEAM_BRANCH%"
+set "HOTWIRE_VALIDATE=%DO_VALIDATE%"
+set "HOTWIRE_STEAMWAIT=%STEAMCMD_WAIT_MINUTES%"
+powershell -NoProfile -NonInteractive -Command "!PSSTEAM!"
+set "STEAMEXIT=!errorlevel!"
+set "HOTWIRE_STEAMCMD="
+set "HOTWIRE_ROOT="
+set "HOTWIRE_APPID="
+set "HOTWIRE_STEAMBRANCH="
+set "HOTWIRE_VALIDATE="
+set "HOTWIRE_STEAMWAIT="
+if not "!STEAMEXIT!"=="0" goto steamfailed
 set "STEAM_OK=1"
 goto framework
 
@@ -1431,7 +1504,13 @@ if not "!ARGCHECK!"=="0" (
 )
 
 if defined CHECK_ONLY (
-    echo [%date% %time%] Settings and option list checked. No problems.
+    if "%CHECK_OPTIONS%"=="0" (
+        echo [%date% %time%] Settings checked. The option list was not: CHECK_OPTIONS is 0.
+    ) else if not "!ARGCHECK!"=="0" (
+        echo [%date% %time%] Settings checked. The option list check could not run -- see above.
+    ) else (
+        echo [%date% %time%] Settings and option list checked. No problems.
+    )
     echo [%date% %time%] check mode -- not starting the server.
     exit /b 0
 )
@@ -1527,9 +1606,10 @@ echo [%date% %time%] The log from the first crash is kept as
 echo [%date% %time%]   %ROOT%\logs\server_crash_*.txt
 echo [%date% %time%] and is the one worth reading. Usual causes: a bad
 echo [%date% %time%] convar in section 4, a port already in use, or a
-echo [%date% %time%] corrupt save. Another copy of this launcher
-echo [%date% %time%] already running would do it too -- the second one
-echo [%date% %time%] cannot bind the port.
+echo [%date% %time%] corrupt save. On a machine with more than one server,
+echo [%date% %time%] check each has its own ports in section 4.2 -- two
+echo [%date% %time%] servers on the same port is exactly this. Another copy
+echo [%date% %time%] of this launcher already running would do it too.
 echo [%date% %time%]
 echo [%date% %time%] Set MAX_CRASH_STREAK=0 to loop forever instead.
 echo [%date% %time%] ====================================================
