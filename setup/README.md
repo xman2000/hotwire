@@ -14,10 +14,11 @@ or removing anything defaults to no.
 1. Put **`hotwire-setup.bat`** and **`hotwire-setup.ps1`** in the folder you want the server in, for
    example `C:\rustserver`.
 2. **Right-click `hotwire-setup.bat` → Run as administrator.**
-3. It checks four things first, and changes nothing while it does:
+3. It checks five things first, and changes nothing while it does:
    - is a Rust server installed in this folder, and which build
    - is the clock right (against Steam's servers, so it never contacts the panel)
    - is Hotwire installed: `hotwire.bat` here, `Hotwire.cs` in `oxide\plugins`
+   - is the RCON password in `secrets.bat` one `hotwire.bat` will accept
    - is it connected to Hotwire Panel, and as what
 4. Pick from the menu. It suggests the next step from what it found.
 
@@ -48,11 +49,11 @@ Linux: `./hotwire-setup.sh doctor` and so on. It needs bash, curl, openssl, and 
 | 1 | Windows, PowerShell 5.1, Administrator, memory, **the clock** | only if the clock is out and you say yes (`w32tm /resync`) |
 | 2 | Where the server goes: **this folder unless you say otherwise** | nothing yet |
 | 3 | SteamCMD into `C:\steamcmd`, where `hotwire.bat` looks for it | reuses one already there |
-| 4 | The Rust server, app 258550, about 12 GB | the server folder |
-| 5 | Oxide, checked to be the Windows build and a real archive before it is unpacked. Defaults to yes; no leaves a vanilla server — but `hotwire.bat` installs Oxide whenever it updates, unless its Oxide section is commented out | the server folder |
-| 6 | **Start script**: `hotwire.bat` from the public repository's `main`, with `ROOT` and `STEAMCMD` set for this folder and Windows line endings. Every schedule ships switched off | `hotwire.bat`; an existing one is left alone |
+| 4 | The Rust server, app 258550, about 12 GB. Defaults to yes | the server folder |
+| 5 | Oxide, checked to be the Windows build and a real archive before it is unpacked. Defaults to yes; no leaves a vanilla server, and the start script is set up to stay vanilla | the server folder |
+| 6 | **Start script**: `hotwire.bat`, with `ROOT` and `STEAMCMD` set for this folder, `INSTALL_FRAMEWORK=0` when there is no Oxide, and Windows line endings. Defaults to yes; no means you use your own start script, and step 8 is skipped | `hotwire.bat`; an existing one is left alone |
 | 7 | **Hotwire plugin**, asked separately, defaults to yes. Scheduled, announced restarts. Skipped without Oxide | `oxide\plugins\Hotwire.cs` |
-| 8 | **RCON password**: 32 random letters and digits into `secrets.bat`, shown once and copied to the clipboard | `secrets.bat`, readable only by Administrators and you; an existing one is never replaced |
+| 8 | **RCON password**, walked through: type your own (hidden, twice, checked against the launcher's rules), or press Enter for 32 random letters and digits, shown once and copied to the clipboard | `secrets.bat`, readable only by Administrators and you; an existing valid one is left alone, an invalid one replaced only if you say yes |
 | 9 | **Windows Firewall**: reports what is already open or blocked, then opens UDP 28015 and 28017; TCP 28083 (Rust+) only if asked | rules in the group `Hotwire` |
 | 10 | **Hotwire Panel**, asked last, defaults to yes. Yes runs `connect`; no changes nothing | only if yes: the three files under *doctor and connect* |
 

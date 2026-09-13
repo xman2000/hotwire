@@ -45,6 +45,9 @@ Two settings use that number:
 - **`UPDATE_ON_NEW_BUILD`** — in `hotwire` mode, update when the build has
   actually changed rather than waiting for `MAX_DAYS_WITHOUT_UPDATE`. The
   calendar rule stays as a fallback for when Steam cannot be reached.
+- **`INSTALL_FRAMEWORK`** — `1` (the default) installs Oxide with the server and
+  puts it back after every update. `0` is a vanilla server: the framework is
+  never downloaded or extracted, and an update is complete once steamcmd is.
 - **`SKIP_UNCHANGED_FRAMEWORK`** — do not re-extract the framework when
   neither it nor the game has changed. Writing it over a working install is
   the riskiest thing this file does, and doing it for no reason is pure risk.

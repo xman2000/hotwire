@@ -8,7 +8,7 @@ set "CHECK_ONLY="
 if /i "%~1"=="check" set "CHECK_ONLY=1"
 
 REM ==[ H O T W I R E ]===================================================
-REM  Version 1.1.7   2026-09-05
+REM  Version 1.1.8   2026-09-13
 REM  Built by xman2000 and Claude.  MIT License.
 REM
 REM  The launcher. Starts a Rust dedicated server, relaunches it when it
@@ -161,6 +161,12 @@ REM     installed, instead of waiting for MAX_DAYS_WITHOUT_UPDATE. A build
 REM     that has actually changed is a better reason than a calendar.
 REM     Needs BUILD_CHECK_HOURS above. 0 leaves the calendar in charge.
 set "UPDATE_ON_NEW_BUILD=1"
+
+REM   Install Oxide/uMod with the server, and put it back after every
+REM     update. 0 for a vanilla server: the framework is never downloaded
+REM     or extracted, and an update is complete once steamcmd is. Anything
+REM     other than 0 installs it, which is how every earlier version behaved.
+set "INSTALL_FRAMEWORK=1"
 
 REM   Skip re-extracting the framework when neither it nor the game has
 REM     changed. The extract writes over a working install, which is the
@@ -577,10 +583,15 @@ goto steamupdate
 echo [%date% %time%] Giving up on steamcmd. Launching what we have.
 
 :framework
-REM  Oxide/uMod. Comment this whole block out for a vanilla server.
+REM  Oxide/uMod. INSTALL_FRAMEWORK=0 in section 1 skips it for a vanilla server.
 REM  -f makes curl fail on an HTTP error instead of saving the error page,
 REM  which would otherwise be force-extracted over a working install.
 set "FRAMEWORK_OK=0"
+if "%INSTALL_FRAMEWORK%"=="0" (
+    echo [%date% %time%] Vanilla server: INSTALL_FRAMEWORK is 0, so no framework.
+    set "FRAMEWORK_OK=1"
+    goto :frameworkdone
+)
 
 REM  Re-read the installed build. If steamcmd changed it, the game's own
 REM  managed assemblies were just rewritten and the framework has to go

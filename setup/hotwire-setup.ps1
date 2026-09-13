@@ -3,9 +3,9 @@
 
     https://github.com/xman2000/hotwire            MIT (c) 2026 xman2000
 
-    Double-click hotwire-setup.bat, which sits beside this file. With no command it first checks four
-    things -- is Rust installed in this folder, is the clock right, is Hotwire installed, is it
-    connected -- then shows a menu and suggests what to do next. Right-click it and choose "Run as administrator"
+    Double-click hotwire-setup.bat, which sits beside this file. With no command it first checks
+    is Rust installed in this folder, is the clock right, is Hotwire installed, is the RCON password
+    valid, is it connected -- then shows a menu and suggests what to do next. Right-click it and choose "Run as administrator"
     if you are installing, so the firewall and clock steps can act rather than only report.
 
     The .bat exists because Windows will not run a .ps1 by double-click, and by default refuses to run
@@ -61,11 +61,11 @@ $DefaultPanel = 'https://hotpanel.on-forge.com'
 $SteamCmdZipUrl = 'https://steamcdn-a.akamaihd.net/client/installer/steamcmd.zip'
 $OxideZipUrl = 'https://umod.org/games/rust/download'
 
-# Hotwire itself, from the public repository's main branch -- what the uMod listing carries. GitHub
-# serves both with LF line endings (checked 2026-09-13), which cmd.exe misreads in a .bat, so the
-# launcher is rewritten with CRLF when it is saved.
-$LauncherUrl = 'https://raw.githubusercontent.com/xman2000/hotwire/main/launcher/hotwire.bat'
-$PluginUrl = 'https://raw.githubusercontent.com/xman2000/hotwire/main/src/Hotwire.cs'
+# Hotwire itself, from the branch this script ships on: the launcher there knows INSTALL_FRAMEWORK, which
+# a vanilla install needs. Repoint at main when the branch merges. GitHub serves both with LF line
+# endings (checked 2026-09-13), which cmd.exe misreads in a .bat, so the launcher is saved with CRLF.
+$LauncherUrl = 'https://raw.githubusercontent.com/xman2000/hotwire/connect-and-report/launcher/hotwire.bat'
+$PluginUrl = 'https://raw.githubusercontent.com/xman2000/hotwire/connect-and-report/src/Hotwire.cs'
 
 $Docs = [ordered]@{
     'This guide, step by step'  = 'https://github.com/xman2000/hotwire/blob/connect-and-report/docs/INSTALL-WINDOWS.md'
@@ -424,7 +424,7 @@ function Show-Plan([string]$d) {
     Write-Host "  5. Install Oxide               about 13 MB"
     Write-Host "  6. Start script                hotwire.bat; every schedule ships switched off"
     Write-Host "  7. Hotwire plugin              asked separately"
-    Write-Host "  8. RCON password               generated into secrets.bat, shown to you once"
+    Write-Host "  8. RCON password               you choose it, or press Enter for a strong one"
     Write-Host "  9. Firewall                    UDP $GamePort and $QueryPort; Rust+ only if you say so; never RCON"
     Write-Host " 10. Hotwire Panel               connect this server, asked at the end"
     Write-Host ""
@@ -532,7 +532,10 @@ function Install-Rust([string]$d, [string]$exe) {
         "",
         "More: $($Docs['Creating a server (Rust)'])"
     )
-    if (-not (Confirm-Step "Download the Rust server now?")) { Write-Summary; exit 0 }
+    if (-not (Confirm-Step "Download the Rust server?" -DefaultYes)) {
+        Write-Note "The Rust server is what this installs, so install stops here."
+        Write-Summary; exit 0
+    }
 
     while ($true) {
         Write-Host ""
@@ -582,9 +585,8 @@ function Install-Oxide([string]$d) {
     )
     if (-not (Confirm-Step "Install Oxide?" -DefaultYes)) {
         Write-Warn "Skipped: this is a vanilla server, and it cannot run plugins."
-        Write-Note "hotwire.bat installs Oxide every time it updates the server, so a server started with it"
-        Write-Note "will not stay vanilla. To keep it vanilla, comment out the Oxide section in hotwire.bat --"
-        Write-Note "the file marks it. Run install again any time to add Oxide."
+        Write-Note "The start script is set up to match, so it will not install Oxide either."
+        Write-Note "Run install again any time to add Oxide."
         return
     }
 
@@ -623,48 +625,71 @@ function Install-Oxide([string]$d) {
     Write-Ok "Oxide $version installed"
     Write-Note "Its oxide\ folder appears the first time the server starts. That is normal."
     $script:Changed.Add("installed Oxide $version into $d")
+    $launcherFile = Join-Path $d 'hotwire.bat'
+    if ((Test-Path -LiteralPath $launcherFile) -and (Select-String -LiteralPath $launcherFile -SimpleMatch 'set "INSTALL_FRAMEWORK=0"' -Quiet)) {
+        Write-Warn "hotwire.bat is set up for a vanilla server, so it will not keep Oxide updated"
+        Write-Note "In hotwire.bat, change set `"INSTALL_FRAMEWORK=0`" to 1."
+    }
     Save-Record $d 'oxide'
 }
 
 # ------------------------------------------------------------ 6. launcher --
-# Sets the two lines hotwire.bat needs for this install and returns the file with CRLF line endings,
-# or $null when the text is not the launcher this script knows -- a changed default, or an error page.
-function Set-LauncherPaths([string]$Text, [string]$RootDir, [string]$SteamCmdExe) {
+# Sets the lines hotwire.bat needs for this install -- ROOT, STEAMCMD and, for a vanilla server,
+# INSTALL_FRAMEWORK -- and returns the file with CRLF line endings. Returns $null when the text is not
+# the launcher this script knows: a changed default, an older launcher, or an error page.
+function Set-LauncherPaths([string]$Text, [string]$RootDir, [string]$SteamCmdExe, [bool]$Vanilla = $false) {
     $rootLine = 'set "ROOT=C:\rustserver"'
     $steamLine = 'set "STEAMCMD=C:\steamcmd\steamcmd.exe"'
+    $frameworkLine = 'set "INSTALL_FRAMEWORK=1"'
     $lines = ($Text -replace "`r`n", "`n") -split "`n"
     if (@($lines | Where-Object { $_ -eq $rootLine }).Count -ne 1) { return $null }
     if (@($lines | Where-Object { $_ -eq $steamLine }).Count -ne 1) { return $null }
+    if ($Vanilla -and @($lines | Where-Object { $_ -eq $frameworkLine }).Count -ne 1) { return $null }
     $lines = $lines | ForEach-Object {
         if ($_ -eq $rootLine) { "set `"ROOT=$RootDir`"" }
         elseif ($_ -eq $steamLine) { "set `"STEAMCMD=$SteamCmdExe`"" }
+        elseif ($Vanilla -and $_ -eq $frameworkLine) { 'set "INSTALL_FRAMEWORK=0"' }
         else { $_ }
     }
     return ($lines -join "`r`n")
 }
 
 function Install-Launcher([string]$d) {
-    Write-Head "6. Hotwire launcher"
+    Write-Head "6. Start script"
     $launcher = Join-Path $d 'hotwire.bat'
+    # No Oxide means a vanilla server, and the launcher has to be told, or it installs Oxide on its
+    # first update.
+    $vanilla = -not (Test-Path -LiteralPath (Join-Path $d 'RustDedicated_Data\Managed\Oxide.Rust.dll'))
 
     if (Test-Path -LiteralPath $launcher) {
         Write-Ok "hotwire.bat is already here -- left as it is"
+        if ($vanilla -and (Select-String -LiteralPath $launcher -SimpleMatch 'set "INSTALL_FRAMEWORK=0"' -Quiet) -eq $false) {
+            Write-Warn "this is a vanilla server, and hotwire.bat may install Oxide when it updates"
+            Write-Note "To keep it vanilla, set `"INSTALL_FRAMEWORK=0`" in hotwire.bat."
+        }
         Save-Record $d 'launcher'
         return
     }
 
     $steamCmdExe = Join-Path $SteamCmd 'steamcmd.exe'
-    Write-Why @(
-        "hotwire.bat is the start script: it starts the server, brings it back when it stops, and",
-        "installs Rust updates. It is free and open source, and every schedule in it ships switched",
-        "off, so it cannot restart anything by surprise.",
+    $why = @(
+        "hotwire.bat is Hotwire's start script: it starts the server, brings it back when it stops,",
+        "and installs Rust updates. Every schedule in it ships switched off, so it cannot restart",
+        "anything by surprise.",
         "",
-        "This downloads it from the public repository and sets two lines for this install:",
-        "  ROOT     = $d",
-        "  STEAMCMD = $steamCmdExe",
-        "",
-        "More: $($Docs['Hotwire (source)'])"
+        "This downloads it from the public repository and sets it up for this install:",
+        "  ROOT              = $d",
+        "  STEAMCMD          = $steamCmdExe"
     )
+    if ($vanilla) { $why += "  INSTALL_FRAMEWORK = 0     no Oxide here, so it runs a vanilla server" }
+    $why += @("", "Say no to start the server with a script of your own instead.", "", "More: $($Docs['Hotwire (source)'])")
+    Write-Why $why
+
+    if (-not (Confirm-Step "Install hotwire.bat as the start script?" -DefaultYes)) {
+        Write-Note "Skipped: you will start the server your own way. The RCON password step is skipped"
+        Write-Note "too, because your start script is what sets it."
+        return
+    }
 
     # hotwire.bat runs with delayed expansion on. A ! or % in ROOT is eaten before the path is used,
     # and a quote, caret or ampersand breaks the lines that use it.
@@ -672,21 +697,25 @@ function Install-Launcher([string]$d) {
         Stop-Politely "setting ROOT in hotwire.bat to $d" "the path contains one of ! % `" ^ &, which a .bat cannot use safely" `
             "install into a folder without those characters, for example C:\rustserver"
     }
-    if (-not (Confirm-Step "Install the start script, hotwire.bat?")) { Write-Summary; exit 0 }
 
     $tmp = Join-Path $env:TEMP 'hotwire-launcher.bat'
     [void](Invoke-Download $LauncherUrl $tmp 'the Hotwire launcher')
     try { $text = [IO.File]::ReadAllText($tmp) }
     finally { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
 
-    $edited = Set-LauncherPaths $text $d $steamCmdExe
+    $edited = Set-LauncherPaths $text $d $steamCmdExe $vanilla
     if ($null -eq $edited) {
-        Stop-Politely "setting ROOT and STEAMCMD in the downloaded hotwire.bat" "it does not contain the two lines this script changes" `
+        Stop-Politely "setting up the downloaded hotwire.bat" "it does not contain the lines this script changes" `
             "nothing was written; download launcher\hotwire.bat by hand from $($Docs['Hotwire (source)']) and set ROOT and STEAMCMD near the top"
     }
     [IO.File]::WriteAllText($launcher, $edited, [System.Text.UTF8Encoding]::new($false))
-    Write-Ok "hotwire.bat written, with ROOT and STEAMCMD set for this install"
-    $script:Changed.Add("created $launcher (ROOT and STEAMCMD set)")
+    if ($vanilla) {
+        Write-Ok "hotwire.bat written for a vanilla server, with ROOT and STEAMCMD set for this install"
+        $script:Changed.Add("created $launcher (ROOT, STEAMCMD, INSTALL_FRAMEWORK=0)")
+    } else {
+        Write-Ok "hotwire.bat written, with ROOT and STEAMCMD set for this install"
+        $script:Changed.Add("created $launcher (ROOT and STEAMCMD set)")
+    }
     Save-Record $d 'launcher'
 }
 
@@ -711,6 +740,10 @@ function Install-Plugin([string]$d) {
         "The Hotwire plugin adds scheduled, announced restarts: it counts down in game, kicks with a",
         "reason, saves, and hands over to hotwire.bat. Every schedule ships switched off."
     )
+    if (-not (Test-Path -LiteralPath (Join-Path $d 'hotwire.bat'))) {
+        Write-Warn "there is no hotwire.bat: a scheduled restart quits the server, and your own start"
+        Write-Note "script has to start it again."
+    }
     if (-not (Confirm-Step "Install the Hotwire plugin?" -DefaultYes)) {
         Write-Note "Skipped. Run install again any time to add it."
         return
@@ -752,50 +785,109 @@ function New-RconPassword {
     return $sb.ToString()
 }
 
+# The launcher's own refusals, in its words (hotwire.bat section 2), plus two a .bat file imposes: for /f
+# skips a line starting with a semicolon, and a batch file treats % as the start of a variable.
+function Test-RconPassword([string]$Password) {
+    if (-not $Password) { return 'it is empty' }
+    if ($Password.Length -lt 8) { return 'it is under 8 characters' }
+    if ($Password -eq 'change_me') { return 'it is still the example value, change_me' }
+    if ($Password.Contains('"')) { return 'it contains a double quote' }
+    if ($Password.StartsWith(';')) { return 'it starts with a semicolon' }
+    if ($Password.Contains('%')) { return 'it contains %, which a .bat file does not keep as written' }
+    return $null
+}
+
+# What is wrong with the RCON password in secrets.bat, or $null when hotwire.bat will accept it. Reads
+# the last set "RCON_PASSWORD=..." line, the form the launcher and install both write.
+function Get-SecretsProblem([string]$d) {
+    $f = Join-Path $d 'secrets.bat'
+    if (-not (Test-Path -LiteralPath $f)) { return 'there is no secrets.bat' }
+    try { $text = [IO.File]::ReadAllText($f) } catch { return 'secrets.bat could not be read by this account' }
+    $found = [regex]::Matches($text, '(?im)^[ \t]*set[ \t]+"RCON_PASSWORD=(.*)"[ \t]*\r?$')
+    if ($found.Count -eq 0) { return 'secrets.bat has no line reading set "RCON_PASSWORD=..."' }
+    return (Test-RconPassword $found[$found.Count - 1].Groups[1].Value)
+}
+
+function Read-SecretText([string]$Prompt) {
+    $secure = Read-Host $Prompt -AsSecureString
+    $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
+    try { return [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr) }
+    finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr) }
+}
+
 function Install-RconPassword([string]$d) {
     Write-Head "8. RCON password"
     $secrets = Join-Path $d 'secrets.bat'
 
-    if (Test-Path -LiteralPath $secrets) {
-        Write-Ok "secrets.bat is already here -- left as it is, password and all"
-        Save-Record $d 'rcon'
+    if (-not (Test-Path -LiteralPath (Join-Path $d 'hotwire.bat'))) {
+        Write-Note "Skipped: there is no hotwire.bat, so your own start script sets the RCON password."
         return
     }
 
-    Write-Why @(
-        "RCON is remote control of your server: anyone with this password can run commands on it.",
-        "hotwire.bat reads it from secrets.bat, beside it, and will not start without one.",
-        "",
-        "This makes a random 32-character password, writes it to secrets.bat, and lets only",
-        "Administrators and you read that file. The password is shown once and copied to your",
-        "clipboard. Save it in a password manager -- you need it to use RCON."
-    )
-    if (-not (Confirm-Step "Create secrets.bat with a new RCON password?")) { Write-Summary; exit 0 }
+    if (Test-Path -LiteralPath $secrets) {
+        $problem = Get-SecretsProblem $d
+        if (-not $problem) {
+            Write-Ok "secrets.bat is already here, and hotwire.bat will accept its password -- left as it is"
+            Save-Record $d 'rcon'
+            return
+        }
+        Write-Bad "secrets.bat is here, but $problem -- hotwire.bat will not start the server"
+        if (-not (Confirm-Step "Set a new RCON password in its place?")) {
+            Write-Note "Left as it is. Fix $secrets before starting the server."
+            return
+        }
+    }
 
-    $password = New-RconPassword
+    Write-Why @(
+        "RCON is remote control of your server: anyone with this password can run commands on it,",
+        "so treat it like this machine's administrator password.",
+        "",
+        "hotwire.bat reads it from secrets.bat, beside it, and will not start the server if it is",
+        "under 8 characters, is 'change_me', or contains a double quote.",
+        "",
+        "Press Enter and a strong one is made for you: 32 random letters and digits, shown once and",
+        "copied to your clipboard. Or type your own -- it is not shown as you type, and you type it",
+        "twice."
+    )
+
+    $generated = $false
+    while ($true) {
+        $first = Read-SecretText "  RCON password (Enter to generate one)"
+        if (-not $first) { $password = New-RconPassword; $generated = $true; break }
+        $problem = Test-RconPassword $first
+        if ($problem) { Write-Bad "that will not work: $problem. Try another, or press Enter to generate one."; continue }
+        $second = Read-SecretText "  Type it again"
+        if ($second -cne $first) { Write-Bad "the two did not match. Try again."; continue }
+        $password = $first
+        break
+    }
+
     $body = "@echo off`r`n" +
         "REM The RCON password for this server. RCON is remote control of the machine: treat this`r`n" +
         "REM like a root password. Never share this file, and never commit it anywhere.`r`n" +
         "set `"RCON_PASSWORD=$password`"`r`n"
     [IO.File]::WriteAllText($secrets, $body, [System.Text.UTF8Encoding]::new($false))
-    $script:Changed.Add("created $secrets (the RCON password)")
+    $script:Changed.Add("wrote $secrets (the RCON password)")
     try { Set-SecretAcl $secrets; Write-Ok "secrets.bat written, readable only by Administrators and you" }
     catch { Write-Warn "secrets.bat written, but who can read it could not be restricted: $($_.Exception.Message)" }
     Write-Note "If the server will run under a different Windows account, give that account read access."
 
-    $copied = $false
-    try { Set-Clipboard -Value $password; $copied = $true } catch { }
-
-    Write-Host ""
-    Write-Host "  Your RCON password:"
-    Write-Host ""
-    Write-Host "      $password" -ForegroundColor Yellow
-    Write-Host ""
-    if ($copied) { Write-Note "It is on your clipboard too." }
-    else { Write-Warn "could not copy it to the clipboard -- copy it from above" }
-    Write-Note "It stays in this window's scrollback until the window is closed."
-    Write-Host ""
-    [void](Read-Host "  Save it somewhere safe, then press Enter")
+    if ($generated) {
+        $copied = $false
+        try { Set-Clipboard -Value $password; $copied = $true } catch { }
+        Write-Host ""
+        Write-Host "  Your RCON password:"
+        Write-Host ""
+        Write-Host "      $password" -ForegroundColor Yellow
+        Write-Host ""
+        if ($copied) { Write-Note "It is on your clipboard too." }
+        else { Write-Warn "could not copy it to the clipboard -- copy it from above" }
+        Write-Note "It stays in this window's scrollback until the window is closed."
+        Write-Host ""
+        [void](Read-Host "  Save it somewhere safe, then press Enter")
+    } else {
+        Write-Note "Your password was not shown and is not on the clipboard."
+    }
     Save-Record $d 'rcon'
 }
 
@@ -1374,9 +1466,14 @@ function Invoke-Install {
     Write-Summary
     Write-Host ""
     Write-Host "  Next:"
-    Write-Host "    1. Open hotwire.bat in Notepad and set your server's name and description."
-    Write-Host "       The top of the file explains every option."
-    Write-Host "    2. Start the server: double-click hotwire.bat."
+    if (Test-Path -LiteralPath (Join-Path $serverDir 'hotwire.bat')) {
+        Write-Host "    1. Open hotwire.bat in Notepad and set your server's name and description."
+        Write-Host "       The top of the file explains every option."
+        Write-Host "    2. Start the server: double-click hotwire.bat."
+    } else {
+        Write-Host "    Start the server with your own start script. hotwire.bat is available any time:"
+        Write-Host "    run install again."
+    }
     Write-Host ""
     Write-Note "The first start takes several minutes while the map generates."
     Write-Note "Run install again any time; it only does what is not done yet."
@@ -1384,8 +1481,8 @@ function Invoke-Install {
 }
 
 # ----------------------------------------------------------------- menu --
-# What a double-click gets. Four checks first -- is Rust here, is the clock right, is Hotwire here,
-# is it connected -- then a suggestion. All four only read; nothing starts until a number is chosen.
+# What a double-click gets. Five checks first -- is Rust here, is the clock right, is Hotwire here,
+# is its RCON password valid, is it connected -- then a suggestion. All four only read; nothing starts until a number is chosen.
 function Write-No ($m) { Write-Host "  [ no ] $m" -ForegroundColor Gray }
 
 function Invoke-Menu {
@@ -1432,6 +1529,15 @@ function Invoke-Menu {
     if ($launcher) { Write-Ok "Hotwire launcher: hotwire.bat" } else { Write-No "Hotwire launcher: no hotwire.bat in this folder" }
     if ($plugin) { Write-Ok "Hotwire plugin: $plugin" } else { Write-No "Hotwire plugin: no Hotwire.cs in oxide\plugins" }
 
+    # The RCON password, by the rules hotwire.bat applies before it starts the server. A server started
+    # some other way keeps its password somewhere this cannot see.
+    $rconProblem = $null
+    if ($hasServer -and $launcher) {
+        $rconProblem = Get-SecretsProblem $here
+        if ($rconProblem) { Write-Bad "RCON password: $rconProblem -- hotwire.bat will not start the server" }
+        else { Write-Ok "RCON password is set, and hotwire.bat will accept it" }
+    } elseif ($hasServer) { Write-No "RCON password: not checked -- without hotwire.bat, your own start script sets it" }
+
     # 4. Connected
     $connected = Test-Path -LiteralPath (Get-StateFile $here)
     if ($connected) {
@@ -1456,6 +1562,10 @@ function Invoke-Menu {
             Write-Note "Suggested: put Hotwire in place -- step 6 of the guide:"
             Write-Note "  $($Docs['This guide, step by step'])"
         }
+    }
+    elseif ($rconProblem) {
+        if (Test-Path -LiteralPath (Get-RecordFile $here)) { Write-Note "Suggested: 1 -- install walks you through setting the RCON password." }
+        else { Write-Note "Suggested: secrets.bat, beside hotwire.bat, needs a line reading: set `"RCON_PASSWORD=your password`"" }
     }
     elseif (-not $connected) { Write-Note "Suggested: 3, connect to Hotwire Panel." }
     else { Write-Note "Suggested: 4." }

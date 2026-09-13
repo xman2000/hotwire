@@ -25,6 +25,15 @@ sit above a launcher `1.1.7`. Read the label, not the number.
 at the top of the file — it is a comment, not something it echoes, so read it
 rather than watch for it.
 
+## 1.1.8 — launcher — 2026-09-13
+
+**A vanilla server can now stay vanilla.** The launcher installed Oxide on
+every update, and the only way to stop it was commenting out a block by hand.
+`INSTALL_FRAMEWORK` in section 1 now decides: `1`, the default, behaves exactly
+as before; `0` never downloads or extracts the framework, and an update counts
+as complete once steamcmd is. `hotwire-setup` writes `0` when it installs a
+server without Oxide.
+
 ## 1.1.2 — plugin — 2026-09-05
 
 **The in-game panel never refreshed itself.** It is static text, drawn once and
