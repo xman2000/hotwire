@@ -35,3 +35,8 @@ docs/RESEARCH.md
 # The decisions. They live in the private panel repository
 # (hotwire-panel/docs/hotwire/DECISIONS.md) and never in this public one.
 docs/DECISIONS.md
+
+# Test build output
+tests/**/bin/
+tests/**/obj/
+tests/plugin-signing/Extracted.cs

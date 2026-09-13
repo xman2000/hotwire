@@ -25,6 +25,28 @@ sit above a launcher `1.1.7`. Read the label, not the number.
 at the top of the file — it is a comment, not something it echoes, so read it
 rather than watch for it.
 
+## 1.1.4 — plugin — 2026-09-13
+
+**Reports to a Hotwire panel.** A server connected with `hotwire-setup connect` now shows up as live.
+
+- **A signed heartbeat every 30 seconds:** player count, max players, uptime, Oxide version, network
+  protocol, and the installed Rust build (read from Steam's app manifest). A value that cannot be read is
+  left out, never guessed.
+- **Only when connected.** The key is read from `oxide/data/Hotwire/panel.json`, which connect writes. No
+  file, nothing sent. The file is re-read when it changes, so connect and detach need no reload.
+- **Not from a copy.** If `panel.json` was written for another folder, the plugin refuses to report and says
+  which folder it was written for.
+- **Never in the server's way.** Requests are queued; failures are caught, logged once with what to do, and
+  retried with a wait that doubles up to ten minutes.
+- New config section `Panel`: `Report to the panel when connected` (true) and `Heartbeat every this many
+  seconds` (30).
+- `hotwire check` shows the panel state.
+- `tests/plugin-signing/run.sh` checks the signing code, taken straight out of the plugin, against the
+  panel's published signature vector.
+
+Not yet: `fps` and the plugin inventory hash in the heartbeat, session and inventory reports, and collecting
+commands from the panel.
+
 ## 1.1.11 — launcher — 2026-09-13
 
 **Safe with several servers on one machine.** Admins often run a production and a dev server side by

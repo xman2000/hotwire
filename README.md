@@ -41,6 +41,16 @@ Announcements go out under a configurable name — **"Server Manager"** by defau
 
 Where **AdvancedStatus** is installed, the countdown also renders as a HUD bar. It is entirely optional and is not distributed through uMod, so it cannot be listed as a formal dependency — install it or do not. Without it the countdown still runs and is announced in chat, which is the normal case rather than a degraded one, and `hotwire check` reports which state you are in.
 
+## Reporting to a panel (optional)
+
+Once a server is connected to a Hotwire panel with `hotwire-setup connect`, the plugin sends it a small signed heartbeat every 30 seconds: player count, max players, uptime, and the Oxide, protocol and Rust build versions. That is what shows the server as up in the panel.
+
+- **Nothing is sent unless the server was connected.** Connecting writes `oxide/data/Hotwire/panel.json`; without that file the plugin says so once in console and sends nothing. `hotwire-setup detach` removes it, and reporting stops without a reload.
+- **Signed, never a password on the wire.** Each request is signed with the server's key; the key itself is never sent.
+- **A copied server folder does not report as the original.** The plugin checks that it is running in the folder that was connected, and refuses to report from any other.
+- **Never in the server's way.** Requests are queued and answered later, and a panel that is down, slow or wrong changes what the server reports, never what it does. Problems are logged once, in plain words, and retried with a growing wait.
+- **Off switch:** `Panel` → `Report to the panel when connected` in the config. `hotwire check` shows whether it is reporting and, if not, why.
+
 ## Times and DST
 
 Schedules are local wall-clock time, so `05:00` means five in the morning whatever the clocks have done. Every time the plugin prints carries the zone and whether daylight saving is in effect.
@@ -55,6 +65,7 @@ Two things this must never do: leave a server unable to restart, or restart one 
 - A failed flag write downgrades an update to a plain restart rather than canceling it.
 - An entry that becomes invalid is switched off and reported, rather than left to fail at three in the morning.
 - Disabling an entry cancels a countdown that came from it.
+- Reporting to a panel runs beside the schedule, never in front of it: nothing that restarts, counts down or writes a flag waits on the panel or reads from it.
 
 ## Installing
 
@@ -248,6 +259,7 @@ docs/LAUNCHER.md                the launcher in full
 docs/CONFIG.md                  every config field, command and permission
 docs/GAME-API.md                what has been verified against a real build
 tools/convars.py                maintenance tooling; you never need to run it
+tests/plugin-signing/           checks the plugin's request signing outside the game
 ```
 
 ## Credit

@@ -285,6 +285,42 @@ written once and never rewritten.
 The `Render the countdown through AdvancedStatus` key from 0.1.x is gone,
 replaced by the `Status bar` section below.
 
+## Panel
+
+```json
+"Panel": {
+  "Report to the panel when connected": true,
+  "Heartbeat every this many seconds": 30
+}
+```
+
+Reporting only happens once this server has been connected to a Hotwire panel
+with `hotwire-setup connect`, which writes the key to
+`oxide/data/Hotwire/panel.json`. Without that file nothing is sent, whatever
+this section says.
+
+- **Report to the panel when connected** — `false` stops reporting and leaves
+  the connection in place. To disconnect instead, run `hotwire-setup detach`.
+- **Heartbeat every this many seconds** — how often the server says it is up.
+  The panel counts a server as silent after ten minutes without one. The
+  minimum is 10.
+
+The plugin re-reads `panel.json` whenever it changes, so connecting,
+reconnecting and detaching take effect without a reload. It refuses to report
+if `panel.json` was written for a different folder than the one this server runs
+from, which is what a copied server folder looks like.
+
+When something goes wrong it is logged once, in console, with what to do:
+
+| console says | means |
+|---|---|
+| clock is more than five minutes out | the machine's clock is wrong; set it to sync automatically |
+| no longer accepts this server's key | the server was retired in the panel, or another machine was connected in its place; make a code in the panel and run `hotwire-setup connect` again |
+| could not reach the panel | the network or the panel is down; it keeps trying, and the server is unaffected |
+| refused the signature / malformed | a bug; please report it with the plugin version |
+
+Failed tries wait longer each time, up to ten minutes apart.
+
 ## Status bar
 
 ```json
@@ -464,6 +500,7 @@ Answers the questions you would otherwise spend a real restart to answer:
 - Schedule counts, what is next, the countdown shape, how many entries the
   DST guard is holding, whether a status plugin is present, and whether the
   framework check is on.
+- **Whether it is reporting to a panel**, and if not, why not.
 
 It changes nothing except the probe file it cleans up after itself. Run it
 after installing, after moving the server, and after any Oxide update.

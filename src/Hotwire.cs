@@ -3,6 +3,9 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.RegularExpressions;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using Oxide.Core;
@@ -13,7 +16,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Hotwire", "xman2000", "1.1.3")]
+    [Info("Hotwire", "xman2000", "1.1.4")]
     [Description("Scheduled restarts and updates. Announces, counts down, writes a flag, quits.")]
     internal class Hotwire : CovalencePlugin
     {
@@ -91,6 +94,25 @@ namespace Oxide.Plugins
 
             [JsonProperty("Status bar")]
             public StatusBarSettings StatusBar = new StatusBarSettings();
+
+            [JsonProperty("Panel")]
+            public PanelSettings Panel = new PanelSettings();
+        }
+
+        // Reporting to a Hotwire panel. Nothing is sent anywhere unless this
+        // server has been connected with hotwire-setup, which writes the key to
+        // oxide/data/Hotwire/panel.json. Deleting that file (or running
+        // hotwire-setup detach) disconnects it; turning this off stops
+        // reporting and leaves the connection in place.
+        private class PanelSettings
+        {
+            [JsonProperty("Report to the panel when connected")]
+            public bool Enabled = true;
+
+            // How often the server says "still here". The panel counts a
+            // server as silent after ten minutes without one.
+            [JsonProperty("Heartbeat every this many seconds")]
+            public int HeartbeatSeconds = 30;
         }
 
         // Recurrence is stored as explicit fields rather than as a cron
@@ -380,6 +402,7 @@ namespace Oxide.Plugins
             if (_config.Framework == null) { _config.Framework = new FrameworkSettings(); repaired.Add("Framework update check"); }
             if (_config.General == null) { _config.General = new GeneralSettings(); repaired.Add("General"); }
             if (_config.StatusBar == null) { _config.StatusBar = new StatusBarSettings(); repaired.Add("Status bar"); }
+            if (_config.Panel == null) { _config.Panel = new PanelSettings(); repaired.Add("Panel"); }
 
             if (_config.Countdown.AnnounceAt == null)
             {
@@ -447,6 +470,8 @@ namespace Oxide.Plugins
 
         private string _knownFrameworkVersion;
 
+        private Timer _panelTimer;
+
         #endregion
 
         #region Lifecycle
@@ -502,6 +527,8 @@ namespace Oxide.Plugins
 
             var next = DescribeNext(null);
             Puts(next == null ? "No schedule is enabled. Nothing will restart." : $"Next: {next}");
+
+            StartPanelReporting();
         }
 
         private void Unload()
@@ -509,6 +536,7 @@ namespace Oxide.Plugins
             _scanTimer?.Destroy();
             _countdownTimer?.Destroy();
             _frameworkTimer?.Destroy();
+            _panelTimer?.Destroy();
 
             CloseAllMenus();   // goes with the menu
 
@@ -1758,6 +1786,403 @@ namespace Oxide.Plugins
 
         #endregion
 
+        #region Panel reporting
+
+        // Sends a signed heartbeat to the panel this server was connected to.
+        //
+        // Everything here is on the side of the game, never in its way: the
+        // request is queued and answered later, every failure is caught and
+        // logged once, and nothing in the schedule, the countdown or the flags
+        // waits on it or reads from it. A panel that is down, slow or wrong
+        // changes what this server reports, never what it does.
+        //
+        // Heartbeats are not kept and resent after an outage. A heartbeat says
+        // "alive now"; ten of them delivered late say nothing the next one does
+        // not, and saving them would only grow a file on the admin's disk.
+
+        private const string PanelReportPath = "/api/v1/report";
+        private const string BuildManifest = "appmanifest_258550.acf";
+
+        private sealed class PanelLink
+        {
+            public string KeyId;
+            public string Secret;
+            public string Url;
+        }
+
+        private PanelLink _panel;
+        private DateTime _panelFileStamp = DateTime.MinValue;
+        private string _panelState = "not started";
+        private string _panelProblem;
+        private bool _panelReporting;
+        private bool _panelInFlight;
+        private int _panelFailures;
+        private DateTime _panelNextAttempt = DateTime.MinValue;
+        private DateTime _manifestStamp = DateTime.MinValue;
+        private string _buildId;
+
+        private string PanelFile() => Path.Combine(Interface.Oxide.DataDirectory, "Hotwire", "panel.json");
+
+        private void StartPanelReporting()
+        {
+            if (!_config.Panel.Enabled)
+            {
+                _panelState = "off in the config";
+                Puts("Panel reporting is off in the config. Nothing is sent.");
+                return;
+            }
+
+            var seconds = Math.Max(10, _config.Panel.HeartbeatSeconds);
+            _panelTimer = timer.Every(seconds, PanelTick);
+            timer.Once(5f, PanelTick);
+        }
+
+        private void PanelTick()
+        {
+            try
+            {
+                if (!_config.Panel.Enabled || _shuttingDown) return;
+
+                RefreshPanelLink();
+                if (_panel == null || _panelInFlight || DateTime.UtcNow < _panelNextAttempt) return;
+
+                SendHeartbeat();
+            }
+            catch (Exception ex)
+            {
+                PanelProblem($"reporting stopped for this tick after an error: {ex.Message}");
+            }
+        }
+
+        // Reads panel.json again only when it changes, so connecting, detaching
+        // or reconnecting takes effect without a reload.
+        private void RefreshPanelLink()
+        {
+            var path = PanelFile();
+            if (!File.Exists(path))
+            {
+                if (_panel != null || _panelFileStamp != DateTime.MinValue || _panelState == "not started")
+                {
+                    if (_panel != null) Puts("panel.json is gone, so this server is no longer connected. Reporting stopped.");
+                    else Puts("Not connected to a panel. Nothing is sent. (hotwire-setup connect connects this server.)");
+                }
+                _panel = null;
+                _panelFileStamp = DateTime.MinValue;
+                _panelState = "not connected";
+                return;
+            }
+
+            var stamp = File.GetLastWriteTimeUtc(path);
+            if (stamp == _panelFileStamp) return;
+            _panelFileStamp = stamp;
+
+            _panel = null;
+            _panelReporting = false;
+            _panelFailures = 0;
+            _panelProblem = null;
+            _panelNextAttempt = DateTime.MinValue;
+
+            JObject file;
+            try
+            {
+                file = JObject.Parse(File.ReadAllText(path));
+            }
+            catch (Exception ex)
+            {
+                PanelRefuse($"{path} could not be read ({ex.Message}). Run hotwire-setup connect again.");
+                return;
+            }
+
+            var keyId = (string)file["key_id"];
+            var secret = (string)file["secret"];
+            var url = (string)file["panel_url"];
+            var folder = (string)file["folder"];
+
+            if (string.IsNullOrWhiteSpace(keyId) || string.IsNullOrWhiteSpace(secret) || string.IsNullOrWhiteSpace(url))
+            {
+                PanelRefuse($"{path} is missing its key or the panel address. Run hotwire-setup connect again.");
+                return;
+            }
+
+            if (!url.StartsWith("https://", StringComparison.OrdinalIgnoreCase) &&
+                !url.StartsWith("http://", StringComparison.OrdinalIgnoreCase))
+            {
+                PanelRefuse($"the panel address in {path} is not a web address. Run hotwire-setup connect again.");
+                return;
+            }
+
+            // A copied server folder carries the original's key. Reporting
+            // from the copy would make two servers speak as one, and the
+            // original would look like it is flapping. Setup records the folder
+            // it connected; anything else is refused rather than guessed at.
+            if (string.IsNullOrWhiteSpace(folder))
+            {
+                PanelRefuse("panel.json does not say which folder it was written for (an older hotwire-setup wrote it). " +
+                            "Run hotwire-setup connect again in this server's folder; the panel keeps the same server entry.");
+                return;
+            }
+
+            var root = ServerRoot();
+            if (root == null)
+            {
+                PanelRefuse("the server root cannot be determined, so it cannot be checked against the folder that was connected. " +
+                            "Set \"Server root\" in the config.");
+                return;
+            }
+
+            if (!SameFolder(folder, root))
+            {
+                PanelRefuse($"panel.json was written for {folder}, but this server runs from {root}. " +
+                            "This looks like a copied server folder, so it will not report as the original. " +
+                            "Run hotwire-setup connect in this folder to connect it as a server of its own.");
+                return;
+            }
+
+            _panel = new PanelLink { KeyId = keyId.Trim(), Secret = secret, Url = url.Trim().TrimEnd('/') };
+            _panelState = $"connected to {_panel.Url}, waiting for the first answer";
+            Puts($"Connected to the panel at {_panel.Url}. Sending a heartbeat every {Math.Max(10, _config.Panel.HeartbeatSeconds)} seconds.");
+        }
+
+        private void PanelRefuse(string why)
+        {
+            _panel = null;
+            _panelState = "NOT REPORTING -- " + why;
+            PrintWarning("Not reporting to the panel: " + why);
+        }
+
+        private static bool SameFolder(string a, string b)
+        {
+            var comparison = Path.DirectorySeparatorChar == '\\' ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+            return string.Equals(NormalizeFolder(a), NormalizeFolder(b), comparison);
+        }
+
+        private static string NormalizeFolder(string path)
+        {
+            var p = path.Trim();
+            try { p = Path.GetFullPath(p); } catch { /* compared as written */ }
+            return p.TrimEnd('\\', '/');
+        }
+
+        private void SendHeartbeat()
+        {
+            var link = _panel;
+            var body = PanelEnvelope("heartbeat", HeartbeatPayload());
+            var timestamp = ((long)(DateTime.UtcNow - UnixEpoch).TotalSeconds).ToString(CultureInfo.InvariantCulture);
+            var nonce = PanelNonce();
+
+            var headers = new Dictionary<string, string>
+            {
+                { "Content-Type", "application/json" },
+                { "Accept", "application/json" },
+                { "X-Hotwire-Key", link.KeyId },
+                { "X-Hotwire-Timestamp", timestamp },
+                { "X-Hotwire-Nonce", nonce },
+                { "X-Hotwire-Signature", PanelSign(link.Secret, "POST", PanelReportPath, timestamp, nonce, body) }
+            };
+
+            _panelInFlight = true;
+            webrequest.Enqueue(link.Url + PanelReportPath, body, (code, response) =>
+            {
+                _panelInFlight = false;
+                try
+                {
+                    if (!ReferenceEquals(link, _panel)) return;   // panel.json changed while this was out
+                    HeartbeatAnswered(code, response);
+                }
+                catch (Exception ex)
+                {
+                    PanelProblem($"the panel's answer could not be read: {ex.Message}");
+                }
+            }, this, Oxide.Core.Libraries.RequestMethod.POST, headers, 20f);
+        }
+
+        private void HeartbeatAnswered(int code, string response)
+        {
+            if (code >= 200 && code < 300)
+            {
+                if (!_panelReporting)
+                    Puts(_panelProblem == null
+                        ? "The panel accepted the first heartbeat. This server is reporting."
+                        : "Reporting to the panel again.");
+                _panelReporting = true;
+                _panelProblem = null;
+                _panelFailures = 0;
+                _panelNextAttempt = DateTime.MinValue;
+                _panelState = $"reporting to {_panel.Url} (last heartbeat accepted {DateTime.Now:HH:mm:ss})";
+                return;
+            }
+
+            _panelReporting = false;
+            var message = PanelMessage(response);
+            string problem;
+
+            if (code == 0)
+                problem = $"could not reach the panel at {_panel.Url}. The server is unaffected; it keeps trying.";
+            else if (code == 401 && message.StartsWith("Timestamp", StringComparison.Ordinal))
+                problem = "the panel refused the time on this machine. Its clock is more than five minutes out; " +
+                          "set the clock to sync automatically (hotwire-setup doctor checks it).";
+            else if (code == 401 && message.StartsWith("Unknown or revoked", StringComparison.Ordinal))
+                problem = "the panel no longer accepts this server's key. The server was retired in the panel, " +
+                          "or another machine was connected in its place. To connect this one again, make a code in the panel " +
+                          "and run hotwire-setup connect in this folder.";
+            else if (code == 401 && message.StartsWith("Replayed", StringComparison.Ordinal))
+                problem = "the panel saw a repeated request. It retries by itself.";
+            else if (code == 401)
+                problem = $"the panel refused the signature ({message}). This is a bug; please report it with Hotwire {Version}.";
+            else if (code == 422)
+                problem = $"the panel refused the report as malformed ({message}). This is a bug; please report it with Hotwire {Version}.";
+            else if (code == 429)
+                problem = "the panel is asking this server to slow down. It backs off and retries.";
+            else
+                problem = $"the panel answered HTTP {code}{(message.Length > 0 ? " (" + message + ")" : "")}. It keeps trying.";
+
+            PanelProblem(problem);
+        }
+
+        // Logs a problem once, not every thirty seconds, and waits longer
+        // between tries each time: 1, 2, 4... intervals, never more than ten
+        // minutes. A change to panel.json starts again at once.
+        private void PanelProblem(string problem)
+        {
+            _panelFailures++;
+            var interval = Math.Max(10, _config.Panel.HeartbeatSeconds);
+            var wait = Math.Min(600.0, interval * Math.Pow(2, Math.Min(_panelFailures - 1, 10)));
+            _panelNextAttempt = DateTime.UtcNow.AddSeconds(wait);
+            _panelState = "NOT REPORTING -- " + problem;
+
+            if (problem != _panelProblem) PrintWarning("Panel: " + problem);
+            _panelProblem = problem;
+        }
+
+        private static string PanelMessage(string response)
+        {
+            if (string.IsNullOrEmpty(response)) return "";
+            try
+            {
+                var message = (string)JObject.Parse(response)["message"];
+                if (!string.IsNullOrEmpty(message)) return message;
+            }
+            catch { /* not the panel's JSON envelope */ }
+            return response.Length > 120 ? response.Substring(0, 120) : response;
+        }
+
+        private JObject HeartbeatPayload()
+        {
+            // Each fact is optional in the contract. One that cannot be read
+            // is left out, never sent as a guess.
+            var payload = new JObject();
+            try { payload["players"] = players.Connected.Count(); } catch { }
+            try { payload["max_players"] = server.MaxPlayers; } catch { }
+            try { payload["uptime_seconds"] = (long)Time.realtimeSinceStartup; } catch { }
+            try { var v = InstalledFrameworkVersion(); if (v != null) payload["oxide_version"] = v; } catch { }
+            try { var p = server.Protocol; if (!string.IsNullOrEmpty(p)) payload["rust_protocol"] = p; } catch { }
+            try { var b = InstalledBuildId(); if (b != null) payload["rust_build_id"] = b; } catch { }
+            return payload;
+        }
+
+        // The build Steam installed, from the same manifest the launcher reads.
+        // Read again only when the file changes.
+        private string InstalledBuildId()
+        {
+            var root = ServerRoot();
+            if (root == null) return null;
+            var manifest = Path.Combine(Path.Combine(root, "steamapps"), BuildManifest);
+            if (!File.Exists(manifest)) return null;
+
+            var stamp = File.GetLastWriteTimeUtc(manifest);
+            if (stamp != _manifestStamp)
+            {
+                _manifestStamp = stamp;
+                var match = Regex.Match(File.ReadAllText(manifest), "\"buildid\"\\s+\"(\\d+)\"");
+                _buildId = match.Success ? match.Groups[1].Value : null;
+            }
+            return _buildId;
+        }
+
+        private string PanelEnvelope(string kind, JObject payload)
+        {
+            return PanelBody(NewReportId(), DateTime.UtcNow, Version.ToString(), kind, payload);
+        }
+
+        #region Panel signing
+
+        // No game or Oxide types in this region: it is compiled and checked
+        // outside the game against the panel's published signature vector, so
+        // a mistake here is found before it reaches a server.
+
+        private static readonly DateTime PanelEpoch = new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+
+        // The body is signed exactly as it is sent. Non-ASCII is escaped, so the
+        // bytes on the wire are the same whatever encoding anything assumes.
+        private static string PanelBody(string reportId, DateTime sentAtUtc, string sourceVersion, string kind, JObject payload)
+        {
+            var envelope = new JObject
+            {
+                ["contract"] = 1,
+                ["report_id"] = reportId,
+                ["sent_at"] = sentAtUtc.ToString("yyyy'-'MM'-'dd'T'HH':'mm':'ss'Z'", CultureInfo.InvariantCulture),
+                ["source"] = "plugin",
+                ["source_version"] = sourceVersion,
+                ["kind"] = kind,
+                ["payload"] = payload
+            };
+            return JsonConvert.SerializeObject(envelope, new JsonSerializerSettings
+            {
+                Formatting = Formatting.None,
+                StringEscapeHandling = StringEscapeHandling.EscapeNonAscii
+            });
+        }
+
+        //   <METHOD> <path>\n<timestamp>\n<nonce>\n<sha256 of the body, lowercase hex>
+        private static string PanelCanonical(string method, string path, string timestamp, string nonce, string body)
+        {
+            return method.ToUpperInvariant() + " " + path + "\n" + timestamp + "\n" + nonce + "\n" + Sha256Hex(body);
+        }
+
+        private static string PanelSign(string secret, string method, string path, string timestamp, string nonce, string body)
+        {
+            using (var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(secret)))
+                return Hex(hmac.ComputeHash(Encoding.UTF8.GetBytes(PanelCanonical(method, path, timestamp, nonce, body))));
+        }
+
+        private static string Sha256Hex(string text)
+        {
+            using (var sha = SHA256.Create())
+                return Hex(sha.ComputeHash(Encoding.UTF8.GetBytes(text)));
+        }
+
+        private static string Hex(byte[] bytes)
+        {
+            var sb = new StringBuilder(bytes.Length * 2);
+            foreach (var b in bytes) sb.Append(b.ToString("x2", CultureInfo.InvariantCulture));
+            return sb.ToString();
+        }
+
+        private static string PanelNonce()
+        {
+            var bytes = new byte[16];
+            using (var rng = RandomNumberGenerator.Create()) rng.GetBytes(bytes);
+            return Hex(bytes);
+        }
+
+        // A UUIDv7: the first 48 bits are milliseconds since 1970, so report
+        // ids sort by the time they were made.
+        private static string NewReportId()
+        {
+            var bytes = new byte[16];
+            using (var rng = RandomNumberGenerator.Create()) rng.GetBytes(bytes);
+            var ms = (long)(DateTime.UtcNow - PanelEpoch).TotalMilliseconds;
+            for (var i = 0; i < 6; i++) bytes[i] = (byte)(ms >> (8 * (5 - i)));
+            bytes[6] = (byte)((bytes[6] & 0x0F) | 0x70);
+            bytes[8] = (byte)((bytes[8] & 0x3F) | 0x80);
+            var h = Hex(bytes);
+            return h.Substring(0, 8) + "-" + h.Substring(8, 4) + "-" + h.Substring(12, 4) + "-" + h.Substring(16, 4) + "-" + h.Substring(20);
+        }
+
+        #endregion
+
+        #endregion
+
         #region Admin menu
 
         // The only part of this plugin that touches Facepunch types. Rust's UI
@@ -2835,6 +3260,8 @@ namespace Oxide.Plugins
                           $"installed {InstalledFrameworkVersion() ?? "unknown"}, would update at {_config.Framework.UpdateAt}");
             else
                 lines.Add("  framework    : checks off");
+
+            lines.Add($"  panel        : {_panelState}");
 
             player.Reply(string.Join("\n", lines.ToArray()));
         }
