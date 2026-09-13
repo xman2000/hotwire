@@ -176,6 +176,25 @@ function Write-Box([string[]]$Lines, [string]$Color = 'DarkCyan') {
     Write-Host ("  +" + ('=' * $width) + "+") -ForegroundColor $Color
 }
 
+# SteamCMD can print nothing for a long time -- first while it starts and logs in, then between progress
+# lines -- and a quiet window looks frozen. This is shown immediately before it runs, as the last thing on
+# screen, because a warning scrolled away above the countdown is a warning nobody sees.
+function Show-SlowWarning([string]$What, [switch]$Resumes) {
+    $lines = @(
+        "PLEASE WAIT -- $What can look frozen.",
+        "",
+        "SteamCMD may print nothing for a while before it starts, and its progress",
+        "can sit still for minutes at a time. That is normal: it is still working.",
+        "",
+        "Do not close this window or press Ctrl+C."
+    )
+    if ($Resumes) {
+        $lines += @("", "If it does get interrupted, run hotwire-setup.bat again. The download", "carries on from where it stopped.")
+    }
+    Write-Box $lines 'Yellow'
+    Write-Host ""
+}
+
 # Ctrl+C during a countdown stops the script with nothing started -- the point of counting down is that
 # the last moment to change your mind is visible.
 function Show-Countdown([int]$Seconds, [string]$What) {
@@ -959,7 +978,7 @@ function Install-SteamCmd([string]$d) {
         # it gets its self-update run here, on its own, whether or not it has had one before. Already
         # current, this takes a few seconds. Its exit code is not judged: the download step is.
         Write-Note "letting SteamCMD update itself first..."
-        Write-Host ""
+        Show-SlowWarning 'SteamCMD updating itself'
         & $exe +quit | Out-Host
         Write-Host ""
         Save-Record $d 'steamcmd'
@@ -1027,7 +1046,7 @@ function Install-SteamCmd([string]$d) {
 
     Write-Host ""
     Write-Note "running SteamCMD once so it can update itself..."
-    Write-Host ""
+    Show-SlowWarning 'SteamCMD installing itself'
     # Out-Host, so SteamCMD's output is shown rather than returned from this function.
     & $exe +quit | Out-Host
     # Its exit code on this first run is not something this script relies on: whether SteamCMD
@@ -1075,8 +1094,7 @@ function Install-Rust([string]$d, [string]$exe) {
         "This downloads the Rust dedicated server -- Steam app $AppId -- into $d.",
         "It is free, and 'anonymous' below is a real Steam login, not a placeholder.",
         "",
-        "About 12 GB. SteamCMD prints its progress as it goes; long pauses are normal.",
-        "If it is interrupted, run this script again: SteamCMD resumes rather than starting over.",
+        "About 12 GB, usually 10 to 30 minutes.",
         "",
         "The command is:",
         "  steamcmd +force_install_dir `"$d`" +login anonymous +app_update $AppId +quit",
@@ -1097,7 +1115,7 @@ function Install-Rust([string]$d, [string]$exe) {
     Show-Countdown 3 'Downloading'
 
     while ($true) {
-        Write-Host ""
+        Show-SlowWarning 'the download' -Resumes
         & $exe +force_install_dir $d +login anonymous +app_update $AppId +quit | Out-Host
         $code = $LASTEXITCODE
         Write-Host ""
