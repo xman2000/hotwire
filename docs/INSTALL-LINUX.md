@@ -198,7 +198,7 @@ crash streak, `always` would restart it immediately and defeat that protection.
 
 ```bash
 cd /home/rust/server
-./hotwire-connect.sh doctor
+./hotwire-setup.sh doctor
 ```
 
 `doctor` checks everything in one go: that this machine signs requests correctly, that it can reach
@@ -208,7 +208,7 @@ so run it as often as you like.
 ## 9. Connect it
 
 ```bash
-./hotwire-connect.sh connect
+./hotwire-setup.sh connect
 ```
 
 It tells you where to get a code and waits while you fetch it — **Servers → Connect a server** in the
@@ -242,5 +242,5 @@ in the panel with a live status.
 **Disconnecting** is one command and leaves everything running:
 
 ```bash
-./hotwire-connect.sh detach
+./hotwire-setup.sh detach
 ```

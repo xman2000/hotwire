@@ -246,7 +246,6 @@ launcher/secrets.example.bat    copy to secrets.bat; never committed
 CHANGELOG.md                    what is in this release, and what is not
 docs/LAUNCHER.md                the launcher in full
 docs/CONFIG.md                  every config field, command and permission
-docs/DECISIONS.md               every design choice, with its reasoning
 docs/GAME-API.md                what has been verified against a real build
 tools/convars.py                maintenance tooling; you never need to run it
 ```

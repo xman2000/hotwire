@@ -5,7 +5,7 @@ restarts until you enable one. That is deliberate: a restarter that starts
 restarting the moment it is installed is a restarter that catches you out.
 
 The config stays hand-editable and always will. Chat commands are a
-convenience over the same file, never the only way in (ADR-0006).
+convenience over the same file, never the only way in.
 
 > **Upgrading to plugin 1.1.1?** The status bar's default `Bar fill color, hex`
 > changes from `#E74C3C` to `#C0392B`, matching the panel's one danger red.
@@ -56,7 +56,7 @@ convenience over the same file, never the only way in (ADR-0006).
 > **Upgrading to 0.2.1?** Two announcement strings changed. Lang files are
 > only written once, so `oxide/lang/en/Hotwire.json` keeps whatever it already
 > had — delete it to pick up the new wording, or edit it in place. It is meant
-> to be edited; that is the point of ADR-0004.
+> to be edited; that is the point of plain strings.
 >
 > **Upgrading to 0.2.0?** The `Render the countdown through AdvancedStatus`
 > key under `General` has been replaced by a `Status bar` section. The old key
@@ -74,7 +74,7 @@ convenience over the same file, never the only way in (ADR-0006).
 
 ## Restarts and Updates
 
-Two lists (ADR-0012). A restart relaunches the server; an update also writes a
+Two lists. A restart relaunches the server; an update also writes a
 flag file the launcher acts on.
 
 ```json
@@ -198,7 +198,7 @@ The bar itself changes text about once a minute over that hour, which is one
 push each. If that ever reads as flicker on a busy HUD, coarsening the bar's
 wording at long range is the lever — the announcements are independent of it.
 
-Announcements are plain lang strings (ADR-0004) and are editable in
+Announcements are plain lang strings and are editable in
 `oxide/lang/en/Hotwire.json`.
 
 **Remaining time is rounded up, everywhere.** An announcement is written once
@@ -217,7 +217,7 @@ do is skip an announcement.
 
 Every time this plugin prints carries the zone it means and whether daylight
 saving is in effect — `Thu 02 Oct 2026 20:00 Central Daylight Time (UTC-05:00,
-DST)`. That is not decoration. Schedules are local wall-clock time (ADR-0013),
+DST)`. That is not decoration. Schedules are local wall-clock time,
 so `05:00` is a different absolute moment either side of a clock change, and
 "next Sunday at 05:00" is ambiguous without it.
 
@@ -231,7 +231,7 @@ line, and says when the zone has no daylight saving at all.
 
 The panel is a convenience and never the only way in. Everything it does,
 `hotwire add`, `set`, `remove`, `enable` and `disable` also do — which is what
-lets the panel be deleted outright if a Rust update ever breaks it (ADR-0016).
+lets the panel be deleted outright if a Rust update ever breaks it.
 
 ## Framework update check
 
@@ -245,7 +245,7 @@ lets the panel be deleted outright if a Rust update ever breaks it (ADR-0016).
 }
 ```
 
-**Off by default and it should stay off until you trust it** (ADR-0007). When
+**Off by default and it should stay off until you trust it**. When
 a new framework release appears it does not restart; it schedules an announced
 update at the hour you chose, which then behaves like any other update entry.
 
@@ -269,7 +269,7 @@ to.
 - **Server root** — where the flag files are written. Empty asks Oxide. Set it
   only if that turns out to be wrong on your install; the plugin says so in
   console at boot if it cannot work it out.
-- **Refuse to fire the same entry twice** — the DST guard (ADR-0013). Leave it
+- **Refuse to fire the same entry twice** — the DST guard. Leave it
   at 20 hours unless you genuinely schedule the same entry twice a day, in
   which case set it below the gap between them. `0` disables it.
 - **Name shown in chat announcements** — **"Hotwire" means nothing to a
@@ -384,7 +384,7 @@ A manual `hotwire now` is not subject to the fired-recently guard and does not
 feed it. An admin asking for a restart means it.
 
 `hotwire cancel` stops the countdown and leaves the schedule alone. Disabling
-the entry stops both (ADR-0017).
+the entry stops both.
 
 **Cancel stops working once the shutdown has begun** — players have been
 kicked by then, and pretending the restart can still be called off would leave
@@ -416,7 +416,7 @@ the question.
 
 **A disabled entry says `Disabled`, not when it would run.** Showing a next
 occurrence under a switch reading OFF is the same false reassurance that once
-let a disabled entry restart a server (ADR-0017). The line underneath still
+let a disabled entry restart a server. The line underneath still
 says when it *would* run, which is what you want while setting one up.
 
 Things worth knowing:
@@ -428,7 +428,7 @@ Things worth knowing:
 - **A change that makes an enabled entry invalid disables it** and says so,
   rather than leaving it to fail at three in the morning.
 - **Disabling, deleting or rescheduling an entry cancels its running
-  countdown**, if it has one, and tells you it did (ADR-0017). Switching an
+  countdown**, if it has one, and tells you it did. Switching an
   entry off used to stop it happening *again* while the countdown already
   under way carried on to a restart — which is not what "disabled" reads as.
 - **A running countdown appears as a banner** across the top of the panel, with

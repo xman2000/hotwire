@@ -21,13 +21,12 @@ namespace Oxide.Plugins
         //  WHAT THIS PLUGIN DELIBERATELY DOES NOT DO
         //
         //  It does not spawn processes, write scheduled tasks or shell out.
-        //  It writes a flag file and quits; the launcher does the rest
-        //  (ADR-0001).
+        //  It writes a flag file and quits; the launcher does the rest.
         //
         //  Everything that schedules, announces or shuts the server down goes
         //  through Covalence, which is a stable Oxide interface rather than a
-        //  moving Facepunch one. That is a safety decision, not a style one
-        //  (ADR-0014): a wrong guess at a Facepunch signature is a COMPILE
+        //  moving Facepunch one. That is a safety decision, not a style one:
+        //  a wrong guess at a Facepunch signature is a COMPILE
         //  error, and a plugin that does not compile is a plugin that never
         //  restarts the server. try/catch cannot save you from code that never
         //  runs. server.Command("quit") runs the same console command as
@@ -37,7 +36,7 @@ namespace Oxide.Plugins
         //  Facepunch types -- CuiHelper.AddUi takes a BasePlayer, and Rust's
         //  UI has no Covalence route. It is confined to a single region so
         //  that deleting it stays a real option, and everything it does the
-        //  chat commands also do (ADR-0016).
+        //  chat commands also do.
         //
         //  What is left is runtime assumption, tagged VERIFY at each use and
         //  wrapped so that being wrong costs one optional feature rather than
@@ -95,7 +94,7 @@ namespace Oxide.Plugins
         }
 
         // Recurrence is stored as explicit fields rather than as a cron
-        // string or a phrase to be parsed (ADR-0015). Every value validates on
+        // string or a phrase to be parsed. Every value validates on
         // its own, an error can name the exact field that is wrong, and the
         // menu maps one control per field instead of round-tripping somebody's
         // hand-written wording through a serializer.
@@ -200,7 +199,7 @@ namespace Oxide.Plugins
 
         private class FrameworkSettings
         {
-            // ADR-0007: the best idea upstream has, and the one most able to
+            // The best idea upstream has, and the one most able to
             // restart a server at a bad moment. Off by default, always.
             [JsonProperty("Enabled")]
             public bool Enabled = false;
@@ -218,7 +217,7 @@ namespace Oxide.Plugins
             public bool Validate = false;
         }
 
-        // ADR-0003: render the countdown through a status surface players
+        // Render the countdown through a status surface players
         // already read. Verified against AdvancedStatus 0.1.26 by IIIaKa --
         // see docs/GAME-API.md. Absent that plugin this does nothing at all
         // and chat carries the countdown, which is the case on most servers.
@@ -319,7 +318,7 @@ namespace Oxide.Plugins
 
             // The autumn DST repeat: 02:30 happens twice, and the second one
             // arrives in a fresh process after the first restart, so the
-            // guard has to be on disk rather than in memory. ADR-0013.
+            // guard has to be on disk rather than in memory.
             [JsonProperty("Refuse to fire the same entry twice within this many hours")]
             public double MinimumHoursBetweenSameEntry = 20.0;
 
@@ -460,7 +459,7 @@ namespace Oxide.Plugins
             permission.RegisterPermission(PermEdit, this);
 
             AddCovalenceCommand(new[] { "hotwire", "hw" }, nameof(CmdHotwire));
-            AddCovalenceCommand("hotwire.ui", nameof(CmdMenuAction));   // ADR-0016: goes with the menu
+            AddCovalenceCommand("hotwire.ui", nameof(CmdMenuAction));   // goes with the menu
 
             try
             {
@@ -511,7 +510,7 @@ namespace Oxide.Plugins
             _countdownTimer?.Destroy();
             _frameworkTimer?.Destroy();
 
-            CloseAllMenus();   // ADR-0016: goes with the menu
+            CloseAllMenus();   // goes with the menu
 
             // Belt and braces: removes every bar this plugin ever created,
             // whatever state we think we are in. A bar left on someone's
@@ -985,7 +984,7 @@ namespace Oxide.Plugins
         }
 
         // The zone and DST state, attached to every time the plugin prints.
-        // The schedule is local wall-clock (ADR-0013), so "05:00" means a
+        // The schedule is local wall-clock, so "05:00" means a
         // different absolute moment either side of a DST change, and an admin
         // reading "next Sunday 05:00" deserves to know which 05:00 that is.
         //
@@ -1301,11 +1300,11 @@ namespace Oxide.Plugins
             {
                 // "quit" saves the world on the way out. A hard kill does not,
                 // and on a server running server.saveinterval 300 that is up
-                // to five minutes of everyone's progress (ADR-0002).
+                // to five minutes of everyone's progress.
                 //
                 // Routed through Covalence rather than ConVar.Global.quit so
                 // that the shutdown path carries no compile-time dependency on
-                // Assembly-CSharp -- see the note at the top (ADR-0014).
+                // Assembly-CSharp -- see the note at the top.
                 server.Command("quit");
             }
             catch (Exception ex)
@@ -1398,7 +1397,7 @@ namespace Oxide.Plugins
 
         private static string FormatRemaining(int seconds)
         {
-            // ADR-0004: plain strings. Upstream ships a regex template
+            // Plain strings. Upstream ships a regex template
             // mini-language to render this, which is a large surface for
             // "5 minutes left".
             if (seconds >= 60)
@@ -1414,7 +1413,7 @@ namespace Oxide.Plugins
 
         #region Status surface
 
-        // ADR-0003 renders the countdown through a status surface players
+        // The countdown renders through a status surface players
         // already read, rather than adding a fifth thing fighting for a screen
         // corner.
         //
@@ -1764,10 +1763,10 @@ namespace Oxide.Plugins
         // The only part of this plugin that touches Facepunch types. Rust's UI
         // has no Covalence route -- CuiHelper.AddUi takes a BasePlayer -- so
         // building a panel means naming BasePlayer and the Cui* classes, which
-        // reverses part of ADR-0014 (see ADR-0016).
+        // knowingly gives up part of the no-Facepunch-types rule at the top.
         //
         // Everything the menu does, the chat commands already do. That is
-        // ADR-0006's condition and it is load-bearing here: if this region
+        // the condition for having a menu at all, and it is load-bearing here: if this region
         // stops compiling after a Rust update, the fix is to delete it, and
         // the schedule is still fully editable.
         //
@@ -2286,7 +2285,7 @@ namespace Oxide.Plugins
 
             // Computed only when the entry would actually run. Showing "next:
             // tomorrow at 05:00" under a switch reading OFF is the same false
-            // reassurance that let a disabled entry restart a server (ADR-0017).
+            // reassurance that let a disabled entry restart a server.
             var next = problem == null && entry.Enabled ? NextOccurrence(entry, DateTime.Now) : null;
 
             var kind = T(entry.IsValidate ? "KindValidate"
@@ -2637,7 +2636,7 @@ namespace Oxide.Plugins
 
         #region Commands
 
-        // ADR-0006: these are written first and must do everything an admin
+        // These are written first and must do everything an admin
         // menu would. A broken CUI panel must never mean a schedule cannot be
         // changed, so the panel -- when it exists -- will be a second way in,
         // never the only one.
@@ -2648,7 +2647,7 @@ namespace Oxide.Plugins
             switch (sub)
             {
                 case "status": CmdStatus(player); return;
-                case "menu": CmdMenu(player); return;   // ADR-0016: goes with the menu
+                case "menu": CmdMenu(player); return;   // goes with the menu
                 case "check": CmdCheck(player); return;
                 case "list": CmdList(player); return;
                 case "now": CmdNow(player, args); return;

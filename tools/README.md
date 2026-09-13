@@ -30,14 +30,14 @@ every convar in it that no longer exists in the installed build, and every
 comment whose claimed default the build disagrees with. Run it after a Rust
 update and it turns a mystery outage into a two-line diff.
 
-**The default output is curated, not exhaustive** (ADR-0018). A launcher
+**The default output is curated, not exhaustive**. A launcher
 holding every convar in the assembly is worse than one holding none: hundreds
 of `ai.*`, `debug.*` and `antihack.*` entries are runtime surface nobody sets
 at launch, and burying the twenty that matter among them destroys the only
 thing that makes the file good. The curation comes from two sources that are
 not opinions of ours — `[ServerVar(ShowInAdminUI = true)]`, which is
 Facepunch's own list of what an admin should see, and the names independent
-configuration sources agree on, recorded in ADR-0009. `--all` prints the long
+configuration sources agree on. `--all` prints the long
 tail when you want to search it.
 
 **Re-run it after every Rust update.** Convars come and go, and their defaults

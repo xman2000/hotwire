@@ -31,3 +31,7 @@ BRIEF.md
 CLAUDE.md
 docs/OPEN-QUESTIONS.md
 docs/RESEARCH.md
+
+# The decisions. They live in the private panel repository
+# (hotwire-panel/docs/hotwire/DECISIONS.md) and never in this public one.
+docs/DECISIONS.md

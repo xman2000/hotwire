@@ -99,7 +99,7 @@ assumptions, so nothing here hard-codes a path that might not be yours.
 Every failure path falls through to the old behavior: no steamcmd, no network,
 a hang (180s timeout, then the process is killed), an unreadable manifest or a
 missing version file all leave the launcher doing exactly what it did before.
-None of this can decide not to start the server. ADR-0028.
+None of this can decide not to start the server.
 
 ## 1.1.6 — launcher — 2026-09-05
 
@@ -179,7 +179,7 @@ as `hotwire` — and an empty `ROOT`. A trailing backslash on `ROOT` or
 closing quote of every path passed to another program.
 
 A missing PowerShell skips the check with a note instead of blocking the
-launch. ADR-0027.
+launch.
 
 **Executed on a real server 2026-09-05**, after 1.1.6. Both directions: a
 clean option list passes in 0.7s, and a deliberately broken one — the query
@@ -221,7 +221,7 @@ carried back out intact, so `!`, `%`, `^` and spaces are all read exactly as
 written. A `"` or a leading `;` still cannot pass, and now fails loudly at
 startup with the reason rather than silently changing the password. The
 previous advice to avoid `!` and `^` is withdrawn — it was a bug, not a rule
-for users to remember. ADR-0024.
+for users to remember.
 
 ## 1.1.1 — launcher — 2026-09-05
 
@@ -238,7 +238,6 @@ point reachable from the "giving up on steamcmd" path, so:
 
 The flag is now deleted and the stamp written only when steamcmd and the
 framework extract both succeeded, and a banner says so when they did not.
-ADR-0022.
 
 Also: the elapsed-days check used `[int]`, which rounds, so 13.6 days tripped
 the 14-day backstop half a day early; it floors now. A failed timestamp call
@@ -256,7 +255,6 @@ run: shorter than `CRASH_SECONDS` (60) is a crash, the first crash of a streak
 keeps its log as `server_crash_*` where the cull cannot reach it, the delay
 backs off 15/30/60/120/300, and after `MAX_CRASH_STREAK` (10) it stops and says
 why rather than looping forever. Set `MAX_CRASH_STREAK=0` for the old behavior.
-ADR-0023.
 
 **The flag and stamp half was executed 2026-09-05**, by a scheduled update
 firing unattended: the flag was consumed only after both steps succeeded, and
@@ -340,6 +338,5 @@ nothing in `launcher/` refers to it and nobody installing this needs Python.
 - No crash-loop protection: if the server dies on boot, the launcher relaunches
   it every 15 seconds indefinitely.
 
-`docs/DECISIONS.md` records why the design is the way it is, and
 `docs/GAME-API.md` lists what has been verified against a real build rather
 than assumed.

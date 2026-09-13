@@ -8,10 +8,10 @@ administer, about **20 GB free**, and **8 GB of RAM** as a realistic floor for a
 Every command below is run in **PowerShell as Administrator** unless it says otherwise. You can
 stop after step 6 and have a perfectly good server; steps 7-9 add the panel, which is optional.
 
-> **Rather not type steps 1–4?** [`install/hotwire-install.ps1`](../install/README.md) does them one
-> confirmed step at a time: clock, SteamCMD, Rust, Oxide, then the firewall. Put
-> `hotwire-install.bat` and `hotwire-install.ps1` in the folder you want the server in, right-click the
-> `.bat` and choose **Run as administrator**, then carry on here from step 5.
+> **Rather not type steps 1–4?** [`setup/hotwire-setup.bat`](../setup/README.md) does them one
+> confirmed step at a time: clock, SteamCMD, Rust, Oxide, then the firewall. Put `hotwire-setup.bat`
+> and `hotwire-setup.ps1` in the folder you want the server in, right-click the `.bat`, choose **Run as
+> administrator**, pick **Install**, then carry on here from step 5.
 
 > **What this never does:** nothing here, and nothing Hotwire does later, can stop your server
 > starting. If the panel is slow, unreachable or gone, your server still boots, restarts and
@@ -131,7 +131,7 @@ Rust's server browser under your hostname, you have a working Rust server.
 
 ```powershell
 cd C:\rustserver
-.\hotwire-connect.ps1 doctor
+.\hotwire-setup.bat doctor
 ```
 
 `doctor` checks everything in one go: that this machine signs requests correctly, that it can reach
@@ -148,7 +148,7 @@ w32tm /resync
 ## 8. Connect it
 
 ```powershell
-.\hotwire-connect.ps1 connect
+.\hotwire-setup.bat connect
 ```
 
 It tells you where to get a code and waits while you fetch it — **Servers → Connect a server** in
@@ -182,5 +182,5 @@ in the panel with a live status.
 **Disconnecting** is one command and leaves everything running:
 
 ```powershell
-.\hotwire-connect.ps1 detach
+.\hotwire-setup.bat detach
 ```

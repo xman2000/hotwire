@@ -23,7 +23,7 @@ BarExists(ulong userID, string barId, string pluginName)
 ```
 
 Hotwire uses the **string** user-id overloads, so nothing in the integration
-needs a `BasePlayer` and ADR-0014 still holds.
+needs a `BasePlayer` and the plugin still names no Facepunch type.
 
 Parameter keys used, from the bar's own constructor:
 
@@ -139,7 +139,7 @@ both ends of the span have to be on it.
 
 **What `currentTimestamp` actually is remains unverified.** Hotwire computes
 Unix epoch seconds from `DateTime.UtcNow` rather than calling the Facepunch
-property, to keep the status code free of Facepunch types (ADR-0014) — so the
+property, to keep the status code free of Facepunch types — so the
 two being the same clock is an assumption, and it is the last one left in this
 section.
 
@@ -152,7 +152,7 @@ miss than one that vanishes.
 reconstructing it: anchor both ends as `currentTimestamp - elapsed` and
 `currentTimestamp + remaining`. That trades an unverifiable correctness
 assumption for a Facepunch type in the status path, which is the trade
-ADR-0014 exists to refuse — a renamed Facepunch member stops the whole plugin
+the plugin is built to refuse — a renamed Facepunch member stops the whole plugin
 compiling, and a plugin that does not compile schedules no restarts at all.
 That is a worse failure than a cosmetic bar, so the assumption stays for now
 and is recorded here rather than resolved.
@@ -228,7 +228,7 @@ carries the countdown by itself.
 No assembly has been inspected yet — `tools/convars.py` is written and unrun.
 
 More usefully: **`src/Hotwire.cs` does not reference a single Facepunch type.**
-ADR-0014 routes the whole plugin through Covalence and `Oxide.Core`, because a
+Everything goes through Covalence and `Oxide.Core`, because a
 wrong guess at a Facepunch signature is a compile error, and a plugin that
 does not compile is a plugin that never restarts the server. So this file
 being empty costs the plugin nothing.

@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 #
-#  hotwire-connect -- connect a Rust server to Hotwire Panel, or check why it will not.
+#  hotwire-setup -- connect a Rust server to Hotwire Panel, or check why it will not.
+#
+#  The Windows sibling, hotwire-setup.ps1, also installs the server. The Linux install half
+#  is not written yet; 'install' here says so and points at the guide.
 #
 #  https://github.com/xman2000/hotwire            MIT (c) 2026 xman2000
 #
@@ -18,10 +21,10 @@
 #  Requires: bash 4+, curl, openssl, and one of jq or python3 (to read JSON).
 #
 #  Usage:
-#     hotwire-connect.sh doctor [--root DIR] [--panel URL]
-#     hotwire-connect.sh connect --code HW-XXXX-XXXX --name "My server" [--root DIR] [--panel URL]
-#     hotwire-connect.sh status  [--root DIR]
-#     hotwire-connect.sh detach  [--root DIR]
+#     hotwire-setup.sh doctor  [--root DIR] [--panel URL]
+#     hotwire-setup.sh connect [--root DIR] [--panel URL]     # asks for the code
+#     hotwire-setup.sh status  [--root DIR]
+#     hotwire-setup.sh detach  [--root DIR]
 #
 set -uo pipefail
 
@@ -288,7 +291,7 @@ cmd_doctor() {
     local root url rc=0
     root="$(find_root)"; url="$(panel_url "$root")"
 
-    say "hotwire-connect $VERSION -- checking this machine"
+    say "hotwire-setup $VERSION -- checking this machine"
     note "Nothing is written by this command."
 
     head_ "Tools"
@@ -307,7 +310,7 @@ cmd_doctor() {
         say "${C_GRN}Everything needed is in place.${C_OFF}"
         [ -f "$(state_file "$root")" ] \
             && note "This server is already connected. 'detach' disconnects it." \
-            || note "Next: hotwire-connect.sh connect --code HW-XXXX-XXXX --name \"My server\""
+            || note "Next: ./hotwire-setup.sh connect"
     else
         say "${C_RED}Something above needs fixing first.${C_OFF}"
         note "Each [fail] line says what to do. Nothing was changed."
@@ -477,7 +480,7 @@ cmd_status() {
 
     if [ ! -f "$(state_file "$root")" ]; then
         say "Not connected."
-        note "Run 'doctor' to check this machine, then 'connect --code ...'."
+        note "Run 'doctor' to check this machine, then 'connect'."
         return 0
     fi
 
@@ -514,11 +517,24 @@ cmd_detach() {
     say "Disconnected. This machine is as it was before it connected."
 }
 
+# ------------------------------------------------------------- install ----
+# Said plainly rather than left out of the help: a Linux user reading the Windows docs will try it.
+cmd_install() {
+    say "Installing a Rust server is not in the Linux script yet."
+    say ""
+    say "  The guide walks the same steps by hand:"
+    say "  https://github.com/xman2000/hotwire/blob/connect-and-report/docs/INSTALL-LINUX.md"
+    say ""
+    note "  Nothing was changed."
+    return 1
+}
+
 # ---------------------------------------------------------------- help ----
 cmd_help() {
     cat <<'HELP'
-hotwire-connect -- connect a Rust server to Hotwire Panel
+hotwire-setup -- connect a Rust server to Hotwire Panel
 
+  install   Not on Linux yet -- prints where the guide is.
   doctor    Check this machine: tools, signing, your server, the panel, the clock.
             Read-only, changes nothing, safe any time.
   connect   Connect to the panel. Asks for the code; no need to type it here.
@@ -535,6 +551,7 @@ HELP
 }
 
 case "$CMD" in
+    install) cmd_install ;;
     doctor)  cmd_doctor ;;
     connect) cmd_connect ;;
     status)  cmd_status ;;
