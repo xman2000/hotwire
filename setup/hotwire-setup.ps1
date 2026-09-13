@@ -198,7 +198,11 @@ function Stop-Politely {
     Write-Host "  Found : $Found"
     Write-Host "  Fix   : $Fix"
     Write-Host ""
+    Write-Note "When that is fixed, run hotwire-setup.bat again. It checks what is already done and carries on."
+    Write-Host ""
     Write-Summary
+    # Connecting from inside install catches this, so a mistyped code does not end a finished install.
+    if ($script:CatchStops) { throw 'HOTWIRE-STOP' }
     exit 1
 }
 
@@ -223,9 +227,106 @@ function Write-Summary {
     foreach ($c in $script:Changed) { Write-Host "    $c" }
 }
 
+# ------------------------------------------------------ changes and undo --
+# Every change is written down as it happens, with how to undo it, in hotwire\changes.log beside the
+# server. The summary on screen is gone when the window closes; this is not.
+$script:JournalDir = $null
+function Add-Change([string]$What, [string]$Undo) {
+    $script:Changed.Add($What)
+    if (-not $script:JournalDir) { return }
+    try {
+        $log = Join-Path $script:JournalDir 'hotwire\changes.log'
+        $folder = Split-Path $log -Parent
+        if (-not (Test-Path -LiteralPath $folder)) { New-Item -ItemType Directory -Path $folder -Force | Out-Null }
+        $entry = "{0}  {1}`r`n                     undo: {2}`r`n" -f (Get-Date).ToString('yyyy-MM-dd HH:mm:ss'), $What, $Undo
+        [System.IO.File]::AppendAllText($log, $entry, [System.Text.UTF8Encoding]::new($false))
+    } catch { }
+}
+
+# ------------------------------------------------------------ safe writes --
+# Nothing is written straight into place. A file goes to "<name>.hotwire-tmp" beside its destination and
+# is renamed over it; a rename within one folder is all-or-nothing, so a crash, a closed window or a power
+# cut leaves the old file or the new one, never half of either. No other program uses that suffix, so a
+# leftover one is always ours to delete.
+function Move-FileIntoPlace([string]$From, [string]$To) {
+    if (Test-Path -LiteralPath $To) { [System.IO.File]::Replace($From, $To, [NullString]::Value) }
+    else { [System.IO.File]::Move($From, $To) }
+}
+
+function Write-FileAtomic([string]$Path, [string]$Text, [switch]$Secret) {
+    $folder = Split-Path $Path -Parent
+    if (-not (Test-Path -LiteralPath $folder)) { New-Item -ItemType Directory -Path $folder -Force | Out-Null }
+    $tmp = "$Path.hotwire-tmp"
+    $utf8 = [System.Text.UTF8Encoding]::new($false)
+    if ($Secret) {
+        # Locked down while still empty, so a secret is never readable by anyone else, even for a moment.
+        [System.IO.File]::WriteAllText($tmp, '', $utf8)
+        Set-SecretAcl $tmp
+    }
+    [System.IO.File]::WriteAllText($tmp, $Text, $utf8)
+    Move-FileIntoPlace $tmp $Path
+    # Replacing a file keeps the old file's permissions, so a replaced secret is locked down again.
+    if ($Secret) { Set-SecretAcl $Path }
+}
+
+function Remove-StaleTemps([string]$d) {
+    foreach ($folder in @($d, (Join-Path $d 'hotwire'), (Join-Path $d 'oxide\plugins'), (Join-Path $d 'oxide\data\Hotwire'), $SteamCmd)) {
+        if (-not (Test-Path -LiteralPath $folder -PathType Container)) { continue }
+        Get-ChildItem -LiteralPath $folder -File -Filter '*.hotwire-tmp' -Force -ErrorAction SilentlyContinue |
+            Remove-Item -Force -ErrorAction SilentlyContinue
+    }
+    $managed = Join-Path $d 'RustDedicated_Data\Managed'
+    if (Test-Path -LiteralPath $managed -PathType Container) {
+        Get-ChildItem -LiteralPath $managed -File -Filter '*.hotwire-tmp' -Recurse -Force -ErrorAction SilentlyContinue |
+            Remove-Item -Force -ErrorAction SilentlyContinue
+    }
+}
+
+# Copies a file into hotwire\backups\<time>-<label>\ before it is changed, and returns where it went.
+# A secret's copy is locked down before the secret is written into it.
+function Backup-File([string]$d, [string]$Path, [string]$Label, [switch]$Secret) {
+    if (-not (Test-Path -LiteralPath $Path)) { return $null }
+    $folder = Join-Path $d ("hotwire\backups\" + (Get-Date).ToString('yyyyMMdd-HHmmss') + "-$Label")
+    New-Item -ItemType Directory -Path $folder -Force | Out-Null
+    $target = Join-Path $folder (Split-Path $Path -Leaf)
+    if ($Secret) {
+        [System.IO.File]::WriteAllText($target, '')
+        Set-SecretAcl $target
+        [System.IO.File]::WriteAllBytes($target, [System.IO.File]::ReadAllBytes($Path))
+    } else {
+        Copy-Item -LiteralPath $Path -Destination $target -Force
+    }
+    return $target
+}
+
+function Test-Under([string]$Path, [string]$Parent) {
+    if (-not $Path -or -not $Parent) { return $false }
+    $p = $Parent.TrimEnd('\')
+    return ($Path.TrimEnd('\') -ieq $p) -or $Path.StartsWith($p + '\', [System.StringComparison]::OrdinalIgnoreCase)
+}
+
+# One copy of setup at a time. Two in the same folder would run two SteamCMDs over the same files. The
+# lock belongs to this window's process, so Windows lets it go if the window is closed or anything crashes.
+function Enter-SingleRun {
+    $script:RunLock = New-Object System.Threading.Mutex($false, 'Local\HotwireSetup')
+    $acquired = $false
+    try { $acquired = $script:RunLock.WaitOne(0) }
+    catch {
+        $inner = $_.Exception.InnerException
+        if ($_.Exception -is [System.Threading.AbandonedMutexException] -or $inner -is [System.Threading.AbandonedMutexException]) { $acquired = $true }
+        else { throw }
+    }
+    if (-not $acquired) {
+        Stop-Politely "starting hotwire-setup" "another hotwire-setup window is already open and working" `
+            "finish or close the other window first, then run this again"
+    }
+}
+
 # ------------------------------------------------------------- the record --
-# What this script finished, kept beside the server. It is how a second run knows the folder is one
-# it started, and so may carry on in, rather than somebody else's server it must leave alone.
+# hotwire\install.json, beside the server: the steps install finished, what the owner said no to, and
+# which files install created. It is how a second run knows the folder is one it started, and so may
+# carry on in, rather than somebody else's server it must leave alone; and which files are its own to
+# change later.
 function Get-RecordFile([string]$d) { Join-Path $d 'hotwire\install.json' }
 
 function Read-Record([string]$d) {
@@ -238,33 +339,76 @@ function Read-Record([string]$d) {
     }
 }
 
-function Save-Record([string]$d, [string]$Step) {
-    $record = Read-Record $d
-    $done = @()
-    $started = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
-    if ($record) {
-        $done = @($record.done)
-        if ($record.started_at) { $started = [string]$record.started_at }
-    }
-    if ($Step -and ($done -notcontains $Step)) { $done += $Step }
-    $body = [ordered]@{
-        installer = "hotwire-setup $Version"
-        started_at = $started
-        updated_at = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
-        steamcmd = $SteamCmd
-        done = $done
-    }
-    $f = Get-RecordFile $d
-    $isNew = -not (Test-Path -LiteralPath $f)
-    New-Item -ItemType Directory -Path (Split-Path $f -Parent) -Force | Out-Null
-    # UTF-8 without a BOM, because a BOM is invisible and breaks every reader that is not expecting one.
-    [System.IO.File]::WriteAllText($f, ($body | ConvertTo-Json -Depth 4), [System.Text.UTF8Encoding]::new($false))
-    if ($isNew) { $script:Changed.Add("created $f") }
+function Get-RecordList($Record, [string]$Name) {
+    if (-not $Record -or -not ($Record.PSObject.Properties.Name -contains $Name)) { return @() }
+    return @($Record.$Name | Where-Object { $_ } | ForEach-Object { [string]$_ })
 }
 
-function Test-Done([string]$d, [string]$Step) {
+function Update-Record([string]$d, [scriptblock]$Change) {
     $record = Read-Record $d
-    return ($record -and (@($record.done) -contains $Step))
+    $now = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+    $data = [ordered]@{
+        installer  = "hotwire-setup $Version"
+        started_at = $now
+        updated_at = $now
+        steamcmd   = $SteamCmd
+        done       = [string[]](Get-RecordList $record 'done')
+        declined   = [string[]](Get-RecordList $record 'declined')
+        created    = [string[]](Get-RecordList $record 'created')
+    }
+    if ($record -and $record.started_at) { $data.started_at = [string]$record.started_at }
+    & $Change $data
+    $f = Get-RecordFile $d
+    $isNew = -not (Test-Path -LiteralPath $f)
+    Write-FileAtomic $f ($data | ConvertTo-Json -Depth 4)
+    if ($isNew) { Add-Change "created $f, the install record" "delete it only with the whole server folder: it is what lets install carry on safely" }
+}
+
+function Save-Record([string]$d, [string]$Step) {
+    Update-Record $d { param($r) if ($Step -and $r.done -notcontains $Step) { $r.done = [string[]]($r.done + $Step) } }
+}
+
+function Test-Done([string]$d, [string]$Step) { return (Get-RecordList (Read-Record $d) 'done') -contains $Step }
+function Test-Declined([string]$d, [string]$Key) { return (Get-RecordList (Read-Record $d) 'declined') -contains $Key }
+function Test-Created([string]$d, [string]$Path) { return (Get-RecordList (Read-Record $d) 'created') -contains $Path }
+
+function Set-Declined([string]$d, [string]$Key, [bool]$Declined) {
+    Update-Record $d { param($r)
+        $others = @($r.declined | Where-Object { $_ -and $_ -ne $Key })
+        $r.declined = [string[]]$(if ($Declined) { $others + $Key } else { $others })
+    }
+}
+
+function Add-Created([string]$d, [string]$Path) {
+    Update-Record $d { param($r) if ($r.created -notcontains $Path) { $r.created = [string[]]($r.created + $Path) } }
+}
+
+# An offer of something optional. Yes is the default, unless the owner said no last time, in which case
+# Enter keeps that answer. The answer is remembered either way.
+function Confirm-Offer([string]$d, [string]$Key, [string]$Question) {
+    $declined = Test-Declined $d $Key
+    if ($declined) {
+        Write-Note "You said no to this last time. Enter keeps that answer."
+        $yes = Confirm-Step $Question
+    } else {
+        $yes = Confirm-Step $Question -DefaultYes
+    }
+    Set-Declined $d $Key (-not $yes)
+    return $yes
+}
+
+# The last install folder, remembered per Windows user, so running setup again from anywhere offers to
+# carry on with it rather than starting over somewhere new.
+function Get-LastInstallFile { if ($env:LOCALAPPDATA) { return (Join-Path $env:LOCALAPPDATA 'Hotwire\setup.json') }; return $null }
+function Get-LastInstall {
+    $f = Get-LastInstallFile
+    if (-not $f -or -not (Test-Path -LiteralPath $f)) { return $null }
+    try { return [string](Get-Content -LiteralPath $f -Raw | ConvertFrom-Json).last_install } catch { return $null }
+}
+function Save-LastInstall([string]$d) {
+    $f = Get-LastInstallFile
+    if (-not $f) { return }
+    try { Write-FileAtomic $f ([ordered]@{ last_install = $d } | ConvertTo-Json) } catch { }
 }
 
 # ---------------------------------------------------------------- helpers --
@@ -302,6 +446,36 @@ function Test-Requirements {
     if ($ps.Major -lt 5 -or ($ps.Major -eq 5 -and $ps.Minor -lt 1)) {
         Stop-Politely "checking PowerShell" "version $ps" "install Windows Management Framework 5.1 from Microsoft, then run this again"
     }
+}
+
+# SteamCMD's folder gets the same care as the server's: never a drive root, never inside Windows.
+function Test-SteamCmdPath {
+    if ($SteamCmd.Length -le 2) {
+        Stop-Politely "using '$SteamCmd' for SteamCMD" "that is the root of a drive" "pass -SteamCmd with a folder, for example C:\steamcmd"
+    }
+    if (Test-Under $SteamCmd $env:SystemRoot) {
+        Stop-Politely "using '$SteamCmd' for SteamCMD" "that is inside the Windows folder" "pass -SteamCmd with a folder, for example C:\steamcmd"
+    }
+}
+
+# Places a server should not go, by what a person would call them. A 12 GB server in Downloads, on the
+# Desktop or in a OneDrive folder gets synced, cleaned up or deleted along with everything else there.
+function Get-RiskyFolder([string]$d) {
+    $places = New-Object System.Collections.Generic.List[object]
+    try { $places.Add(@('your Desktop', [Environment]::GetFolderPath('Desktop'))) } catch { }
+    try { $places.Add(@('your Documents folder', [Environment]::GetFolderPath('MyDocuments'))) } catch { }
+    $downloads = $null
+    try { $downloads = (Get-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Shell Folders' -ErrorAction Stop).'{374DE290-123F-4565-9164-39C4925E467B}' } catch { }
+    if (-not $downloads -and $env:USERPROFILE) { $downloads = Join-Path $env:USERPROFILE 'Downloads' }
+    if ($downloads) { $places.Add(@('your Downloads folder', $downloads)) }
+    foreach ($name in @('OneDrive', 'OneDriveConsumer', 'OneDriveCommercial')) {
+        $value = [Environment]::GetEnvironmentVariable($name)
+        if ($value) { $places.Add(@('a OneDrive folder', $value)) }
+    }
+    if ($env:TEMP) { $places.Add(@('a temporary folder Windows cleans out', $env:TEMP)) }
+    foreach ($place in $places) { if (Test-Under $d ([string]$place[1])) { return [string]$place[0] } }
+    if ($env:USERPROFILE -and ($d.TrimEnd('\') -ieq $env:USERPROFILE.TrimEnd('\'))) { return 'your user folder' }
+    return $null
 }
 
 # The clock. Two reasons it is checked before anything is downloaded:
@@ -359,11 +533,11 @@ function Test-InstallClock {
     try {
         if ($service.Status -ne 'Running') {
             Start-Service -Name W32Time
-            $script:Changed.Add("started the Windows Time service")
+            Add-Change "started the Windows Time service" "nothing needed: Windows normally keeps it running"
         }
         & w32tm /resync | ForEach-Object { Write-Note $_ }
         if ($LASTEXITCODE -ne 0) { Write-Warn "w32tm could not sync (exit $LASTEXITCODE). Try Settings > Time > 'Sync now'." }
-        else { $script:Changed.Add("synced the clock with w32tm /resync") }
+        else { Add-Change "synced the clock with w32tm /resync" "nothing needed: the clock was set to the correct time" }
     } catch { Write-Warn "could not sync the clock: $($_.Exception.Message)" }
 
     $after = Get-ClockSkew
@@ -376,21 +550,39 @@ function Test-InstallClock {
 # ----------------------------------------------------------- 2. directory --
 function Select-Directory {
     Write-Head "Where the server goes"
+    $here = (Get-Location).Path
+    $defaultDir = 'C:\rustserver'
 
     $d = $Root
     if (-not $d) {
-        $here = (Get-Location).Path
+        $last = Get-LastInstall
+        if ($last -and ($last -ine $here) -and (Test-Path -LiteralPath (Get-RecordFile $last))) {
+            Write-Host "  An install was started in: $last" -ForegroundColor Cyan
+            if (Confirm-Step "Carry on with that one?" -DefaultYes) { $d = $last }
+        }
+    }
+    if (-not $d) {
         Write-Why @(
-            "The Rust server is about 12 GB of files plus its saves and logs. It gets its own folder,",
-            "and everything this script installs for the server goes inside it."
+            "The Rust server is about 12 GB of files, plus its saves and logs. It gets a folder of its own,",
+            "and everything install adds for the server goes inside it."
         )
-        Write-Host "  This folder: $here"
-        Write-Host ""
-        if (Confirm-Step "Install the Rust server here?") { $d = $here }
-        else {
-            Write-Note "A short path with no spaces is easiest, for example C:\rustserver"
-            $d = (Read-Host "  Type the folder to use (Enter on its own to stop)").Trim().Trim('"')
-            if (-not $d) { Write-Summary; exit 0 }
+        $risky = Get-RiskyFolder $here
+        if (Test-Path -LiteralPath (Get-RecordFile $here)) {
+            Write-Host "  This folder has an install to carry on with: $here" -ForegroundColor Cyan
+            if (Confirm-Step "Carry on here?" -DefaultYes) { $d = $here }
+        } elseif ($risky) {
+            Write-Warn "this window was started from $risky ($here)"
+            Write-Note "That is not a good place for a server: some of these folders are synced to the cloud or"
+            Write-Note "cleaned out by Windows. Choose a folder of its own below."
+        } else {
+            Write-Host "  This folder: $here"
+            if (Confirm-Step "Install the Rust server here?") { $d = $here }
+        }
+        if (-not $d) {
+            Write-Host ""
+            Write-Note "A short folder name with no spaces is easiest. Press Enter to use $defaultDir."
+            $typed = ([string](Read-Host "  Folder for the server [$defaultDir]")).Trim().Trim('"')
+            $d = if ($typed) { $typed } else { $defaultDir }
         }
     }
 
@@ -403,27 +595,32 @@ function Select-Directory {
     }
     # Belt and braces behind hotwire-setup.bat: an elevated prompt starts in System32, and a Rust
     # server inside the Windows folder would be a disaster to find and worse to remove.
-    if ($env:SystemRoot -and ($d -eq $env:SystemRoot -or $d -like "$env:SystemRoot\*")) {
+    if (Test-Under $d $env:SystemRoot) {
         Stop-Politely "using '$d' for the server" "that is inside the Windows folder" `
             "put hotwire-setup.bat in the folder you want the server in (for example C:\rustserver) and start it from there"
     }
-    if ($d.TrimEnd('\') -eq $SteamCmd.TrimEnd('\')) {
-        Stop-Politely "using '$d' for the server" "that is where SteamCMD goes" "choose a separate folder, for example C:\rustserver"
+    if ((Test-Under $d $SteamCmd) -or (Test-Under $SteamCmd $d)) {
+        Stop-Politely "using '$d' for the server" "that overlaps with where SteamCMD goes ($SteamCmd)" "choose a separate folder, for example C:\rustserver"
     }
-    if ($d -like "$env:ProgramFiles*" -or ($env:ProgramW6432 -and $d -like "$env:ProgramW6432*") -or (${env:ProgramFiles(x86)} -and $d -like "${env:ProgramFiles(x86)}*")) {
+    if (Test-Path -LiteralPath $d -PathType Leaf) {
+        Stop-Politely "using '$d' for the server" "that is a file, not a folder" "choose a folder, for example C:\rustserver"
+    }
+    if ((Test-Under $d $env:ProgramFiles) -or (Test-Under $d $env:ProgramW6432) -or (Test-Under $d ${env:ProgramFiles(x86)})) {
         Write-Warn "that is inside Program Files"
         Write-Note "Windows protects that folder: the server may be unable to write its saves and logs"
         Write-Note "unless it always runs as Administrator. C:\rustserver avoids the problem."
+        if (-not (Confirm-Step "Use it anyway?")) { Write-Summary; exit 0 }
+    }
+    $riskyChoice = Get-RiskyFolder $d
+    if ($riskyChoice) {
+        Write-Warn "$d is inside $riskyChoice"
+        Write-Note "Some of these folders are synced to the cloud or cleaned out by Windows. C:\rustserver avoids that."
         if (-not (Confirm-Step "Use it anyway?")) { Write-Summary; exit 0 }
     }
     if ($d -match ' ') {
         Write-Warn "the path contains a space"
         Write-Note "This script quotes it correctly. Hand-written start scripts often do not; if one of"
         Write-Note "yours ever fails to find the server, the space is the first thing to check."
-    }
-
-    if (Test-Path -LiteralPath $d -PathType Leaf) {
-        Stop-Politely "using '$d' for the server" "that is a file, not a folder" "choose a folder"
     }
 
     $record = if (Test-Path -LiteralPath $d) { Read-Record $d } else { $null }
@@ -438,7 +635,8 @@ function Select-Directory {
 
     if ($record) {
         Write-Ok "carrying on with an install started here on $($record.started_at)"
-        if (@($record.done).Count -gt 0) { Write-Note ("already finished: " + (@($record.done) -join ', ')) }
+        $finished = Get-RecordList $record 'done'
+        if ($finished.Count -gt 0) { Write-Note ("already finished: " + ($finished -join ', ')) }
         if ($record.steamcmd -and -not $SteamCmdGiven) { $script:SteamCmd = [string]$record.steamcmd }
     } elseif (Test-Path -LiteralPath $d) {
         $items = @(Get-ChildItem -LiteralPath $d -Force)
@@ -451,7 +649,7 @@ function Select-Directory {
             if (-not (Confirm-Step "Install into this folder anyway?")) { Write-Summary; exit 0 }
         } else { Write-Ok "$d is empty" }
     } else {
-        Write-Note "$d does not exist yet and will be created."
+        Write-Note "$d does not exist yet. It is created when you say go ahead."
     }
 
     return $d
@@ -494,6 +692,32 @@ function Get-PortState([string]$Protocol, [int]$Port, $ActiveProfiles) {
     }
 }
 
+# A server that is running holds its files open, and unpacking over them fails part-way. Path is only
+# readable for processes this account may inspect; when it is not, any RustDedicated on the machine is
+# treated as possibly this one.
+function Get-RunningServer([string]$d) {
+    $processes = @(Get-Process -Name RustDedicated -ErrorAction SilentlyContinue)
+    $unknown = $false
+    foreach ($process in $processes) {
+        $path = $null
+        try { $path = $process.Path } catch { }
+        if (-not $path) { $unknown = $true; continue }
+        if ((Split-Path $path -Parent).TrimEnd('\') -ieq $d.TrimEnd('\')) { return 'here' }
+    }
+    if ($unknown) { return 'unknown' }
+    return $null
+}
+
+# cmd.exe reads a .bat file line by line as it runs, so changing hotwire.bat under a running launcher
+# makes it execute half of one version and half of another.
+function Test-LauncherRunning([string]$d) {
+    $bat = Join-Path $d 'hotwire.bat'
+    try {
+        return @(Get-CimInstance Win32_Process -Filter "Name='cmd.exe'" -ErrorAction Stop |
+            Where-Object { $_.CommandLine -and $_.CommandLine.IndexOf($bat, [System.StringComparison]::OrdinalIgnoreCase) -ge 0 }).Count -gt 0
+    } catch { return $false }
+}
+
 function Get-InstallState([string]$d) {
     $s = [ordered]@{ Dir = $d }
     $s.PsVersion = [string]$PSVersionTable.PSVersion
@@ -510,17 +734,26 @@ function Get-InstallState([string]$d) {
     $s.HasRust = Test-Path -LiteralPath (Join-Path $d 'RustDedicated.exe')
     $s.RustBuild = if ($s.HasRust) { Get-InstalledBuild $d } else { $null }
     $s.RustDone = $s.HasRust -and [bool]$s.RustBuild -and (Test-Done $d 'rust')
+    $s.ServerRunning = Get-RunningServer $d
 
     $oxideDll = Join-Path $d 'RustDedicated_Data\Managed\Oxide.Rust.dll'
     $s.HasOxide = Test-Path -LiteralPath $oxideDll
+    # Present is not finished: an unpack that stopped part-way can leave the dll with other files missing.
+    $s.OxideComplete = $s.HasOxide -and (Test-Done $d 'oxide')
+    $s.OxideDeclined = Test-Declined $d 'oxide'
     $s.OxideVersion = if ($s.HasOxide) { [string](Get-Item -LiteralPath $oxideDll).VersionInfo.FileVersion } else { $null }
 
     $launcher = Join-Path $d 'hotwire.bat'
     $s.HasLauncher = Test-Path -LiteralPath $launcher
     $s.LauncherVanilla = $s.HasLauncher -and (Select-String -LiteralPath $launcher -SimpleMatch 'set "INSTALL_FRAMEWORK=0"' -Quiet)
+    $s.LauncherDeclined = Test-Declined $d 'launcher'
+    $s.LauncherOurs = Test-Created $d $launcher
+    $s.LauncherRunning = $s.HasLauncher -and (Test-LauncherRunning $d)
+    $s.LauncherMismatch = $s.HasLauncher -and (($s.OxideComplete -and $s.LauncherVanilla) -or (-not $s.HasOxide -and $s.OxideDeclined -and -not $s.LauncherVanilla))
 
     $plugin = Join-Path $d 'oxide\plugins\Hotwire.cs'
     $s.HasPlugin = Test-Path -LiteralPath $plugin
+    $s.PluginDeclined = Test-Declined $d 'plugin'
     $s.PluginVersion = $null
     if ($s.HasPlugin) {
         try {
@@ -532,6 +765,7 @@ function Get-InstallState([string]$d) {
     $s.RconProblem = if ($s.HasLauncher) { Get-SecretsProblem $d } else { $null }
 
     $s.Connected = Test-Path -LiteralPath (Get-StateFile $d)
+    $s.PanelDeclined = Test-Declined $d 'panel'
     $s.Identity = $null
     if ($s.Connected) { try { $s.Identity = [string](Read-State $d).identity } catch { } }
 
@@ -587,21 +821,33 @@ function Show-InstallState($s, [string]$Title) {
     Write-Group "Rust"
     if ($s.HasSteamCmd) { Write-Check ok 'SteamCMD' $s.SteamCmdExe } else { Write-Check no 'SteamCMD' "not installed ($SteamCmd)" }
     if ($s.RustDone) { Write-Check ok 'Rust server' "build $($s.RustBuild)" }
-    elseif ($s.HasRust) { Write-Check warn 'Rust server' 'download not finished' }
+    elseif ($s.HasRust) { Write-Check warn 'Rust server' 'download not finished -- install finishes it' }
     else { Write-Check no 'Rust server' 'not installed' }
-    if ($s.HasOxide) { Write-Check ok 'Oxide' $s.OxideVersion } else { Write-Check no 'Oxide' 'not installed -- without it, a vanilla server' }
+    if ($s.ServerRunning -eq 'here') { Write-Check fail 'Running' 'the server in this folder is running -- stop it before installing' }
+    elseif ($s.ServerRunning -eq 'unknown') { Write-Check warn 'Running' 'a Rust server is running on this machine -- if it is this one, stop it first' }
+    if ($s.OxideComplete) { Write-Check ok 'Oxide' $s.OxideVersion }
+    elseif ($s.HasOxide) { Write-Check warn 'Oxide' 'partly installed -- install finishes it' }
+    elseif ($s.OxideDeclined) { Write-Check info 'Oxide' 'not installed -- a vanilla server, as you chose' }
+    else { Write-Check no 'Oxide' 'not installed -- without it, a vanilla server' }
 
     Write-Group "Hotwire"
-    if (-not $s.HasLauncher) { Write-Check no 'Start script' 'no hotwire.bat' }
-    elseif ($s.HasOxide -and $s.LauncherVanilla) { Write-Check warn 'Start script' 'hotwire.bat is set for vanilla, but Oxide is installed' }
-    elseif (-not $s.HasOxide -and -not $s.LauncherVanilla -and $s.HasRust) { Write-Check warn 'Start script' 'hotwire.bat will install Oxide on this vanilla server' }
-    else { Write-Check ok 'Start script' $(if ($s.LauncherVanilla) { 'hotwire.bat (vanilla)' } else { 'hotwire.bat' }) }
+    if (-not $s.HasLauncher) {
+        if ($s.LauncherDeclined) { Write-Check info 'Start script' 'no hotwire.bat -- you chose your own start script' }
+        else { Write-Check no 'Start script' 'no hotwire.bat' }
+    } elseif ($s.LauncherMismatch) {
+        $what = if ($s.OxideComplete) { 'set for vanilla, but Oxide is installed' } else { 'will install Oxide on this vanilla server' }
+        $fix = if ($s.LauncherOurs) { 'install fixes it' } else { 'change INSTALL_FRAMEWORK in it' }
+        Write-Check warn 'Start script' "hotwire.bat is $what -- $fix"
+    } else { Write-Check ok 'Start script' $(if ($s.LauncherVanilla) { 'hotwire.bat (vanilla)' } else { 'hotwire.bat' }) }
+    if ($s.LauncherRunning) { Write-Check warn 'Start script' 'hotwire.bat is running right now' }
     if ($s.HasPlugin) { Write-Check ok 'Plugin' $(if ($s.PluginVersion) { "Hotwire $($s.PluginVersion)" } else { 'Hotwire.cs' }) }
+    elseif ($s.PluginDeclined) { Write-Check info 'Plugin' 'not installed -- you said no' }
     else { Write-Check no 'Plugin' 'not installed' }
     if (-not $s.HasLauncher) { Write-Check info 'RCON password' 'set with the start script' }
     elseif ($s.RconProblem) { Write-Check fail 'RCON password' "$($s.RconProblem) -- hotwire.bat will not start" }
     else { Write-Check ok 'RCON password' 'set, and hotwire.bat will accept it' }
     if ($s.Connected) { Write-Check ok 'Hotwire Panel' $(if ($s.Identity) { "connected as '$($s.Identity)'" } else { 'connected' }) }
+    elseif ($s.PanelDeclined) { Write-Check info 'Hotwire Panel' 'not connected -- you said no' }
     else { Write-Check no 'Hotwire Panel' 'not connected' }
 
     Write-Group "Firewall"
@@ -631,14 +877,28 @@ function Get-InstallPlan($s) {
         & $add 'steamcmd' 'SteamCMD' $(if ($s.HasSteamCmd) { 'let it update itself before the download' } else { 'install it -- Rust downloads through it' })
         & $add 'rust' 'Rust server' $(if ($s.HasRust) { 'finish the download' } else { 'download it, about 12 GB' })
     }
-    if (-not $s.HasOxide) { & $add 'oxide' 'Oxide' 'install it, or say no for a vanilla server' }
-    if (-not $s.HasLauncher) { & $add 'launcher' 'Start script' 'install hotwire.bat, or say no to use your own' }
-    if (-not $s.HasPlugin) { & $add 'plugin' 'Hotwire plugin' 'install it -- needs Oxide' }
-    if (-not $s.HasLauncher -or $s.RconProblem) { & $add 'rcon' 'RCON password' $(if ($s.RconProblem) { "fix it: $($s.RconProblem)" } else { 'set it, for hotwire.bat' }) }
+    if (-not $s.OxideComplete -and -not $s.OxideDeclined) {
+        & $add 'oxide' 'Oxide' $(if ($s.HasOxide) { 'finish installing it' } else { 'install it, or say no for a vanilla server' })
+    }
+    if (-not $s.HasLauncher -and -not $s.LauncherDeclined) { & $add 'launcher' 'Start script' 'install hotwire.bat, or say no to use your own' }
+    elseif ($s.LauncherMismatch -and $s.LauncherOurs) { & $add 'launcher' 'Start script' 'set INSTALL_FRAMEWORK in hotwire.bat to match Oxide' }
+    if (-not $s.HasPlugin -and -not $s.PluginDeclined -and -not $s.OxideDeclined) { & $add 'plugin' 'Hotwire plugin' 'install it -- needs Oxide' }
+    if (($s.HasLauncher -and $s.RconProblem) -or (-not $s.HasLauncher -and -not $s.LauncherDeclined)) {
+        & $add 'rcon' 'RCON password' $(if ($s.RconProblem) { "fix it: $($s.RconProblem)" } else { 'set it, for hotwire.bat' })
+    }
     $portsShut = $s.FirewallError -or ($s.FirewallOn -and ($s.Game.Allows.Count -eq 0 -or $s.Query.Allows.Count -eq 0 -or $s.Game.Blocks.Count -gt 0 -or $s.Query.Blocks.Count -gt 0))
     if ($portsShut) { & $add 'firewall' 'Firewall' "open UDP $GamePort and $QueryPort" }
-    if (-not $s.Connected) { & $add 'panel' 'Hotwire Panel' 'connect this server' }
+    if (-not $s.Connected -and -not $s.PanelDeclined) { & $add 'panel' 'Hotwire Panel' 'connect this server' }
     return $plan.ToArray()
+}
+
+function Get-DeclinedNames($s) {
+    $names = @()
+    if ($s.OxideDeclined -and -not $s.OxideComplete) { $names += 'Oxide' }
+    if ($s.LauncherDeclined -and -not $s.HasLauncher) { $names += 'the start script' }
+    if ($s.PluginDeclined -and -not $s.HasPlugin) { $names += 'the Hotwire plugin' }
+    if ($s.PanelDeclined -and -not $s.Connected) { $names += 'Hotwire Panel' }
+    return $names
 }
 
 function Show-InstallPlan($Plan, $s) {
@@ -662,7 +922,7 @@ function Show-InstallPlan($Plan, $s) {
 }
 
 function Show-Finish([string]$d, $s) {
-    $ready = $s.HasRust -and $s.RustDone -and $s.HasLauncher -and -not $s.RconProblem
+    $ready = $s.RustDone -and (($s.HasLauncher -and -not $s.RconProblem) -or (-not $s.HasLauncher -and $s.LauncherDeclined))
     if ($ready) {
         Write-Box @('A L L   S Y S T E M S   G O', '', 'This Rust server is ready to start.') 'Green'
     } else {
@@ -682,6 +942,8 @@ function Show-Finish([string]$d, $s) {
         Write-Host "  Start the server with your own start script. hotwire.bat is here any time: run install again."
     }
     Write-Note "Run install again any time; the pre-flight decides what is left to do."
+    $log = Join-Path $d 'hotwire\changes.log'
+    if (Test-Path -LiteralPath $log) { Write-Note "Every change install has made, and how to undo it: $log" }
 }
 
 # ------------------------------------------------------------ 3. steamcmd --
@@ -703,35 +965,64 @@ function Install-SteamCmd([string]$d) {
         return $exe
     }
 
+    if (Test-Path -LiteralPath $SteamCmd -PathType Leaf) {
+        Stop-Politely "installing SteamCMD into $SteamCmd" "that is a file, not a folder" "move that file, or pass -SteamCmd with another folder"
+    }
+    $existing = @()
+    if (Test-Path -LiteralPath $SteamCmd) { $existing = @(Get-ChildItem -LiteralPath $SteamCmd -Force) }
+
     Write-Why @(
         "SteamCMD is Valve's command-line Steam client. It is how Rust server files are downloaded",
         "and, later, updated. It needs no Steam account for Rust.",
         "",
-        "This downloads steamcmd.zip from Valve, unpacks it into $SteamCmd, and runs it once so it",
-        "can finish installing itself. That first run prints a lot and takes a minute or two.",
+        "This downloads steamcmd.zip from Valve, checks it holds exactly steamcmd.exe, puts that into",
+        "$SteamCmd, and runs it once so it can finish installing itself. That first run prints a lot",
+        "and takes a minute or two.",
         "",
         "More: $($Docs['SteamCMD (Valve)'])"
     )
-    if (-not (Confirm-Step "Install SteamCMD into $SteamCmd?" -DefaultYes)) {
+    if ($existing.Count -gt 0) {
+        Write-Warn "$SteamCmd already exists and holds $($existing.Count) item(s), but no steamcmd.exe"
+        $existing | Select-Object -First 8 | ForEach-Object { Write-Note $_.Name }
+        Write-Note "Only steamcmd.exe is added. Nothing already there is changed or deleted."
+        $go = Confirm-Step "Put SteamCMD in that folder?"
+    } else {
+        $go = Confirm-Step "Install SteamCMD into $SteamCmd?" -DefaultYes
+    }
+    if (-not $go) {
         Write-Note "The Rust server is downloaded through SteamCMD, so install stops here."
         Write-Summary; exit 0
     }
 
     $zip = Join-Path $env:TEMP 'hotwire-steamcmd.zip'
     [void](Invoke-Download $SteamCmdZipUrl $zip 'SteamCMD')
+    $tmp = "$exe.hotwire-tmp"
     try {
-        New-Item -ItemType Directory -Path $SteamCmd -Force | Out-Null
-        Expand-Archive -LiteralPath $zip -DestinationPath $SteamCmd -Force
+        Add-Type -AssemblyName System.IO.Compression.FileSystem
+        try { $archive = [System.IO.Compression.ZipFile]::OpenRead($zip) }
+        catch {
+            Stop-Politely "checking the SteamCMD download" "it is not a readable zip file" `
+                "nothing was unpacked; try again later, or get SteamCMD by hand from $($Docs['SteamCMD (Valve)'])"
+        }
+        try {
+            $entries = @($archive.Entries)
+            if ($entries.Count -ne 1 -or $entries[0].FullName -ne 'steamcmd.exe') {
+                Stop-Politely "checking the SteamCMD download" "it does not hold exactly one file, steamcmd.exe" `
+                    "nothing was unpacked; try again later, or get SteamCMD by hand from $($Docs['SteamCMD (Valve)'])"
+            }
+            if (-not (Test-Path -LiteralPath $SteamCmd)) {
+                New-Item -ItemType Directory -Path $SteamCmd -Force | Out-Null
+            }
+            [System.IO.Compression.ZipFileExtensions]::ExtractToFile($entries[0], $tmp, $true)
+        } finally { $archive.Dispose() }
+        Move-FileIntoPlace $tmp $exe
     } catch {
+        if ([string]$_.Exception.Message -eq 'HOTWIRE-STOP') { throw }
+        Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
         Stop-Politely "unpacking SteamCMD into $SteamCmd" "$($_.Exception.Message)" `
             "if that is a permissions error, right-click hotwire-setup.bat and choose 'Run as administrator', or pass -SteamCmd with a folder you own"
     } finally { Remove-Item -LiteralPath $zip -Force -ErrorAction SilentlyContinue }
-    $script:Changed.Add("installed SteamCMD into $SteamCmd")
-
-    if (-not (Test-Path -LiteralPath $exe)) {
-        Stop-Politely "installing SteamCMD" "no steamcmd.exe in $SteamCmd after unpacking" `
-            "Valve may have changed the download; get it by hand from $($Docs['SteamCMD (Valve)'])"
-    }
+    Add-Change "installed SteamCMD at $exe" "delete $SteamCmd, if nothing else on this machine uses SteamCMD"
 
     Write-Host ""
     Write-Note "running SteamCMD once so it can update itself..."
@@ -752,6 +1043,20 @@ function Get-InstalledBuild([string]$d) {
     if (-not (Test-Path -LiteralPath $acf)) { return $null }
     $m = [regex]::Match([IO.File]::ReadAllText($acf), '"buildid"\s+"(\d+)"')
     if ($m.Success) { return $m.Groups[1].Value }
+    return $null
+}
+
+# The Oxide archive may only write inside RustDedicated_Data. Anything else -- another folder, a "..",
+# a drive letter -- would put files somewhere this step never meant to touch. Returns what is wrong, or
+# $null. Takes entry names, so it can be checked without a download.
+function Test-OxideEntries([string[]]$Names) {
+    if (-not $Names -or $Names.Count -eq 0) { return 'it is empty' }
+    if ($Names -notcontains 'RustDedicated_Data/Managed/Oxide.Rust.dll') { return 'it does not contain RustDedicated_Data/Managed/Oxide.Rust.dll' }
+    foreach ($name in $Names) {
+        if (-not $name.StartsWith('RustDedicated_Data/') -or $name.Contains('..') -or $name.Contains(':') -or $name.Contains('\')) {
+            return "it contains '$name', outside RustDedicated_Data"
+        }
+    }
     return $null
 }
 
@@ -776,7 +1081,14 @@ function Install-Rust([string]$d, [string]$exe) {
         "",
         "More: $($Docs['Creating a server (Rust)'])"
     )
-    if (-not (Confirm-Step "Download the Rust server?" -DefaultYes)) {
+    # A full disk stops the download part-way and can upset Windows itself, so low space is a real question.
+    $free = $null
+    try { $free = Get-FreeGB $d } catch { }
+    if ($null -ne $free -and $free -lt $MinFreeDiskGB) {
+        Write-Warn "only $free GB free on that drive, for a download of about 12 GB that keeps growing"
+        Write-Note "If the disk fills up the download stops, and Windows itself can start misbehaving."
+        if (-not (Confirm-Step "Download anyway?")) { Write-Note "Free up some space, then run install again."; Write-Summary; exit 0 }
+    } elseif (-not (Confirm-Step "Download the Rust server?" -DefaultYes)) {
         Write-Note "The Rust server is what this installs, so install stops here."
         Write-Summary; exit 0
     }
@@ -792,7 +1104,7 @@ function Install-Rust([string]$d, [string]$exe) {
         $build = Get-InstalledBuild $d
         if ($code -eq 0 -and (Test-Path -LiteralPath (Join-Path $d 'RustDedicated.exe')) -and $build) {
             Write-Ok "Rust server downloaded (build $build)"
-            $script:Changed.Add("downloaded the Rust server into $d (build $build)")
+            Add-Change "downloaded the Rust server into $d (build $build)" "delete the server files from $d; its saves are in $d\server if you want to keep them"
             Save-Record $d 'rust'
             return
         }
@@ -815,22 +1127,27 @@ function Install-Oxide([string]$d) {
         Write-Ok ("Oxide is installed (" + (Get-Item -LiteralPath $dll).VersionInfo.FileVersion + ")")
         return
     }
+    if (-not (Test-Done $d 'rust')) {
+        Write-Note "Skipped: Oxide goes on top of a finished Rust download, and this one is not finished."
+        return
+    }
 
     Write-Why @(
         "Oxide (uMod) is what lets a Rust server run plugins. Hotwire's own plugin needs it.",
         "",
-        "This downloads the Windows build of Oxide and unpacks it over the server, replacing some of",
-        "the game's own files in RustDedicated_Data\Managed. That is how Oxide works.",
+        "This downloads the Windows build of Oxide and puts its files over the server, replacing some",
+        "of the game's own files in RustDedicated_Data\Managed. That is how Oxide works. The game's",
+        "files are copied to hotwire\backups first, so they can be put back.",
         "",
-        "One thing worth knowing now: every time SteamCMD updates the server, it puts the game's",
-        "original files back and Oxide stops loading until it is installed again. hotwire.bat does",
-        "that for you after every update. A hand-written start script has to do it too.",
+        "Every time SteamCMD updates the server, it puts the game's original files back and Oxide",
+        "stops loading until it is installed again. hotwire.bat does that for you after every update.",
         "",
         "More: $($Docs['Oxide (uMod)'])"
     )
-    if (-not (Confirm-Step "Install Oxide?" -DefaultYes)) {
+    if (Test-Path -LiteralPath $dll) { Write-Note "An earlier attempt did not finish. This puts every Oxide file in place again." }
+    if (-not (Confirm-Offer $d 'oxide' "Install Oxide?")) {
         Write-Warn "Skipped: this is a vanilla server, and it cannot run plugins."
-        Write-Note "The start script is set up to match, so it will not install Oxide either."
+        Sync-LauncherFramework $d
         Write-Note "Run install again any time to add Oxide."
         return
     }
@@ -846,20 +1163,58 @@ function Install-Oxide([string]$d) {
                 "download the Windows build by hand from $($Docs['Oxide source and releases']) (Oxide.Rust.zip)"
         }
 
-        # Check the archive is what it claims before it is unpacked over a server: a saved error page
-        # force-extracted over RustDedicated_Data is the one way this step could do harm.
         Add-Type -AssemblyName System.IO.Compression.FileSystem
-        try {
-            $archive = [System.IO.Compression.ZipFile]::OpenRead($zip)
-            $ok = @($archive.Entries | Where-Object { $_.FullName -eq 'RustDedicated_Data/Managed/Oxide.Rust.dll' }).Count -gt 0
-            $archive.Dispose()
-        } catch { $ok = $false }
-        if (-not $ok) {
-            Stop-Politely "checking the Oxide download" "it is not a zip containing RustDedicated_Data/Managed/Oxide.Rust.dll" `
+        try { $archive = [System.IO.Compression.ZipFile]::OpenRead($zip) }
+        catch {
+            Stop-Politely "checking the Oxide download" "it is not a readable zip file" `
                 "nothing was unpacked; try again later, or download it by hand from $($Docs['Oxide source and releases'])"
         }
+        try {
+            # Directory entries have an empty Name; only files are checked and written.
+            $entries = @($archive.Entries | Where-Object { $_.Name })
+            $problem = Test-OxideEntries ([string[]]@($entries | ForEach-Object { $_.FullName }))
+            if ($problem) {
+                Stop-Politely "checking the Oxide download" $problem `
+                    "nothing was unpacked; try again later, or download it by hand from $($Docs['Oxide source and releases'])"
+            }
 
-        Expand-Archive -LiteralPath $zip -DestinationPath $d -Force
+            # The game's own files, copied once, before Oxide first replaces them. A later attempt keeps
+            # that first copy rather than backing up files an earlier attempt already replaced.
+            $backupsDir = Join-Path $d 'hotwire\backups'
+            $earlier = @(Get-ChildItem -LiteralPath $backupsDir -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -like '*-before-oxide' })
+            if ($earlier.Count -eq 0) {
+                $backupRoot = Join-Path $backupsDir ((Get-Date).ToString('yyyyMMdd-HHmmss') + '-before-oxide')
+                $saved = 0
+                foreach ($entry in $entries) {
+                    $target = Join-Path $d ($entry.FullName -replace '/', '\')
+                    if (-not (Test-Path -LiteralPath $target -PathType Leaf)) { continue }
+                    $copy = Join-Path $backupRoot ($entry.FullName -replace '/', '\')
+                    New-Item -ItemType Directory -Path (Split-Path $copy -Parent) -Force | Out-Null
+                    Copy-Item -LiteralPath $target -Destination $copy -Force
+                    $saved++
+                }
+                if ($saved -gt 0) {
+                    Write-Ok "copied $saved game file(s) Oxide replaces to $backupRoot"
+                    Add-Change "copied $saved game file(s) that Oxide replaces to $backupRoot" "nothing needed; this is the backup"
+                }
+            } else {
+                Write-Note "The game's original files were already copied to $($earlier[0].FullName)."
+            }
+
+            # Each file is unpacked to a temporary name and renamed into place, so none is ever half-written.
+            foreach ($entry in $entries) {
+                $target = Join-Path $d ($entry.FullName -replace '/', '\')
+                $folder = Split-Path $target -Parent
+                if (-not (Test-Path -LiteralPath $folder)) { New-Item -ItemType Directory -Path $folder -Force | Out-Null }
+                $tmp = "$target.hotwire-tmp"
+                [System.IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $tmp, $true)
+                Move-FileIntoPlace $tmp $target
+            }
+        } finally { $archive.Dispose() }
+    } catch {
+        if ([string]$_.Exception.Message -eq 'HOTWIRE-STOP') { throw }
+        Stop-Politely "putting the Oxide files into $d" "$($_.Exception.Message)" `
+            "run install again: it puts every Oxide file in place again. The game's original files are in $d\hotwire\backups."
     } finally { Remove-Item -LiteralPath $zip -Force -ErrorAction SilentlyContinue }
 
     if (-not (Test-Path -LiteralPath $dll)) {
@@ -869,13 +1224,9 @@ function Install-Oxide([string]$d) {
     $version = (Get-Item -LiteralPath $dll).VersionInfo.FileVersion
     Write-Ok "Oxide $version installed"
     Write-Note "Its oxide\ folder appears the first time the server starts. That is normal."
-    $script:Changed.Add("installed Oxide $version into $d")
-    $launcherFile = Join-Path $d 'hotwire.bat'
-    if ((Test-Path -LiteralPath $launcherFile) -and (Select-String -LiteralPath $launcherFile -SimpleMatch 'set "INSTALL_FRAMEWORK=0"' -Quiet)) {
-        Write-Warn "hotwire.bat is set up for a vanilla server, so it will not keep Oxide updated"
-        Write-Note "In hotwire.bat, change set `"INSTALL_FRAMEWORK=0`" to 1."
-    }
+    Add-Change "installed Oxide $version into $d" "copy the files from $d\hotwire\backups\*-before-oxide back into $d"
     Save-Record $d 'oxide'
+    Sync-LauncherFramework $d
 }
 
 # ------------------------------------------------------------ 6. launcher --
@@ -899,23 +1250,58 @@ function Set-LauncherPaths([string]$Text, [string]$RootDir, [string]$SteamCmdExe
     return ($lines -join "`r`n")
 }
 
+# Keeps hotwire.bat's INSTALL_FRAMEWORK in step with whether Oxide is installed. Only a hotwire.bat this
+# script created is changed, only while it is not running, and only after a copy is kept; anyone else's
+# gets the exact line to change.
+function Sync-LauncherFramework([string]$d) {
+    $launcher = Join-Path $d 'hotwire.bat'
+    if (-not (Test-Path -LiteralPath $launcher)) { return }
+    $oxide = (Test-Done $d 'oxide') -and (Test-Path -LiteralPath (Join-Path $d 'RustDedicated_Data\Managed\Oxide.Rust.dll'))
+    $want = if ($oxide) { '1' } else { '0' }
+    $lines = ([System.IO.File]::ReadAllText($launcher) -replace "`r`n", "`n") -split "`n"
+    $current = @($lines | Where-Object { $_ -match '^set "INSTALL_FRAMEWORK=[01]"$' })
+    if ($current.Count -ne 1) {
+        if (-not $oxide) {
+            Write-Warn "this hotwire.bat has no INSTALL_FRAMEWORK setting, so it installs Oxide when it updates"
+            Write-Note "A newer hotwire.bat can keep a server vanilla: $($Docs['Hotwire (source)'])"
+        }
+        return
+    }
+    $wanted = "set `"INSTALL_FRAMEWORK=$want`""
+    if ($current[0] -eq $wanted) { return }
+
+    $why = if ($oxide) { 'Oxide is installed, so hotwire.bat should keep it updated' } else { 'this is a vanilla server, so hotwire.bat should not install Oxide' }
+    if (-not (Test-Created $d $launcher)) {
+        Write-Warn $why
+        Write-Note "hotwire.bat was not created by install, so it is left alone. In it, change the line"
+        Write-Note "  $($current[0])   to   $wanted"
+        return
+    }
+    if (Test-LauncherRunning $d) {
+        Write-Warn "$why, but hotwire.bat is running. Stop it, then run install again."
+        return
+    }
+    $backup = Backup-File $d $launcher 'hotwire.bat'
+    $text = ($lines | ForEach-Object { if ($_ -match '^set "INSTALL_FRAMEWORK=[01]"$') { $wanted } else { $_ } }) -join "`r`n"
+    Write-FileAtomic $launcher $text
+    Write-Ok "${why}: hotwire.bat now has INSTALL_FRAMEWORK=$want"
+    Add-Change "set INSTALL_FRAMEWORK=$want in $launcher" "copy $backup back over it"
+}
+
 function Install-Launcher([string]$d) {
     Write-Step "Start script"
     $launcher = Join-Path $d 'hotwire.bat'
-    # No Oxide means a vanilla server, and the launcher has to be told, or it installs Oxide on its
-    # first update.
-    $vanilla = -not (Test-Path -LiteralPath (Join-Path $d 'RustDedicated_Data\Managed\Oxide.Rust.dll'))
 
     if (Test-Path -LiteralPath $launcher) {
-        Write-Ok "hotwire.bat is already here -- left as it is"
-        if ($vanilla -and (Select-String -LiteralPath $launcher -SimpleMatch 'set "INSTALL_FRAMEWORK=0"' -Quiet) -eq $false) {
-            Write-Warn "this is a vanilla server, and hotwire.bat may install Oxide when it updates"
-            Write-Note "To keep it vanilla, set `"INSTALL_FRAMEWORK=0`" in hotwire.bat."
-        }
+        Write-Ok "hotwire.bat is already here -- kept"
+        Sync-LauncherFramework $d
         Save-Record $d 'launcher'
         return
     }
 
+    # No Oxide means a vanilla server, and the launcher has to be told, or it installs Oxide on its
+    # first update.
+    $vanilla = -not ((Test-Done $d 'oxide') -and (Test-Path -LiteralPath (Join-Path $d 'RustDedicated_Data\Managed\Oxide.Rust.dll')))
     $steamCmdExe = Join-Path $SteamCmd 'steamcmd.exe'
     $why = @(
         "hotwire.bat is Hotwire's start script: it starts the server, brings it back when it stops,",
@@ -930,7 +1316,7 @@ function Install-Launcher([string]$d) {
     $why += @("", "Say no to start the server with a script of your own instead.", "", "More: $($Docs['Hotwire (source)'])")
     Write-Why $why
 
-    if (-not (Confirm-Step "Install hotwire.bat as the start script?" -DefaultYes)) {
+    if (-not (Confirm-Offer $d 'launcher' "Install hotwire.bat as the start script?")) {
         Write-Note "Skipped: you will start the server your own way. The RCON password step is skipped"
         Write-Note "too, because your start script is what sets it."
         return
@@ -943,23 +1329,24 @@ function Install-Launcher([string]$d) {
             "install into a folder without those characters, for example C:\rustserver"
     }
 
-    $tmp = Join-Path $env:TEMP 'hotwire-launcher.bat'
-    [void](Invoke-Download $LauncherUrl $tmp 'the Hotwire launcher')
-    try { $text = [IO.File]::ReadAllText($tmp) }
-    finally { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
+    $download = "$launcher.hotwire-tmp"
+    [void](Invoke-Download $LauncherUrl $download 'the Hotwire launcher')
+    try { $text = [System.IO.File]::ReadAllText($download) }
+    finally { Remove-Item -LiteralPath $download -Force -ErrorAction SilentlyContinue }
 
     $edited = Set-LauncherPaths $text $d $steamCmdExe $vanilla
     if ($null -eq $edited) {
         Stop-Politely "setting up the downloaded hotwire.bat" "it does not contain the lines this script changes" `
             "nothing was written; download launcher\hotwire.bat by hand from $($Docs['Hotwire (source)']) and set ROOT and STEAMCMD near the top"
     }
-    [IO.File]::WriteAllText($launcher, $edited, [System.Text.UTF8Encoding]::new($false))
+    Write-FileAtomic $launcher $edited
+    Add-Created $d $launcher
     if ($vanilla) {
         Write-Ok "hotwire.bat written for a vanilla server, with ROOT and STEAMCMD set for this install"
-        $script:Changed.Add("created $launcher (ROOT, STEAMCMD, INSTALL_FRAMEWORK=0)")
+        Add-Change "created $launcher (ROOT, STEAMCMD, INSTALL_FRAMEWORK=0)" "delete hotwire.bat"
     } else {
         Write-Ok "hotwire.bat written, with ROOT and STEAMCMD set for this install"
-        $script:Changed.Add("created $launcher (ROOT and STEAMCMD set)")
+        Add-Change "created $launcher (ROOT and STEAMCMD set)" "delete hotwire.bat"
     }
     Save-Record $d 'launcher'
 }
@@ -972,11 +1359,11 @@ function Install-Plugin([string]$d) {
     $plugin = Join-Path $pluginDir 'Hotwire.cs'
 
     if (Test-Path -LiteralPath $plugin) {
-        Write-Ok "oxide\plugins\Hotwire.cs is already here -- left as it is"
+        Write-Ok "oxide\plugins\Hotwire.cs is already here -- kept"
         Save-Record $d 'plugin'
         return
     }
-    if (-not (Test-Path -LiteralPath (Join-Path $d 'RustDedicated_Data\Managed\Oxide.Rust.dll'))) {
+    if (-not ((Test-Done $d 'oxide') -and (Test-Path -LiteralPath (Join-Path $d 'RustDedicated_Data\Managed\Oxide.Rust.dll')))) {
         Write-Note "Skipped: the plugin runs on Oxide, which is not installed."
         return
     }
@@ -989,25 +1376,26 @@ function Install-Plugin([string]$d) {
         Write-Warn "there is no hotwire.bat: a scheduled restart quits the server, and your own start"
         Write-Note "script has to start it again."
     }
-    if (-not (Confirm-Step "Install the Hotwire plugin?" -DefaultYes)) {
+    if (-not (Confirm-Offer $d 'plugin' "Install the Hotwire plugin?")) {
         Write-Note "Skipped. Run install again any time to add it."
         return
     }
 
-    $tmp = Join-Path $env:TEMP 'hotwire-plugin.cs'
+    # Downloaded beside where it goes, under a name Oxide does not load, then renamed into place.
+    if (-not (Test-Path -LiteralPath $pluginDir)) { New-Item -ItemType Directory -Path $pluginDir -Force | Out-Null }
+    $tmp = "$plugin.hotwire-tmp"
     [void](Invoke-Download $PluginUrl $tmp 'the Hotwire plugin')
-    $source = [IO.File]::ReadAllText($tmp)
-    $info = [regex]::Match($source, '\[Info\("Hotwire",\s*"[^"]*",\s*"([^"]+)"\)\]')
+    $info = [regex]::Match([System.IO.File]::ReadAllText($tmp), '\[Info\("Hotwire",\s*"[^"]*",\s*"([^"]+)"\)\]')
     if (-not $info.Success) {
         Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
         Stop-Politely "checking the downloaded Hotwire.cs" "it is not the Hotwire plugin" `
             "nothing was written; download src\Hotwire.cs by hand from $($Docs['Hotwire (source)'])"
     }
-    New-Item -ItemType Directory -Path $pluginDir -Force | Out-Null
-    Move-Item -LiteralPath $tmp -Destination $plugin -Force
+    Move-FileIntoPlace $tmp $plugin
+    Add-Created $d $plugin
     Write-Ok "Hotwire plugin $($info.Groups[1].Value) written to oxide\plugins"
     Write-Note "Oxide compiles it the first time the server starts."
-    $script:Changed.Add("created $plugin (Hotwire $($info.Groups[1].Value))")
+    Add-Change "created $plugin (Hotwire $($info.Groups[1].Value))" "delete oxide\plugins\Hotwire.cs"
     Save-Record $d 'plugin'
 }
 
@@ -1034,6 +1422,10 @@ function New-RconPassword {
 # skips a line starting with a semicolon, and a batch file treats % as the start of a variable.
 function Test-RconPassword([string]$Password) {
     if (-not $Password) { return 'it is empty' }
+    # A .bat file is read in the console's code page, so a letter outside plain ASCII reaches the server as
+    # something else. A space at either end is kept, and nobody remembers typing it.
+    if ($Password -match '[^\x20-\x7E]') { return 'it has a character that is not a plain English letter, digit or keyboard symbol' }
+    if ($Password -ne $Password.Trim()) { return 'it starts or ends with a space' }
     if ($Password.Length -lt 8) { return 'it is under 8 characters' }
     if ($Password -eq 'change_me') { return 'it is still the example value, change_me' }
     if ($Password.Contains('"')) { return 'it contains a double quote' }
@@ -1063,6 +1455,7 @@ function Read-SecretText([string]$Prompt) {
 function Install-RconPassword([string]$d) {
     Write-Step "RCON password"
     $secrets = Join-Path $d 'secrets.bat'
+    $replacing = $false
 
     if (-not (Test-Path -LiteralPath (Join-Path $d 'hotwire.bat'))) {
         Write-Note "Skipped: there is no hotwire.bat, so your own start script sets the RCON password."
@@ -1081,6 +1474,7 @@ function Install-RconPassword([string]$d) {
             Write-Note "Left as it is. Fix $secrets before starting the server."
             return
         }
+        $replacing = $true
     }
 
     Write-Why @(
@@ -1107,14 +1501,22 @@ function Install-RconPassword([string]$d) {
         break
     }
 
+    $previous = $null
+    if ($replacing) { $previous = Backup-File $d $secrets 'secrets.bat' -Secret }
     $body = "@echo off`r`n" +
         "REM The RCON password for this server. RCON is remote control of the machine: treat this`r`n" +
         "REM like a root password. Never share this file, and never commit it anywhere.`r`n" +
         "set `"RCON_PASSWORD=$password`"`r`n"
-    [IO.File]::WriteAllText($secrets, $body, [System.Text.UTF8Encoding]::new($false))
-    $script:Changed.Add("wrote $secrets (the RCON password)")
-    try { Set-SecretAcl $secrets; Write-Ok "secrets.bat written, readable only by Administrators and you" }
-    catch { Write-Warn "secrets.bat written, but who can read it could not be restricted: $($_.Exception.Message)" }
+    try { Write-FileAtomic $secrets $body -Secret }
+    catch {
+        Remove-Item -LiteralPath "$secrets.hotwire-tmp" -Force -ErrorAction SilentlyContinue
+        Stop-Politely "writing secrets.bat, readable only by Administrators and you" "$($_.Exception.Message)" `
+            "right-click hotwire-setup.bat and choose 'Run as administrator', then run install again"
+    }
+    Add-Created $d $secrets
+    Write-Ok "secrets.bat written, readable only by Administrators and you"
+    if ($previous) { Add-Change "replaced $secrets (the RCON password)" "copy $previous back over it" }
+    else { Add-Change "created $secrets (the RCON password)" "delete secrets.bat; hotwire.bat will not start without one" }
     Write-Note "If the server will run under a different Windows account, give that account read access."
 
     if ($generated) {
@@ -1192,7 +1594,7 @@ function Open-PortUnguarded([string]$Protocol, [int]$Port, [string]$Label) {
     New-NetFirewallRule -DisplayName "Rust $Label (Hotwire)" -Group 'Hotwire' -Direction Inbound `
         -Protocol $Protocol -LocalPort $Port -Action Allow | Out-Null
     Write-Ok "opened $Protocol $Port ($Label)"
-    $script:Changed.Add("firewall: allowed inbound $Protocol $Port, rule 'Rust $Label (Hotwire)'")
+    Add-Change "firewall: allowed inbound $Protocol $Port, rule 'Rust $Label (Hotwire)'" "Remove-NetFirewallRule -DisplayName 'Rust $Label (Hotwire)'  (as Administrator)"
 }
 
 function Set-Firewall([string]$d) {
@@ -1423,20 +1825,23 @@ function Invoke-Doctor {
 }
 
 # ----------------------------------------------------------------- connect --
-function Backup-IfPresent([string]$Path) {
+function Backup-IfPresent([string]$Path, [switch]$Secret) {
     if (-not (Test-Path -LiteralPath $Path)) { return }
     $backup = "$Path.backup-" + (Get-Date).ToUniversalTime().ToString('yyyyMMdd-HHmmss')
-    Copy-Item -LiteralPath $Path -Destination $backup
+    if ($Secret) {
+        # Locked down before the secret is copied in, like the original.
+        [System.IO.File]::WriteAllText($backup, '')
+        Set-SecretAcl $backup
+        [System.IO.File]::WriteAllBytes($backup, [System.IO.File]::ReadAllBytes($Path))
+    } else {
+        Copy-Item -LiteralPath $Path -Destination $backup
+    }
     Write-Note "kept the previous file as $backup"
 }
 
 function Write-JsonFile([string]$Path, $Object, [switch]$Secret) {
-    $dir = Split-Path $Path -Parent
-    if (-not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
-    Backup-IfPresent $Path
-    # UTF-8 without a BOM, because a BOM is invisible and breaks every reader that is not expecting one.
-    [System.IO.File]::WriteAllText($Path, ($Object | ConvertTo-Json -Depth 5), [System.Text.UTF8Encoding]::new($false))
-    if ($Secret) { Set-SecretAcl $Path }
+    Backup-IfPresent $Path -Secret:$Secret
+    Write-FileAtomic $Path ($Object | ConvertTo-Json -Depth 5) -Secret:$Secret
 }
 
 # Readable by this machine's administrators, SYSTEM and the account running this script; not by
@@ -1492,9 +1897,20 @@ function Invoke-Connect {
     # machine adopts its existing server rather than creating a second one, so a rename or a
     # repair never splits its history.
     $state = Read-State $r
-    $installId = if ($state -and $state.install_id) { [string]$state.install_id } else { [guid]::NewGuid().ToString() }
-    if ($state -and $state.install_id) { Write-Note "This install is already known to the panel -- reconnecting will adopt it." }
-    else { Write-Note "This install has no id yet; a new one was generated." }
+    $idFile = Join-Path $r 'hotwire\install_id'
+    $parsed = [guid]::Empty
+    $saved = if (Test-Path -LiteralPath $idFile) { ([System.IO.File]::ReadAllText($idFile)).Trim() } else { '' }
+    if ($state -and $state.install_id) {
+        $installId = [string]$state.install_id
+        Write-Note "This install is already known to the panel -- reconnecting will adopt it."
+    } elseif ($saved -and [guid]::TryParse($saved, [ref]$parsed)) {
+        $installId = $saved
+        Write-Note "An earlier connect did not finish. The same install id is used, so the panel adopts it"
+        Write-Note "rather than making a second server."
+    } else {
+        $installId = [guid]::NewGuid().ToString()
+        Write-Note "This install has no id yet; a new one was generated."
+    }
 
     if (-not $Name) { $Name = $env:COMPUTERNAME }
 
@@ -1507,6 +1923,11 @@ function Invoke-Connect {
     Write-Host "               $(Get-PluginFile $r)   (secret)"
     Write-Host ""
     if (-not (Confirm-Step "Connect this server to the panel?" -DefaultYes)) { Write-Host "  Nothing was changed."; return 0 }
+
+    # Kept before the request: a connect interrupted after the panel has answered then adopts the same
+    # server on the next try, instead of making a second one.
+    $script:JournalDir = $r
+    Write-FileAtomic $idFile $installId
 
     $payload = @{
         token = $Code; install_id = $installId; identity = $Name; name = $Name
@@ -1532,19 +1953,15 @@ function Invoke-Connect {
     if ($response.data.panel_url) { $url = ([string]$response.data.panel_url).TrimEnd('/') }
 
     $plugin = $response.data.keys | Where-Object { $_.component -eq 'plugin' } | Select-Object -First 1
-    $script = $response.data.keys | Where-Object { $_.component -eq 'script' } | Select-Object -First 1
+    $scriptKey = $response.data.keys | Where-Object { $_.component -eq 'script' } | Select-Object -First 1
 
-    if (-not $script) {
+    if (-not $scriptKey) {
         Stop-Politely "reading the panel's answer" "it carried no key for the launcher component" `
             "this is a bug -- please report it with the panel's response"
     }
 
-    Write-JsonFile (Get-StateFile $r) ([ordered]@{
-        install_id = $installId; server_id = $server.id; identity = $Name
-        panel_url = $url; connected_at = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
-    })
-    Write-JsonFile (Get-KeysFile $r) ([ordered]@{ key_id = $script.key_id; secret = $script.secret }) -Secret
-
+    # The keys first and connect.json last. connect.json is what every check reads as "connected", so
+    # until it exists a stopped connect reads as not connected, and running connect again finishes it.
     if ($plugin) {
         # The plugin's key goes in oxide\data, NOT oxide\config: the plugin rewrites its config
         # constantly and the documented way to reset it is to delete it, which would silently
@@ -1553,6 +1970,12 @@ function Invoke-Connect {
             key_id = $plugin.key_id; secret = $plugin.secret; panel_url = $url
         }) -Secret
     }
+    Write-JsonFile (Get-KeysFile $r) ([ordered]@{ key_id = $scriptKey.key_id; secret = $scriptKey.secret }) -Secret
+    Write-JsonFile (Get-StateFile $r) ([ordered]@{
+        install_id = $installId; server_id = $server.id; identity = $Name
+        panel_url = $url; connected_at = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+    })
+    Add-Change "connected $r to $url as '$Name'" "hotwire-setup.bat detach, then revoke the keys in the panel"
 
     Write-Head "Connected"
     if ($server.adopted) {
@@ -1596,23 +2019,37 @@ function Invoke-Status {
 # running, and the launcher and plugin carry on without a panel.
 function Invoke-Detach {
     $r = Find-Root
-    if (-not (Test-Path -LiteralPath (Get-StateFile $r))) { Write-Host "Not connected -- nothing to detach."; return 0 }
+    $script:JournalDir = $r
+    $connected = Test-Path -LiteralPath (Get-StateFile $r)
+
+    # Everything connect writes: the three files, the install id, and the backups connect kept.
+    $files = @((Get-StateFile $r), (Get-KeysFile $r), (Get-PluginFile $r), (Join-Path $r 'hotwire\install_id'))
+    $backups = @()
+    foreach ($f in @((Get-StateFile $r), (Get-KeysFile $r), (Get-PluginFile $r))) {
+        $folder = Split-Path $f -Parent
+        if (Test-Path -LiteralPath $folder) {
+            $backups += @(Get-ChildItem -LiteralPath $folder -File -Filter ((Split-Path $f -Leaf) + '.backup-*') -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName })
+        }
+    }
+    $present = @(($files + $backups) | Where-Object { Test-Path -LiteralPath $_ })
+
+    if ($present.Count -eq 0) { Write-Host "Not connected -- nothing to detach."; return 0 }
 
     Write-Head "About to do this"
-    Write-Host "  Remove : $(Get-StateFile $r)"
-    Write-Host "           $(Get-KeysFile $r)"
-    if (Test-Path -LiteralPath (Get-PluginFile $r)) { Write-Host "           $(Get-PluginFile $r)" }
+    if (-not $connected) { Write-Note "Not connected, but these files from an earlier connect are still here." }
+    Write-Host "  Remove:"
+    foreach ($f in $present) { Write-Host "    $f" }
     Write-Host ""
     Write-Note "Your server keeps running. Reporting stops. Nothing else changes."
     Write-Note "Revoke the keys in the panel too -- this machine cannot do that for you."
     Write-Host ""
-    if (-not (Confirm-Step "Disconnect this server from the panel?")) { Write-Host "  Nothing was changed."; return 0 }
+    if (-not (Confirm-Step "Remove them?")) { Write-Host "  Nothing was changed."; return 0 }
 
-    foreach ($f in @((Get-StateFile $r), (Get-KeysFile $r), (Get-PluginFile $r))) {
-        if (Test-Path -LiteralPath $f) { Remove-Item -LiteralPath $f -Force }
-    }
+    # connect.json first: once it is gone every check reads "not connected", even if this stops part-way.
+    foreach ($f in $present) { Remove-Item -LiteralPath $f -Force }
+    Add-Change "disconnected $r from Hotwire Panel" "connect again, with a new code from the panel"
     Write-Host ""
-    Write-Host "Disconnected. This machine is as it was before it connected."
+    Write-Host "Disconnected. Everything connect wrote has been removed."
     return 0
 }
 
@@ -1629,12 +2066,18 @@ function Invoke-PanelOffer([string]$d) {
         "code from the panel, writes three small files in this folder, and 'Disconnect' in the menu",
         "removes them."
     )
-    if (-not (Confirm-Step "Connect this server to Hotwire Panel?" -DefaultYes)) {
+    if (-not (Confirm-Offer $d 'panel' "Connect this server to Hotwire Panel?")) {
         Write-Note "Not connected. Connect any time from the menu."
         return
     }
     $script:Root = $d
-    $null = Invoke-Connect
+    # A mistyped or expired code is not a reason to end an install that is otherwise finished.
+    $script:CatchStops = $true
+    try { $null = Invoke-Connect }
+    catch {
+        if ([string]$_.Exception.Message -ne 'HOTWIRE-STOP') { throw }
+        Write-Note "Not connected. The rest of the install is not affected; connect any time from the menu."
+    } finally { $script:CatchStops = $false }
 }
 
 # -------------------------------------------------------------- install --
@@ -1649,17 +2092,32 @@ function Invoke-Install {
         "password, the firewall and the panel, and changes nothing while it looks. Then it lists what",
         "is missing and installs only that, asking before each part. Enter takes the answer in capitals.",
         "",
+        "If anything stops it -- an error, a closed window, a power cut -- run it again. It checks what is",
+        "already done and carries on.",
+        "",
         "Worth keeping open while you go:"
     )
     foreach ($k in $Docs.Keys) { Write-Host ("    {0,-27} {1}" -f $k, $Docs[$k]) -ForegroundColor DarkGray }
 
     Test-Requirements
+    Test-SteamCmdPath
     $serverDir = Select-Directory
+    Remove-StaleTemps $serverDir
 
     Write-Host ""
     Write-Note "Running pre-flight checks..."
     $state = Get-InstallState $serverDir
     Show-InstallState $state 'Pre-flight'
+
+    $declined = @(Get-DeclinedNames $state)
+    if ($declined.Count -gt 0) {
+        Write-Host ""
+        Write-Note ("You said no earlier to: " + ($declined -join ', ') + ".")
+        if (Confirm-Step "Ask about those again?") {
+            Update-Record $serverDir { param($r) $r.declined = [string[]]@() }
+            $state = Get-InstallState $serverDir
+        }
+    }
 
     $plan = @(Get-InstallPlan $state)
     Show-InstallPlan $plan $state
@@ -1667,14 +2125,29 @@ function Invoke-Install {
         Show-Finish $serverDir $state
         return
     }
+
+    # Nothing is unpacked over a running server: its files are open, and the unpack would fail part-way.
+    $touchesServer = @($plan | Where-Object { $_.Key -in @('rust', 'oxide') }).Count -gt 0
+    if ($touchesServer -and $state.ServerRunning -eq 'here') {
+        Stop-Politely "installing into $serverDir" "the Rust server in this folder is running" `
+            "stop the server first: close the hotwire.bat window, or type quit in the server's window. Then run this again."
+    }
+    if ($touchesServer -and $state.ServerRunning -eq 'unknown') {
+        Write-Warn "a Rust server is running on this machine, and Windows will not say from which folder"
+        Write-Note "If it is the one in $serverDir, stop it first."
+        if (-not (Confirm-Step "Is it a different server?")) { Write-Note "Stop it, then run this again."; Write-Summary; exit 0 }
+    }
+
     Write-Host ""
     if (-not (Confirm-Step "Go ahead?" -DefaultYes)) { Write-Summary; exit 0 }
 
+    $script:JournalDir = $serverDir
     if (-not (Test-Path -LiteralPath $serverDir)) {
         New-Item -ItemType Directory -Path $serverDir -Force | Out-Null
-        $script:Changed.Add("created $serverDir")
+        Add-Change "created $serverDir" "delete the folder, once nothing in it is wanted"
     }
     Save-Record $serverDir $null
+    Save-LastInstall $serverDir
 
     Show-Countdown 5 'Starting'
     $script:StepTotal = $plan.Count
@@ -1702,7 +2175,7 @@ function Invoke-Install {
 
 # ----------------------------------------------------------------- menu --
 # What a double-click gets. Five checks first -- is Rust here, is the clock right, is Hotwire here,
-# is its RCON password valid, is it connected -- then a suggestion. All four only read; nothing starts until a number is chosen.
+# is its RCON password valid, is it connected -- then a suggestion. All of them only read; nothing starts until a number is chosen.
 function Write-No ($m) { Write-Host "  [ no ] $m" -ForegroundColor Gray }
 
 function Invoke-Menu {
@@ -1827,13 +2300,33 @@ if (-not $Command) {
     if (-not $Command) { Write-Note "Nothing was changed."; exit 0 }
 }
 
-switch ($Command.ToLowerInvariant()) {
-    # Install's steps print as they go; anything they return is not an exit code.
-    'install' { $null = Invoke-Install; exit 0 }
-    'doctor'  { exit (Invoke-Doctor) }
-    'connect' { $script:YesAllowed = $true; exit (Invoke-Connect) }
-    'status'  { exit (Invoke-Status) }
-    'detach'  { $script:YesAllowed = $true; exit (Invoke-Detach) }
-    'help'    { Show-Help; exit 0 }
-    default   { Show-Help; exit 1 }
+$action = $Command.ToLowerInvariant()
+if ($action -in @('install', 'connect', 'detach')) { Enter-SingleRun }
+
+# Anything nobody foresaw still gets a plain message, and the reassurance that is true of every step: files
+# are only ever put in place whole, so running again is safe.
+try {
+    switch ($action) {
+        # Install's steps print as they go; anything they return is not an exit code.
+        'install' { $null = Invoke-Install; exit 0 }
+        'doctor'  { exit (Invoke-Doctor) }
+        'connect' { $script:YesAllowed = $true; exit (Invoke-Connect) }
+        'status'  { exit (Invoke-Status) }
+        'detach'  { $script:YesAllowed = $true; exit (Invoke-Detach) }
+        'help'    { Show-Help; exit 0 }
+        default   { Show-Help; exit 1 }
+    }
+} catch {
+    Write-Host ""
+    Write-Host "Something unexpected went wrong." -ForegroundColor Red
+    Write-Host ""
+    Write-Host "  $($_.Exception.Message)"
+    Write-Host "  (hotwire-setup.ps1, line $($_.InvocationInfo.ScriptLineNumber))" -ForegroundColor DarkGray
+    Write-Host ""
+    Write-Note "Files are only ever put in place whole, so nothing is half-written. Run hotwire-setup.bat"
+    Write-Note "again: it checks what is already done and carries on. If this keeps happening, report the"
+    Write-Note "message above at $($Docs['Hotwire (source)'])/issues"
+    Write-Host ""
+    Write-Summary
+    exit 1
 }

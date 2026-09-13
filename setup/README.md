@@ -11,16 +11,24 @@ or removing anything defaults to no.
 
 ## Windows
 
-1. Put **`hotwire-setup.bat`** and **`hotwire-setup.ps1`** in the folder you want the server in, for
-   example `C:\rustserver`.
-2. **Right-click `hotwire-setup.bat` → Run as administrator.**
-3. It checks five things first, and changes nothing while it does:
+1. **Extract everything first.** If you downloaded a `.zip`, right-click it and choose **Extract All**.
+   Double-clicking a file while it is still inside the zip does not work.
+2. Put **`hotwire-setup.bat`** and **`hotwire-setup.ps1`** together in a folder. Any folder will do,
+   because install asks where the server goes and suggests `C:\rustserver`.
+3. **Right-click `hotwire-setup.bat` → Run as administrator.** Windows may ask whether to allow it,
+   and a download can also show a blue "Windows protected your PC" box: choose *More info*, then *Run
+   anyway*.
+4. It checks five things first, and changes nothing while it does:
    - is a Rust server installed in this folder, and which build
    - is the clock right (against Steam's servers, so it never contacts the panel)
    - is Hotwire installed: `hotwire.bat` here, `Hotwire.cs` in `oxide\plugins`
    - is the RCON password in `secrets.bat` one `hotwire.bat` will accept
    - is it connected to Hotwire Panel, and as what
-4. Pick from the menu. It suggests the next step from what it found.
+5. Pick from the menu. It suggests the next step from what it found.
+
+Windows usually hides file extensions, so you may see two files both called `hotwire-setup`. The one
+to double-click is the one whose type is **Windows Batch File**. Double-clicking the other only opens
+it as text, which does no harm.
 
 Double-clicking works too; without Administrator, install can only *report* on the firewall and the
 clock rather than fix them. From a console, name the command: `.\hotwire-setup.bat connect`.
@@ -28,6 +36,56 @@ clock rather than fix them. From a console, name the command: `.\hotwire-setup.b
 **Why two files.** Windows will not run a PowerShell script when you double-click it, and by default
 refuses to run one at all. The `.bat` starts that one script for that one window, changes no Windows
 setting, and is short enough to read first.
+
+## Safe to stop, safe to run again
+
+Install is built so that stopping at any moment — an error, a closed window, a power cut — leaves
+nothing broken, and running it again simply carries on.
+
+- **Nothing is written straight into place.** Every file goes to a temporary `<name>.hotwire-tmp`
+  beside its destination and is then renamed over it. A rename is all-or-nothing, so you get the old
+  file or the new one, never half of either. Leftover temporary files are deleted on the next run.
+  That suffix is used by nothing else.
+- **Secrets are locked before they hold anything.** `secrets.bat` and the panel keys are restricted to
+  Administrators and you while still empty, and so are their backups.
+- **A record, `hotwire\install.json`, says what is finished**, what you said no to, and which files
+  install created. The pre-flight reads it, so a second run does only what is left. A folder holding a
+  Rust server with no record is somebody else's, and install refuses to touch it.
+- **Only one copy runs at a time.** A second window stops with a message; Windows releases the lock if
+  the first is closed.
+- **Nothing is unpacked over a running server.** If the server in that folder is running, install
+  stops and says how to stop it.
+- **A download is checked before it is used.** SteamCMD's zip must hold exactly `steamcmd.exe`. Oxide's
+  must contain `Oxide.Rust.dll`, every file must sit inside `RustDedicated_Data`, and it must be the
+  Windows build. The start script and the plugin must be the files they claim to be.
+- **Low disk space is a question, not a warning.** Under 15 GB free, the Rust download defaults to *no*.
+- **A mistyped panel code does not end the install.** The rest stays done; connect later from the menu.
+
+## What it will never overwrite
+
+- **A Rust server it did not install.**
+- **An existing `hotwire.bat`, `Hotwire.cs` or valid `secrets.bat`.** They are kept as they are. The one
+  exception is a `hotwire.bat` that install created: its `INSTALL_FRAMEWORK` line is changed to match
+  whether Oxide is installed, after a copy is saved, and never while it is running.
+- **The game's own files, without a copy.** Before Oxide first replaces anything, the originals go to
+  `hotwire\backups\<time>-before-oxide\`.
+- **Anything in a SteamCMD folder that already exists.** Only `steamcmd.exe` is added, and you are asked
+  first.
+- **Your Downloads, Desktop, Documents, OneDrive or temporary folders.** It will not suggest them for a
+  server, and it warns before using one you type.
+
+## Undoing it
+
+Every change is written, as it happens, to **`hotwire\changes.log`** in the server folder, each with the
+exact way to undo it. The last screen shows where that file is. In short:
+
+| to undo | do this |
+|---|---|
+| the firewall rules | `Remove-NetFirewallRule -Group Hotwire` (as Administrator) |
+| Oxide | copy the files from `hotwire\backups\*-before-oxide\` back into the server folder |
+| the start script, plugin or password | delete `hotwire.bat`, `oxide\plugins\Hotwire.cs` or `secrets.bat` |
+| connecting to the panel | `hotwire-setup.bat detach`, then revoke the keys in the panel |
+| everything | delete the server folder, and `C:\steamcmd` if nothing else uses it |
 
 ## Commands
 
@@ -74,8 +132,8 @@ It never opens RCON (TCP 28016), and warns if something else has. It never touch
 did not install: a folder with `RustDedicated.exe` and no `hotwire\install.json` is refused. It does
 not start the server. When it finishes, set the server's name in `hotwire.bat` and double-click it.
 
-Stopped halfway? Run it again. `hotwire\install.json` records the finished steps, and SteamCMD
-resumes a partial download. `Remove-NetFirewallRule -Group Hotwire` removes the rules it added.
+Stopped halfway? Run it again, from anywhere: it remembers the last install folder and offers to
+carry on there. SteamCMD resumes a partial download, and Oxide puts every file in place again.
 
 The numbers it uses: ports from `launcher/hotwire.bat` section 4.1; the Rust+ port from
 [Rust+ Server](https://wiki.facepunch.com/rust/rust-companion-server); 15 GB disk and 12 GB RAM,

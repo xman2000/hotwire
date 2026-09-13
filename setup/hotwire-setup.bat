@@ -12,31 +12,35 @@ REM  plain text.
 REM
 REM  From a console, name the command:  hotwire-setup.bat connect
 REM
-REM  No labels or goto in this file on purpose: those are what break when a .bat loses
-REM  its Windows line endings on the way to you.
+REM  Written with no labels, no goto and no bracketed blocks, on purpose. Labels break
+REM  when a .bat loses its Windows line endings on the way to you, and a block breaks
+REM  when the folder it runs from has a bracket in its name -- "New folder (2)",
+REM  "Program Files (x86)" -- because the folder name closes the block early.
 
 setlocal
 
-if not exist "%~dp0hotwire-setup.ps1" (
-    echo.
-    echo   hotwire-setup.ps1 is missing. Put it in the same folder as this file:
-    echo   %~dp0
-    echo.
-    pause
-    exit /b 1
-)
+set "HW_PS1=%~dp0hotwire-setup.ps1"
+set "HW_POWERSHELL=%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe"
+if not exist "%HW_POWERSHELL%" set "HW_POWERSHELL=powershell.exe"
+
+if not exist "%HW_PS1%" echo.
+if not exist "%HW_PS1%" echo   hotwire-setup.ps1 is missing. It has to be in the same folder as this file.
+if not exist "%HW_PS1%" echo.
+if not exist "%HW_PS1%" echo   If you opened this from inside a .zip file, close this window, right-click the
+if not exist "%HW_PS1%" echo   .zip, choose Extract All, and double-click hotwire-setup.bat in the new folder.
+if not exist "%HW_PS1%" echo.
+if not exist "%HW_PS1%" pause
+if not exist "%HW_PS1%" exit /b 1
 
 REM  "Run as administrator" starts a .bat in C:\Windows\System32, not where the file is.
 REM  Installing a server there would be a disaster, so start from this file's folder.
 if /i "%CD%"=="%SystemRoot%\System32" cd /d "%~dp0"
 
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0hotwire-setup.ps1" %*
+"%HW_POWERSHELL%" -NoProfile -ExecutionPolicy Bypass -File "%HW_PS1%" %*
 set "HW_EXIT=%ERRORLEVEL%"
 
 REM  A double-clicked window closes the moment the script ends, so keep it open to be
 REM  read. Given a command, it was typed into a console that stays open anyway.
-if "%~1"=="" (
-    echo.
-    pause
-)
+if "%~1"=="" echo.
+if "%~1"=="" pause
 exit /b %HW_EXIT%

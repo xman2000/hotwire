@@ -368,6 +368,13 @@ cmd_connect() {
     # from the same box adopts its existing server rather than creating a second
     # one, so a rename or a repair never splits its history.
     install_id="$(json_get "$(read_state "$root")" install_id)"
+    # A connect that stopped after the panel answered left its install id behind; using it again makes
+    # the panel adopt that server rather than create a second one.
+    if [ -z "$install_id" ] && [ -f "$(state_dir "$root")/install_id" ]; then
+        install_id="$(tr -d '[:space:]' < "$(state_dir "$root")/install_id")"
+        case "$install_id" in *[!0-9a-fA-F-]*) install_id="" ;; esac
+        [ -n "$install_id" ] && note "  An earlier connect did not finish; the same install id is used."
+    fi
     if [ -z "$install_id" ]; then
         install_id="$(cat /proc/sys/kernel/random/uuid 2>/dev/null || openssl rand -hex 16 | sed 's/\(........\)\(....\)\(....\)\(....\)\(............\)/\1-\2-\3-\4-\5/')"
         note "  This install has no id yet; a new one was generated."
@@ -386,6 +393,10 @@ cmd_connect() {
     say "                 $(plugin_file "$root")   (secrets, chmod 600)"
     say ""
     confirm_default_yes "Connect this server to the panel?" || { say "  Nothing was changed."; exit 0; }
+
+    # Kept before the request, so an interrupted connect adopts the same server on the next try.
+    mkdir -p "$(state_dir "$root")" && write_atomic "$(state_dir "$root")/install_id" "$install_id"$'\n' \
+        || die "saving the install id in $(state_dir "$root")" "the write failed" "check permissions on $root"
 
     body="$(printf '{"token":"%s","install_id":"%s","identity":"%s","name":"%s","components":["plugin","script"]}' \
         "$(json_escape "$CODE")" "$install_id" "$(json_escape "$NAME")" "$(json_escape "$NAME")")"
@@ -449,6 +460,21 @@ cmd_connect() {
 
 # Writes, politely: an existing file is backed up with a timestamp and the path
 # is printed, never silently replaced.
+# Writes a file whole or not at all: to a temporary name beside it, then renamed over it. A secret is
+# created under umask 077, so it is never readable by anyone else, even for a moment.
+write_atomic() {  # write_atomic <path> <content> [secret]
+    local tmp="$1.hotwire-tmp"
+    if [ "${3:-}" = "secret" ]; then
+        ( umask 077; printf '%s' "$2" > "$tmp" ) || return 1
+    else
+        printf '%s' "$2" > "$tmp" || return 1
+    fi
+    mv -f "$tmp" "$1"
+}
+
+# Writes, politely: an existing file is backed up with a timestamp and the path is printed, never
+# silently replaced. The keys first and connect.json last: connect.json is what every check reads as
+# "connected", so until it exists a stopped connect reads as not connected, and running it again finishes.
 write_files() {
     local root="$1" install_id="$2" server_id="$3" url="$4"
     local pkey="$5" psec="$6" skey="$7" ssec="$8"
@@ -456,25 +482,27 @@ write_files() {
 
     mkdir -p "$dir" || die "creating $dir" "permission denied" "run as the user that owns $root"
 
-    back_up "$(state_file "$root")"
-    printf '{\n  "install_id": "%s",\n  "server_id": "%s",\n  "identity": "%s",\n  "panel_url": "%s",\n  "connected_at": "%s"\n}\n' \
-        "$install_id" "$server_id" "$(json_escape "$NAME")" "$url" "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
-        > "$(state_file "$root")"
-
-    back_up "$(keys_file "$root")"
-    printf '{\n  "key_id": "%s",\n  "secret": "%s"\n}\n' "$skey" "$ssec" > "$(keys_file "$root")"
-    chmod 600 "$(keys_file "$root")"
-
     if [ -n "$psec" ]; then
         # The plugin's key goes in oxide/data, NOT oxide/config: the plugin
         # rewrites its config constantly and the README tells people to delete
         # it to reset defaults, which would silently unenroll the server.
         mkdir -p "$(dirname "$(plugin_file "$root")")"
         back_up "$(plugin_file "$root")"
-        printf '{\n  "key_id": "%s",\n  "secret": "%s",\n  "panel_url": "%s"\n}\n' "$pkey" "$psec" "$url" \
-            > "$(plugin_file "$root")"
-        chmod 600 "$(plugin_file "$root")"
+        write_atomic "$(plugin_file "$root")" \
+            "$(printf '{\n  "key_id": "%s",\n  "secret": "%s",\n  "panel_url": "%s"\n}' "$pkey" "$psec" "$url")"$'\n' secret \
+            || die "writing $(plugin_file "$root")" "the write failed" "check free space and permissions on $root"
     fi
+
+    back_up "$(keys_file "$root")"
+    write_atomic "$(keys_file "$root")" \
+        "$(printf '{\n  "key_id": "%s",\n  "secret": "%s"\n}' "$skey" "$ssec")"$'\n' secret \
+        || die "writing $(keys_file "$root")" "the write failed" "check free space and permissions on $root"
+
+    back_up "$(state_file "$root")"
+    write_atomic "$(state_file "$root")" \
+        "$(printf '{\n  "install_id": "%s",\n  "server_id": "%s",\n  "identity": "%s",\n  "panel_url": "%s",\n  "connected_at": "%s"\n}' \
+            "$install_id" "$server_id" "$(json_escape "$NAME")" "$url" "$(date -u '+%Y-%m-%dT%H:%M:%SZ')")"$'\n' \
+        || die "writing $(state_file "$root")" "the write failed" "check free space and permissions on $root"
 }
 
 back_up() {
@@ -510,21 +538,29 @@ cmd_status() {
 cmd_detach() {
     local root; root="$(find_root)"
 
-    [ -f "$(state_file "$root")" ] || { say "Not connected -- nothing to detach."; return 0; }
+    local leftovers
+    leftovers="$(ls -1 "$(state_file "$root")" "$(keys_file "$root")" "$(plugin_file "$root")" \
+        "$(state_dir "$root")/install_id" "$(state_file "$root")".backup-* "$(keys_file "$root")".backup-* \
+        "$(plugin_file "$root")".backup-* 2>/dev/null)"
+    [ -n "$leftovers" ] || { say "Not connected -- nothing to detach."; return 0; }
 
     head_ "About to do this"
     say "  Remove : $(state_file "$root")"
     say "           $(keys_file "$root")"
     [ -f "$(plugin_file "$root")" ] && say "           $(plugin_file "$root")"
+    say "           and the install id and .backup- copies connect kept, if any"
     say ""
     note "  Your server keeps running. Reporting stops. Nothing else changes."
     note "  Revoke the keys in the panel too -- this machine cannot do that for you."
     say ""
     confirm "Disconnect this server from the panel?" || { say "  Nothing was changed."; exit 0; }
 
-    rm -f "$(state_file "$root")" "$(keys_file "$root")" "$(plugin_file "$root")"
+    # connect.json first: once it is gone every check reads "not connected", even if this stops part-way.
+    rm -f "$(state_file "$root")"
+    rm -f "$(keys_file "$root")" "$(plugin_file "$root")" "$(state_dir "$root")/install_id" \
+        "$(state_file "$root")".backup-* "$(keys_file "$root")".backup-* "$(plugin_file "$root")".backup-*
     say ""
-    say "Disconnected. This machine is as it was before it connected."
+    say "Disconnected. Everything connect wrote has been removed."
 }
 
 # ------------------------------------------------------------- install ----
