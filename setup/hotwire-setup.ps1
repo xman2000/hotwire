@@ -23,7 +23,7 @@
     Requires Windows PowerShell 5.1, which ships with Windows 10 and Windows Server 2016 and later.
 
     Commands (from a console: .\hotwire-setup.bat <command>):
-        install   SteamCMD, Rust, Oxide, a start script and RCON password, the firewall; our plugin and panel only if you want them. Asks before every step.
+        install   Pre-flight checks everything, then installs only what is missing. Asks before every step.
         doctor    Check this machine is ready to connect. Changes nothing.
         connect   Connect to the panel. Asks for the code.
         status    What this server is connected to.
@@ -107,6 +107,85 @@ function Write-Head ($m) { Write-Host ""; Write-Host $m -ForegroundColor White; 
 function Write-Why([string[]]$Lines) {
     foreach ($line in $Lines) { Write-Host "  $line" }
     Write-Host ""
+}
+
+# ----------------------------------------------------------- look and feel --
+# Plain ASCII on purpose: Windows PowerShell 5.1 reads a file without a byte-order mark as the local
+# code page, so a box-drawing character here would arrive as mojibake. Colour does the rest.
+$script:StepNo = 0
+$script:StepTotal = 0
+
+function Show-Banner {
+    $art = @(
+        ' ____   _   _  ____   _____ ',
+        '|  _ \ | | | |/ ___| |_   _|',
+        '| |_) || | | |\___ \   | |  ',
+        '|  _ < | |_| | ___) |  | |  ',
+        '|_| \_\ \___/ |____/   |_|  '
+    )
+    $shades = @('Yellow', 'DarkYellow', 'Red', 'Red', 'DarkRed')
+    Write-Host ""
+    Write-Host "              W E L C O M E    T O" -ForegroundColor Gray
+    Write-Host ""
+    for ($i = 0; $i -lt $art.Count; $i++) { Write-Host ("            " + $art[$i]) -ForegroundColor $shades[$i] }
+    Write-Host ""
+    Write-Host "        -=[ " -NoNewline -ForegroundColor DarkGray
+    Write-Host "supported by " -NoNewline -ForegroundColor Gray
+    Write-Host "H O T W I R E" -NoNewline -ForegroundColor Cyan
+    Write-Host " ]=-" -ForegroundColor DarkGray
+    Write-Host ("                 setup {0}" -f $Version) -ForegroundColor DarkGray
+    Write-Host ""
+}
+
+# A heavy rule and the step's place in the plan, so a long install always says where it is.
+function Write-Step([string]$Title) {
+    $script:StepNo++
+    $label = if ($script:StepTotal) { "STEP $($script:StepNo) OF $($script:StepTotal)" } else { "STEP $($script:StepNo)" }
+    Write-Host ""
+    Write-Host ("  " + ('=' * 72)) -ForegroundColor DarkCyan
+    Write-Host "  >> " -NoNewline -ForegroundColor Yellow
+    Write-Host "$label   " -NoNewline -ForegroundColor DarkCyan
+    Write-Host $Title.ToUpper() -ForegroundColor White
+    Write-Host ("  " + ('=' * 72)) -ForegroundColor DarkCyan
+    Write-Host ""
+}
+
+function Write-Frame([string]$Title) {
+    Write-Host ""
+    Write-Host "  .--[ " -NoNewline -ForegroundColor DarkCyan
+    Write-Host $Title.ToUpper() -NoNewline -ForegroundColor White
+    Write-Host (" ]" + ('-' * [math]::Max(4, 64 - $Title.Length)) + ".") -ForegroundColor DarkCyan
+}
+
+function Write-Group([string]$Name) { Write-Host ""; Write-Host "  $Name" -ForegroundColor Cyan }
+
+# One line of a pre-flight: status, what was checked, what was found.
+function Write-Check([string]$Status, [string]$Label, [string]$Detail) {
+    $tag = @{ ok = '[ ok ]'; no = '[ -- ]'; warn = '[warn]'; fail = '[FAIL]'; info = '[ .. ]' }[$Status]
+    $color = @{ ok = 'Green'; no = 'Gray'; warn = 'Yellow'; fail = 'Red'; info = 'DarkGray' }[$Status]
+    Write-Host ("    {0} " -f $tag) -NoNewline -ForegroundColor $color
+    Write-Host ("{0,-17}" -f $Label) -NoNewline -ForegroundColor White
+    Write-Host $Detail -ForegroundColor $color
+}
+
+function Write-Box([string[]]$Lines, [string]$Color = 'DarkCyan') {
+    $width = ($Lines | Measure-Object -Property Length -Maximum).Maximum + 4
+    Write-Host ""
+    Write-Host ("  +" + ('=' * $width) + "+") -ForegroundColor $Color
+    foreach ($line in $Lines) { Write-Host ("  |  " + $line.PadRight($width - 2) + "|") -ForegroundColor $Color }
+    Write-Host ("  +" + ('=' * $width) + "+") -ForegroundColor $Color
+}
+
+# Ctrl+C during a countdown stops the script with nothing started -- the point of counting down is that
+# the last moment to change your mind is visible.
+function Show-Countdown([int]$Seconds, [string]$What) {
+    Write-Host ""
+    for ($i = $Seconds; $i -ge 1; $i--) {
+        $bar = ('#' * ($Seconds - $i + 1)).PadRight($Seconds, '.')
+        Write-Host ("`r  [{0}]  {1} in {2}...   Ctrl+C stops it " -f $bar, $What, $i) -NoNewline -ForegroundColor Yellow
+        Start-Sleep -Seconds 1
+    }
+    Write-Host ("`r  [{0}]  {1} now.{2}" -f ('#' * $Seconds), $What, (' ' * 30)) -ForegroundColor Green
 }
 
 # Three parts, always. "Failed to install" helps nobody at three in the morning.
@@ -214,43 +293,15 @@ function Invoke-Download([string]$Url, [string]$OutFile, [string]$What) {
 }
 
 # ------------------------------------------------------------- 1. machine --
-function Test-Machine {
-    Write-Head "1. Checking this machine"
-    Write-Note "Nothing is changed in this step unless the clock needs fixing, and that is asked first."
-    Write-Host ""
-
+# The two things nothing else can work around. Everything else is a pre-flight line, not a stop.
+function Test-Requirements {
     if ($env:OS -ne 'Windows_NT') {
         Stop-Politely "checking this is Windows" "OS reports '$env:OS'" "on Linux, follow docs/INSTALL-LINUX.md instead"
     }
-    Write-Ok "Windows"
-
     $ps = $PSVersionTable.PSVersion
     if ($ps.Major -lt 5 -or ($ps.Major -eq 5 -and $ps.Minor -lt 1)) {
         Stop-Politely "checking PowerShell" "version $ps" "install Windows Management Framework 5.1 from Microsoft, then run this again"
     }
-    Write-Ok "PowerShell $ps"
-
-    $script:IsAdmin = Test-Admin
-    if ($script:IsAdmin) { Write-Ok "running as Administrator" }
-    else {
-        Write-Warn "not running as Administrator"
-        Write-Note "Installing works without it. Opening firewall ports and fixing the clock do not,"
-        Write-Note "so those steps will be checked and explained but skipped."
-        Write-Note "To do them too: close this, right-click hotwire-setup.bat, choose 'Run as administrator'."
-        Write-Host ""
-        if (-not (Confirm-Step "Carry on without Administrator?")) { Write-Summary; exit 0 }
-    }
-
-    try {
-        $ramGB = [math]::Round((Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory / 1GB, 1)
-        if ($ramGB -ge $MinRamGB) { Write-Ok "$ramGB GB of memory" }
-        else {
-            Write-Warn "$ramGB GB of memory -- Rust recommends $MinRamGB GB free for a server"
-            Write-Note "A small map with few players can run on less. A 6000-size map will not."
-        }
-    } catch { Write-Warn "could not read how much memory this machine has" }
-
-    Test-InstallClock
 }
 
 # The clock. Two reasons it is checked before anything is downloaded:
@@ -269,6 +320,7 @@ function Get-ClockSkew {
 }
 
 function Test-InstallClock {
+    Write-Step "Clock"
     $skew = Get-ClockSkew
     if ($null -eq $skew) {
         Write-Warn "could not compare this machine's clock with the internet's"
@@ -323,7 +375,7 @@ function Test-InstallClock {
 
 # ----------------------------------------------------------- 2. directory --
 function Select-Directory {
-    Write-Head "2. Where the server goes"
+    Write-Head "Where the server goes"
 
     $d = $Root
     if (-not $d) {
@@ -402,47 +454,239 @@ function Select-Directory {
         Write-Note "$d does not exist yet and will be created."
     }
 
-    $free = $null
-    try { $free = Get-FreeGB $d } catch { }
-    if ($null -eq $free) { Write-Warn "could not read the free space for $d (a network path?) -- Rust recommends $MinFreeDiskGB GB" }
-    elseif ($free -ge $MinFreeDiskGB) { Write-Ok "$free GB free on that drive" }
-    else {
-        Write-Warn "$free GB free on that drive -- Rust recommends $MinFreeDiskGB GB"
-        Write-Note "The download is about 12 GB and the server grows with every save."
-        if (-not (Confirm-Step "Carry on with less space than recommended?")) { Write-Summary; exit 0 }
-    }
     return $d
 }
 
-function Show-Plan([string]$d) {
-    Write-Head "Here is the plan"
-    Write-Host "  Server folder : $d"
-    Write-Host "  SteamCMD      : $SteamCmd"
-    Write-Host ""
-    Write-Host "  3. Install SteamCMD            $(if (Test-Path (Join-Path $SteamCmd 'steamcmd.exe')) { '(already there -- reused)' })"
-    Write-Host "  4. Download the Rust server    about 12 GB, usually 10-30 minutes"
-    Write-Host "  5. Install Oxide               about 13 MB"
-    Write-Host "  6. Start script                hotwire.bat; every schedule ships switched off"
-    Write-Host "  7. Hotwire plugin              asked separately"
-    Write-Host "  8. RCON password               you choose it, or press Enter for a strong one"
-    Write-Host "  9. Firewall                    UDP $GamePort and $QueryPort; Rust+ only if you say so; never RCON"
-    Write-Host " 10. Hotwire Panel               connect this server, asked at the end"
-    Write-Host ""
-    Write-Note "Each step asks before it does anything. Saying no to one stops there; run the script"
-    Write-Note "again whenever you like and it carries on."
-    Write-Host ""
-    if (-not (Confirm-Step "Start?")) { Write-Summary; exit 0 }
+# ------------------------------------------------------------ pre-flight --
+# Everything install could do, checked first and changed by none of it. The plan is whatever this finds
+# missing, so a second run on a finished server does nothing, and a half-finished one does only the rest.
 
-    if (-not (Test-Path -LiteralPath $d)) {
-        New-Item -ItemType Directory -Path $d -Force | Out-Null
-        $script:Changed.Add("created $d")
+# The firewall profiles in force right now. A rule for Private networks does nothing on a machine whose
+# connection is Public, so "open" has to mean open on the network in use. $null when it cannot be told.
+function Get-ActiveFirewallProfiles {
+    try {
+        $names = @(Get-NetConnectionProfile -ErrorAction Stop | ForEach-Object {
+            $category = [string]$_.NetworkCategory
+            if ($category -eq 'DomainAuthenticated') { 'Domain' } else { $category }
+        } | Select-Object -Unique)
+        if ($names.Count -gt 0) { return $names }
+    } catch { }
+    return $null
+}
+
+function Test-RuleApplies($Rule, $ActiveProfiles) {
+    if ($null -eq $ActiveProfiles) { return $true }
+    $ruleProfile = [string]$Rule.Profile
+    if (-not $ruleProfile -or $ruleProfile -eq 'Any') { return $true }
+    foreach ($name in $ActiveProfiles) { if ($ruleProfile -match "\b$name\b") { return $true } }
+    return $false
+}
+
+# Allow and block rules for one port that apply on the network in use, and allow rules that exist but
+# only for a network type this machine is not on.
+function Get-PortState([string]$Protocol, [int]$Port, $ActiveProfiles) {
+    $rules = @(Get-InboundPortRules $Protocol $Port)
+    $applying = @($rules | Where-Object { Test-RuleApplies $_ $ActiveProfiles })
+    return [pscustomobject]@{
+        Allows    = @($applying | Where-Object { $_.Action -eq 'Allow' })
+        Blocks    = @($applying | Where-Object { $_.Action -eq 'Block' })
+        Elsewhere = @($rules | Where-Object { $_.Action -eq 'Allow' -and -not (Test-RuleApplies $_ $ActiveProfiles) })
     }
-    Save-Record $d $null
+}
+
+function Get-InstallState([string]$d) {
+    $s = [ordered]@{ Dir = $d }
+    $s.PsVersion = [string]$PSVersionTable.PSVersion
+    $s.IsAdmin = Test-Admin
+    $script:IsAdmin = $s.IsAdmin
+    $s.RamGB = $null
+    try { $s.RamGB = [math]::Round((Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory / 1GB, 1) } catch { }
+    $s.FreeGB = $null
+    try { $s.FreeGB = Get-FreeGB $d } catch { }
+    $s.ClockSkew = Get-ClockSkew
+
+    $s.SteamCmdExe = Join-Path $SteamCmd 'steamcmd.exe'
+    $s.HasSteamCmd = Test-Path -LiteralPath $s.SteamCmdExe
+    $s.HasRust = Test-Path -LiteralPath (Join-Path $d 'RustDedicated.exe')
+    $s.RustBuild = if ($s.HasRust) { Get-InstalledBuild $d } else { $null }
+    $s.RustDone = $s.HasRust -and [bool]$s.RustBuild -and (Test-Done $d 'rust')
+
+    $oxideDll = Join-Path $d 'RustDedicated_Data\Managed\Oxide.Rust.dll'
+    $s.HasOxide = Test-Path -LiteralPath $oxideDll
+    $s.OxideVersion = if ($s.HasOxide) { [string](Get-Item -LiteralPath $oxideDll).VersionInfo.FileVersion } else { $null }
+
+    $launcher = Join-Path $d 'hotwire.bat'
+    $s.HasLauncher = Test-Path -LiteralPath $launcher
+    $s.LauncherVanilla = $s.HasLauncher -and (Select-String -LiteralPath $launcher -SimpleMatch 'set "INSTALL_FRAMEWORK=0"' -Quiet)
+
+    $plugin = Join-Path $d 'oxide\plugins\Hotwire.cs'
+    $s.HasPlugin = Test-Path -LiteralPath $plugin
+    $s.PluginVersion = $null
+    if ($s.HasPlugin) {
+        try {
+            $m = [regex]::Match([IO.File]::ReadAllText($plugin), '\[Info\("Hotwire",\s*"[^"]*",\s*"([^"]+)"\)\]')
+            if ($m.Success) { $s.PluginVersion = $m.Groups[1].Value }
+        } catch { }
+    }
+
+    $s.RconProblem = if ($s.HasLauncher) { Get-SecretsProblem $d } else { $null }
+
+    $s.Connected = Test-Path -LiteralPath (Get-StateFile $d)
+    $s.Identity = $null
+    if ($s.Connected) { try { $s.Identity = [string](Read-State $d).identity } catch { } }
+
+    $s.FirewallError = $null; $s.ActiveProfiles = $null; $s.FirewallOn = $null
+    $s.Game = $null; $s.Query = $null; $s.RconOpen = @(); $s.ProgramRules = @()
+    try {
+        $s.ActiveProfiles = Get-ActiveFirewallProfiles
+        $profiles = @(Get-NetFirewallProfile -PolicyStore ActiveStore)
+        $relevant = if ($s.ActiveProfiles) { @($profiles | Where-Object { $s.ActiveProfiles -contains $_.Name }) } else { $profiles }
+        $s.FirewallOn = @($relevant | Where-Object { $_.Enabled -eq 'True' }).Count -gt 0
+        $s.Game = Get-PortState 'UDP' $GamePort $s.ActiveProfiles
+        $s.Query = Get-PortState 'UDP' $QueryPort $s.ActiveProfiles
+        $s.RconOpen = @((Get-PortState 'TCP' $RconPort $s.ActiveProfiles).Allows)
+        $active = $s.ActiveProfiles
+        $s.ProgramRules = @(Get-NetFirewallApplicationFilter -PolicyStore ActiveStore |
+            Where-Object { $_.Program -like '*\RustDedicated.exe' } | Get-NetFirewallRule |
+            Where-Object { $_.Direction -eq 'Inbound' -and $_.Enabled -eq 'True' -and (Test-RuleApplies $_ $active) })
+    } catch { $s.FirewallError = $_.Exception.Message }
+
+    return [pscustomobject]$s
+}
+
+function Write-PortCheck([string]$Label, $Port, $FirewallOn) {
+    if ($FirewallOn -eq $false) { Write-Check info $Label "reachable -- the firewall is off"; return }
+    if ($Port.Blocks.Count -gt 0) { Write-Check fail $Label "BLOCKED by '$($Port.Blocks[0].DisplayName)' -- a block beats every allow"; return }
+    if ($Port.Allows.Count -gt 0) { Write-Check ok $Label "open: '$($Port.Allows[0].DisplayName)' $(Get-RemoteText $Port.Allows[0])"; return }
+    if ($Port.Elsewhere.Count -gt 0) { Write-Check no $Label "closed here -- '$($Port.Elsewhere[0].DisplayName)' only covers $($Port.Elsewhere[0].Profile) networks"; return }
+    Write-Check no $Label "closed"
+}
+
+function Show-InstallState($s, [string]$Title) {
+    Write-Frame $Title
+    Write-Host "    folder: $($s.Dir)" -ForegroundColor DarkGray
+
+    Write-Group "This machine"
+    Write-Check ok 'PowerShell' $s.PsVersion
+    if ($s.IsAdmin) { Write-Check ok 'Administrator' 'yes' }
+    else { Write-Check warn 'Administrator' 'no -- the firewall and the clock can be checked, not changed' }
+    if ($null -eq $s.RamGB) { Write-Check warn 'Memory' 'could not be read' }
+    elseif ($s.RamGB -ge $MinRamGB) { Write-Check ok 'Memory' "$($s.RamGB) GB" }
+    else { Write-Check warn 'Memory' "$($s.RamGB) GB -- Rust recommends $MinRamGB GB" }
+    if ($null -eq $s.FreeGB) { Write-Check warn 'Disk' "free space could not be read -- Rust recommends $MinFreeDiskGB GB" }
+    elseif ($s.FreeGB -ge $MinFreeDiskGB) { Write-Check ok 'Disk' "$($s.FreeGB) GB free" }
+    else { Write-Check warn 'Disk' "$($s.FreeGB) GB free -- Rust recommends $MinFreeDiskGB GB" }
+    if ($null -eq $s.ClockSkew) { Write-Check warn 'Clock' "could not be compared with Steam's servers" }
+    else {
+        $abs = [math]::Abs($s.ClockSkew); $dir = if ($s.ClockSkew -gt 0) { 'ahead' } else { 'behind' }
+        if ($abs -le 30) { Write-Check ok 'Clock' ("right ({0:N0}s from Steam's servers)" -f $abs) }
+        elseif ($abs -le 300) { Write-Check warn 'Clock' ("{0:N0}s {1} -- drifting" -f $abs, $dir) }
+        else { Write-Check fail 'Clock' ("{0:N0}s {1} -- Hotwire Panel would refuse every request" -f $abs, $dir) }
+    }
+
+    Write-Group "Rust"
+    if ($s.HasSteamCmd) { Write-Check ok 'SteamCMD' $s.SteamCmdExe } else { Write-Check no 'SteamCMD' "not installed ($SteamCmd)" }
+    if ($s.RustDone) { Write-Check ok 'Rust server' "build $($s.RustBuild)" }
+    elseif ($s.HasRust) { Write-Check warn 'Rust server' 'download not finished' }
+    else { Write-Check no 'Rust server' 'not installed' }
+    if ($s.HasOxide) { Write-Check ok 'Oxide' $s.OxideVersion } else { Write-Check no 'Oxide' 'not installed -- without it, a vanilla server' }
+
+    Write-Group "Hotwire"
+    if (-not $s.HasLauncher) { Write-Check no 'Start script' 'no hotwire.bat' }
+    elseif ($s.HasOxide -and $s.LauncherVanilla) { Write-Check warn 'Start script' 'hotwire.bat is set for vanilla, but Oxide is installed' }
+    elseif (-not $s.HasOxide -and -not $s.LauncherVanilla -and $s.HasRust) { Write-Check warn 'Start script' 'hotwire.bat will install Oxide on this vanilla server' }
+    else { Write-Check ok 'Start script' $(if ($s.LauncherVanilla) { 'hotwire.bat (vanilla)' } else { 'hotwire.bat' }) }
+    if ($s.HasPlugin) { Write-Check ok 'Plugin' $(if ($s.PluginVersion) { "Hotwire $($s.PluginVersion)" } else { 'Hotwire.cs' }) }
+    else { Write-Check no 'Plugin' 'not installed' }
+    if (-not $s.HasLauncher) { Write-Check info 'RCON password' 'set with the start script' }
+    elseif ($s.RconProblem) { Write-Check fail 'RCON password' "$($s.RconProblem) -- hotwire.bat will not start" }
+    else { Write-Check ok 'RCON password' 'set, and hotwire.bat will accept it' }
+    if ($s.Connected) { Write-Check ok 'Hotwire Panel' $(if ($s.Identity) { "connected as '$($s.Identity)'" } else { 'connected' }) }
+    else { Write-Check no 'Hotwire Panel' 'not connected' }
+
+    Write-Group "Firewall"
+    if ($s.FirewallError) { Write-Check warn 'Windows Firewall' "could not be read: $($s.FirewallError)" }
+    else {
+        $network = if ($s.ActiveProfiles) { ($s.ActiveProfiles -join ', ') + ' network' } else { 'network type unknown' }
+        if ($s.FirewallOn) { Write-Check ok 'Windows Firewall' "on ($network)" }
+        else { Write-Check warn 'Windows Firewall' "OFF ($network) -- every port is reachable, RCON included" }
+        Write-PortCheck "Game  UDP $GamePort" $s.Game $s.FirewallOn
+        Write-PortCheck "Query UDP $QueryPort" $s.Query $s.FirewallOn
+        if ($s.RconOpen.Count -gt 0) { Write-Check warn "RCON  TCP $RconPort" "OPEN: '$($s.RconOpen[0].DisplayName)' $(Get-RemoteText $s.RconOpen[0])" }
+        elseif ($s.FirewallOn) { Write-Check ok "RCON  TCP $RconPort" 'closed, as it should be' }
+        foreach ($r in $s.ProgramRules) {
+            if ($r.Action -eq 'Allow') { Write-Check warn 'RustDedicated' "'$($r.DisplayName)' allows the program $(Get-RemoteText $r) -- RCON too, if it names no port" }
+            else { Write-Check fail 'RustDedicated' "'$($r.DisplayName)' blocks the program -- players cannot connect" }
+        }
+    }
+}
+
+# What the pre-flight found missing, in the order it has to be done.
+function Get-InstallPlan($s) {
+    $plan = New-Object System.Collections.Generic.List[object]
+    $add = { param($Key, $Title, $Why) $plan.Add([pscustomobject]@{ Key = $Key; Title = $Title; Why = $Why }) }
+
+    if ($null -ne $s.ClockSkew -and [math]::Abs($s.ClockSkew) -gt 30) { & $add 'clock' 'Clock' ("{0:N0}s out" -f [math]::Abs($s.ClockSkew)) }
+    if (-not $s.RustDone) {
+        & $add 'steamcmd' 'SteamCMD' $(if ($s.HasSteamCmd) { 'let it update itself before the download' } else { 'install it -- Rust downloads through it' })
+        & $add 'rust' 'Rust server' $(if ($s.HasRust) { 'finish the download' } else { 'download it, about 12 GB' })
+    }
+    if (-not $s.HasOxide) { & $add 'oxide' 'Oxide' 'install it, or say no for a vanilla server' }
+    if (-not $s.HasLauncher) { & $add 'launcher' 'Start script' 'install hotwire.bat, or say no to use your own' }
+    if (-not $s.HasPlugin) { & $add 'plugin' 'Hotwire plugin' 'install it -- needs Oxide' }
+    if (-not $s.HasLauncher -or $s.RconProblem) { & $add 'rcon' 'RCON password' $(if ($s.RconProblem) { "fix it: $($s.RconProblem)" } else { 'set it, for hotwire.bat' }) }
+    $portsShut = $s.FirewallError -or ($s.FirewallOn -and ($s.Game.Allows.Count -eq 0 -or $s.Query.Allows.Count -eq 0 -or $s.Game.Blocks.Count -gt 0 -or $s.Query.Blocks.Count -gt 0))
+    if ($portsShut) { & $add 'firewall' 'Firewall' "open UDP $GamePort and $QueryPort" }
+    if (-not $s.Connected) { & $add 'panel' 'Hotwire Panel' 'connect this server' }
+    return $plan.ToArray()
+}
+
+function Show-InstallPlan($Plan, $s) {
+    Write-Frame 'Flight plan'
+    if ($Plan.Count -eq 0) { return }
+    Write-Host ""
+    $n = 0
+    foreach ($step in $Plan) {
+        $n++
+        $note = if (-not $s.IsAdmin -and $step.Key -in @('clock', 'firewall')) { '   (report only -- not Administrator)' } else { '' }
+        Write-Host ("    {0,2}.  " -f $n) -NoNewline -ForegroundColor Yellow
+        Write-Host ("{0,-16}" -f $step.Title) -NoNewline -ForegroundColor White
+        Write-Host ($step.Why + $note) -ForegroundColor Gray
+    }
+    if (($Plan | Where-Object { $_.Key -eq 'rust' }) -and $null -ne $s.FreeGB -and $s.FreeGB -lt $MinFreeDiskGB) {
+        Write-Host ""
+        Write-Warn "only $($s.FreeGB) GB free for a download of about 12 GB"
+    }
+    Write-Host ""
+    Write-Note "Every step still says what it will do and asks first."
+}
+
+function Show-Finish([string]$d, $s) {
+    $ready = $s.HasRust -and $s.RustDone -and $s.HasLauncher -and -not $s.RconProblem
+    if ($ready) {
+        Write-Box @('A L L   S Y S T E M S   G O', '', 'This Rust server is ready to start.') 'Green'
+    } else {
+        Write-Box @('N O T   R E A D Y   Y E T', '', 'The pre-flight lines marked above say what is left.') 'Yellow'
+    }
+    Write-Host ""
+    Write-Summary
+    Write-Host ""
+    if ($s.HasLauncher) {
+        Write-Host "  Next:" -ForegroundColor Cyan
+        Write-Host "    1. Open hotwire.bat in Notepad and set your server's name and description."
+        Write-Host "       The top of the file explains every option."
+        Write-Host "    2. Start the server: double-click hotwire.bat."
+        Write-Host ""
+        Write-Note "The first start takes several minutes while the map generates."
+    } elseif ($s.HasRust) {
+        Write-Host "  Start the server with your own start script. hotwire.bat is here any time: run install again."
+    }
+    Write-Note "Run install again any time; the pre-flight decides what is left to do."
 }
 
 # ------------------------------------------------------------ 3. steamcmd --
 function Install-SteamCmd([string]$d) {
-    Write-Head "3. SteamCMD"
+    Write-Step "SteamCMD"
     $exe = Join-Path $SteamCmd 'steamcmd.exe'
 
     if (Test-Path -LiteralPath $exe) {
@@ -512,7 +756,7 @@ function Get-InstalledBuild([string]$d) {
 }
 
 function Install-Rust([string]$d, [string]$exe) {
-    Write-Head "4. The Rust server"
+    Write-Step "The Rust server"
 
     if (Test-Done $d 'rust') {
         Write-Ok "already downloaded (build $(Get-InstalledBuild $d))"
@@ -536,6 +780,7 @@ function Install-Rust([string]$d, [string]$exe) {
         Write-Note "The Rust server is what this installs, so install stops here."
         Write-Summary; exit 0
     }
+    Show-Countdown 3 'Downloading'
 
     while ($true) {
         Write-Host ""
@@ -563,7 +808,7 @@ function Install-Rust([string]$d, [string]$exe) {
 
 # --------------------------------------------------------------- 5. oxide --
 function Install-Oxide([string]$d) {
-    Write-Head "5. Oxide"
+    Write-Step "Oxide"
     $dll = Join-Path $d 'RustDedicated_Data\Managed\Oxide.Rust.dll'
 
     if ((Test-Done $d 'oxide') -and (Test-Path -LiteralPath $dll)) {
@@ -655,7 +900,7 @@ function Set-LauncherPaths([string]$Text, [string]$RootDir, [string]$SteamCmdExe
 }
 
 function Install-Launcher([string]$d) {
-    Write-Head "6. Start script"
+    Write-Step "Start script"
     $launcher = Join-Path $d 'hotwire.bat'
     # No Oxide means a vanilla server, and the launcher has to be told, or it installs Oxide on its
     # first update.
@@ -722,7 +967,7 @@ function Install-Launcher([string]$d) {
 # ----------------------------------------------------------- 7. the plugin --
 # Asked, defaulting to yes. No carries on with the install; it is skipped when Oxide was declined.
 function Install-Plugin([string]$d) {
-    Write-Head "7. Hotwire plugin"
+    Write-Step "Hotwire plugin"
     $pluginDir = Join-Path $d 'oxide\plugins'
     $plugin = Join-Path $pluginDir 'Hotwire.cs'
 
@@ -816,7 +1061,7 @@ function Read-SecretText([string]$Prompt) {
 }
 
 function Install-RconPassword([string]$d) {
-    Write-Head "8. RCON password"
+    Write-Step "RCON password"
     $secrets = Join-Path $d 'secrets.bat'
 
     if (-not (Test-Path -LiteralPath (Join-Path $d 'hotwire.bat'))) {
@@ -928,20 +1173,21 @@ function Open-Port([string]$Protocol, [int]$Port, [string]$Label) {
 }
 
 function Open-PortUnguarded([string]$Protocol, [int]$Port, [string]$Label) {
-    $rules = Get-InboundPortRules $Protocol $Port
-    $blocks = @($rules | Where-Object { $_.Action -eq 'Block' })
-    $allows = @($rules | Where-Object { $_.Action -eq 'Allow' })
+    $port = Get-PortState $Protocol $Port (Get-ActiveFirewallProfiles)
 
-    foreach ($b in $blocks) {
+    foreach ($b in $port.Blocks) {
         Write-Bad "$Protocol $Port is BLOCKED by the rule '$($b.DisplayName)'"
         Write-Note "In Windows Firewall a block rule beats every allow rule, so no rule added here would help."
         Write-Note "Remove or disable it yourself if it is not deliberate (wf.msc > Inbound Rules)."
     }
-    if ($allows.Count -gt 0) {
-        foreach ($a in $allows) { Write-Ok "$Protocol $Port ($Label) is already open: '$($a.DisplayName)' $(Get-RemoteText $a)" }
+    if ($port.Allows.Count -gt 0) {
+        foreach ($a in $port.Allows) { Write-Ok "$Protocol $Port ($Label) is already open: '$($a.DisplayName)' $(Get-RemoteText $a)" }
         return
     }
-    if ($blocks.Count -gt 0) { return }
+    if ($port.Blocks.Count -gt 0) { return }
+    foreach ($e in $port.Elsewhere) {
+        Write-Note "'$($e.DisplayName)' allows $Protocol $Port, but only on $($e.Profile) networks, which this machine is not on."
+    }
 
     New-NetFirewallRule -DisplayName "Rust $Label (Hotwire)" -Group 'Hotwire' -Direction Inbound `
         -Protocol $Protocol -LocalPort $Port -Action Allow | Out-Null
@@ -950,8 +1196,7 @@ function Open-PortUnguarded([string]$Protocol, [int]$Port, [string]$Label) {
 }
 
 function Set-Firewall([string]$d) {
-    Write-Head "9. Firewall"
-
+    Write-Step "Firewall"
     Write-Why @(
         "A Rust server uses four ports. These numbers match hotwire.bat's defaults:",
         "",
@@ -961,64 +1206,24 @@ function Set-Firewall([string]$d) {
         "  TCP $RconPort   RCON         remote control of the server    NEVER opened here",
         "",
         "RCON is a remote console: anyone who reaches it and guesses the password runs commands on",
-        "your server. Reach it from this machine or over a VPN. If you really must open it, open it",
-        "to your own address only -- the guide shows how.",
+        "your server. Reach it from this machine or over a VPN.",
         "",
         "This is Windows Firewall only. A home router needs port forwarding, and a cloud provider has",
         "its own firewall; both are outside this machine. More: $($Docs['Creating a server (Rust)'])"
     )
 
-    try { $profiles = @(Get-NetFirewallProfile -PolicyStore ActiveStore) }
-    catch { Write-Warn "could not read Windows Firewall: $($_.Exception.Message)"; return }
-
-    $on = @($profiles | Where-Object { $_.Enabled -eq 'True' })
-    if ($on.Count -eq 0) {
-        Write-Warn "Windows Firewall is switched off for every network profile"
-        Write-Note "Every port on this machine is reachable -- including RCON once the server runs."
-        Write-Note "Rules added now take effect only if the firewall is switched back on. Not switching it on:"
-        Write-Note "that may be deliberate (another firewall, a cloud firewall). Check before you go live."
-    } else {
-        Write-Ok ("Windows Firewall is on for: " + (($on | ForEach-Object { $_.Name }) -join ', '))
-    }
-
-    # A rule scoped to the program with no port filter covers every port it listens on. An allow here
-    # exposes RCON whatever the port rules say; a block here stops players. Whether Windows' 'allow
-    # this app?' prompt creates exactly such a rule on current builds is not verified here (GAP 2.7).
-    $programRules = @()
-    try {
-        $programRules = @(Get-NetFirewallApplicationFilter -PolicyStore ActiveStore |
-            Where-Object { $_.Program -like '*\RustDedicated.exe' } | Get-NetFirewallRule |
-            Where-Object { $_.Direction -eq 'Inbound' -and $_.Enabled -eq 'True' })
-    } catch { }
-    foreach ($r in $programRules) {
-        if ($r.Action -eq 'Allow') {
-            Write-Warn "'$($r.DisplayName)' allows RustDedicated.exe $(Get-RemoteText $r) -- if it names no port, that includes RCON"
-        } else {
-            Write-Bad "'$($r.DisplayName)' blocks RustDedicated.exe -- players will not be able to connect"
-        }
-    }
-
-    try {
-        foreach ($r in (Get-InboundPortRules 'TCP' $RconPort | Where-Object { $_.Action -eq 'Allow' })) {
-            Write-Warn "RCON (TCP $RconPort) is open: '$($r.DisplayName)' $(Get-RemoteText $r)"
-            Write-Note "Not changed. If that is not your own address only, remove it (wf.msc > Inbound Rules)."
-        }
-    } catch { Write-Warn "could not check whether RCON (TCP $RconPort) is open: $($_.Exception.Message)" }
-
     if (-not $script:IsAdmin) {
-        Write-Host ""
-        Write-Warn "not Administrator, so no rules were added"
-        Write-Note "To open them: right-click hotwire-setup.bat, 'Run as administrator'. It skips what is already done."
+        Write-Warn "not Administrator, so no rules can be added"
+        Write-Note "To open the ports: right-click hotwire-setup.bat, 'Run as administrator', and choose install."
         return
     }
 
-    Write-Host ""
     if (-not (Confirm-Step "Open UDP $GamePort and UDP $QueryPort in Windows Firewall?")) { Write-Note "No rules were added."; return }
     Open-Port 'UDP' $GamePort 'game'
     Open-Port 'UDP' $QueryPort 'query'
 
     Write-Host ""
-    Write-Note "Rust+ lets players pair their phone with your server. It is optional, and more: $($Docs['Rust+ companion (Rust)'])"
+    Write-Note "Rust+ lets players pair their phone with your server. More: $($Docs['Rust+ companion (Rust)'])"
     if (Confirm-Step "Also open TCP $AppPort for Rust+?") { Open-Port 'TCP' $AppPort 'Rust+' }
 
     Write-Note "Every rule this script adds is in the group 'Hotwire'. To remove them all:"
@@ -1414,7 +1619,7 @@ function Invoke-Detach {
 # ----------------------------------------------------------- 10. the panel --
 # Asked last, once the server is complete. Yes runs exactly what 'connect' runs; no changes nothing.
 function Invoke-PanelOffer([string]$d) {
-    Write-Head "10. Hotwire Panel"
+    Write-Step "Hotwire Panel"
     if (Test-Path -LiteralPath (Get-StateFile $d)) {
         Write-Ok "this server is already connected -- 'Show the connection' in the menu says where"
         return
@@ -1435,49 +1640,64 @@ function Invoke-PanelOffer([string]$d) {
 # -------------------------------------------------------------- install --
 function Invoke-Install {
     $script:SteamCmd = Resolve-FullPath $SteamCmd
+    Show-Banner
     if ($Yes) { Write-Note "(-Yes does not apply to install: every step asks.)" }
-    Write-Host ""
-    Write-Host "hotwire-setup $Version -- a Rust server with Oxide, on this machine" -ForegroundColor White
-    Write-Host ""
     Write-Why @(
-        "This walks through installing a Rust dedicated server, one step at a time. Every step says",
-        "what it is about to do and waits for an answer. Enter takes the one in capitals.",
+        "This installs a Rust dedicated server on this machine.",
         "",
-        "It does not start the server or connect to anything of ours. When it finishes, the server",
-        "is ready to name and start.",
+        "First a pre-flight: it checks this machine, the folder, Rust, Oxide, Hotwire, the RCON",
+        "password, the firewall and the panel, and changes nothing while it looks. Then it lists what",
+        "is missing and installs only that, asking before each part. Enter takes the answer in capitals.",
         "",
         "Worth keeping open while you go:"
     )
-    foreach ($k in $Docs.Keys) { Write-Host ("    {0,-27} {1}" -f $k, $Docs[$k]) }
+    foreach ($k in $Docs.Keys) { Write-Host ("    {0,-27} {1}" -f $k, $Docs[$k]) -ForegroundColor DarkGray }
 
-    Test-Machine
+    Test-Requirements
     $serverDir = Select-Directory
-    Show-Plan $serverDir
-    $steamCmdExe = Install-SteamCmd $serverDir
-    Install-Rust $serverDir $steamCmdExe
-    Install-Oxide $serverDir
-    Install-Launcher $serverDir
-    Install-Plugin $serverDir
-    Install-RconPassword $serverDir
-    Set-Firewall $serverDir
-    Invoke-PanelOffer $serverDir
 
-    Write-Head "Done"
-    Write-Summary
     Write-Host ""
-    Write-Host "  Next:"
-    if (Test-Path -LiteralPath (Join-Path $serverDir 'hotwire.bat')) {
-        Write-Host "    1. Open hotwire.bat in Notepad and set your server's name and description."
-        Write-Host "       The top of the file explains every option."
-        Write-Host "    2. Start the server: double-click hotwire.bat."
-    } else {
-        Write-Host "    Start the server with your own start script. hotwire.bat is available any time:"
-        Write-Host "    run install again."
+    Write-Note "Running pre-flight checks..."
+    $state = Get-InstallState $serverDir
+    Show-InstallState $state 'Pre-flight'
+
+    $plan = @(Get-InstallPlan $state)
+    Show-InstallPlan $plan $state
+    if ($plan.Count -eq 0) {
+        Show-Finish $serverDir $state
+        return
     }
     Write-Host ""
-    Write-Note "The first start takes several minutes while the map generates."
-    Write-Note "Run install again any time; it only does what is not done yet."
-    Write-Note "Connecting to Hotwire Panel is optional, and later: hotwire-setup.bat, then Connect."
+    if (-not (Confirm-Step "Go ahead?" -DefaultYes)) { Write-Summary; exit 0 }
+
+    if (-not (Test-Path -LiteralPath $serverDir)) {
+        New-Item -ItemType Directory -Path $serverDir -Force | Out-Null
+        $script:Changed.Add("created $serverDir")
+    }
+    Save-Record $serverDir $null
+
+    Show-Countdown 5 'Starting'
+    $script:StepTotal = $plan.Count
+    $script:StepNo = 0
+    foreach ($step in $plan) {
+        switch ($step.Key) {
+            'clock'    { Test-InstallClock }
+            'steamcmd' { $null = Install-SteamCmd $serverDir }
+            'rust'     { Install-Rust $serverDir (Join-Path $SteamCmd 'steamcmd.exe') }
+            'oxide'    { Install-Oxide $serverDir }
+            'launcher' { Install-Launcher $serverDir }
+            'plugin'   { Install-Plugin $serverDir }
+            'rcon'     { Install-RconPassword $serverDir }
+            'firewall' { Set-Firewall $serverDir }
+            'panel'    { Invoke-PanelOffer $serverDir }
+        }
+    }
+
+    Write-Host ""
+    Write-Note "Running post-flight checks..."
+    $after = Get-InstallState $serverDir
+    Show-InstallState $after 'Post-flight'
+    Show-Finish $serverDir $after
 }
 
 # ----------------------------------------------------------------- menu --
@@ -1488,9 +1708,7 @@ function Write-No ($m) { Write-Host "  [ no ] $m" -ForegroundColor Gray }
 function Invoke-Menu {
     $here = (Get-Location).Path
 
-    Write-Host ""
-    Write-Host "hotwire-setup $Version" -ForegroundColor White
-    Write-Host ""
+    Show-Banner
     Write-Host "  Folder: $here"
     Write-Note "Looking around first. Nothing is changed by these checks."
     Write-Host ""
@@ -1587,7 +1805,7 @@ function Show-Help {
 hotwire-setup -- install a Rust server, and connect it to Hotwire Panel if you want to
 
   (none)    A menu. It looks at this folder and suggests what to do next.
-  install   SteamCMD, Rust, Oxide, a start script and RCON password, the firewall; our plugin and panel only if you want them. Asks before every step.
+  install   Pre-flight checks everything, then installs only what is missing. Asks before every step.
   doctor    Check this machine is ready to connect: signing, your server, the panel, the clock.
             Read-only, changes nothing, safe any time.
   connect   Connect to the panel. Asks for the code; no need to type it here.

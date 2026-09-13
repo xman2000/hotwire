@@ -44,6 +44,19 @@ Linux: `./hotwire-setup.sh doctor` and so on. It needs bash, curl, openssl, and 
 
 ## install
 
+It runs in four parts, and only the third one changes anything:
+
+1. **Where the server goes**: this folder, unless you say otherwise.
+2. **Pre-flight**: a read-only check of everything below. That covers the machine (Administrator,
+   memory, disk, the clock against Steam's servers), SteamCMD, Rust, Oxide, the start script, the
+   plugin, the RCON password and Hotwire Panel. It also checks Windows Firewall, and there *open*
+   means open on the network the machine is actually on: a rule that only covers Private networks
+   does not count on a Public connection. A **flight plan** then lists only what is missing. A
+   finished server gets an empty plan and nothing happens.
+3. **The steps** in that plan, after a five-second countdown you can stop with Ctrl+C. Each step says
+   what it will do and asks first.
+4. **Post-flight**: the same checks again, so you see the result rather than take it on trust.
+
 | step | what | changes |
 |---|---|---|
 | 1 | Windows, PowerShell 5.1, Administrator, memory, **the clock** | only if the clock is out and you say yes (`w32tm /resync`) |
