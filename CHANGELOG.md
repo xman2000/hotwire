@@ -25,6 +25,21 @@ sit above a launcher `1.1.7`. Read the label, not the number.
 at the top of the file — it is a comment, not something it echoes, so read it
 rather than watch for it.
 
+## 1.1.6 — plugin — 2026-09-13
+
+**The panel can show the map.**
+
+- **Map details:** seed, world size, whether it is procedural, the custom map address, the map name, and
+  when the current save was created (the last wipe). Sent when they change.
+- **Map markers other plugins place:** radius circles (position, radius, fill and outline colour, opacity)
+  and their text labels, such as Flashpoint's PVP zones. Sent when they change, at most once a minute. A
+  player's vending machine is never sent, since it marks their base, and players are never sent.
+- **Read by name while running.** The game's map types are looked up by reflection instead of being
+  named in the code, so a Rust update that moves one cannot stop the plugin compiling. Map reporting
+  switches itself off with a warning, and everything else carries on.
+- New `Panel` settings: `Report the map and its markers` (true) and `Send map markers at most every this
+  many seconds` (60). `hotwire check` shows the map state.
+
 ## 1.1.5 — plugin — 2026-09-13
 
 **The panel can see what is installed, act on the server, and enforce bans.**

@@ -295,7 +295,9 @@ replaced by the `Status bar` section below.
   "Check for commands every this many seconds": 30,
   "Shortest restart countdown from the panel (seconds)": 60,
   "Enforce the panel's ban list": true,
-  "Check the ban list every this many seconds": 120
+  "Check the ban list every this many seconds": 120,
+  "Report the map and its markers": true,
+  "Send map markers at most every this many seconds": 60
 }
 ```
 
@@ -323,6 +325,20 @@ this section says.
   server stays. Mutes are not enforced by the plugin. If the account's plan does
   not include ban sync, nothing is added and bans added earlier stay in place.
   What the panel added is recorded in `oxide/data/Hotwire/panel_bans.json`.
+
+- **Report the map and its markers** — sends the map's seed, world size,
+  custom map address (`server.levelurl`) and when the current save was created
+  (the last wipe), and the map markers other plugins have placed: generic radius
+  circles and their text labels, such as Flashpoint's PVP zones. A player's
+  vending machine is never sent, because where it stands is where their base is,
+  and neither are players. The map details are sent when they change; the
+  markers when they change, at most once per **Send map markers at most every
+  this many seconds** (minimum 30).
+
+  The game keeps these in its own types, which the plugin looks up by name while
+  it runs rather than naming in its code. If a Rust update moves one, map
+  reporting turns itself off with a console warning until the plugin reloads,
+  and restarts, commands, bans and heartbeats carry on.
 
 Commands already carried out are recorded in
 `oxide/data/Hotwire/panel_commands.json` before they run, for two days. A
@@ -525,7 +541,8 @@ Answers the questions you would otherwise spend a real restart to answer:
   DST guard is holding, whether a status plugin is present, and whether the
   framework check is on.
 - **Whether it is reporting to a panel**, and if not, why not; when the plugin
-  list was last sent, when commands and the ban list were last checked.
+  list was last sent, when commands and the ban list were last checked, and
+  whether the map is being reported.
 
 It changes nothing except the probe file it cleans up after itself. Run it
 after installing, after moving the server, and after any Oxide update.

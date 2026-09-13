@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -16,7 +17,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Hotwire", "xman2000", "1.1.5")]
+    [Info("Hotwire", "xman2000", "1.1.6")]
     [Description("Scheduled restarts and updates. Announces, counts down, writes a flag, quits.")]
     internal class Hotwire : CovalencePlugin
     {
@@ -136,6 +137,16 @@ namespace Oxide.Plugins
 
             [JsonProperty("Check the ban list every this many seconds")]
             public int BanSeconds = 120;
+
+            // The map's seed, size, custom map address and last wipe, so the
+            // panel can show the map, and the map markers other plugins placed
+            // (zones, event circles and their labels). Never players, shops or
+            // bases.
+            [JsonProperty("Report the map and its markers")]
+            public bool ReportMap = true;
+
+            [JsonProperty("Send map markers at most every this many seconds")]
+            public int MarkerSeconds = 60;
         }
 
         // Recurrence is stored as explicit fields rather than as a cron
@@ -1986,6 +1997,13 @@ namespace Oxide.Plugins
 
             if (!_panelReporting) return;   // nothing else until the panel has accepted a heartbeat
 
+            if (_config.Panel.ReportMap && !_mapOff)
+            {
+                if (now >= _mapCheckDue) { _mapCheckDue = now.AddSeconds(30); RefreshMap(); }
+                if (_worldJson != null && _worldJson != _worldSentJson) { SendWorld(); return; }
+                if (_markersJson != null && _markersJson != _markersSentJson && now >= _markersDue) { SendMarkers(); return; }
+            }
+
             if (_config.Panel.AcceptCommands && now >= _commandsDue) { PollCommands(); return; }
             if (_config.Panel.EnforceBans && now >= _bansDue) { PollBans(); }
         }
@@ -2020,6 +2038,8 @@ namespace Oxide.Plugins
             _heartbeatDue = DateTime.MinValue;
             _inventorySentHash = null;
             _bansListHash = null;
+            _worldSentJson = null;
+            _markersSentJson = null;
 
             JObject file;
             try
@@ -2413,6 +2433,204 @@ namespace Oxide.Plugins
                 _inventorySentHash = hash;   // not again until the list changes
                 _inventoryState = $"{count} plugin(s), REFUSED by the panel -- see the console";
             });
+        }
+
+        // ---------------------------------------------------------- map
+
+        // The world's seed, size, custom map address and wipe time, and the map
+        // markers other plugins placed. The panel shows the map from these.
+        //
+        // These live in the game's own types, which this plugin otherwise
+        // never names: a Facepunch rename turns a named type into a compile
+        // error, and a plugin that does not compile restarts nothing. So they
+        // are looked up by name while running. If one has moved, map reporting
+        // switches itself off with a warning and everything else carries on.
+
+        private sealed class GameMap
+        {
+            public PropertyInfo Seed, Size, Url, Procedural, Name;
+            public FieldInfo SaveCreated, ServerMapMarkers;
+            public Type GenericRadius, VendingLabel;
+            public FieldInfo Radius, Color1, Color2, Alpha, ShopName, ShopMachine;
+        }
+
+        private GameMap _gameMap;
+        private bool _mapOff;
+        private string _mapState = "not read yet";
+        private DateTime _mapCheckDue = DateTime.MinValue;
+        private DateTime _markersDue = DateTime.MinValue;
+        private string _worldJson, _worldSentJson;
+        private string _markersJson, _markersSentJson;
+        private int _markerCount;
+
+        private void RefreshMap()
+        {
+            try
+            {
+                if (_gameMap == null) _gameMap = FindGameMap();
+                _worldJson = JsonConvert.SerializeObject(ReadWorld(_gameMap), Formatting.None);
+                var markers = ReadMarkers(_gameMap);
+                _markerCount = markers.Count;
+                _markersJson = JsonConvert.SerializeObject(markers, Formatting.None);
+            }
+            catch (Exception ex)
+            {
+                var why = ex is TargetInvocationException && ex.InnerException != null ? ex.InnerException.Message : ex.Message;
+                _mapOff = true;
+                _mapState = "OFF until the plugin reloads -- " + why;
+                PrintWarning($"Map reporting is off until the plugin reloads: {why}. " +
+                             "A Rust update may have moved something the map reads. Everything else carries on.");
+            }
+        }
+
+        private static GameMap FindGameMap()
+        {
+            var game = AppDomain.CurrentDomain.GetAssemblies().FirstOrDefault(a => a.GetName().Name == "Assembly-CSharp");
+            if (game == null) throw new InvalidOperationException("the game assembly is not loaded");
+
+            const BindingFlags staticMember = BindingFlags.Public | BindingFlags.Static;
+            const BindingFlags instanceMember = BindingFlags.Public | BindingFlags.Instance;
+
+            var world = GameType(game, "World");
+            var save = GameType(game, "SaveRestore");
+            var marker = GameType(game, "MapMarker");
+            var radius = GameType(game, "MapMarkerGenericRadius");
+            var label = GameType(game, "VendingMachineMapMarker");
+
+            return new GameMap
+            {
+                Seed = Member(world.GetProperty("Seed", staticMember), "World.Seed"),
+                Size = Member(world.GetProperty("Size", staticMember), "World.Size"),
+                Url = Member(world.GetProperty("Url", staticMember), "World.Url"),
+                Procedural = Member(world.GetProperty("Procedural", staticMember), "World.Procedural"),
+                Name = Member(world.GetProperty("Name", staticMember), "World.Name"),
+                SaveCreated = Member(save.GetField("SaveCreatedTime", staticMember), "SaveRestore.SaveCreatedTime"),
+                ServerMapMarkers = Member(marker.GetField("serverMapMarkers", staticMember), "MapMarker.serverMapMarkers"),
+                GenericRadius = radius,
+                VendingLabel = label,
+                Radius = Member(radius.GetField("radius", instanceMember), "MapMarkerGenericRadius.radius"),
+                Color1 = Member(radius.GetField("color1", instanceMember), "MapMarkerGenericRadius.color1"),
+                Color2 = Member(radius.GetField("color2", instanceMember), "MapMarkerGenericRadius.color2"),
+                Alpha = Member(radius.GetField("alpha", instanceMember), "MapMarkerGenericRadius.alpha"),
+                ShopName = Member(label.GetField("markerShopName", instanceMember), "VendingMachineMapMarker.markerShopName"),
+                ShopMachine = Member(label.GetField("server_vendingMachine", instanceMember), "VendingMachineMapMarker.server_vendingMachine")
+            };
+        }
+
+        private static Type GameType(Assembly game, string name)
+        {
+            var type = game.GetType(name, false);
+            if (type == null) throw new InvalidOperationException($"the game has no type {name}");
+            return type;
+        }
+
+        private static T Member<T>(T member, string name) where T : MemberInfo
+        {
+            if (member == null) throw new InvalidOperationException($"the game has no {name}");
+            return member;
+        }
+
+        // Every value optional: one that cannot be read is left out.
+        private static JObject ReadWorld(GameMap g)
+        {
+            var world = new JObject();
+
+            var seed = g.Seed.GetValue(null, null);
+            if (seed != null) world["seed"] = Convert.ToInt64(seed, CultureInfo.InvariantCulture);
+
+            var size = g.Size.GetValue(null, null);
+            if (size != null && Convert.ToInt64(size, CultureInfo.InvariantCulture) > 0) world["size"] = Convert.ToInt64(size, CultureInfo.InvariantCulture);
+
+            var procedural = g.Procedural.GetValue(null, null);
+            if (procedural is bool) world["procedural"] = (bool)procedural;
+
+            var url = g.Url.GetValue(null, null) as string;
+            world["level_url"] = string.IsNullOrWhiteSpace(url) ? null : url;
+
+            var name = g.Name.GetValue(null, null) as string;
+            if (!string.IsNullOrWhiteSpace(name)) world["map_name"] = name;
+
+            var created = g.SaveCreated.GetValue(null);
+            if (created is DateTime && (DateTime)created != default(DateTime))
+                world["save_created_at"] = ((DateTime)created).ToUniversalTime().ToString("yyyy'-'MM'-'dd'T'HH':'mm':'ss'Z'", CultureInfo.InvariantCulture);
+
+            return world;
+        }
+
+        // Only markers another plugin placed: generic radius circles, and text
+        // labels that are not a real vending machine. A player's shop is left
+        // out, because where it stands is where their base is.
+        private static JArray ReadMarkers(GameMap g)
+        {
+            var result = new JArray();
+            var all = g.ServerMapMarkers.GetValue(null) as System.Collections.IEnumerable;
+            if (all == null) return result;
+
+            foreach (var entry in all)
+            {
+                var component = entry as Component;
+                if (component == null || component.transform == null) continue;
+                var position = component.transform.position;
+
+                if (g.GenericRadius.IsInstanceOfType(entry))
+                {
+                    var fill = (Color)g.Color1.GetValue(entry);
+                    var outline = (Color)g.Color2.GetValue(entry);
+                    result.Add(new JObject
+                    {
+                        ["type"] = "radius",
+                        ["x"] = Math.Round(position.x, 1),
+                        ["z"] = Math.Round(position.z, 1),
+                        ["radius"] = Math.Round((float)g.Radius.GetValue(entry), 3),
+                        ["color"] = HexColor(fill),
+                        ["outline"] = HexColor(outline),
+                        ["alpha"] = Math.Round(Mathf.Clamp01((float)g.Alpha.GetValue(entry)), 3)
+                    });
+                }
+                else if (g.VendingLabel.IsInstanceOfType(entry))
+                {
+                    var machine = g.ShopMachine.GetValue(entry) as UnityEngine.Object;
+                    if (machine != null) continue;   // a real shop
+                    var text = g.ShopName.GetValue(entry) as string;
+                    if (string.IsNullOrWhiteSpace(text)) continue;
+                    result.Add(new JObject
+                    {
+                        ["type"] = "label",
+                        ["x"] = Math.Round(position.x, 1),
+                        ["z"] = Math.Round(position.z, 1),
+                        ["label"] = text.Length > 200 ? text.Substring(0, 200) : text
+                    });
+                }
+            }
+            return result;
+        }
+
+        private static string HexColor(Color c)
+        {
+            Func<float, string> part = v => ((int)Math.Round(Mathf.Clamp01(v) * 255f)).ToString("X2", CultureInfo.InvariantCulture);
+            return "#" + part(c.r) + part(c.g) + part(c.b);
+        }
+
+        private void SendWorld()
+        {
+            var json = _worldJson;
+            PanelRequest("POST", PanelReportPath, PanelEnvelope("world", JObject.Parse(json)), response =>
+            {
+                _worldSentJson = json;
+                _mapState = $"map sent {DateTime.Now:HH:mm:ss}; {_markerCount} marker(s)";
+            }, () => { _worldSentJson = json; });
+        }
+
+        private void SendMarkers()
+        {
+            var json = _markersJson;
+            var count = _markerCount;
+            _markersDue = DateTime.UtcNow.AddSeconds(Math.Max(30, _config.Panel.MarkerSeconds));
+            PanelRequest("POST", PanelReportPath, PanelEnvelope("map_markers", new JObject { ["markers"] = JArray.Parse(json) }), response =>
+            {
+                _markersSentJson = json;
+                _mapState = $"map sent; {count} marker(s), last sent {DateTime.Now:HH:mm:ss}";
+            }, () => { _markersSentJson = json; });
         }
 
         // ---------------------------------------------------------- commands
@@ -3870,6 +4088,7 @@ namespace Oxide.Plugins
                 lines.Add($"  plugins sent : {_inventoryState}");
                 lines.Add($"  commands     : {_commandsState}");
                 lines.Add($"  ban list     : {_bansState}");
+                lines.Add($"  map          : {_mapState}");
             }
 
             player.Reply(string.Join("\n", lines.ToArray()));
