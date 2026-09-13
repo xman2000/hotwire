@@ -8,7 +8,7 @@ set "CHECK_ONLY="
 if /i "%~1"=="check" set "CHECK_ONLY=1"
 
 REM ==[ H O T W I R E ]===================================================
-REM  Version 1.1.8   2026-09-13
+REM  Version 1.1.9   2026-09-13
 REM  Built by xman2000 and Claude.  MIT License.
 REM
 REM  The launcher. Starts a Rust dedicated server, relaunches it when it
@@ -77,9 +77,9 @@ REM
 REM  EDITING OPTIONS
 REM     One option per line. REM disables it, removing REM enables it:
 REM
-REM       REM   server.maxplayers -- Slots.
-REM       REM   [int, default 500]
-REM       set "ARGS=!ARGS! +server.maxplayers 50"
+REM       REM   server.saveinterval -- Seconds between world saves.
+REM       REM   [int, default 600]
+REM       set "ARGS=!ARGS! +server.saveinterval 300"
 REM
 REM     Lines are independent. Disabling one cannot affect any other.
 REM
@@ -93,9 +93,22 @@ REM     substitutes after cmd has parsed the line, so pipes, ampersands,
 REM     redirection arrows and carets already inside ARGS are never seen
 REM     by the parser.
 REM
+REM     A value typed straight into a set "ARGS=..." line is different: cmd
+REM     does read it, and the quotes around the value leave it outside the
+REM     line's own quotes. A | & < or > there splits the line into separate
+REM     commands, and the server never starts. So the name, description,
+REM     tags and player count have their own settings in 4.2 and 4.3, where
+REM     those characters are safe. A web address with & in it needs ^& in
+REM     front of each &. Nowhere can a value contain ! or a double quote.
+REM
 REM  DEFAULTS
 REM     The defaults shown in section 4 were read out of a Rust build, not
 REM     copied from documentation. Report any that disagree with the game.
+REM
+REM     Out of the box this launcher sets only what a server cannot run
+REM     without, or what has to agree with something outside the game --
+REM     the ports, which match the firewall. Everything else is the game's
+REM     own default until you choose otherwise. Facepunch picked those.
 REM ======================================================================
 
 
@@ -457,6 +470,10 @@ if not defined INSTALLED_BUILD (
     echo [%date% %time%] not answer. Carrying on under the usual rules.
 ) else if "!INSTALLED_BUILD!"=="!PUBLIC_BUILD!" (
     echo [%date% %time%] Rust build: installed !INSTALLED_BUILD!, public !PUBLIC_BUILD! -- current.
+) else if !INSTALLED_BUILD! GTR !PUBLIC_BUILD! (
+    echo [%date% %time%] Rust build: installed !INSTALLED_BUILD!, public !PUBLIC_BUILD! -- this server
+    echo [%date% %time%] is on a newer build than Steam's public branch, as a test
+    echo [%date% %time%] branch such as staging would be. Nothing to update.
 ) else (
     echo [%date% %time%] ================================================
     echo [%date% %time%] Rust build: installed !INSTALLED_BUILD!
@@ -520,6 +537,10 @@ if not "%UPDATE_ON_NEW_BUILD%"=="1" goto :nobuildtrigger
 if not defined INSTALLED_BUILD goto :nobuildtrigger
 if not defined PUBLIC_BUILD goto :nobuildtrigger
 if "!INSTALLED_BUILD!"=="!PUBLIC_BUILD!" goto :nobuildtrigger
+REM  Behind means public is higher. A server on a newer build than public,
+REM  as a test branch is, is not behind, and updating it every start would
+REM  achieve nothing but a steamcmd run.
+if !INSTALLED_BUILD! GTR !PUBLIC_BUILD! goto :nobuildtrigger
 set "DO_UPDATE=1"
 echo [%date% %time%] Updating: installed build !INSTALLED_BUILD! is behind
 echo [%date% %time%] Steam's !PUBLIC_BUILD!.
@@ -630,7 +651,7 @@ set "PSFW=!PSFW!$r=Invoke-RestMethod -Uri $u -TimeoutSec 25; "
 set "PSFW=!PSFW!$l=[string]$r.latest_release_version; "
 set "PSFW=!PSFW!if([string]::IsNullOrWhiteSpace($l)){ exit 2 } "
 set "PSFW=!PSFW!$ln=(($l.Trim() -split '\.') + @('0','0','0'))[0..2] -join '.'; "
-set "PSFW=!PSFW!Write-Output ('Framework: installed '+$vn+', latest '+$ln) "
+set "PSFW=!PSFW!Write-Output ('Framework: installed '+$vn+', latest '+$ln); "
 set "PSFW=!PSFW!if($vn -eq $ln){ exit 0 } else { exit 1 } "
 powershell -NoProfile -NonInteractive -Command "!PSFW!"
 set "FWSAME=!errorlevel!"
@@ -785,12 +806,12 @@ set "ARGS=!ARGS! +server.level "Procedural Map""
 REM   server.seed -- Any integer. The same seed and worldsize always give
 REM     the same map.
 REM   [int, default 1337]
-set "ARGS=!ARGS! +server.seed 1234567"
+REM set "ARGS=!ARGS! +server.seed VALUE"
 
 REM   server.worldsize -- Metres across, 1000-6000. Memory and boot time
 REM     climb faster than the number does.
 REM   [int, default 4500]
-set "ARGS=!ARGS! +server.worldsize 4000"
+REM set "ARGS=!ARGS! +server.worldsize VALUE"
 
 REM   server.levelurl -- Custom map URL. Replaces level, seed and
 REM     worldsize -- do not set both.
@@ -828,9 +849,10 @@ REM   rcon.port -- Remote console, TCP.
 REM   [int, default 0]
 set "ARGS=!ARGS! +rcon.port 28016"
 
-REM   server.maxplayers -- Slots.
+REM   server.maxplayers -- Slots. A whole number. Left empty, the game's own.
 REM   [int, default 500]
-set "ARGS=!ARGS! +server.maxplayers 50"
+set "SERVER_MAXPLAYERS="
+if defined SERVER_MAXPLAYERS set "ARGS=!ARGS! +server.maxplayers !SERVER_MAXPLAYERS!"
 
 REM   server.ip -- Bind address. Leave alone unless the machine is multi-
 REM     homed.
@@ -853,14 +875,20 @@ REM
 REM     What people see before they join.
 REM ----------------------------------------------------------------------
 
-REM   server.hostname -- Your advert. Pipes and spaces are safe here.
+REM   server.hostname -- Your advert, as the server browser lists it. Write
+REM     it between the = and the closing quote. | & < and > are safe here;
+REM     ! and " are not, and a percent sign is written %%. Left empty, the
+REM     game's own.
 REM   [string, default "My Untitled Rust Server"]
-set "ARGS=!ARGS! +server.hostname "My Rust Server | Monthly | NA""
+set "SERVER_HOSTNAME="
+if defined SERVER_HOSTNAME set "ARGS=!ARGS! +server.hostname "!SERVER_HOSTNAME!""
 
 REM   server.description -- Join-screen text. Backslash-n makes a line
-REM     break.
+REM     break. The same characters rules as the name. Left empty, the
+REM     game's own.
 REM   [string, default "No server description has been provided."]
-set "ARGS=!ARGS! +server.description "What makes this server different.""
+set "SERVER_DESCRIPTION="
+if defined SERVER_DESCRIPTION set "ARGS=!ARGS! +server.description "!SERVER_DESCRIPTION!""
 
 REM   server.tags -- Browser filter tags, comma separated, no spaces. The
 REM     tags the client recognizes are:
@@ -873,8 +901,10 @@ REM
 REM     Add a region tag such as NA or EU. Only tags the browser filters
 REM     on have any effect; inventing your own only makes the string
 REM     longer.
+REM   Left empty, no tags.
 REM   [property, default UNKNOWN]
-set "ARGS=!ARGS! +server.tags "monthly,pve,NA""
+set "SERVER_TAGS="
+if defined SERVER_TAGS set "ARGS=!ARGS! +server.tags "!SERVER_TAGS!""
 
 REM   server.headerimage -- 512x256 banner. Direct image URL, not a page
 REM     containing one.
@@ -918,7 +948,7 @@ REM set "ARGS=!ARGS! +rcon.ip VALUE"
 REM   server.printReportsToConsole -- Player reports appear in the
 REM     console.
 REM   [bool, default false]
-set "ARGS=!ARGS! +server.printReportsToConsole true"
+REM set "ARGS=!ARGS! +server.printReportsToConsole VALUE"
 
 REM ----------------------------------------------------------------------
 REM  4.5  SAVES AND LOGS
@@ -931,7 +961,7 @@ REM ----------------------------------------------------------------------
 REM   server.saveinterval -- Seconds between world saves. Lower costs a
 REM     brief hitch more often.
 REM   [int, default 600]
-set "ARGS=!ARGS! +server.saveinterval 300"
+REM set "ARGS=!ARGS! +server.saveinterval VALUE"
 
 REM   server.saveBackupCount -- Rolling save backups kept on disk.
 REM   [int, default 2]

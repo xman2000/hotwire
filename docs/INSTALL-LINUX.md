@@ -125,24 +125,24 @@ source /home/rust/server/secrets.env
 while true; do
     ./RustDedicated -batchmode -nographics \
         +server.identity   "myserver" \
-        +server.hostname   "My Rust Server" \
-        +server.description "Built from the Hotwire guide" \
+        +server.hostname   "Change this to your server's name" \
+        +server.description "Change this to what your server is about" \
         +server.port       28015 \
         +server.queryport  28017 \
         +rcon.port         28016 \
         +rcon.password     "$RCON_PASSWORD" \
         +rcon.web          1 \
-        +server.maxplayers 50 \
-        +server.level      "Procedural Map" \
-        +server.seed       12345 \
-        +server.worldsize  3500 \
-        +server.saveinterval 300 \
         -logfile /home/rust/server/logs/server.log
 
     echo "Server exited. Restarting in 10 seconds -- Ctrl-C to stop."
     sleep 10
 done
 ```
+
+Set the name and description to your own. Everything not on that list, including player count, map
+seed, world size and how often it saves, is left to the game's own defaults. To choose one yourself,
+add it as another line, for example `+server.maxplayers 100 \`. Only the ports are set here, because
+they have to match the firewall in step 4.
 
 Then:
 

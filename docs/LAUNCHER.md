@@ -102,8 +102,9 @@ waiting a fortnight to discover it is out of date. Set it to `0` to disable.
 Every option is one independent line:
 
 ```bat
-REM  server.maxplayers -- slots.  [default: unknown]
-set "ARGS=!ARGS! +server.maxplayers 50"
+REM   server.saveinterval -- Seconds between world saves.
+REM   [int, default 600]
+set "ARGS=!ARGS! +server.saveinterval 300"
 ```
 
 Put `REM` in front to disable it; take it away to enable it. You cannot break
@@ -115,6 +116,15 @@ names and defaults beside each one were read out of a Rust build rather than
 copied from a guide, and they are re-checked against a new build after every
 Rust update. A comment claiming a default that has quietly moved is worse than
 no comment, because someone will believe it.
+
+**Out of the box it sets almost nothing.** Only the ports are set, because they have to match
+the firewall. Everything else, including seed, world size, save interval and player count, is the
+game's own default until you choose otherwise.
+
+**The server's name, description, tags and player count have their own settings**, `SERVER_HOSTNAME`
+and friends, because a `|`, `&`, `<` or `>` typed straight into a `set "ARGS=..."` line splits the
+line and the server never starts. In those settings they are safe. `!` and `"` are not safe
+anywhere, and a web address containing `&` needs `^&` in its `ARGS` line.
 
 That checking is maintenance work, not yours: nothing here needs Python, and
 the launcher never asks you to run anything. See `tools/` if you are curious

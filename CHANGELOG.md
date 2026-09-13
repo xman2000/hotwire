@@ -25,6 +25,38 @@ sit above a launcher `1.1.7`. Read the label, not the number.
 at the top of the file — it is a comment, not something it echoes, so read it
 rather than watch for it.
 
+## 1.1.9 — launcher — 2026-09-13
+
+**The server never started with the shipped settings.** The default server
+name, `My Rust Server | Monthly | NA`, was typed straight into a
+`set "ARGS=..."` line. The quotes around the name leave it outside the line's
+own quotes, so cmd split the line at each `|`, tried to run a program called
+`Monthly`, and stopped. The file's own comments said pipes were safe there.
+Found on the first real run on Windows. The name, description, tags and player
+count now have their own settings, `SERVER_HOSTNAME`, `SERVER_DESCRIPTION`,
+`SERVER_TAGS` and `SERVER_MAXPLAYERS`, where `| & < >` are safe. `!` and `"`
+still are not.
+
+**Out of the box, the game's own defaults.** The launcher shipped with values
+chosen for one server: a name and tags including a region (`NA`), 50 players,
+seed 1234567, a 4000 map, five-minute saves and player reports in the console.
+Now it sets only what has to agree with something outside the game (the ports,
+which match the firewall). The name, description, tags and player count are
+empty, which means the game's defaults. Seed, world size, save interval and
+`printReportsToConsole` are left to the game.
+
+**Oxide was never updated while the game stayed the same.** Since 1.1.7 the
+framework comparison has printed its own code instead of running it: a missing
+`;` made the statement that sets its exit code into text for `Write-Output`.
+It always reported "unchanged", so a new Oxide release was skipped until the
+next Rust update.
+
+**"A newer build is available" appeared when this server was ahead.** Any
+difference between the installed and public builds counted as behind. A
+server on a newer build than public, as a test branch is, was told to update,
+and with `UPDATE_ON_NEW_BUILD` it would have run steamcmd on every start. Only
+a public build higher than the installed one counts now.
+
 ## 1.1.8 — launcher — 2026-09-13
 
 **A vanilla server can now stay vanilla.** The launcher installed Oxide on
