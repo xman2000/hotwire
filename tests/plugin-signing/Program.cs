@@ -69,6 +69,73 @@ namespace PluginSigning
             rows[0][1] = "";
             Check("a missing author hashes as the empty string", withNull == Extracted.InventoryHash(rows));
 
+            // ---- the Oxide log: the contract's shape vectors, the parser, the source gates.
+            Check("shape matches the contract's first vector",
+                Extracted.LogShape("Corpse Location", "Player (76561190000000000) died at (-268.23, 58.57, 841.06)") ==
+                "sha256:8542895ac3fe9378400e1c05ea6ae55a0d7375611c8bf378adb42628ff244686");
+            Check("shape matches the contract's non-ASCII vector",
+                Extracted.LogShape(null, "★Игрок_7★ joined") ==
+                "sha256:9b43be8af597db7b46a8e324653fe9cdcc57afe2da26e98ac4c063baa9689586");
+
+            var ln = Extracted.ParseOxideLine("18:52 [Info] [Corpse Location] Someone died");
+            Check("a 24-hour line parses", ln.Recognised && ln.Hour == 18 && ln.Minute == 52 && ln.Level == "info" && ln.Source == "Corpse Location" && ln.Body == "Someone died",
+                $"{ln.Recognised} {ln.Hour}:{ln.Minute} {ln.Level} {ln.Source} {ln.Body}");
+            ln = Extracted.ParseOxideLine("6:52 PM [Warning] Loaded plugin Kits v1.0.0 by x");
+            Check("a 12-hour line parses, without a source", ln.Recognised && ln.Hour == 18 && ln.Minute == 52 && ln.Level == "warning" && ln.Source == null && ln.Body == "Loaded plugin Kits v1.0.0 by x");
+            ln = Extracted.ParseOxideLine("12:05 AM [Error] x");
+            Check("12 AM is hour 0", ln.Recognised && ln.Hour == 0 && ln.Minute == 5);
+            ln = Extracted.ParseOxideLine("下午6:52 [Info] x");
+            Check("an unreadable time is left out, the line still parses", ln.Recognised && ln.Hour == -1 && ln.Body == "x");
+            Check("a stack trace line is not a new entry", !Extracted.ParseOxideLine("  at Oxide.Plugins.Kits.Foo () [0x00000] in <abc>:0").Recognised);
+            Check("an unknown level is not a new entry", !Extracted.ParseOxideLine("18:52 [Verbose] x").Recognised);
+            Check("an empty text parses", Extracted.ParseOxideLine("18:52 [Info]").Recognised);
+
+            TimeZoneInfo london = null;
+            try { london = TimeZoneInfo.FindSystemTimeZoneById("Europe/London"); } catch { }
+            if (london == null) Check("Europe/London time zone available for the DST checks", false);
+            else
+            {
+                Check("a summer time converts to UTC", Extracted.LogLineUtc(new DateTime(2026, 6, 1), 12, 0, london) == "2026-06-01T11:00:00Z");
+                Check("the repeated DST hour has no time", Extracted.LogLineUtc(new DateTime(2026, 10, 25), 1, 30, london) == null);
+                Check("the skipped DST hour has no time", Extracted.LogLineUtc(new DateTime(2026, 3, 29), 1, 30, london) == null);
+            }
+            Check("no hour, no time", Extracted.LogLineUtc(new DateTime(2026, 6, 1), -1, -1, TimeZoneInfo.Utc) == null);
+
+            Check("a card number keeps its last four", Extracted.MaskSourceGates("card 4111 1111 1111 1111 end") == "card #### #### #### 1111 end",
+                Extracted.MaskSourceGates("card 4111 1111 1111 1111 end"));
+            Check("a failed Luhn check is left alone", Extracted.MaskSourceGates("4111 1111 1111 1112") == "4111 1111 1111 1112");
+            Check("a Steam ID is not a card", Extracted.MaskSourceGates("id 76561198211375245") == "id 76561198211375245");
+            Check("a hyphenated SSN is masked", Extracted.MaskSourceGates("ssn 123-45-6789.") == "ssn ###-##-####.");
+            Check("tokens are whitespace-separated", Extracted.CountTokens(" a  b\tc ") == 3);
+            var pii = Extracted.SuspectedPii("Bob (76561198211375245) died at (-268.23, 58.57, 841.06) from 10.0.0.1", "info");
+            Check("identity, position and network are suspected", string.Join(",", pii) == "identity,position,network", string.Join(",", pii));
+            Check("chat is suspected from the level", Extracted.SuspectedPii("hello", "chat").Contains("chat"));
+            Check("a version number is not an address", !Extracted.SuspectedPii("v2.1.3.4.5", "info").Contains("network"));
+
+            var sk = Extracted.LogSessionKey(638900000000000000, "/srv/rust");
+            Check("the session key is a version-8 UUID", Regex.IsMatch(sk, "^[0-9a-f]{8}-[0-9a-f]{4}-8[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"), sk);
+            Check("the session key is stable for one process", sk == Extracted.LogSessionKey(638900000000000000, "/srv/rust"));
+            Check("another process gets another session key", sk != Extracted.LogSessionKey(638900000010000000, "/srv/rust"));
+
+            // Real Oxide logs, when a folder is given: how many lines parse, and how many shapes they make.
+            var logs = Environment.GetEnvironmentVariable("HOTWIRE_OXIDE_LOGS");
+            if (!string.IsNullOrEmpty(logs) && Directory.Exists(logs))
+            {
+                int total = 0, recognised = 0, timed = 0;
+                var shapes = new System.Collections.Generic.HashSet<string>();
+                foreach (var file in Directory.GetFiles(logs, "oxide_????-??-??.txt"))
+                    foreach (var line in File.ReadAllLines(file))
+                    {
+                        total++;
+                        var parsed = Extracted.ParseOxideLine(line);
+                        if (!parsed.Recognised) continue;
+                        recognised++;
+                        if (parsed.Hour >= 0) timed++;
+                        shapes.Add(Extracted.LogShape(parsed.Source, parsed.Body));
+                    }
+                Console.WriteLine($"  real logs: {total} lines, {recognised} start an entry, {timed} with a time, {shapes.Count} distinct shapes");
+            }
+
             var n = Extracted.PanelNonce();
             Check("nonce is 32 lowercase hex characters", Regex.IsMatch(n, "^[0-9a-f]{32}$"), n);
 

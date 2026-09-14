@@ -17,7 +17,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Hotwire", "xman2000", "1.1.9")]
+    [Info("Hotwire", "xman2000", "1.1.10")]
     [Description("Scheduled restarts and updates. Announces, counts down, writes a flag, quits.")]
     internal class Hotwire : CovalencePlugin
     {
@@ -172,6 +172,18 @@ namespace Oxide.Plugins
             // last saw it. Off leaves the schedule editable only in game.
             [JsonProperty("Accept schedule changes from the panel")]
             public bool AcceptScheduleChanges = true;
+
+            // Oxide's own log (oxide/logs/oxide_<date>.txt), so the panel can
+            // show what plugins said: compile failures, hook errors, warnings.
+            // Below the "identified" player data level a line's text is never
+            // sent -- only its time, level, plugin, length and a fingerprint of
+            // its shape -- because a line can hold a player's name. The log file
+            // on this machine stays the full record either way.
+            [JsonProperty("Send the Oxide log")]
+            public bool SendLog = true;
+
+            [JsonProperty("Send the log every this many seconds")]
+            public int LogSeconds = 60;
         }
 
         // Recurrence is stored as explicit fields rather than as a cron
@@ -2076,6 +2088,7 @@ namespace Oxide.Plugins
             }
 
             if (_config.Panel.AcceptCommands && now >= _commandsDue) { PollCommands(); return; }
+            if (_config.Panel.SendLog && now >= _logDue) { SendLog(); return; }
             if (_config.Panel.EnforceBans && now >= _bansDue) { PollBans(); }
         }
 
@@ -2115,6 +2128,8 @@ namespace Oxide.Plugins
             _imageDue = DateTime.MinValue;
             _scheduleSentJson = null;
             _sharingDue = DateTime.MinValue;
+            _logPending = null;
+            _logDue = DateTime.MinValue;
 
             JObject file;
             try
@@ -2226,6 +2241,7 @@ namespace Oxide.Plugins
             webrequest.Enqueue(link.Url + path, body, (code, response) =>
             {
                 _panelBusy = false;
+                _panelLastCode = code;
                 try
                 {
                     if (!ReferenceEquals(link, _panel)) return;   // panel.json changed while this was out
@@ -3538,6 +3554,635 @@ namespace Oxide.Plugins
             if (player != null && player.IsConnected) player.Kick(reason);
         }
 
+        // ---------------------------------------------------------- oxide log
+
+        private const string LogDataFile = "Hotwire/panel_log";
+        private const int LogMaxReadBytes = 262144;
+        private const int LogMaxBodyChars = 1000000;
+
+        // Where the log has been sent up to, kept across reloads so nothing is
+        // sent twice. The session is this server process: a reload keeps it, a
+        // restart starts a new one.
+        private sealed class LogCursor
+        {
+            public string SessionKey;
+            public long ProcessStartTicks;
+            public long Seq;
+            public string File;
+            public long Offset;
+        }
+
+        private sealed class LogSendBatch
+        {
+            public string Body;
+            public string File;
+            public long EndOffset;
+            public long EndSeq;
+            public int Lines;
+            public bool More;
+        }
+
+        private sealed class LogEntry
+        {
+            public long Start;
+            public OxideLine Line;
+            public StringBuilder Body;
+        }
+
+        private LogCursor _logCursor;
+        private LogSendBatch _logPending;
+        private DateTime _logDue = DateTime.MinValue;
+        private int _logBatchLines = 500;
+        private string _logHeldFile;
+        private long _logHeldOffset = -1;
+        private int _panelLastCode;
+        private long _logLinesSent;
+        private string _logState = "nothing sent yet";
+
+        private string LogDescription()
+        {
+            if (!_config.Panel.SendLog) return "off in the config";
+            var text = EffectiveSharingLevel() >= 3
+                ? "line text sent"
+                : "line text withheld (player data level is below identified)";
+            return $"{_logState}; {text}";
+        }
+
+        // Sends the next batch of Oxide's log. A batch the panel has not
+        // accepted is sent again as it was, with the same report id, so a retry
+        // never stores a line twice.
+        private void SendLog()
+        {
+            var interval = Math.Max(10, _config.Panel.LogSeconds);
+            if (_logPending == null) _logPending = BuildLogBatch();
+            if (_logPending == null)
+            {
+                _logDue = DateTime.UtcNow.AddSeconds(interval);
+                return;
+            }
+
+            var batch = _logPending;
+            PanelRequest("POST", PanelReportPath, batch.Body, response =>
+            {
+                CommitLogBatch(batch);
+                _logLinesSent += batch.Lines;
+                _logState = $"{_logLinesSent} line{(_logLinesSent == 1 ? "" : "s")} sent since load, last at {DateTime.Now:HH:mm:ss}";
+                _logDue = batch.More ? DateTime.UtcNow : DateTime.UtcNow.AddSeconds(interval);
+            }, () =>
+            {
+                if (_panelLastCode == 413 && batch.Lines > 1)
+                {
+                    // Too large for the panel's web server: split it, never drop it.
+                    _logBatchLines = Math.Max(1, batch.Lines / 2);
+                    _logPending = null;
+                    _logDue = DateTime.MinValue;
+                    return;
+                }
+
+                // The panel understood these lines and refused them; the same
+                // bytes would be refused again, so they are let go.
+                PrintWarning($"Panel: {batch.Lines} log line{(batch.Lines == 1 ? " was" : "s were")} refused (HTTP {_panelLastCode}) and will not be sent again.");
+                CommitLogBatch(batch);
+            }, 60f);
+        }
+
+        private void CommitLogBatch(LogSendBatch batch)
+        {
+            if (!ReferenceEquals(batch, _logPending)) return;
+            _logPending = null;
+            _logCursor.File = batch.File;
+            _logCursor.Offset = batch.EndOffset;
+            _logCursor.Seq = batch.EndSeq;
+            WriteData(LogDataFile, _logCursor);
+        }
+
+        private void LoadLogCursor()
+        {
+            if (_logCursor != null) return;
+
+            var saved = ReadData<LogCursor>(LogDataFile);
+            if (saved == null || string.IsNullOrEmpty(saved.File))
+            {
+                // First time: today's file from its start, so this boot's
+                // compile failures are included.
+                saved = new LogCursor { File = OxideLogName(DateTime.Now), Offset = 0 };
+            }
+
+            var start = ProcessStartTicks();
+            if (saved.SessionKey == null || start == 0 || saved.ProcessStartTicks != start)
+            {
+                saved.SessionKey = LogSessionKey(start == 0 ? DateTime.UtcNow.Ticks : start, ServerRoot() ?? "");
+                saved.ProcessStartTicks = start;
+                saved.Seq = 0;
+            }
+
+            _logCursor = saved;
+            WriteData(LogDataFile, _logCursor);
+        }
+
+        private static long ProcessStartTicks()
+        {
+            try
+            {
+                var ticks = System.Diagnostics.Process.GetCurrentProcess().StartTime.ToUniversalTime().Ticks;
+                return ticks / TimeSpan.TicksPerSecond * TimeSpan.TicksPerSecond;
+            }
+            catch
+            {
+                return 0;
+            }
+        }
+
+        private static string OxideLogName(DateTime localDate)
+        {
+            return "oxide_" + localDate.ToString("yyyy'-'MM'-'dd", CultureInfo.InvariantCulture) + ".txt";
+        }
+
+        private static string NextOxideLog(string dir, string after)
+        {
+            try
+            {
+                return Directory.GetFiles(dir, "oxide_????-??-??.txt")
+                    .Select(Path.GetFileName)
+                    .Where(name => string.CompareOrdinal(name, after) > 0)
+                    .OrderBy(name => name, StringComparer.Ordinal)
+                    .FirstOrDefault();
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        // Reads what Oxide has written since the cursor, a bounded amount per
+        // batch. Only whole lines are read; a line still being written, and the
+        // last entry of today's file (a stack trace may still be arriving under
+        // it), wait one more pass.
+        private LogSendBatch BuildLogBatch()
+        {
+            LoadLogCursor();
+            var dir = Interface.Oxide.LogDirectory;
+            var today = OxideLogName(DateTime.Now);
+
+            for (var hops = 0; hops < 400; hops++)
+            {
+                var current = Path.Combine(dir, _logCursor.File);
+                var length = File.Exists(current) ? new FileInfo(current).Length : -1;
+                if (length >= 0 && _logCursor.Offset > length) _logCursor.Offset = 0;   // the file was replaced
+                if (length >= 0 && _logCursor.Offset < length) break;
+                if (string.CompareOrdinal(_logCursor.File, today) >= 0) break;
+
+                var next = NextOxideLog(dir, _logCursor.File);
+                if (next == null) break;
+                _logCursor.File = next;
+                _logCursor.Offset = 0;
+                WriteData(LogDataFile, _logCursor);
+            }
+
+            var file = _logCursor.File;
+            var path = Path.Combine(dir, file);
+            if (!File.Exists(path)) return null;
+
+            byte[] buffer;
+            int read = 0;
+            long fileLength;
+            using (var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
+            {
+                fileLength = stream.Length;
+                if (_logCursor.Offset >= fileLength) return null;
+                stream.Seek(_logCursor.Offset, SeekOrigin.Begin);
+                buffer = new byte[(int)Math.Min(LogMaxReadBytes, fileLength - _logCursor.Offset)];
+                while (read < buffer.Length)
+                {
+                    var n = stream.Read(buffer, read, buffer.Length - read);
+                    if (n <= 0) break;
+                    read += n;
+                }
+            }
+
+            var finished = string.CompareOrdinal(file, today) < 0;
+            var atEnd = _logCursor.Offset + read >= fileLength;
+            DateTime fileDate;
+            if (file.Length < 16 || !DateTime.TryParseExact(file.Substring(6, 10), "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out fileDate))
+                fileDate = DateTime.MinValue;
+
+            var raw = new List<KeyValuePair<long, string>>();
+            var pos = 0;
+            for (var i = 0; i < read; i++)
+            {
+                if (buffer[i] != (byte)'\n') continue;
+                var len = i - pos;
+                if (len > 0 && buffer[i - 1] == (byte)'\r') len--;
+                raw.Add(new KeyValuePair<long, string>(_logCursor.Offset + pos, Encoding.UTF8.GetString(buffer, pos, len)));
+                pos = i + 1;
+            }
+            var consumed = _logCursor.Offset + pos;
+            if (finished && atEnd && pos < read)
+            {
+                raw.Add(new KeyValuePair<long, string>(_logCursor.Offset + pos, Encoding.UTF8.GetString(buffer, pos, read - pos)));
+                consumed = _logCursor.Offset + read;
+            }
+
+            if (raw.Count == 0)
+            {
+                if (read == LogMaxReadBytes)
+                {
+                    // One line longer than a whole read: it cannot be sent whole, so it is skipped.
+                    PrintWarning($"Panel: a line in {file} is longer than {LogMaxReadBytes} bytes and is not sent.");
+                    _logCursor.Offset += read;
+                    WriteData(LogDataFile, _logCursor);
+                }
+                return null;
+            }
+
+            var entries = new List<LogEntry>();
+            foreach (var pair in raw)
+            {
+                var parsed = ParseOxideLine(pair.Value);
+                if (parsed.Recognised || entries.Count == 0)
+                    entries.Add(new LogEntry { Start = pair.Key, Line = parsed, Body = new StringBuilder(parsed.Body) });
+                else
+                    entries[entries.Count - 1].Body.Append('\n').Append(pair.Value);
+            }
+
+            long end = consumed;
+            if (!(finished && atEnd))
+            {
+                var last = entries[entries.Count - 1];
+                var waited = _logHeldFile == file && _logHeldOffset == last.Start;
+                if (atEnd && !waited)
+                {
+                    _logHeldFile = file;
+                    _logHeldOffset = last.Start;
+                    entries.RemoveAt(entries.Count - 1);
+                    end = last.Start;
+                }
+                else if (!atEnd && entries.Count > 1)
+                {
+                    entries.RemoveAt(entries.Count - 1);
+                    end = last.Start;
+                }
+            }
+            if (entries.Count == 0) return null;
+
+            var level = EffectiveSharingLevel();
+            var count = Math.Min(entries.Count, _logBatchLines);
+            while (true)
+            {
+                var lines = new JArray();
+                for (var i = 0; i < count; i++)
+                {
+                    var entry = entries[i];
+                    var body = MaskSourceGates(entry.Body.ToString());
+                    var line = new JObject { ["seq"] = _logCursor.Seq + i + 1 };
+                    var at = LogLineUtc(fileDate, entry.Line.Hour, entry.Line.Minute, TimeZoneInfo.Local);
+                    if (at != null) line["at"] = at;
+                    line["level"] = entry.Line.Level == null ? JValue.CreateNull() : (JToken)entry.Line.Level;
+                    line["source"] = entry.Line.Source == null ? JValue.CreateNull() : (JToken)entry.Line.Source;
+                    if (level >= 3)
+                    {
+                        line["message"] = body;
+                    }
+                    else
+                    {
+                        line["bytes"] = Encoding.UTF8.GetByteCount(body);
+                        line["tokens"] = CountTokens(body);
+                        line["withheld_reason"] = "unknown_template";
+                        line["suspected_pii"] = new JArray(SuspectedPii(body, entry.Line.Level).ToArray());
+                        line["shape"] = LogShape(entry.Line.Source, body);
+                    }
+                    lines.Add(line);
+                }
+
+                var payload = new JObject
+                {
+                    ["stream"] = "oxide",
+                    ["session_key"] = _logCursor.SessionKey,
+                    ["sharing_level"] = level,
+                    ["lines"] = lines,
+                    ["withheld"] = 0
+                };
+                var envelope = PanelEnvelope("log", payload);
+                if (envelope.Length > LogMaxBodyChars && count > 1)
+                {
+                    count = Math.Max(1, count / 2);
+                    continue;
+                }
+
+                return new LogSendBatch
+                {
+                    Body = envelope,
+                    File = file,
+                    EndOffset = count < entries.Count ? entries[count].Start : end,
+                    EndSeq = _logCursor.Seq + count,
+                    Lines = count,
+                    More = count < entries.Count || !atEnd || (finished && NextOxideLog(dir, file) != null)
+                };
+            }
+        }
+
+        #region Log lines
+
+        // No game or Oxide types in this region either: it is compiled and
+        // checked outside the game against the panel's published vectors and
+        // real Oxide logs. No regular expressions -- these run on the game
+        // thread, and a scan cannot backtrack.
+
+        private static readonly string[] OxideLogTypes = { "Chat", "Error", "Info", "Warning", "Debug" };
+
+        private sealed class OxideLine
+        {
+            public bool Recognised;
+            public int Hour = -1;
+            public int Minute = -1;
+            public string Level;
+            public string Source;
+            public string Body = "";
+        }
+
+        // Oxide writes "<short time> [<type>] <text>", the time in the machine's
+        // own culture ("18:52", "6:52 PM"). A plugin's own line starts its text
+        // with "[<plugin title>] ". A line that does not start this way belongs
+        // to the one before it (a stack trace). A time that cannot be read is
+        // left out, never guessed.
+        private static OxideLine ParseOxideLine(string text)
+        {
+            var result = new OxideLine { Body = text ?? "" };
+            if (string.IsNullOrEmpty(text)) return result;
+
+            var open = text.IndexOf(" [", StringComparison.Ordinal);
+            if (open < 0 || open > 16) return result;
+
+            var close = text.IndexOf(']', open + 2);
+            if (close < 0 || (close + 1 < text.Length && text[close + 1] != ' ')) return result;
+
+            var type = text.Substring(open + 2, close - open - 2);
+            if (Array.IndexOf(OxideLogTypes, type) < 0) return result;
+
+            result.Recognised = true;
+            result.Level = type.ToLowerInvariant();
+            ReadShortTime(text.Substring(0, open), out result.Hour, out result.Minute);
+
+            var rest = close + 2 <= text.Length ? text.Substring(close + 2) : "";
+            if (rest.Length > 0 && rest[0] == '[')
+            {
+                var end = rest.IndexOf("] ", StringComparison.Ordinal);
+                if (end > 1 && end <= 64)
+                {
+                    result.Source = rest.Substring(1, end - 1);
+                    rest = rest.Substring(end + 2);
+                }
+            }
+            result.Body = rest;
+            return result;
+        }
+
+        private static void ReadShortTime(string text, out int hour, out int minute)
+        {
+            hour = -1;
+            minute = -1;
+            var s = text.Trim();
+            var i = 0;
+            var h = 0;
+            var digits = 0;
+            while (i < s.Length && s[i] >= '0' && s[i] <= '9' && digits < 2) { h = h * 10 + (s[i] - '0'); i++; digits++; }
+            if (digits == 0 || i >= s.Length || (s[i] != ':' && s[i] != '.')) return;
+            i++;
+            if (i + 2 > s.Length || s[i] < '0' || s[i] > '9' || s[i + 1] < '0' || s[i + 1] > '9') return;
+            var m = (s[i] - '0') * 10 + (s[i + 1] - '0');
+            i += 2;
+
+            var suffix = s.Substring(i).Trim().ToUpperInvariant();
+            if (suffix == "AM" || suffix == "PM")
+            {
+                if (h < 1 || h > 12) return;
+                if (suffix == "AM" && h == 12) h = 0;
+                else if (suffix == "PM" && h != 12) h += 12;
+            }
+            else if (suffix.Length != 0)
+            {
+                return;
+            }
+
+            if (h > 23 || m > 59) return;
+            hour = h;
+            minute = m;
+        }
+
+        // The local wall-clock time Oxide wrote, in UTC. A time the clock went
+        // past twice (the hour DST repeats) or never showed (the hour it skips)
+        // has no single answer, so there is no time.
+        private static string LogLineUtc(DateTime fileDate, int hour, int minute, TimeZoneInfo zone)
+        {
+            if (hour < 0 || minute < 0 || fileDate == DateTime.MinValue) return null;
+            var local = new DateTime(fileDate.Year, fileDate.Month, fileDate.Day, hour, minute, 0, DateTimeKind.Unspecified);
+            if (zone.IsInvalidTime(local) || zone.IsAmbiguousTime(local)) return null;
+            return TimeZoneInfo.ConvertTimeToUtc(local, zone).ToString("yyyy'-'MM'-'dd'T'HH':'mm':'ss'Z'", CultureInfo.InvariantCulture);
+        }
+
+        // The line's shape, frozen by the contract: runs of ASCII digits become
+        // "0", runs of ASCII letters "a", runs of anything else above ASCII "u";
+        // then sha256 over the source, 0x1F and the result.
+        private static string LogShape(string source, string body)
+        {
+            var sb = new StringBuilder(body.Length);
+            var i = 0;
+            while (i < body.Length)
+            {
+                var kind = ShapeClass(body[i]);
+                if (kind == '\0')
+                {
+                    sb.Append(body[i]);
+                    i++;
+                    continue;
+                }
+                sb.Append(kind);
+                while (i < body.Length && ShapeClass(body[i]) == kind) i++;
+            }
+            return "sha256:" + Sha256Hex((source ?? "") + "" + sb);
+        }
+
+        private static char ShapeClass(char c)
+        {
+            if (c >= '0' && c <= '9') return '0';
+            if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')) return 'a';
+            return c > '' ? 'u' : '\0';
+        }
+
+        private static int CountTokens(string body)
+        {
+            var count = 0;
+            var inToken = false;
+            foreach (var c in body)
+            {
+                if (char.IsWhiteSpace(c)) { inToken = false; continue; }
+                if (!inToken) count++;
+                inToken = true;
+            }
+            return count;
+        }
+
+        // What a withheld line may hold, suspected from its shape alone:
+        // identity (a Steam ID), position (three numbers in brackets), chat
+        // (Oxide's chat level), network (an IPv4 address).
+        private static List<string> SuspectedPii(string body, string level)
+        {
+            var classes = new List<string>();
+            if (ContainsSteamId(body)) classes.Add("identity");
+            if (ContainsPosition(body)) classes.Add("position");
+            if (level == "chat") classes.Add("chat");
+            if (ContainsIpv4(body)) classes.Add("network");
+            return classes;
+        }
+
+        private static bool IsDigit(string s, int i) => i >= 0 && i < s.Length && s[i] >= '0' && s[i] <= '9';
+
+        private static bool ContainsSteamId(string s)
+        {
+            var at = 0;
+            while ((at = s.IndexOf("7656119", at, StringComparison.Ordinal)) >= 0)
+            {
+                if (!IsDigit(s, at - 1))
+                {
+                    var j = at + 7;
+                    var run = 0;
+                    while (IsDigit(s, j)) { j++; run++; }
+                    if (run == 10) return true;
+                }
+                at++;
+            }
+            return false;
+        }
+
+        private static bool ContainsPosition(string s)
+        {
+            for (var i = s.IndexOf('('); i >= 0; i = s.IndexOf('(', i + 1))
+            {
+                var j = i + 1;
+                var ok = true;
+                for (var n = 0; n < 3 && ok; n++)
+                {
+                    while (j < s.Length && s[j] == ' ') j++;
+                    if (j < s.Length && s[j] == '-') j++;
+                    var start = j;
+                    while (IsDigit(s, j) || (j < s.Length && s[j] == '.')) j++;
+                    ok = j > start;
+                    while (j < s.Length && s[j] == ' ') j++;
+                    if (ok && n < 2) ok = j < s.Length && s[j++] == ',';
+                }
+                if (ok && j < s.Length && s[j] == ')') return true;
+            }
+            return false;
+        }
+
+        private static bool ContainsIpv4(string s)
+        {
+            for (var i = 0; i < s.Length; i++)
+            {
+                if (!IsDigit(s, i) || IsDigit(s, i - 1) || (i > 0 && s[i - 1] == '.')) continue;
+                var j = i;
+                var parts = 0;
+                while (parts < 4)
+                {
+                    var start = j;
+                    var value = 0;
+                    while (IsDigit(s, j) && j - start < 3) { value = value * 10 + (s[j] - '0'); j++; }
+                    if (j == start || IsDigit(s, j) || value > 255) break;
+                    parts++;
+                    if (parts == 4) break;
+                    if (j >= s.Length || s[j] != '.') break;
+                    j++;
+                }
+                if (parts == 4 && !(j < s.Length && s[j] == '.' && IsDigit(s, j + 1))) return true;
+            }
+            return false;
+        }
+
+        // A card number keeps its last four digits and its separators; a
+        // hyphenated US SSN becomes ###-##-####. The panel checks again on
+        // arrival; this keeps them off the wire in the first place.
+        private static string MaskSourceGates(string body)
+        {
+            var chars = body.ToCharArray();
+            for (var i = 0; i < chars.Length; i++)
+            {
+                if (chars[i] < '0' || chars[i] > '9') continue;
+                if (i > 0 && (chars[i - 1] >= '0' && chars[i - 1] <= '9')) continue;
+                if (i > 1 && (chars[i - 1] == ' ' || chars[i - 1] == '-') && chars[i - 2] >= '0' && chars[i - 2] <= '9') continue;
+
+                var positions = new List<int>();
+                var j = i;
+                while (j < chars.Length && positions.Count <= 19)
+                {
+                    if (chars[j] >= '0' && chars[j] <= '9') { positions.Add(j); j++; continue; }
+                    if ((chars[j] == ' ' || chars[j] == '-') && j + 1 < chars.Length && chars[j + 1] >= '0' && chars[j + 1] <= '9' && j > i) { j++; continue; }
+                    break;
+                }
+                var digits = positions.Count;
+                if (digits >= 13 && digits <= 19 && !(j < chars.Length && chars[j] >= '0' && chars[j] <= '9') &&
+                    chars[positions[0]] >= '2' && chars[positions[0]] <= '6' && PassesLuhn(chars, positions))
+                {
+                    for (var k = 0; k < digits - 4; k++) chars[positions[k]] = '#';
+                }
+                i = j;
+            }
+
+            for (var i = 0; i + 11 <= chars.Length; i++)
+            {
+                if (!SsnAt(chars, i)) continue;
+                for (var k = 0; k < 11; k++) if (chars[i + k] != '-') chars[i + k] = '#';
+                i += 10;
+            }
+            return new string(chars);
+        }
+
+        private static bool PassesLuhn(char[] chars, List<int> positions)
+        {
+            var sum = 0;
+            var doubleIt = false;
+            for (var k = positions.Count - 1; k >= 0; k--)
+            {
+                var d = chars[positions[k]] - '0';
+                if (doubleIt) { d *= 2; if (d > 9) d -= 9; }
+                sum += d;
+                doubleIt = !doubleIt;
+            }
+            return sum % 10 == 0;
+        }
+
+        private static bool SsnAt(char[] c, int i)
+        {
+            Func<int, bool> digit = k => k >= 0 && k < c.Length && c[k] >= '0' && c[k] <= '9';
+            Func<int, bool> word = k => k >= 0 && k < c.Length && (char.IsLetterOrDigit(c[k]) || c[k] == '_');
+            for (var k = 0; k < 11; k++)
+            {
+                var hyphen = k == 3 || k == 6;
+                if (hyphen ? c[i + k] != '-' : !digit(i + k)) return false;
+            }
+            if (word(i - 1) || word(i + 11)) return false;
+            if (i >= 2 && (c[i - 1] == '.' || c[i - 1] == ',' || c[i - 1] == '-') && digit(i - 2)) return false;
+            if (i + 12 < c.Length && (c[i + 11] == '.' || c[i + 11] == ',' || c[i + 11] == '-') && digit(i + 12)) return false;
+            return true;
+        }
+
+        // A UUID naming this server process, the same for every reload inside
+        // it: the version-8 form of a sha256 over the process's start time and
+        // the server's folder.
+        private static string LogSessionKey(long processStartTicks, string root)
+        {
+            byte[] hash;
+            using (var sha = System.Security.Cryptography.SHA256.Create())
+                hash = sha.ComputeHash(Encoding.UTF8.GetBytes("hotwire-log-session" + processStartTicks.ToString(CultureInfo.InvariantCulture) + "" + root));
+            var bytes = new byte[16];
+            Array.Copy(hash, bytes, 16);
+            bytes[6] = (byte)((bytes[6] & 0x0F) | 0x80);
+            bytes[8] = (byte)((bytes[8] & 0x3F) | 0x80);
+            var h = Hex(bytes);
+            return h.Substring(0, 8) + "-" + h.Substring(8, 4) + "-" + h.Substring(12, 4) + "-" + h.Substring(16, 4) + "-" + h.Substring(20);
+        }
+
+        #endregion
+
         #region Panel signing
 
         // No game or Oxide types in this region: it is compiled and checked
@@ -4733,6 +5378,7 @@ namespace Oxide.Plugins
                 lines.Add($"  map image    : {_imageState}");
                 lines.Add($"  schedule     : {_scheduleState}");
                 lines.Add($"  player data  : {SharingDescription()}");
+                lines.Add($"  oxide log    : {LogDescription()}");
             }
 
             player.Reply(string.Join("\n", lines.ToArray()));

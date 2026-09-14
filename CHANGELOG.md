@@ -25,6 +25,23 @@ sit above a launcher `1.1.7`. Read the label, not the number.
 at the top of the file — it is a comment, not something it echoes, so read it
 rather than watch for it.
 
+## 1.1.10 — plugin — 2026-09-13
+
+**Oxide's log, sent to the panel.**
+
+- Reads `oxide/logs/oxide_<date>.txt` as Oxide writes it and sends new lines every minute: time, level, plugin
+  and, where allowed, the text. A stack trace stays with the line it belongs to.
+- **Below the "identified" player data level no line's text is sent**, because a line can hold a player's name.
+  Each line still arrives with its time, level, plugin, length, what it might contain, and a fingerprint of its
+  shape, so a gap is visible rather than silent. Your log file stays the full record.
+- Card numbers keep only their last four digits, and hyphenated US SSNs are masked, before anything is sent.
+- Where it has read up to is kept in `oxide/data/Hotwire/panel_log.json`, so a reload or an outage never sends
+  a line twice or skips one. A batch too large for the panel is split, never dropped.
+- Times are read in 24-hour or AM/PM form. A time that cannot be read, or that falls in the hour a clock change
+  repeats or skips, is left out rather than guessed.
+- New `Panel` settings: `Send the Oxide log` (on) and `Send the log every this many seconds` (60).
+  `hotwire check` shows what has been sent and whether text is included.
+
 ## 1.1.9 — plugin — 2026-09-13
 
 **Player data sharing, applied on the server.**
