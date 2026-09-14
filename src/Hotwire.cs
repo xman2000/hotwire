@@ -17,7 +17,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Hotwire", "xman2000", "1.1.10")]
+    [Info("Hotwire", "xman2000", "1.1.11")]
     [Description("Scheduled restarts and updates. Announces, counts down, writes a flag, quits.")]
     internal class Hotwire : CovalencePlugin
     {
@@ -175,10 +175,9 @@ namespace Oxide.Plugins
 
             // Oxide's own log (oxide/logs/oxide_<date>.txt), so the panel can
             // show what plugins said: compile failures, hook errors, warnings.
-            // Below the "identified" player data level a line's text is never
-            // sent -- only its time, level, plugin, length and a fingerprint of
-            // its shape -- because a line can hold a player's name. The log file
-            // on this machine stays the full record either way.
+            // Card numbers and SSNs are masked before a line is sent, and Steam
+            // IDs are removed below the "identified" player data level. The log
+            // file on this machine stays the full record either way.
             [JsonProperty("Send the Oxide log")]
             public bool SendLog = true;
 
@@ -601,7 +600,9 @@ namespace Oxide.Plugins
             }
         }
 
-        private void OnServerInitialized()
+        // Oxide passes true once, when the server finishes booting, and false to a
+        // plugin loaded into a server that is already running.
+        private void OnServerInitialized(bool initial)
         {
             var root = ServerRoot();
             if (root == null)
@@ -631,6 +632,7 @@ namespace Oxide.Plugins
             var next = DescribeNext(null);
             Puts(next == null ? "No schedule is enabled. Nothing will restart." : $"Next: {next}");
 
+            PrepareSession(initial);
             StartPanelReporting();
         }
 
@@ -640,6 +642,7 @@ namespace Oxide.Plugins
             _countdownTimer?.Destroy();
             _frameworkTimer?.Destroy();
             _panelTimer?.Destroy();
+            _sessionTimer?.Destroy();
 
             CloseAllMenus();   // goes with the menu
 
@@ -1972,6 +1975,7 @@ namespace Oxide.Plugins
 
         private DateTime _manifestStamp = DateTime.MinValue;
         private string _buildId;
+        private string _branch;
 
         private readonly Dictionary<string, HashedFile> _fileHashes = new Dictionary<string, HashedFile>(StringComparer.OrdinalIgnoreCase);
         private List<InventoryItem> _inventory;
@@ -2068,6 +2072,8 @@ namespace Oxide.Plugins
 
             // How much player data may leave this machine, before anything that could carry any.
             if (now >= _sharingDue) { PollSharing(); return; }
+
+            if (SessionReportDue()) { SendSession(); return; }
 
             if (_config.Panel.ReportMap && !_mapOff)
             {
@@ -2362,6 +2368,14 @@ namespace Oxide.Plugins
             try { var v = InstalledFrameworkVersion(); if (v != null) payload["oxide_version"] = v; } catch { }
             try { var p = server.Protocol; if (!string.IsNullOrEmpty(p)) payload["rust_protocol"] = p; } catch { }
             try { var b = InstalledBuildId(); if (b != null) payload["rust_build_id"] = b; } catch { }
+            try { var br = InstalledBranch(); if (br != null) payload["rust_branch"] = br; } catch { }
+            // The port A2S answers on: server.queryport, or the game port when it is 0, as Rust itself does.
+            try
+            {
+                var q = ConVar.Server.queryport > 0 ? ConVar.Server.queryport : ConVar.Server.port;
+                if (q > 0 && q <= 65535) payload["query_port"] = q;
+            }
+            catch { }
             if (_inventoryHash != null) payload["inventory_hash"] = _inventoryHash;
             return payload;
         }
@@ -2394,10 +2408,159 @@ namespace Oxide.Plugins
             if (stamp != _manifestStamp)
             {
                 _manifestStamp = stamp;
-                var match = Regex.Match(File.ReadAllText(manifest), "\"buildid\"\\s+\"(\\d+)\"");
+                var text = File.ReadAllText(manifest);
+                var match = Regex.Match(text, "\"buildid\"\\s+\"(\\d+)\"");
                 _buildId = match.Success ? match.Groups[1].Value : null;
+                _branch = ManifestBranch(text);
             }
             return _buildId;
+        }
+
+        // The Steam branch that build came from, read from the same manifest.
+        private string InstalledBranch()
+        {
+            return InstalledBuildId() == null ? null : _branch;
+        }
+
+        // ---------------------------------------------------------- session
+
+        private const string SessionDataFile = "Hotwire/panel_session";
+
+        // This server process as the plugin sees it: when it started, when it was
+        // last known alive, and whether the game said it was shutting down. What
+        // is still to be reported is kept with it, so a reload does not lose it.
+        private sealed class SessionMarker
+        {
+            public DateTime StartedUtc;
+            public DateTime LastAliveUtc;
+            public bool CleanShutdown;
+            public double? BootSeconds;
+            public bool BootReported;
+            public DateTime? PreviousStartedUtc;
+            public DateTime? PreviousEndedUtc;
+            public bool PreviousClean;
+            public bool PreviousPending;
+        }
+
+        private SessionMarker _session;
+        private Timer _sessionTimer;
+        private string _sessionState = "not started";
+
+        private void PrepareSession(bool initial)
+        {
+            var ticks = ProcessStartTicks();
+            if (ticks == 0)
+            {
+                _sessionState = "the server process's start time cannot be read, so no session is reported";
+                return;
+            }
+
+            var started = new DateTime(ticks, DateTimeKind.Utc);
+            var now = DateTime.UtcNow;
+            var saved = ReadData<SessionMarker>(SessionDataFile);
+
+            if (saved != null && saved.StartedUtc == started)
+            {
+                _session = saved;   // a reload inside the same process: nothing new happened
+            }
+            else
+            {
+                _session = new SessionMarker
+                {
+                    StartedUtc = started,
+                    LastAliveUtc = now,
+                    // Only a real boot is timed. A plugin loaded into a running
+                    // server cannot know how long the boot took.
+                    BootSeconds = initial ? Math.Round((now - started).TotalSeconds, 2) : (double?)null
+                };
+
+                if (saved != null && saved.StartedUtc != default(DateTime))
+                {
+                    _session.PreviousStartedUtc = saved.StartedUtc;
+                    _session.PreviousEndedUtc = saved.LastAliveUtc;
+                    _session.PreviousClean = saved.CleanShutdown;
+                    _session.PreviousPending = true;
+                }
+
+                WriteData(SessionDataFile, _session);
+            }
+
+            _sessionState = _session.BootReported ? "this boot reported" : "this boot not reported yet";
+            _sessionTimer = timer.Every(300f, TouchSession);
+        }
+
+        // When the process was last known alive, so a run that ends without a
+        // shutdown still has an approximate end.
+        private void TouchSession()
+        {
+            if (_session == null) return;
+            _session.LastAliveUtc = DateTime.UtcNow;
+            WriteData(SessionDataFile, _session);
+        }
+
+        // Rust is shutting down on purpose. A run that ends without this was a
+        // crash, a kill or a power loss.
+        private void OnServerShutdown()
+        {
+            if (_session == null) return;
+            _session.LastAliveUtc = DateTime.UtcNow;
+            _session.CleanShutdown = true;
+            WriteData(SessionDataFile, _session);
+        }
+
+        private bool SessionReportDue()
+        {
+            return _session != null && (_session.PreviousPending || (!_session.BootReported && _inventory != null));
+        }
+
+        // The previous run first, then this boot, as two session reports keyed
+        // by when each run started.
+        private void SendSession()
+        {
+            var session = _session;
+            JObject payload;
+            Action done;
+
+            if (session.PreviousPending && session.PreviousStartedUtc != null)
+            {
+                payload = new JObject
+                {
+                    ["started_at"] = SessionTime(session.PreviousStartedUtc.Value),
+                    ["ended_at"] = SessionTime(session.PreviousEndedUtc ?? session.PreviousStartedUtc.Value),
+                    ["clean_shutdown"] = session.PreviousClean
+                };
+                done = () =>
+                {
+                    session.PreviousPending = false;
+                    WriteData(SessionDataFile, session);
+                };
+            }
+            else
+            {
+                payload = new JObject { ["started_at"] = SessionTime(session.StartedUtc) };
+                if (session.BootSeconds != null) payload["boot_seconds"] = session.BootSeconds.Value;
+                if (_inventory != null)
+                {
+                    payload["plugins_loaded"] = _inventory.Count(i => i.Loaded);
+                    payload["compile_errors"] = new JArray(_inventory.Where(i => !i.Loaded && i.Error != null).Select(i => i.Name).ToArray());
+                }
+                try { var p = server.Protocol; if (!string.IsNullOrEmpty(p)) payload["rust_protocol"] = p; } catch { }
+                try { var b = InstalledBuildId(); if (b != null) payload["rust_build_id"] = b; } catch { }
+                done = () =>
+                {
+                    session.PreviousPending = false;
+                    session.BootReported = true;
+                    WriteData(SessionDataFile, session);
+                    _sessionState = $"this boot reported {DateTime.Now:HH:mm:ss}";
+                };
+            }
+
+            PanelRequest("POST", PanelReportPath, PanelEnvelope("session", payload), response => done(), () => done());
+        }
+
+        private static string SessionTime(DateTime utc)
+        {
+            return utc.ToString("yyyy'-'MM'-'dd'T'HH':'mm':'ss'Z'", CultureInfo.InvariantCulture);
         }
 
         // ---------------------------------------------------------- plugin list
@@ -3603,8 +3766,8 @@ namespace Oxide.Plugins
         {
             if (!_config.Panel.SendLog) return "off in the config";
             var text = EffectiveSharingLevel() >= 3
-                ? "line text sent"
-                : "line text withheld (player data level is below identified)";
+                ? "line text sent; card numbers and SSNs masked"
+                : "line text sent; card numbers, SSNs and Steam IDs removed";
             return $"{_logState}; {text}";
         }
 
@@ -3839,18 +4002,10 @@ namespace Oxide.Plugins
                     if (at != null) line["at"] = at;
                     line["level"] = entry.Line.Level == null ? JValue.CreateNull() : (JToken)entry.Line.Level;
                     line["source"] = entry.Line.Source == null ? JValue.CreateNull() : (JToken)entry.Line.Source;
-                    if (level >= 3)
-                    {
-                        line["message"] = body;
-                    }
-                    else
-                    {
-                        line["bytes"] = Encoding.UTF8.GetByteCount(body);
-                        line["tokens"] = CountTokens(body);
-                        line["withheld_reason"] = "unknown_template";
-                        line["suspected_pii"] = new JArray(SuspectedPii(body, entry.Line.Level).ToArray());
-                        line["shape"] = LogShape(entry.Line.Source, body);
-                    }
+                    // Every line's text is sent. What can be picked out is removed
+                    // first: card numbers and SSNs always (above), and a Steam ID
+                    // below the identified level. Nothing else is held back.
+                    line["message"] = level >= 3 ? body : BlockSteamIds(body);
                     lines.Add(line);
                 }
 
@@ -3880,6 +4035,20 @@ namespace Oxide.Plugins
                 };
             }
         }
+
+        #region Manifest
+
+        // No game or Oxide types: checked outside the game. The Steam branch in
+        // the app manifest, read exactly as hotwire-setup reads it: UserConfig's
+        // BetaKey. No key, or an empty one, is the public branch.
+        private static string ManifestBranch(string manifest)
+        {
+            if (string.IsNullOrEmpty(manifest)) return null;
+            var match = System.Text.RegularExpressions.Regex.Match(manifest, "\"UserConfig\"\\s*\\{[^}]*\"BetaKey\"\\s+\"([^\"]*)\"");
+            return match.Success && match.Groups[1].Value.Length > 0 ? match.Groups[1].Value : "public";
+        }
+
+        #endregion
 
         #region Log lines
 
@@ -4036,6 +4205,34 @@ namespace Oxide.Plugins
         }
 
         private static bool IsDigit(string s, int i) => i >= 0 && i < s.Length && s[i] >= '0' && s[i] <= '9';
+
+        // Every Steam ID64 becomes [blocked:identity], the panel's own marker, so
+        // the panel sees exactly what it would have removed itself.
+        private static string BlockSteamIds(string s)
+        {
+            if (s.IndexOf("7656119", StringComparison.Ordinal) < 0) return s;
+            var sb = new StringBuilder(s.Length);
+            var i = 0;
+            while (i < s.Length)
+            {
+                var at = s.IndexOf("7656119", i, StringComparison.Ordinal);
+                if (at < 0) { sb.Append(s, i, s.Length - i); break; }
+                var j = at + 7;
+                var run = 0;
+                while (IsDigit(s, j)) { j++; run++; }
+                if (!IsDigit(s, at - 1) && run == 10)
+                {
+                    sb.Append(s, i, at - i).Append("[blocked:identity]");
+                    i = j;
+                }
+                else
+                {
+                    sb.Append(s, i, at + 1 - i);
+                    i = at + 1;
+                }
+            }
+            return sb.ToString();
+        }
 
         private static bool ContainsSteamId(string s)
         {
@@ -5379,6 +5576,7 @@ namespace Oxide.Plugins
                 lines.Add($"  schedule     : {_scheduleState}");
                 lines.Add($"  player data  : {SharingDescription()}");
                 lines.Add($"  oxide log    : {LogDescription()}");
+                lines.Add($"  session      : {_sessionState}");
             }
 
             player.Reply(string.Join("\n", lines.ToArray()));

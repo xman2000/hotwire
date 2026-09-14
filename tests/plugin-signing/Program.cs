@@ -106,6 +106,8 @@ namespace PluginSigning
             Check("a failed Luhn check is left alone", Extracted.MaskSourceGates("4111 1111 1111 1112") == "4111 1111 1111 1112");
             Check("a Steam ID is not a card", Extracted.MaskSourceGates("id 76561198211375245") == "id 76561198211375245");
             Check("a hyphenated SSN is masked", Extracted.MaskSourceGates("ssn 123-45-6789.") == "ssn ###-##-####.");
+            var blocked = Extracted.BlockSteamIds("Bob (76561198211375245) died at (-268.23, 58.57, 841.06); 76561198211375245x ok; 176561198211375245 kept");
+            Check("a Steam ID is removed and the rest of the line kept", blocked == "Bob ([blocked:identity]) died at (-268.23, 58.57, 841.06); [blocked:identity]x ok; 176561198211375245 kept", blocked);
             Check("tokens are whitespace-separated", Extracted.CountTokens(" a  b\tc ") == 3);
             var pii = Extracted.SuspectedPii("Bob (76561198211375245) died at (-268.23, 58.57, 841.06) from 10.0.0.1", "info");
             Check("identity, position and network are suspected", string.Join(",", pii) == "identity,position,network", string.Join(",", pii));
@@ -135,6 +137,13 @@ namespace PluginSigning
                     }
                 Console.WriteLine($"  real logs: {total} lines, {recognised} start an entry, {timed} with a time, {shapes.Count} distinct shapes");
             }
+
+            // ---- the app manifest's branch, read as hotwire-setup reads it.
+            const string acf = "\"AppState\"\n{\n\t\"appid\"\t\t\"258550\"\n\t\"buildid\"\t\t\"25272657\"\n\t\"UserConfig\"\n\t{\n\t\t\"BetaKey\"\t\t\"staging\"\n\t}\n\t\"MountedConfig\"\n\t{\n\t\t\"BetaKey\"\t\t\"staging\"\n\t}\n}";
+            Check("a BetaKey names the branch", Extracted.ManifestBranch(acf) == "staging", Extracted.ManifestBranch(acf));
+            Check("no BetaKey is the public branch", Extracted.ManifestBranch("\"AppState\"\n{\n\t\"buildid\"\t\t\"25230300\"\n\t\"UserConfig\"\n\t{\n\t\t\"language\"\t\t\"english\"\n\t}\n}") == "public");
+            Check("an empty BetaKey is the public branch", Extracted.ManifestBranch("\"UserConfig\"\n{\n\t\"BetaKey\"\t\t\"\"\n}") == "public");
+            Check("no manifest, no branch", Extracted.ManifestBranch("") == null);
 
             var n = Extracted.PanelNonce();
             Check("nonce is 32 lowercase hex characters", Regex.IsMatch(n, "^[0-9a-f]{32}$"), n);

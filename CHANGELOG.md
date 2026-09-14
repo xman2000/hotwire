@@ -25,6 +25,21 @@ sit above a launcher `1.1.7`. Read the label, not the number.
 at the top of the file — it is a comment, not something it echoes, so read it
 rather than watch for it.
 
+## 1.1.11 — plugin — 2026-09-13
+
+**Log lines are readable, and the panel's health rows fill in.**
+
+- **Every log line's text is sent.** Card numbers keep only their last four digits and hyphenated US SSNs are masked
+  at every sharing level; Steam IDs are removed below the "identified" level. Nothing else is held back. 1.1.10 held
+  back every line's text below that level, which made the panel's log useless.
+- **The heartbeat reports the query port** (`server.queryport`, or the game port when it is 0), so the panel can
+  check the game port without anyone typing it in, and **which Steam branch is installed**, so the installed build is
+  compared with the right one.
+- **Each boot is reported:** how long it took, how many plugins loaded and which failed, and, at the next boot,
+  whether the run before ended with a clean shutdown or not (a crash, a kill or a power loss). A plugin loaded into a
+  server that is already running does not time a boot it did not see.
+- `hotwire check` shows the session state.
+
 ## 1.1.10 — plugin — 2026-09-13
 
 **Oxide's log, sent to the panel.**
