@@ -17,7 +17,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Hotwire", "xman2000", "1.1.11")]
+    [Info("Hotwire", "xman2000", "1.1.12")]
     [Description("Scheduled restarts and updates. Announces, counts down, writes a flag, quits.")]
     internal class Hotwire : CovalencePlugin
     {
@@ -115,7 +115,7 @@ namespace Oxide.Plugins
             [JsonProperty("Heartbeat every this many seconds")]
             public int HeartbeatSeconds = 30;
 
-            // Messages, saves, plugin reloads, kicks and announced restarts
+            // Messages, saves, plugin reloads and unloads, kicks and announced restarts
             // queued in the panel. Off means the panel's buttons do nothing on
             // this server; queued commands expire there unanswered.
             [JsonProperty("Accept commands from the panel")]
@@ -1941,6 +1941,7 @@ namespace Oxide.Plugins
         private sealed class InventoryItem
         {
             public string Name = "";
+            public string File = "";
             public string Author = "";
             public string Version = "";
             public string Sha256Hex = "";
@@ -2599,8 +2600,10 @@ namespace Oxide.Plugins
                     _fileHashes[path] = hashed;
                 }
 
-                var item = new InventoryItem { Sha256Hex = hashed.Sha256Hex, Size = hashed.Size };
                 var fileName = Path.GetFileNameWithoutExtension(path);
+                // The file name travels beside the [Info] title because Oxide reloads and
+                // unloads by file name. It is not part of the plugin list hash.
+                var item = new InventoryItem { Sha256Hex = hashed.Sha256Hex, Size = hashed.Size, File = fileName };
 
                 Plugin plugin;
                 item.Loaded = loaded.TryGetValue(NormalizeFolder(path), out plugin) && plugin.IsLoaded;
@@ -2670,6 +2673,7 @@ namespace Oxide.Plugins
                 list.Add(new JObject
                 {
                     ["name"] = i.Name,
+                    ["file"] = i.File,
                     ["author"] = i.Author,
                     ["version"] = i.Version,
                     ["sha256"] = "sha256:" + i.Sha256Hex,
@@ -3424,6 +3428,21 @@ namespace Oxide.Plugins
                     }
                     var ok = Interface.Oxide.ReloadPlugin(name);
                     status = ok ? "done" : "failed"; result = ok ? "reloaded" : "Oxide could not reload it; see the server console";
+                    return;
+                }
+                case "unload":
+                {
+                    var name = ((string)args["plugin"] ?? "").Trim();
+                    if (!Regex.IsMatch(name, "^[A-Za-z0-9_]{1,64}$")) { status = "refused"; result = "not a plugin name"; return; }
+                    if (!File.Exists(Path.Combine(Interface.Oxide.PluginDirectory, name + ".cs"))) { status = "failed"; result = $"there is no {name}.cs in the plugins folder"; return; }
+                    // Unloading this plugin would end the connection that could load it again.
+                    if (string.Equals(name, Name, StringComparison.OrdinalIgnoreCase)) { status = "refused"; result = "Hotwire does not unload itself from the panel: it would stop hearing the panel. Unload it on the server."; return; }
+                    var target = plugins.Find(name);
+                    if (target == null || !target.IsLoaded) { status = "done"; result = "it was not loaded"; return; }
+                    // Only unloads: the file stays, and Oxide loads it again at the next restart.
+                    // OnPluginUnloaded refreshes the plugin list.
+                    var ok = Interface.Oxide.UnloadPlugin(name);
+                    status = ok ? "done" : "failed"; result = ok ? "unloaded; it loads again when the server restarts" : "Oxide would not unload it; see the server console";
                     return;
                 }
                 case "kick":

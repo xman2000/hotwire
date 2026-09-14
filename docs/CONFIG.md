@@ -317,8 +317,9 @@ this section says.
   minimum is 10.
 - **Accept commands from the panel** — `false` means the panel's command
   buttons do nothing on this server; what is queued there expires unanswered.
-  Commands the plugin carries out: a message to players, a save, a plugin
-  reload, a kick, and an announced restart. Anything else is refused and the
+  Commands the plugin carries out: a message to players, a save, reloading or
+  unloading a plugin, a kick, and an announced restart. Hotwire does not unload
+  itself from the panel. Anything else is refused and the
   panel is told why.
 - **Shortest restart countdown from the panel** — a restart from the panel goes
   through the same countdown as `hotwire now`, and never with less warning than

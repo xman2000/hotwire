@@ -25,6 +25,17 @@ sit above a launcher `1.1.7`. Read the label, not the number.
 at the top of the file — it is a comment, not something it echoes, so read it
 rather than watch for it.
 
+## 1.1.12 — plugin — 2026-09-13
+
+**Unload a plugin from the panel, and the plugin list names each file.**
+
+- **A new panel command unloads a plugin.** The file stays where it is and nothing is deleted or moved; Oxide loads
+  the plugin again when the server restarts, or when the panel reloads it. Hotwire refuses to unload itself from the
+  panel, because it would stop hearing the panel; unload it on the server instead.
+- **The plugin list sends each plugin's file name** beside the name in its `[Info]` line. Oxide reloads and unloads
+  by file name, which often differs from the title (`ImageLibrary` for "Image Library"), so the panel can now reload
+  or unload any plugin it lists. The plugin list hash is unchanged.
+
 ## 1.1.11 — plugin — 2026-09-13
 
 **Log lines are readable, and the panel's health rows fill in.**
