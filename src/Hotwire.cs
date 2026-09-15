@@ -2160,8 +2160,18 @@ namespace Oxide.Plugins
                 return;
             }
 
-            if (!url.StartsWith("https://", StringComparison.OrdinalIgnoreCase) &&
-                !url.StartsWith("http://", StringComparison.OrdinalIgnoreCase))
+            // HW-15: the panel address must be https. Oxide disables TLS certificate
+            // validation process-wide, so http:// would send this server's reports in
+            // the clear and let any on-path machine answer as the panel. Refusing is
+            // safe: reporting is never on the boot path, so the server is unaffected.
+            if (url.StartsWith("http://", StringComparison.OrdinalIgnoreCase))
+            {
+                PanelRefuse($"the panel address in {path} uses http://, which is not encrypted and cannot be trusted. " +
+                            "Use the panel's https:// address, then run hotwire-setup connect again.");
+                return;
+            }
+
+            if (!url.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
             {
                 PanelRefuse($"the panel address in {path} is not a web address. Run hotwire-setup connect again.");
                 return;
@@ -2227,7 +2237,12 @@ namespace Oxide.Plugins
         // understood the request and said no to its content (400, 413, 422): the
         // same bytes would be refused again, so the caller lets it go rather than
         // letting it block everything behind it.
-        private void PanelRequest(string method, string path, string body, Action<string> onAccepted, Action onRefused = null, float timeoutSeconds = 20f)
+        // signedResponse opts this request into a signed answer (HW-1): the panel
+        // wraps the real body and signs it, and onAccepted runs only if that
+        // signature verifies. Used for the answers the plugin acts on -- commands,
+        // bans, the sharing level -- where a forged reply would be dangerous. A
+        // reply that cannot be verified is dropped and retried, never acted on.
+        private void PanelRequest(string method, string path, string body, Action<string> onAccepted, Action onRefused = null, float timeoutSeconds = 20f, bool signedResponse = false)
         {
             var link = _panel;
             var timestamp = ((long)(DateTime.UtcNow - UnixEpoch).TotalSeconds).ToString(CultureInfo.InvariantCulture);
@@ -2241,6 +2256,7 @@ namespace Oxide.Plugins
                 { "X-Hotwire-Nonce", nonce },
                 { "X-Hotwire-Signature", PanelSign(link.Secret, method, path, timestamp, nonce, body ?? "") }
             };
+            if (signedResponse) headers["X-Hotwire-Signed-Response"] = "1";
             if (body != null) headers["Content-Type"] = "application/json";
 
             _panelBusy = true;
@@ -2255,11 +2271,28 @@ namespace Oxide.Plugins
 
                     if (code >= 200 && code < 300)
                     {
+                        var accepted = response;
+                        if (signedResponse)
+                        {
+                            // Fail closed: an answer the panel's secret did not sign
+                            // is dropped, never acted on. Dropping a command changes
+                            // nothing; acting on a forged one is the whole risk. It is
+                            // logged once and retried on the next poll.
+                            string verified;
+                            if (!PanelVerifyResponse(link.Secret, code, timestamp, nonce, response, out verified))
+                            {
+                                PanelProblem($"the panel's answer to {path} was not signed with this server's key, so it was ignored. " +
+                                             "If this keeps happening, something on the network may be answering in the panel's place.");
+                                return;
+                            }
+                            accepted = verified;
+                        }
+
                         if (_panelProblem != null) Puts("Reporting to the panel again.");
                         _panelProblem = null;
                         _panelFailures = 0;
                         _panelNextAttempt = DateTime.MinValue;
-                        onAccepted(response);
+                        onAccepted(accepted);
                         PanelPump();
                         return;
                     }
@@ -3343,7 +3376,7 @@ namespace Oxide.Plugins
                 _commandsState = $"checked {DateTime.Now:HH:mm:ss}";
                 if (commands == null) return;
                 foreach (var c in commands.OfType<JObject>()) ReceiveCommand(c);
-            });
+            }, signedResponse: true);
         }
 
         private void ReceiveCommand(JObject command)
@@ -3629,7 +3662,7 @@ namespace Oxide.Plugins
                 WriteData(SharingDataFile, _sharing);
                 if (before != answer.Level)
                     Puts($"Player data sharing level from the panel: {SharingDescription()}.");
-            });
+            }, signedResponse: true);
         }
 
         // ---------------------------------------------------------- ban list
@@ -3663,7 +3696,7 @@ namespace Oxide.Plugins
                 if (bans == null) return;
                 ReconcileBans(bans);
                 _bansListHash = hash;
-            });
+            }, signedResponse: true);
         }
 
         // Writes the account's bans into this server's own ban list. Only bans
@@ -4444,6 +4477,68 @@ namespace Oxide.Plugins
         {
             using (var sha = SHA256.Create())
                 return Hex(sha.ComputeHash(Encoding.UTF8.GetBytes(text)));
+        }
+
+        // HW-1 / ADR-0085: the panel signs the answers a plugin acts on, so a
+        // forged reply cannot unload a plugin, ban players fleet-wide or raise the
+        // sharing level. Oxide disables TLS validation process-wide AND its
+        // webrequest callback cannot read a response header, so the signature
+        // travels in the body: when the plugin opts in (X-Hotwire-Signed-Response),
+        // the panel wraps the real answer as
+        //     {"signed":"<the real body, verbatim>","sig":"<hex HMAC-SHA256>"}
+        // and signs, with the SAME per-server secret, the canonical form below,
+        // bound to the request's own nonce and timestamp so a captured reply cannot
+        // be replayed against a later request.
+        //
+        //   <http status>\n<request timestamp>\n<request nonce>\n<sha256 of the signed string, lowercase hex>
+        private static string PanelResponseCanonical(int status, string timestamp, string nonce, string signedBody)
+        {
+            return status.ToString(CultureInfo.InvariantCulture) + "\n" + timestamp + "\n" + nonce + "\n" + Sha256Hex(signedBody);
+        }
+
+        private static string PanelSignResponse(string secret, int status, string timestamp, string nonce, string signedBody)
+        {
+            using (var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(secret)))
+                return Hex(hmac.ComputeHash(Encoding.UTF8.GetBytes(PanelResponseCanonical(status, timestamp, nonce, signedBody))));
+        }
+
+        // Verify a wrapped response and, only on success, hand back the real body.
+        // The signed string is hashed exactly as received -- never re-serialised --
+        // so the plugin verifies the same bytes the panel signed. Any failure (not
+        // wrapped, no/short fields, or a signature that does not match) returns
+        // false with realBody null, and the caller drops the answer without acting.
+        private static bool PanelVerifyResponse(string secret, int status, string timestamp, string nonce, string outerBody, out string realBody)
+        {
+            realBody = null;
+            if (string.IsNullOrEmpty(outerBody)) return false;
+
+            JObject outer;
+            try { outer = JObject.Parse(outerBody); }
+            catch { return false; }
+
+            var signed = outer["signed"];
+            var sig = (string)outer["sig"];
+            if (signed == null || signed.Type != JTokenType.String || string.IsNullOrEmpty(sig)) return false;
+
+            var signedBody = (string)signed;
+            var expected = PanelSignResponse(secret, status, timestamp, nonce, signedBody);
+            if (!FixedTimeEquals(expected, sig)) return false;
+
+            realBody = signedBody;
+            return true;
+        }
+
+        // Constant-time comparison of two hex signatures: the time taken does not
+        // reveal how many leading characters matched.
+        private static bool FixedTimeEquals(string a, string b)
+        {
+            if (a == null || b == null) return false;
+            var x = Encoding.UTF8.GetBytes(a);
+            var y = Encoding.UTF8.GetBytes(b);
+            var diff = x.Length ^ y.Length;
+            for (var i = 0; i < x.Length; i++)
+                diff |= x[i] ^ (i < y.Length ? y[i] : 0);
+            return diff == 0;
         }
 
         // The plugin set's merge key, frozen by the contract: for each plugin

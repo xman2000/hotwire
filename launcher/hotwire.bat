@@ -675,7 +675,12 @@ if "%MAX_DAYS_WITHOUT_UPDATE%"=="0" goto :updatedecided
 set "DAYS_SINCE_UPDATE=9999"
 REM  Floor, not [int]: [int] rounds, so 13.6 days would trip a 14-day
 REM  backstop half a day early.
-if exist "%UPDATE_STAMP%" for /f %%d in ('powershell -NoProfile -Command "[math]::Floor(((Get-Date) - (Get-Item '%UPDATE_STAMP%').LastWriteTime).TotalDays)"') do set "DAYS_SINCE_UPDATE=%%d"
+REM  HW-10: pass the path through an environment variable, never inside a
+REM  PowerShell single-quoted literal, so an apostrophe in the path (a folder
+REM  like C:\Rob's server) cannot close the literal and break or inject.
+set "HOTWIRE_STAMP=%UPDATE_STAMP%"
+if exist "%UPDATE_STAMP%" for /f %%d in ('powershell -NoProfile -Command "[math]::Floor(((Get-Date) - (Get-Item -LiteralPath $env:HOTWIRE_STAMP).LastWriteTime).TotalDays)"') do set "DAYS_SINCE_UPDATE=%%d"
+set "HOTWIRE_STAMP="
 
 if !DAYS_SINCE_UPDATE! GEQ %MAX_DAYS_WITHOUT_UPDATE% (
     set "DO_UPDATE=1"
@@ -831,17 +836,28 @@ if "!FWSKIP!"=="1" (
 )
 
 :frameworkextract
+REM  HW-9: the framework (uMod / Oxide) is third-party and its version changes
+REM  with every Rust release, so there is no first-party hash to pin it against
+REM  here. It is fetched over HTTPS and is NOT otherwise integrity-checked: that
+REM  residual is unverified third-party code, stated plainly so it is never a
+REM  silent omission. setup pins and verifies the first-party launcher and plugin
+REM  (see $PinnedHashes in hotwire-setup.ps1); this download is not pinnable.
+REM  HW-10: the destination path goes through an environment variable, never a
+REM  PowerShell single-quoted literal, so an apostrophe in the path is safe.
+echo [%date% %time%] Downloading the framework from uMod ^(third-party, not hash-verified^).
+set "HOTWIRE_ZIPROOT=%ROOT%"
 curl -fSL -A "Mozilla/5.0" "%FRAMEWORK_URL%" --output "%ROOT%\OxideMod.zip"
 if errorlevel 1 (
     echo [%date% %time%] Framework download failed. Keeping the install.
 ) else (
-    powershell -NoProfile -Command "Expand-Archive -Force '%ROOT%\OxideMod.zip' '%ROOT%'"
+    powershell -NoProfile -Command "Expand-Archive -Force -LiteralPath (Join-Path $env:HOTWIRE_ZIPROOT 'OxideMod.zip') -DestinationPath $env:HOTWIRE_ZIPROOT"
     if errorlevel 1 (
         echo [%date% %time%] Framework extract failed.
     ) else (
         set "FRAMEWORK_OK=1"
     )
 )
+set "HOTWIRE_ZIPROOT="
 if exist "%ROOT%\OxideMod.zip" del "%ROOT%\OxideMod.zip"
 
 :frameworkdone
@@ -1543,14 +1559,18 @@ REM  cull never matches. Later crashes in the same streak rotate normally:
 REM  they say the same thing as the first, and keeping every one of them
 REM  is how a crash loop fills a disk.
 if not "%ROTATE_LOGS%"=="0" if exist "%LOGFILE%" (
+    REM  HW-10: log root via an environment variable, not a PS single-quoted
+    REM  literal, so an apostrophe in the path is safe.
+    set "HOTWIRE_LOGROOT=%ROOT%"
     set "LOGSTAMP="
     for /f %%i in ('powershell -NoProfile -Command "Get-Date -Format yyyyMMdd-HHmmss"') do set "LOGSTAMP=%%i"
     if not defined LOGSTAMP set "LOGSTAMP=unstamped-!RANDOM!"
     set "ROTATED=%ROOT%\logs\server_log_!LOGSTAMP!.txt"
     if "!CRASH_STREAK!"=="1" set "ROTATED=%ROOT%\logs\server_crash_!LOGSTAMP!.txt"
     move /y "%LOGFILE%" "!ROTATED!" >nul
-    powershell -NoProfile -Command "Get-ChildItem '%ROOT%\logs\server_log_*.txt' | Sort-Object LastWriteTime -Descending | Select-Object -Skip %LOG_KEEP% | Remove-Item -Force" 2>nul
+    powershell -NoProfile -Command "Get-ChildItem -Path (Join-Path $env:HOTWIRE_LOGROOT 'logs\server_log_*.txt') | Sort-Object LastWriteTime -Descending | Select-Object -Skip %LOG_KEEP% | Remove-Item -Force" 2>nul
 )
+set "HOTWIRE_LOGROOT="
 
 echo [%date% %time%] Starting server...
 

@@ -75,6 +75,31 @@ $OxideZipUrl = 'https://umod.org/games/rust/download'
 $LauncherUrl = 'https://raw.githubusercontent.com/xman2000/hotwire/connect-and-report/launcher/hotwire.bat'
 $PluginUrl = 'https://raw.githubusercontent.com/xman2000/hotwire/connect-and-report/src/Hotwire.cs'
 
+# ---------------------------------------------------------------------------
+# HW-9: pinned SHA-256 of the FIRST-PARTY files this script downloads and then
+# runs, so a launcher or plugin altered in transit (or at rest on GitHub) is
+# caught before it is ever executed -- the OX-2 mirror. Confirm-DownloadHash
+# compares Get-FileHash of each download against the value here.
+#
+# These are the hashes of the files AS SERVED: raw.githubusercontent serves the
+# git blob, which .gitattributes normalises to LF, so hotwire.bat is hashed with
+# LF line endings here even though it is checked out -- and finally saved -- with
+# CRLF. Compute a value as: (read file, replace CRLF with LF, sha256).
+#
+# !! REGENERATED AT RELEASE TIME -- NO AUTOMATION EXISTS YET !!
+# Whenever launcher/hotwire.bat or src/Hotwire.cs changes on the branch the URLs
+# above point at, these values MUST change in the same commit, or every install
+# aborts with a hash mismatch. A value must match what that branch actually
+# serves once pushed; a hash computed from an unpushed working tree will not.
+#
+# Third-party downloads (SteamCMD from Valve, Oxide from uMod) are deliberately
+# ABSENT: their versions vary, so they are not pinned. They are reported as
+# "unverified (third-party)" rather than blocked -- the omission is never silent.
+$PinnedHashes = @{
+    'hotwire.bat' = '7f180e2060e3291aa32933b1cded00b1d041b9dd218b97f001e9f28792684196'
+    'Hotwire.cs'  = '6102cd7a1dc5fbc028fd69f660ed9cebaa0daf1fa4665b43a94b3ffc5ba4c3fa'
+}
+
 $Docs = [ordered]@{
     'This guide, step by step'  = 'https://github.com/xman2000/hotwire/blob/connect-and-report/docs/INSTALL-WINDOWS.md'
     'SteamCMD (Valve)'          = 'https://developer.valvesoftware.com/wiki/SteamCMD'
@@ -630,6 +655,29 @@ function Invoke-Download([string]$Url, [string]$OutFile, [string]$What) {
     $size = [math]::Round((Get-Item -LiteralPath $OutFile).Length / 1MB, 1)
     Write-Ok "downloaded $What ($size MB)"
     return $response
+}
+
+# HW-9: integrity gate for a download. $ArtifactKey indexes $PinnedHashes.
+#   - a hash is pinned and matches      -> say so, carry on
+#   - a hash is pinned and does NOT     -> STOP. Setup is install-time, not the
+#                                          boot path, so aborting is safe; running
+#                                          tampered first-party code is not.
+#   - no hash is pinned for the key     -> do not block, but say plainly that the
+#                                          artifact is unverified third-party code.
+function Confirm-DownloadHash([string]$OutFile, [string]$ArtifactKey, [string]$What) {
+    $expected = $PinnedHashes[$ArtifactKey]
+    if (-not $expected) {
+        Write-Note "$What is not integrity-checked here: unverified (third-party), because its version varies"
+        return
+    }
+    $actual = (Get-FileHash -LiteralPath $OutFile -Algorithm SHA256).Hash
+    if ($actual -ieq $expected) {
+        Write-Ok "$What verified -- its SHA-256 matches the pinned value"
+        return
+    }
+    Stop-Politely "verifying $What against its pinned SHA-256" `
+        "the download's hash ($($actual.ToLower())) does not match the expected $expected" `
+        "nothing was installed; this can mean the download was corrupted or altered in transit, or that the pinned hash is stale after a release -- try again, and if it persists get the file by hand from $($Docs['Hotwire (source)'])"
 }
 
 # ------------------------------------------------------------- 1. machine --
@@ -1224,6 +1272,7 @@ function Install-SteamCmd([string]$d) {
 
     $zip = Join-Path $env:TEMP 'hotwire-steamcmd.zip'
     [void](Invoke-Download $SteamCmdZipUrl $zip 'SteamCMD')
+    Confirm-DownloadHash $zip 'steamcmd.zip' 'SteamCMD'
     $tmp = "$exe.hotwire-tmp"
     try {
         Add-Type -AssemblyName System.IO.Compression.FileSystem
@@ -1479,6 +1528,7 @@ function Install-Oxide([string]$d) {
 
     $zip = Join-Path $env:TEMP 'hotwire-oxide.zip'
     $response = Invoke-Download $OxideZipUrl $zip 'Oxide for Rust'
+    Confirm-DownloadHash $zip 'Oxide.Rust.zip' 'Oxide for Rust'
     try {
         # Windows PowerShell 5.1 exposes the final URL as ResponseUri; PowerShell 7 as RequestMessage.
         $finalUrl = [string]$response.BaseResponse.ResponseUri
@@ -1737,9 +1787,12 @@ function Install-Launcher([string]$d) {
     }
 
     # hotwire.bat runs with delayed expansion on. A ! or % in ROOT is eaten before the path is used,
-    # and a quote, caret or ampersand breaks the lines that use it.
-    if ($d -match '[!%"^&]') {
-        Stop-Politely "setting ROOT in hotwire.bat to $d" "the path contains one of ! % `" ^ &, which a .bat cannot use safely" `
+    # and a quote, caret or ampersand breaks the lines that use it. HW-10: an apostrophe used to close
+    # the PowerShell single-quoted literals the launcher builds paths in; those now go through
+    # environment variables, but the apostrophe is rejected here too so a setup-written ROOT never
+    # relies on that alone.
+    if ($d -match '[!%"^&'']') {
+        Stop-Politely "setting ROOT in hotwire.bat to $d" "the path contains one of ! % ' `" ^ &, which a .bat cannot use safely" `
             "install into a folder without those characters, for example C:\rustserver"
     }
 
@@ -1747,6 +1800,7 @@ function Install-Launcher([string]$d) {
 
     $download = "$launcher.hotwire-tmp"
     [void](Invoke-Download $LauncherUrl $download 'the Hotwire launcher')
+    Confirm-DownloadHash $download 'hotwire.bat' 'the Hotwire launcher'
     try { $text = [System.IO.File]::ReadAllText($download) }
     finally { Remove-Item -LiteralPath $download -Force -ErrorAction SilentlyContinue }
 
@@ -1814,6 +1868,7 @@ function Install-Plugin([string]$d) {
     if (-not (Test-Path -LiteralPath $pluginDir)) { New-Item -ItemType Directory -Path $pluginDir -Force | Out-Null }
     $tmp = "$plugin.hotwire-tmp"
     [void](Invoke-Download $PluginUrl $tmp 'the Hotwire plugin')
+    Confirm-DownloadHash $tmp 'Hotwire.cs' 'the Hotwire plugin'
     $info = [regex]::Match([System.IO.File]::ReadAllText($tmp), '\[Info\("Hotwire",\s*"[^"]*",\s*"([^"]+)"\)\]')
     if (-not $info.Success) {
         Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
@@ -2174,10 +2229,25 @@ function Read-State ($r) {
     return $null
 }
 
+# HW-15: the panel address must be https. Oxide disables TLS certificate validation process-wide, so an
+# http:// panel would send this server's reports in the clear and let an on-path machine answer as the
+# panel. The default is already https, so this only ever trips an explicit http:// (or non-web) address.
+function Assert-HttpsPanel([string]$Url) {
+    if ($Url -match '^http://') {
+        Stop-Politely "using the panel address $Url" "it is http://, which is not encrypted and cannot be trusted" `
+            "use your panel's https:// address (the default is $DefaultPanel)"
+    }
+    if ($Url -notmatch '^https://') {
+        Stop-Politely "using the panel address $Url" "it is not an https:// web address" `
+            "pass -Panel with your panel's https:// address (the default is $DefaultPanel)"
+    }
+    return $Url
+}
+
 function Get-PanelUrl ($r) {
-    if ($Panel) { return $Panel.TrimEnd('/') }
+    if ($Panel) { return (Assert-HttpsPanel ($Panel.TrimEnd('/'))) }
     $state = Read-State $r
-    if ($state -and $state.panel_url) { return ([string]$state.panel_url).TrimEnd('/') }
+    if ($state -and $state.panel_url) { return (Assert-HttpsPanel (([string]$state.panel_url).TrimEnd('/'))) }
     return $DefaultPanel
 }
 

@@ -8,5 +8,17 @@
     "body_utf8": "{\"contract\":1,\"report_id\":\"0193f2c1-8a4e-7c1a-9f3b-2d5e6a7b8c9d\",\"sent_at\":\"2026-09-09T18:42:11Z\",\"source\":\"plugin\",\"source_version\":\"1.1.2\",\"kind\":\"heartbeat\",\"payload\":{\"players\":34,\"max_players\":50}}",
     "body_sha256": "980c7522d9ba59d5fe8e677984234ef8eb9f48e8811bf4880c735ba21c4edb67",
     "canonical_string": "POST /api/v1/report\n1757533331\n3f9a1c7e2b5d4086\n980c7522d9ba59d5fe8e677984234ef8eb9f48e8811bf4880c735ba21c4edb67",
-    "signature": "0018750ad887b85034deee8237784a18fc46f5bf3da6610ccab4794a696c5bb4"
+    "signature": "0018750ad887b85034deee8237784a18fc46f5bf3da6610ccab4794a696c5bb4",
+    "response": {
+        "note": "Frozen conformance vector for the SIGNED RESPONSE (HW-1 / ADR-0085). The panel wraps the real body as {\"signed\":<body>,\"sig\":<hmac>} when the caller opts in; the plugin must reproduce `response_signature` from these inputs and verify `wrapper`. Reference: App\\Support\\HotwireSignature::responseCanonical()/signResponse().",
+        "secret": "hotwire-conformance-secret-do-not-use-in-production",
+        "status": 200,
+        "request_timestamp": "1757533331",
+        "request_nonce": "3f9a1c7e2b5d4086",
+        "signed_body_utf8": "{\"ok\":true,\"message\":\"OK\",\"data\":{\"sharing_level\":1}}",
+        "signed_body_sha256": "fa8ed83511a150c2097fc8503d719c5f5201d520d6535831e809e030db70778b",
+        "response_canonical_string": "200\n1757533331\n3f9a1c7e2b5d4086\nfa8ed83511a150c2097fc8503d719c5f5201d520d6535831e809e030db70778b",
+        "response_signature": "0c157581ac13c5e5fd31a26c0b8d8e231d281cab40d367dacbfa5682d3f58619",
+        "wrapper": "{\"signed\":\"{\\\"ok\\\":true,\\\"message\\\":\\\"OK\\\",\\\"data\\\":{\\\"sharing_level\\\":1}}\",\"sig\":\"0c157581ac13c5e5fd31a26c0b8d8e231d281cab40d367dacbfa5682d3f58619\"}"
+    }
 }

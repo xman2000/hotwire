@@ -238,6 +238,10 @@ check_panel() {
     code="$(curl -fsS -o /dev/null -w '%{http_code}' --max-time 10 "$url/up" 2>/dev/null)" || code=""
     if [ "$code" = "200" ]; then ok "panel is reachable at $url"; return 0; fi
 
+    # S1: this probe DOWNLOADS NOTHING and installs nothing -- '-o /dev/null' discards the body.
+    # '--insecure' is used ONLY to tell "the panel is reachable but its TLS certificate was rejected"
+    # apart from "the panel is unreachable", so the fix message can be precise. It never fetches code
+    # and never relaxes TLS for any real request; the reachability check above uses full verification.
     if curl -fsS -o /dev/null --max-time 10 --insecure "$url/up" 2>/dev/null; then
         bad "panel reachable but its TLS certificate was rejected"
         note "        fix: check the system CA bundle, or that the URL matches the certificate"

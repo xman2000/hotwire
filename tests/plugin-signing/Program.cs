@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Text.RegularExpressions;
+using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 
 namespace PluginSigning
@@ -147,6 +148,47 @@ namespace PluginSigning
 
             var n = Extracted.PanelNonce();
             Check("nonce is 32 lowercase hex characters", Regex.IsMatch(n, "^[0-9a-f]{32}$"), n);
+
+            // ---- HW-1 / ADR-0085: the panel's signed response. The plugin must verify a wrapped
+            // answer byte-for-byte with the panel (App\Support\HotwireSignature::responseCanonical /
+            // signResponse), and fail closed on anything it cannot verify.
+            var rv = (JObject)v["response"];
+            var rSecret = (string)rv["secret"];
+            var rStatus = (int)rv["status"];
+            var rTs = (string)rv["request_timestamp"];
+            var rNonce = (string)rv["request_nonce"];
+            var rSigned = (string)rv["signed_body_utf8"];
+
+            Check("signed body sha256 matches the vector", Extracted.Sha256Hex(rSigned) == (string)rv["signed_body_sha256"]);
+            Check("response canonical string matches the vector",
+                Extracted.PanelResponseCanonical(rStatus, rTs, rNonce, rSigned) == (string)rv["response_canonical_string"]);
+            var rSig = Extracted.PanelSignResponse(rSecret, rStatus, rTs, rNonce, rSigned);
+            Check("response signature matches the vector", rSig == (string)rv["response_signature"], rSig);
+
+            // The full wrapper the panel sends verifies, and hands back the real body verbatim.
+            string real;
+            var okWrap = Extracted.PanelVerifyResponse(rSecret, rStatus, rTs, rNonce, (string)rv["wrapper"], out real);
+            Check("a correctly wrapped response verifies", okWrap);
+            Check("verification returns the real body verbatim, not re-serialised", real == rSigned, real);
+
+            // Fail-closed cases: each must be rejected with a null body.
+            string dropped;
+            Check("a plain (unwrapped) body is rejected",
+                !Extracted.PanelVerifyResponse(rSecret, rStatus, rTs, rNonce, rSigned, out dropped) && dropped == null);
+            var forged = "{\"signed\":" + JsonConvert.SerializeObject(rSigned) + ",\"sig\":\"" + new string('0', 64) + "\"}";
+            Check("a wrapper with a forged signature is rejected",
+                !Extracted.PanelVerifyResponse(rSecret, rStatus, rTs, rNonce, forged, out dropped) && dropped == null);
+            Check("a wrapper verified against a different nonce is rejected (no replay)",
+                !Extracted.PanelVerifyResponse(rSecret, rStatus, rTs, "a-different-nonce", (string)rv["wrapper"], out dropped) && dropped == null);
+            Check("a wrapper verified with the wrong secret is rejected",
+                !Extracted.PanelVerifyResponse("the-wrong-secret", rStatus, rTs, rNonce, (string)rv["wrapper"], out dropped) && dropped == null);
+            var tampered = "{\"signed\":" + JsonConvert.SerializeObject("{\"ok\":true,\"message\":\"OK\",\"data\":{\"sharing_level\":3}}") +
+                           ",\"sig\":\"" + rSig + "\"}";
+            Check("a wrapper whose signed body was swapped is rejected",
+                !Extracted.PanelVerifyResponse(rSecret, rStatus, rTs, rNonce, tampered, out dropped) && dropped == null);
+            Check("a wrapper missing its sig is rejected",
+                !Extracted.PanelVerifyResponse(rSecret, rStatus, rTs, rNonce, "{\"signed\":\"x\"}", out dropped) && dropped == null);
+            Check("empty/garbage is rejected", !Extracted.PanelVerifyResponse(rSecret, rStatus, rTs, rNonce, "not json", out dropped) && dropped == null);
 
             Console.WriteLine(_failed == 0 ? "All checks passed." : _failed + " check(s) FAILED.");
             return _failed == 0 ? 0 : 1;
