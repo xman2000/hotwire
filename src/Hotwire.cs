@@ -17,7 +17,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Hotwire", "xman2000", "1.1.12")]
+    [Info("Hotwire", "xman2000", "1.1.13")]
     [Description("Scheduled restarts and updates. Announces, counts down, writes a flag, quits.")]
     internal class Hotwire : CovalencePlugin
     {
@@ -183,6 +183,22 @@ namespace Oxide.Plugins
 
             [JsonProperty("Send the log every this many seconds")]
             public int LogSeconds = 60;
+
+            // Who is online, and when each player joins and leaves, by Steam ID
+            // and name. Sent only while the panel's player data level is
+            // "identified"; below it nothing about a player leaves this machine
+            // beyond the count in the heartbeat.
+            [JsonProperty("Send who is online, and player joins and leaves")]
+            public bool SendPlayers = true;
+
+            // What players say in chat, with its channel (global, team, local,
+            // clan). Only at the "identified" level, with card numbers and SSNs
+            // masked first. Chat commands are not chat and are never sent.
+            [JsonProperty("Send chat")]
+            public bool SendChat = true;
+
+            [JsonProperty("Send player joins, leaves and chat every this many seconds")]
+            public int EventSeconds = 30;
         }
 
         // Recurrence is stored as explicit fields rather than as a cron
@@ -1973,6 +1989,11 @@ namespace Oxide.Plugins
 
         private int _fpsFrames = -1;
         private float _fpsAt;
+        private bool _cpuMeasured;
+        private TimeSpan _cpuUsed;
+        private DateTime _cpuAt;
+        private MethodInfo _serverInfo;
+        private bool _serverInfoMissing;
 
         private DateTime _manifestStamp = DateTime.MinValue;
         private string _buildId;
@@ -2095,6 +2116,9 @@ namespace Oxide.Plugins
             }
 
             if (_config.Panel.AcceptCommands && now >= _commandsDue) { PollCommands(); return; }
+            if (_config.Panel.SendPlayers && now >= _playersCheckDue) { _playersCheckDue = now.AddSeconds(30); RefreshPlayers(); }
+            if (_playersJson != null && _playersJson != _playersSentJson && now >= _playersSendNotBefore) { SendPlayers(); return; }
+            if (_events.Count > 0 && now >= _eventsDue) { SendEvents(); return; }
             if (_config.Panel.SendLog && now >= _logDue) { SendLog(); return; }
             if (_config.Panel.EnforceBans && now >= _bansDue) { PollBans(); }
         }
@@ -2137,6 +2161,11 @@ namespace Oxide.Plugins
             _sharingDue = DateTime.MinValue;
             _logPending = null;
             _logDue = DateTime.MinValue;
+            _playersJson = null;
+            _playersSentJson = null;
+            _playersCheckDue = DateTime.MinValue;
+            _playersSendNotBefore = DateTime.MinValue;
+            _events.Clear();
 
             JObject file;
             try
@@ -2399,6 +2428,8 @@ namespace Oxide.Plugins
             try { payload["max_players"] = server.MaxPlayers; } catch { }
             try { payload["uptime_seconds"] = (long)Time.realtimeSinceStartup; } catch { }
             try { var fps = AverageFps(); if (fps >= 0) payload["fps"] = fps; } catch { }
+            try { var cpu = AverageCpuPercent(); if (cpu >= 0) payload["cpu_percent"] = cpu; } catch { }
+            try { AddServerInfo(payload); } catch { }
             try { var v = InstalledFrameworkVersion(); if (v != null) payload["oxide_version"] = v; } catch { }
             try { var p = server.Protocol; if (!string.IsNullOrEmpty(p)) payload["rust_protocol"] = p; } catch { }
             try { var b = InstalledBuildId(); if (b != null) payload["rust_build_id"] = b; } catch { }
@@ -2427,6 +2458,65 @@ namespace Oxide.Plugins
             _fpsFrames = frames;
             _fpsAt = at;
             return result;
+        }
+
+        // The share of the whole machine's CPU this process used since the last
+        // heartbeat, 0 to 100. The first heartbeat has nothing to compare with.
+        private int AverageCpuPercent()
+        {
+            TimeSpan used;
+            using (var process = System.Diagnostics.Process.GetCurrentProcess()) used = process.TotalProcessorTime;
+            var at = DateTime.UtcNow;
+            var result = -1;
+            var seconds = (at - _cpuAt).TotalSeconds;
+            if (_cpuMeasured && seconds >= 1)
+            {
+                var share = (used - _cpuUsed).TotalSeconds / seconds / Math.Max(1, Environment.ProcessorCount) * 100.0;
+                result = (int)Math.Round(Math.Max(0.0, Math.Min(100.0, share)));
+            }
+            _cpuUsed = used;
+            _cpuAt = at;
+            _cpuMeasured = true;
+            return result;
+        }
+
+        // Entities, memory, network and the join queue, from the game's own
+        // serverinfo -- the figures RCON tools graph. Looked up by name while
+        // running, so a Rust update that moves it drops these figures with a
+        // warning instead of stopping the plugin compiling.
+        private void AddServerInfo(JObject payload)
+        {
+            if (_serverInfoMissing) return;
+            if (_serverInfo == null)
+            {
+                var game = AppDomain.CurrentDomain.GetAssemblies().FirstOrDefault(a => a.GetName().Name == "Assembly-CSharp");
+                var admin = game == null ? null : game.GetType("ConVar.Admin", false);
+                _serverInfo = admin == null ? null : admin.GetMethod("ServerInfo", BindingFlags.Public | BindingFlags.Static, null, Type.EmptyTypes, null);
+                if (_serverInfo == null)
+                {
+                    _serverInfoMissing = true;
+                    PrintWarning("The game has no ConVar.Admin.ServerInfo, so the heartbeat carries no entity, memory or network figures. Everything else carries on.");
+                    return;
+                }
+            }
+
+            var info = _serverInfo.Invoke(null, null);
+            if (info == null) return;
+            CopyServerInfo(payload, info, "EntityCount", "entities");
+            CopyServerInfo(payload, info, "MemoryUsageSystem", "memory_mb");
+            CopyServerInfo(payload, info, "Memory", "managed_memory_mb");
+            CopyServerInfo(payload, info, "NetworkIn", "network_in_bytes_per_second");
+            CopyServerInfo(payload, info, "NetworkOut", "network_out_bytes_per_second");
+            CopyServerInfo(payload, info, "Queued", "queued");
+            CopyServerInfo(payload, info, "Joining", "joining");
+        }
+
+        private static void CopyServerInfo(JObject payload, object info, string field, string key)
+        {
+            var member = info.GetType().GetField(field, BindingFlags.Public | BindingFlags.Instance);
+            if (member == null) return;
+            var value = member.GetValue(info);
+            if (value is int number && number >= 0) payload[key] = number;
         }
 
         // The build Steam installed, from the same manifest the launcher reads.
@@ -3661,8 +3751,158 @@ namespace Oxide.Plugins
                 _sharing = answer;
                 WriteData(SharingDataFile, _sharing);
                 if (before != answer.Level)
+                {
                     Puts($"Player data sharing level from the panel: {SharingDescription()}.");
+                    // Identity gathered under the old level never leaves under a lower one.
+                    if (answer.Level < 3) _events.Clear();
+                    _playersSentJson = null;
+                    _playersCheckDue = DateTime.MinValue;
+                }
             }, signedResponse: true);
+        }
+
+        // ---------------------------------------------------------- players
+
+        // Who is online, sent when the set of players or a name changes. Only at
+        // the "identified" level: below it, the heartbeat's count is all that
+        // leaves this machine.
+        private string _playersJson, _playersSentJson;
+        private DateTime _playersCheckDue = DateTime.MinValue;
+        private DateTime _playersSendNotBefore = DateTime.MinValue;
+        private string _playersState = "nothing sent yet";
+
+        private void RefreshPlayers()
+        {
+            if (EffectiveSharingLevel() < 3)
+            {
+                _playersJson = null;
+                _playersSentJson = null;
+                _playersState = "not sent: the player data level is below identified";
+                return;
+            }
+
+            var list = new JArray();
+            foreach (var player in players.Connected.Where(p => p != null).OrderBy(p => p.Id, StringComparer.Ordinal))
+                list.Add(new JObject { ["steam_id"] = player.Id, ["name"] = MaskSourceGates(player.Name ?? "") });
+            _playersJson = list.ToString(Formatting.None);
+        }
+
+        private void SendPlayers()
+        {
+            var json = _playersJson;
+            var list = JArray.Parse(json);
+            // When each connected, worked out as it is sent. It is not part of what
+            // decides whether the list changed, so a clock tick never resends it.
+            foreach (JObject entry in list)
+            {
+                try
+                {
+                    var player = players.FindPlayerById((string)entry["steam_id"]);
+                    var connection = player == null ? null : (player.Object as BasePlayer)?.Connection;
+                    if (connection != null)
+                        entry["connected_at"] = DateTime.UtcNow.AddSeconds(-connection.GetSecondsConnected())
+                            .ToString("yyyy'-'MM'-'dd'T'HH':'mm':'ss'Z'", CultureInfo.InvariantCulture);
+                }
+                catch { }
+            }
+
+            // At most once a minute: a busy server's list changes far more often than
+            // anyone needs to see it change.
+            _playersSendNotBefore = DateTime.UtcNow.AddSeconds(60);
+            var payload = new JObject { ["sharing_level"] = EffectiveSharingLevel(), ["players"] = list };
+            PanelRequest("POST", PanelReportPath, PanelEnvelope("players", payload), response =>
+            {
+                _playersSentJson = json;
+                _playersState = $"{list.Count} online, sent {DateTime.Now:HH:mm:ss}";
+            }, () => { _playersSentJson = json; });
+        }
+
+        // Joins, leaves and chat, queued as they happen and sent in batches. Only
+        // gathered while the level is "identified", and let go if it drops before
+        // they are sent. Held in memory: a crash loses the unsent few seconds.
+        private const int MaxQueuedEvents = 1000;
+        private const int EventsPerReport = 200;
+        private readonly List<JObject> _events = new List<JObject>();
+        private DateTime _eventsDue = DateTime.MinValue;
+        private int _eventsSent;
+        private int _eventsDropped;
+        private string _eventsState = "nothing sent yet";
+
+        private void OnPlayerConnected(BasePlayer player)
+        {
+            if (player == null) return;
+            QueueEvent(_config.Panel.SendPlayers, "join", player.UserIDString, new JObject { ["name"] = MaskSourceGates(player.displayName ?? "") });
+            _playersCheckDue = DateTime.MinValue;
+        }
+
+        private void OnPlayerDisconnected(BasePlayer player, string reason)
+        {
+            if (player == null) return;
+            QueueEvent(_config.Panel.SendPlayers, "leave", player.UserIDString, new JObject
+            {
+                ["name"] = MaskSourceGates(player.displayName ?? ""),
+                ["reason"] = MaskSourceGates(reason ?? "")
+            });
+            _playersCheckDue = DateTime.MinValue;
+        }
+
+        // The channel is taken as an object and named by its value, so a Rust
+        // update that moves the chat types cannot stop this plugin compiling.
+        // Returns nothing, so it never changes whether a message is delivered.
+        private void OnPlayerChat(BasePlayer player, string message, object channel)
+        {
+            if (player == null || string.IsNullOrEmpty(message)) return;
+            QueueEvent(_config.Panel.SendChat, "chat", player.UserIDString, new JObject
+            {
+                ["channel"] = channel == null ? "unknown" : channel.ToString().ToLowerInvariant(),
+                ["text"] = MaskSourceGates(message)
+            });
+        }
+
+        private void QueueEvent(bool enabled, string kind, string actor, JObject data)
+        {
+            if (!enabled || _panel == null || !_config.Panel.Enabled || EffectiveSharingLevel() < 3) return;
+            if (_events.Count >= MaxQueuedEvents)
+            {
+                _events.RemoveAt(0);
+                _eventsDropped++;
+            }
+            _events.Add(new JObject
+            {
+                ["at"] = DateTime.UtcNow.ToString("yyyy'-'MM'-'dd'T'HH':'mm':'ss'Z'", CultureInfo.InvariantCulture),
+                ["kind"] = kind,
+                ["actor"] = actor,
+                ["data"] = data
+            });
+        }
+
+        private void SendEvents()
+        {
+            var interval = Math.Max(10, _config.Panel.EventSeconds);
+            if (EffectiveSharingLevel() < 3)
+            {
+                _events.Clear();
+                _eventsState = "not sent: the player data level is below identified";
+                _eventsDue = DateTime.UtcNow.AddSeconds(interval);
+                return;
+            }
+
+            var batch = _events.Take(EventsPerReport).ToList();
+            var payload = new JObject { ["events"] = new JArray(batch) };
+            PanelRequest("POST", PanelReportPath, PanelEnvelope("events", payload), response =>
+            {
+                _events.RemoveAll(e => batch.Contains(e));
+                _eventsSent += batch.Count;
+                _eventsState = $"{_eventsSent} sent since load, last at {DateTime.Now:HH:mm:ss}" +
+                               (_eventsDropped > 0 ? $"; {_eventsDropped} dropped while the queue was full" : "");
+                _eventsDue = _events.Count > 0 ? DateTime.UtcNow : DateTime.UtcNow.AddSeconds(interval);
+            }, () =>
+            {
+                // Refused: the same events would be refused again, so they are let go.
+                PrintWarning($"Panel: {batch.Count} player event{(batch.Count == 1 ? " was" : "s were")} refused (HTTP {_panelLastCode}) and will not be sent again.");
+                _events.RemoveAll(e => batch.Contains(e));
+                _eventsDue = DateTime.UtcNow.AddSeconds(interval);
+            });
         }
 
         // ---------------------------------------------------------- ban list
@@ -5690,6 +5930,8 @@ namespace Oxide.Plugins
                 lines.Add($"  schedule     : {_scheduleState}");
                 lines.Add($"  player data  : {SharingDescription()}");
                 lines.Add($"  oxide log    : {LogDescription()}");
+                lines.Add($"  who's online : {_playersState}");
+                lines.Add($"  joins & chat : {_eventsState}");
                 lines.Add($"  session      : {_sessionState}");
             }
 

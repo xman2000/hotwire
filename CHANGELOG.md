@@ -25,6 +25,19 @@ sit above a launcher `1.1.7`. Read the label, not the number.
 at the top of the file — it is a comment, not something it echoes, so read it
 rather than watch for it.
 
+## 1.1.13 — plugin — 2026-09-16
+
+**Performance figures, who is online, player joins and leaves, and chat, for a connected server.**
+
+- **The heartbeat carries performance figures:** the game process's share of the machine's CPU, and entities, memory,
+  network and the join queue as Rust's own `serverinfo` reports them. They are read from the game by name while it runs,
+  so a Rust update that moves them drops these figures with a warning, never the rest of the plugin.
+- **Who is online, when players join and leave, and chat** are sent only while the panel's player data level is
+  "identified". Below it, only the player count leaves the machine, and anything gathered is let go when the level drops.
+  Names, disconnect reasons and chat have card numbers and SSNs masked first. Chat commands are never sent as chat.
+- **New config switches** under `Panel`: `Send who is online, and player joins and leaves`, `Send chat`, and how often
+  joins, leaves and chat are sent. `hotwire check` shows what each has sent.
+
 ## 1.1.12 — plugin — 2026-09-13
 
 **Unload a plugin from the panel, and the plugin list names each file.**
