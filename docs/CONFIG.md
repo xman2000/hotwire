@@ -300,6 +300,7 @@ replaced by the `Status bar` section below.
   "Send map markers at most every this many seconds": 60,
   "Send the map image": true,
   "Render the map image if Rust+ has not": true,
+  "Send the map layout": true,
   "Report the schedule": true,
   "Accept schedule changes from the panel": true
 }
@@ -352,6 +353,14 @@ this section says.
   (`app.port -1`) the game draws no picture, so the plugin asks the game to draw
   the same one, once per map, after the server has been up for two minutes. It
   takes the game a few seconds.
+- **Send the map layout** — sends how the world is laid out, for the panel's
+  map layers: the landmarks the game shows on the map, the roads, rails, rivers
+  and power lines, the train tunnel grid and its entrances, and the underwater
+  labs' rooms. It is what the world generator made, never players, bases or
+  anything that moves. Sent once per map (about 100-200 KB); what was sent is
+  recorded in `oxide/data/Hotwire/map_layout_sent.json`, so a restart sends
+  nothing, and it is sent again after a week. A part the game no longer has is
+  left out with a console warning, and everything else carries on.
 
 - **Report the schedule** — sends every restart and update entry as it stands,
   with a plain description, when it next fires, anything wrong with it, the

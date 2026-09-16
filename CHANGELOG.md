@@ -25,6 +25,15 @@ sit above a launcher `1.1.7`. Read the label, not the number.
 at the top of the file — it is a comment, not something it echoes, so read it
 rather than watch for it.
 
+## 1.1.16 — plugin — 2026-09-16
+
+**The map's layout, for a connected server's map layers.**
+
+- **The map layout** is sent once per map: the landmarks the game shows on its map, the roads, rails, rivers and power lines,
+  the train tunnel grid and its entrances, and the underwater labs' rooms. It is what the world generator made, never
+  players, bases or anything that moves. A restart sends nothing; it is sent again after a week.
+- **A new config switch** under `Panel`: `Send the map layout`. `hotwire check` shows the last send under "map layout".
+
 ## 1.1.15 — plugin — 2026-09-16
 
 **Far less memory: a plugin file's text is read only when the file changes.**

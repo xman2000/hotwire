@@ -17,7 +17,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Hotwire", "xman2000", "1.1.15")]
+    [Info("Hotwire", "xman2000", "1.1.16")]
     [Description("Scheduled restarts and updates. Announces, counts down, writes a flag, quits.")]
     internal class Hotwire : CovalencePlugin
     {
@@ -160,6 +160,14 @@ namespace Oxide.Plugins
             // up for two minutes.
             [JsonProperty("Render the map image if Rust+ has not")]
             public bool RenderMapImage = true;
+
+            // How the world is laid out, for the panel's map layers: landmarks,
+            // roads, rails, rivers, power lines, the train tunnels and the
+            // underwater labs. Read from the world the game generated, never
+            // players or anything that moves. Sent once per map, again after a
+            // week.
+            [JsonProperty("Send the map layout")]
+            public bool SendMapLayout = true;
 
             // The restart and update schedule, as it stands, with when each
             // entry next fires. Sent when it changes.
@@ -2117,6 +2125,11 @@ namespace Oxide.Plugins
                 if (now >= _mapCheckDue) { _mapCheckDue = now.AddSeconds(30); RefreshMap(); }
                 if (_worldJson != null && _worldJson != _worldSentJson) { SendWorld(); return; }
                 if (_markersJson != null && _markersJson != _markersSentJson && now >= _markersDue) { SendMarkers(); return; }
+                if (_config.Panel.SendMapLayout && _worldSentJson != null && _worldSentJson == _worldJson && now >= _layoutDue && MapKey() != null && MapKey() != _layoutDoneKey)
+                {
+                    CheckMapLayout();
+                    return;
+                }
                 if (_config.Panel.SendMapImage && _worldSentJson != null && _worldSentJson == _worldJson && now >= _imageDue && MapKey() != _imageDoneKey)
                 {
                     CheckMapImage();
@@ -2173,6 +2186,8 @@ namespace Oxide.Plugins
             _markersSentJson = null;
             _imageDoneKey = null;
             _imageDue = DateTime.MinValue;
+            _layoutDoneKey = null;
+            _layoutDue = DateTime.MinValue;
             _scheduleSentJson = null;
             _sharingDue = DateTime.MinValue;
             _logPending = null;
@@ -3038,6 +3053,281 @@ namespace Oxide.Plugins
                 _markersSentJson = json;
                 _mapState = $"map sent; {count} marker(s), last sent {DateTime.Now:HH:mm:ss}";
             }, () => { _markersSentJson = json; });
+        }
+
+        // ---------------------------------------------------------- map layout
+
+        // How the generator laid the world out: landmarks, roads, rails, rivers,
+        // power lines, the train tunnel grid and the underwater labs. Fixed for
+        // the life of a world, so it is sent once per map. What was sent is kept
+        // in oxide/data so a restart sends nothing, and it is sent again after a
+        // week in case the panel lost it. Looked up by name like the rest of the
+        // map; non-public members too, because vanilla Rust marks these lists
+        // internal and Oxide's build makes them public.
+
+        private const string LayoutSentFile = "Hotwire/map_layout_sent";
+        private const BindingFlags AnyInstance = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
+
+        private sealed class LayoutSent
+        {
+            public string KeyId;
+            public string Map;
+            public string Hash;
+            public DateTime SentUtc;
+        }
+
+        private DateTime _layoutDue = DateTime.MinValue;
+        private string _layoutDoneKey;
+        private string _layoutState = "not sent yet";
+
+        private void CheckMapLayout()
+        {
+            var key = MapKey();
+            _layoutDue = DateTime.UtcNow.AddMinutes(10);
+
+            JObject layout;
+            try
+            {
+                layout = ReadLayout();
+            }
+            catch (Exception ex)
+            {
+                var why = ex is TargetInvocationException && ex.InnerException != null ? ex.InnerException.Message : ex.Message;
+                _layoutDoneKey = key;   // not again until the map changes or the plugin reloads
+                _layoutState = "OFF for this map -- " + why;
+                PrintWarning($"The map layout could not be read: {why}. A Rust update may have moved something it reads. Everything else carries on.");
+                return;
+            }
+
+            var parts = key.Split('/');
+            layout["seed"] = long.Parse(parts[0], CultureInfo.InvariantCulture);
+            layout["size"] = long.Parse(parts[1], CultureInfo.InvariantCulture);
+            var json = JsonConvert.SerializeObject(layout, Formatting.None);
+
+            string hash;
+            using (var sha = SHA256.Create()) hash = "sha256:" + Hex(sha.ComputeHash(Encoding.UTF8.GetBytes(json)));
+
+            var sent = ReadData<LayoutSent>(LayoutSentFile);
+            if (sent != null && sent.KeyId == _panel.KeyId && sent.Map == key && sent.Hash == hash && DateTime.UtcNow - sent.SentUtc < TimeSpan.FromDays(7))
+            {
+                _layoutDoneKey = key;
+                _layoutState = $"already sent {sent.SentUtc.ToLocalTime():yyyy-MM-dd HH:mm}";
+                return;
+            }
+
+            var kilobytes = json.Length / 1024;
+            _layoutState = $"sending the map layout ({kilobytes} KB)";
+            PanelRequest("POST", PanelReportPath, PanelEnvelope("map_layout", layout), response =>
+            {
+                _layoutDoneKey = key;
+                _layoutState = $"sent {DateTime.Now:HH:mm:ss} ({kilobytes} KB)";
+                WriteData(LayoutSentFile, new LayoutSent { KeyId = _panel?.KeyId, Map = key, Hash = hash, SentUtc = DateTime.UtcNow });
+                Puts($"Sent the map layout to the panel ({kilobytes} KB).");
+            }, () =>
+            {
+                _layoutState = "the panel refused the map layout -- see the console; tried again in an hour";
+                _layoutDue = DateTime.UtcNow.AddHours(1);
+            }, 60f);
+        }
+
+        // Each part is read on its own: one the game no longer has is left out
+        // of the report, which the panel reads as unknown, not as none.
+        private JObject ReadLayout()
+        {
+            var game = AppDomain.CurrentDomain.GetAssemblies().FirstOrDefault(a => a.GetName().Name == "Assembly-CSharp");
+            if (game == null) throw new InvalidOperationException("the game assembly is not loaded");
+
+            var terrainMeta = GameType(game, "TerrainMeta");
+            var path = Member(terrainMeta.GetProperty("Path", BindingFlags.Public | BindingFlags.Static), "TerrainMeta.Path").GetValue(null, null);
+            if (path == null) throw new InvalidOperationException("the world has no TerrainMeta.Path yet");
+
+            var layout = new JObject();
+            var problems = new List<string>();
+            Action<string, Func<JToken>> part = (name, read) =>
+            {
+                try { layout[name] = read(); }
+                catch (Exception ex) { problems.Add(name + ": " + (ex is TargetInvocationException && ex.InnerException != null ? ex.InnerException.Message : ex.Message)); }
+            };
+
+            part("landmarks", () => ReadLandmarks(game, path));
+            part("paths", () => ReadPaths(path));
+            part("tunnels", () => ReadTunnels(path));
+            part("labs", () => ReadLabs(path));
+
+            if (problems.Count > 0)
+                PrintWarning("Part of the map layout could not be read and is left out: " + string.Join("; ", problems.ToArray()));
+            if (layout.Count == 0) throw new InvalidOperationException("no part of it could be read");
+            return layout;
+        }
+
+        private static System.Collections.IEnumerable LayoutList(object path, string name)
+        {
+            var field = Member(path.GetType().GetField(name, AnyInstance), "TerrainPath." + name);
+            var list = field.GetValue(path) as System.Collections.IEnumerable;
+            if (list == null) throw new InvalidOperationException($"TerrainPath.{name} is empty");
+            return list;
+        }
+
+        private static object FieldOf(object target, string name)
+        {
+            var field = Member(target.GetType().GetField(name, AnyInstance), target.GetType().Name + "." + name);
+            return field.GetValue(target);
+        }
+
+        private static JToken ReadLandmarks(Assembly game, object path)
+        {
+            var monument = GameType(game, "MonumentInfo");
+            var result = new JArray();
+            foreach (var entry in LayoutList(path, "Landmarks"))
+            {
+                var component = entry as Component;
+                if (component == null || component.transform == null) continue;
+                var position = component.transform.position;
+
+                var o = new JObject
+                {
+                    ["x"] = Math.Round(position.x, 1),
+                    ["z"] = Math.Round(position.z, 1),
+                    ["on_map"] = (bool)FieldOf(entry, "shouldDisplayOnMap")
+                };
+
+                var phrase = FieldOf(entry, "displayPhrase");
+                var english = PhraseText(phrase, "english");
+                var token = PhraseText(phrase, "token");
+                if (english != null) o["name"] = english;
+                if (token != null) o["token"] = token;
+                var root = component.transform.root;
+                if (root != null && !string.IsNullOrEmpty(root.name)) o["prefab"] = root.name;
+
+                var layer = entry.GetType().GetProperty("MapLayer", BindingFlags.Public | BindingFlags.Instance);
+                if (layer != null) o["layer"] = layer.GetValue(entry, null)?.ToString();
+
+                if (monument.IsInstanceOfType(entry))
+                {
+                    o["monument_type"] = FieldOf(entry, "Type")?.ToString();
+                    o["safe_zone"] = (bool)FieldOf(entry, "IsSafeZone");
+                    o["tunnel_link"] = (bool)FieldOf(entry, "HasDungeonLink");
+                }
+                result.Add(o);
+            }
+            return result;
+        }
+
+        private static string PhraseText(object phrase, string name)
+        {
+            if (phrase == null) return null;
+            var field = phrase.GetType().GetField(name, AnyInstance);
+            var value = field != null ? field.GetValue(phrase) as string : phrase.GetType().GetProperty(name, AnyInstance)?.GetValue(phrase, null) as string;
+            return string.IsNullOrWhiteSpace(value) ? null : value;
+        }
+
+        private static JToken ReadPaths(object path)
+        {
+            var main = new HashSet<object>(LayoutList(path, "MainRoads").Cast<object>());
+            var side = new HashSet<object>(LayoutList(path, "SideRoads").Cast<object>());
+            var trail = new HashSet<object>(LayoutList(path, "TrailRoads").Cast<object>());
+
+            var result = new JArray();
+            foreach (var list in new[] { new[] { "Roads", "road" }, new[] { "Rails", "rail" }, new[] { "Rivers", "river" }, new[] { "Powerlines", "powerline" } })
+            {
+                foreach (var entry in LayoutList(path, list[0]))
+                {
+                    if (entry == null) continue;
+                    var interpolator = FieldOf(entry, "Path");
+                    var points = interpolator == null ? null : FieldOf(interpolator, "Points") as Vector3[];
+                    if (points == null || points.Length < 2) continue;
+
+                    var line = new JArray();
+                    foreach (var point in points)
+                        line.Add(new JArray((long)Math.Round(point.x), (long)Math.Round(point.z)));
+
+                    var o = new JObject { ["type"] = list[1] };
+                    var name = FieldOf(entry, "Name") as string;
+                    if (!string.IsNullOrEmpty(name)) o["name"] = name;
+                    o["width"] = Math.Round((float)FieldOf(entry, "Width"), 1);
+                    if (list[1] == "road")
+                    {
+                        if (main.Contains(entry)) o["road_class"] = "main";
+                        else if (side.Contains(entry)) o["road_class"] = "side";
+                        else if (trail.Contains(entry)) o["road_class"] = "trail";
+                    }
+                    o["points"] = line;
+                    result.Add(o);
+                }
+            }
+            return result;
+        }
+
+        private static JToken ReadTunnels(object path)
+        {
+            var cells = new JArray();
+            foreach (var entry in LayoutList(path, "DungeonGridCells"))
+            {
+                var component = entry as Component;
+                if (component == null || component.transform == null) continue;
+                var position = component.transform.position;
+                cells.Add(new JObject
+                {
+                    ["x"] = Math.Round(position.x, 1),
+                    ["z"] = Math.Round(position.z, 1),
+                    ["north"] = Connected(FieldOf(entry, "North")),
+                    ["south"] = Connected(FieldOf(entry, "South")),
+                    ["west"] = Connected(FieldOf(entry, "West")),
+                    ["east"] = Connected(FieldOf(entry, "East"))
+                });
+            }
+
+            var entrances = new JArray();
+            object cellSize = null;
+            foreach (var entry in LayoutList(path, "DungeonGridEntrances"))
+            {
+                var component = entry as Component;
+                if (component == null || component.transform == null) continue;
+                var position = component.transform.position;
+                entrances.Add(new JObject { ["x"] = Math.Round(position.x, 1), ["z"] = Math.Round(position.z, 1) });
+                if (cellSize == null) cellSize = FieldOf(entry, "CellSize");
+            }
+
+            var tunnels = new JObject { ["cells"] = cells, ["entrances"] = entrances };
+            // The cell size lives on an entrance; a world with none leaves it out rather than guessing it.
+            if (cellSize != null) tunnels["cell_size"] = Convert.ToDouble(cellSize, CultureInfo.InvariantCulture);
+            return tunnels;
+        }
+
+        // DungeonGridConnectionType: None or TrainTunnel.
+        private static bool Connected(object connection) => connection != null && connection.ToString() != "None";
+
+        private static JToken ReadLabs(object path)
+        {
+            var labs = new JArray();
+            foreach (var entry in LayoutList(path, "DungeonBaseEntrances"))
+            {
+                var component = entry as Component;
+                if (component == null || component.transform == null) continue;
+                var position = component.transform.position;
+
+                var floors = new JArray();
+                foreach (var floor in (FieldOf(entry, "Floors") as System.Collections.IEnumerable) ?? new object[0])
+                {
+                    var pieces = new JArray();
+                    foreach (var link in (FieldOf(floor, "Links") as System.Collections.IEnumerable) ?? new object[0])
+                    {
+                        var piece = link as Component;
+                        if (piece == null || piece.transform == null) continue;
+                        var at = piece.transform.position;
+                        pieces.Add(new JObject
+                        {
+                            ["x"] = Math.Round(at.x, 1),
+                            ["z"] = Math.Round(at.z, 1),
+                            ["type"] = FieldOf(link, "Type")?.ToString()
+                        });
+                    }
+                    floors.Add(pieces);
+                }
+
+                labs.Add(new JObject { ["x"] = Math.Round(position.x, 1), ["z"] = Math.Round(position.z, 1), ["floors"] = floors });
+            }
+            return labs;
         }
 
         // ---------------------------------------------------------- map image
@@ -6019,6 +6309,7 @@ namespace Oxide.Plugins
                 lines.Add($"  commands     : {_commandsState}");
                 lines.Add($"  ban list     : {_bansState}");
                 lines.Add($"  map          : {_mapState}");
+                lines.Add($"  map layout   : {_layoutState}");
                 lines.Add($"  map image    : {_imageState}");
                 lines.Add($"  schedule     : {_scheduleState}");
                 lines.Add($"  player data  : {SharingDescription()}");
