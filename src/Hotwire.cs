@@ -199,6 +199,16 @@ namespace Oxide.Plugins
 
             [JsonProperty("Send player joins, leaves and chat every this many seconds")]
             public int EventSeconds = 30;
+
+            // How much of the server's time each plugin used since the last
+            // report, and the memory allocated while it ran: the totals Oxide
+            // keeps for "oxide.plugins", sent as the change. Plugin names and
+            // numbers only; nothing about players.
+            [JsonProperty("Report each plugin's server time")]
+            public bool ReportPluginTime = true;
+
+            [JsonProperty("Send plugin server time every this many seconds")]
+            public int PluginTimeSeconds = 60;
         }
 
         // Recurrence is stored as explicit fields rather than as a cron
@@ -2119,6 +2129,7 @@ namespace Oxide.Plugins
             if (_config.Panel.SendPlayers && now >= _playersCheckDue) { _playersCheckDue = now.AddSeconds(30); RefreshPlayers(); }
             if (_playersJson != null && _playersJson != _playersSentJson && now >= _playersSendNotBefore) { SendPlayers(); return; }
             if (_events.Count > 0 && now >= _eventsDue) { SendEvents(); return; }
+            if (_config.Panel.ReportPluginTime && now >= _pluginTimeDue && SendPluginTime()) return;
             if (_config.Panel.SendLog && now >= _logDue) { SendLog(); return; }
             if (_config.Panel.EnforceBans && now >= _bansDue) { PollBans(); }
         }
@@ -2166,6 +2177,8 @@ namespace Oxide.Plugins
             _playersCheckDue = DateTime.MinValue;
             _playersSendNotBefore = DateTime.MinValue;
             _events.Clear();
+            _pluginTotals.Clear();
+            _pluginTimeDue = DateTime.MinValue;
 
             JObject file;
             try
@@ -3903,6 +3916,76 @@ namespace Oxide.Plugins
                 _events.RemoveAll(e => batch.Contains(e));
                 _eventsDue = DateTime.UtcNow.AddSeconds(interval);
             });
+        }
+
+        // ---------------------------------------------------------- plugin time
+
+        // Oxide keeps, for every plugin that is not part of Oxide itself, the
+        // seconds its hooks, timers, commands and web request callbacks have run
+        // on the main thread, and the memory allocated while they did. Sent as
+        // the change since the last report, so the panel can say which plugin is
+        // costing the server its time. Work Oxide does not track -- a plugin's own
+        // Unity components, coroutines, threads or Harmony patches -- is not here.
+        private sealed class PluginTotals
+        {
+            public double Seconds;
+            public long Bytes;
+        }
+
+        private Dictionary<Plugin, PluginTotals> _pluginTotals = new Dictionary<Plugin, PluginTotals>();
+        private DateTime _pluginTotalsAt = DateTime.MinValue;
+        private DateTime _pluginTimeDue = DateTime.MinValue;
+        private string _pluginTimeState = "nothing sent yet";
+
+        // Reads every plugin's totals and sends the change. The first read after
+        // a load, and a plugin's first read after it loads, only sets the starting
+        // point: there is no interval to measure yet. Returns whether a request went.
+        private bool SendPluginTime()
+        {
+            var now = DateTime.UtcNow;
+            _pluginTimeDue = now.AddSeconds(Math.Max(30, _config.Panel.PluginTimeSeconds));
+
+            var current = new Dictionary<Plugin, PluginTotals>();
+            var list = new JArray();
+            foreach (var plugin in plugins.GetAll())
+            {
+                if (plugin == null || plugin.IsCorePlugin) continue;
+                var totals = new PluginTotals { Seconds = plugin.TotalHookTime, Bytes = plugin.TotalHookMemory };
+                current[plugin] = totals;
+
+                PluginTotals before;
+                if (!_pluginTotals.TryGetValue(plugin, out before)) continue;
+
+                var milliseconds = (long)Math.Round(Math.Max(0.0, totals.Seconds - before.Seconds) * 1000.0);
+                var kilobytes = Math.Max(0L, totals.Bytes - before.Bytes) / 1024;
+                if (milliseconds <= 0 && kilobytes <= 0) continue;
+
+                list.Add(new JObject
+                {
+                    ["file"] = string.IsNullOrEmpty(plugin.Filename) ? plugin.Name : Path.GetFileNameWithoutExtension(plugin.Filename),
+                    ["name"] = plugin.Title ?? plugin.Name,
+                    ["ms"] = milliseconds,
+                    ["alloc_kb"] = kilobytes
+                });
+            }
+
+            var hadBaseline = _pluginTotalsAt != DateTime.MinValue;
+            var windowSeconds = hadBaseline ? (int)Math.Round((now - _pluginTotalsAt).TotalSeconds) : 0;
+            _pluginTotals = current;
+            _pluginTotalsAt = now;
+
+            if (!hadBaseline || windowSeconds <= 0)
+            {
+                _pluginTimeState = "measuring: the first report goes after one interval";
+                return false;
+            }
+
+            var payload = new JObject { ["window_seconds"] = windowSeconds, ["plugins"] = list };
+            PanelRequest("POST", PanelReportPath, PanelEnvelope("plugin_time", payload), response =>
+            {
+                _pluginTimeState = $"{list.Count} plugin{(list.Count == 1 ? "" : "s")} over {windowSeconds}s, sent {DateTime.Now:HH:mm:ss}";
+            });
+            return true;
         }
 
         // ---------------------------------------------------------- ban list
@@ -5932,6 +6015,7 @@ namespace Oxide.Plugins
                 lines.Add($"  oxide log    : {LogDescription()}");
                 lines.Add($"  who's online : {_playersState}");
                 lines.Add($"  joins & chat : {_eventsState}");
+                lines.Add($"  plugin time  : {_pluginTimeState}");
                 lines.Add($"  session      : {_sessionState}");
             }
 
