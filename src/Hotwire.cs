@@ -17,7 +17,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Hotwire", "xman2000", "1.1.14")]
+    [Info("Hotwire", "xman2000", "1.1.15")]
     [Description("Scheduled restarts and updates. Announces, counts down, writes a flag, quits.")]
     internal class Hotwire : CovalencePlugin
     {
@@ -1976,11 +1976,16 @@ namespace Oxide.Plugins
             public string Error;
         }
 
+        // A plugin file's hash and its [Info] line, read together once and kept
+        // until the file's time or size changes. Reading every plugin's text on
+        // every check allocated the whole plugins folder, megabytes, once a minute.
         private sealed class HashedFile
         {
             public DateTime Stamp;
             public long Size;
             public string Sha256Hex;
+            public bool HasInfo;
+            public string Title, Author, Version;
         }
 
         private PanelLink _panel;
@@ -2733,6 +2738,7 @@ namespace Oxide.Plugins
                     catch { continue; }   // being written right now; the next check has it
                     using (var sha = SHA256.Create())
                         hashed = new HashedFile { Stamp = info.LastWriteTimeUtc, Size = bytes.LongLength, Sha256Hex = Hex(sha.ComputeHash(bytes)) };
+                    hashed.HasInfo = ReadInfoAttribute(bytes, out hashed.Title, out hashed.Author, out hashed.Version);
                     _fileHashes[path] = hashed;
                 }
 
@@ -2744,10 +2750,9 @@ namespace Oxide.Plugins
                 Plugin plugin;
                 item.Loaded = loaded.TryGetValue(NormalizeFolder(path), out plugin) && plugin.IsLoaded;
 
-                string title, author, version;
-                if (ReadInfoAttribute(path, out title, out author, out version))
+                if (hashed.HasInfo)
                 {
-                    item.Name = title; item.Author = author; item.Version = version;
+                    item.Name = hashed.Title; item.Author = hashed.Author; item.Version = hashed.Version;
                 }
                 else if (plugin != null)
                 {
@@ -2783,12 +2788,17 @@ namespace Oxide.Plugins
             "\\[\\s*Info\\s*\\(\\s*\"((?:[^\"\\\\]|\\\\.)*)\"\\s*,\\s*\"((?:[^\"\\\\]|\\\\.)*)\"\\s*,\\s*\"?([0-9][0-9A-Za-z.\\-+]*)\"?",
             RegexOptions.Compiled);
 
-        private static bool ReadInfoAttribute(string path, out string title, out string author, out string version)
+        // The bytes already read for the hash, decoded as File.ReadAllText decodes a
+        // file: UTF-8 unless a byte order mark says otherwise.
+        private static bool ReadInfoAttribute(byte[] bytes, out string title, out string author, out string version)
         {
             title = author = version = null;
             try
             {
-                var match = InfoAttribute.Match(File.ReadAllText(path));
+                string text;
+                using (var reader = new StreamReader(new MemoryStream(bytes), Encoding.UTF8, true))
+                    text = reader.ReadToEnd();
+                var match = InfoAttribute.Match(text);
                 if (!match.Success) return false;
                 title = Regex.Unescape(match.Groups[1].Value);
                 author = Regex.Unescape(match.Groups[2].Value);

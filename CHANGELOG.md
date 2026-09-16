@@ -25,6 +25,14 @@ sit above a launcher `1.1.7`. Read the label, not the number.
 at the top of the file — it is a comment, not something it echoes, so read it
 rather than watch for it.
 
+## 1.1.15 — plugin — 2026-09-16
+
+**Far less memory: a plugin file's text is read only when the file changes.**
+
+- The plugin list check ran every minute and read the full text of every plugin in the plugins folder to find its `[Info]`
+  line. On a server with 10 MB of plugins that allocated tens of megabytes a minute. The `[Info]` line is now read once with
+  the file's hash, and again only when the file changes. The plugin list it sends is the same.
+
 ## 1.1.14 — plugin — 2026-09-16
 
 **Each plugin's server time, for a connected server.**
