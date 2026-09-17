@@ -17,7 +17,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Hotwire", "xman2000", "1.1.18")]
+    [Info("Hotwire", "xman2000", "1.1.19")]
     [Description("Scheduled restarts and updates. Announces, counts down, writes a flag, quits.")]
     internal class Hotwire : CovalencePlugin
     {
@@ -3067,44 +3067,61 @@ namespace Oxide.Plugins
 
         // ------------------------------------------------------ raidable bases
 
-        // A raid's position rounds to a key so the Ended/Despawned hook removes exactly what Started added. The hook payload is
-        // Raidable Bases' documented object[] (Location, Options.Level, ..., BaseName, ..., ProtectionRadius, ...): read by
-        // index with guards, so a different Raidable Bases shape gives fewer fields rather than throwing.
-        private static string RaidKey(object[] h)
-        {
-            return h != null && h.Length >= 1 && h[0] is Vector3 loc
-                ? loc.x.ToString("0.0", CultureInfo.InvariantCulture) + "," + loc.z.ToString("0.0", CultureInfo.InvariantCulture)
-                : null;
-        }
-
-        private static JObject RaidZone(object[] h)
-        {
-            if (h == null || h.Length < 1 || !(h[0] is Vector3 loc)) return null;
-            var zone = new JObject { ["x"] = Math.Round(loc.x, 1), ["z"] = Math.Round(loc.z, 1) };
-            if (h.Length >= 2) { try { zone["difficulty"] = Convert.ToInt32(h[1], CultureInfo.InvariantCulture); } catch { } }
-            if (h.Length >= 16) { try { zone["radius"] = Math.Round(Convert.ToSingle(h[15], CultureInfo.InvariantCulture), 1); } catch { } }
-            if (h.Length >= 13 && h[12] is string name && name.Length > 0) zone["name"] = name;
-            return zone;
-        }
-
-        private void OnRaidableBaseStarted(object[] hookObjects)
+        // Oxide's Interface.CallHook(hook, object[] args) treats that array as the ARGUMENT LIST, not as one argument:
+        // Oxide.Core's CSPlugin resizes a copy to the declared method's parameter count, drops the extra arguments, and
+        // then type-checks. So a method declaring a single `object[] hookObjects` parameter is offered Raidable Bases'
+        // FIRST argument (a Vector3) and never matches -- 1.1.17 and 1.1.18 subscribed to these hooks and were never
+        // called once. The parameters below are that array positionally instead, which is how every other plugin reads
+        // this hook.
+        //
+        // They are `object` rather than the real types for two reasons. Raidable Bases also fires a second, ONE-argument
+        // OnRaidableBaseStarted(rb) with the base itself, which lands here too and would throw against a typed first
+        // parameter; and a future Raidable Bases that reorders its array gives us a wrongly-typed value we ignore rather
+        // than a hook that silently stops matching -- the failure this comment exists because of. Oxide accepts an
+        // `object` parameter explicitly (HookMethod.HasMatchingSignature: `parameterType.FullName == "System.Object"`)
+        // and invokes a non-exact match.
+        //
+        // The order is RaidableBases 3.1.8's `hookObjects` property, verified against warren's copy: Location,
+        // Options.Level, AllowPVP, ID, 0f, 0f, loadTime, ownerId, GetOwner(), GetRaiders(), GetIntruders(), Entities,
+        // BaseName, spawnDateTime, despawnDateTime, ProtectionRadius, GetLootAmountCounted(). We read four of them, and
+        // must declare up to the last one we read.
+        private void OnRaidableBaseStarted(object location, object level, object allowPvp, object id,
+            object unused4, object unused5, object loadTime, object ownerId, object owner, object raiders,
+            object intruders, object entities, object baseName, object spawnedAt, object despawnAt,
+            object protectionRadius)
         {
             if (!_config.Panel.ReportMap) return;
-            var key = RaidKey(hookObjects);
-            var zone = RaidZone(hookObjects);
-            if (key == null || zone == null) return;
-            _raids[key] = zone;
+            if (!(location is Vector3 loc)) return;   // the one-argument OnRaidableBaseStarted(rb) call arrives here too
+
+            _raids[RaidKey(loc)] = RaidZone(loc, level, baseName, protectionRadius);
             RebuildRaidZones();
         }
 
-        private void OnRaidableBaseEnded(object[] hookObjects) => RemoveRaid(hookObjects);
+        private void OnRaidableBaseEnded(object location) => RemoveRaid(location);
 
-        private void OnRaidableBaseDespawned(object[] hookObjects) => RemoveRaid(hookObjects);
+        private void OnRaidableBaseDespawned(object location) => RemoveRaid(location);
 
-        private void RemoveRaid(object[] hookObjects)
+        // A raid's position rounds to a key so the Ended/Despawned hook removes exactly the one Started added.
+        private void RemoveRaid(object location)
         {
-            var key = RaidKey(hookObjects);
-            if (key != null && _raids.Remove(key)) RebuildRaidZones();
+            if (location is Vector3 loc && _raids.Remove(RaidKey(loc))) RebuildRaidZones();
+        }
+
+        private static string RaidKey(Vector3 loc)
+        {
+            return loc.x.ToString("0.0", CultureInfo.InvariantCulture) + "," + loc.z.ToString("0.0", CultureInfo.InvariantCulture);
+        }
+
+        // Each field is read with a guard, so a Raidable Bases that changes one of them gives a zone with fewer fields
+        // rather than throwing inside a hook.
+        private static JObject RaidZone(Vector3 loc, object level, object baseName, object protectionRadius)
+        {
+            var zone = new JObject { ["x"] = Math.Round(loc.x, 1), ["z"] = Math.Round(loc.z, 1) };
+            if (level != null) { try { zone["difficulty"] = Convert.ToInt32(level, CultureInfo.InvariantCulture); } catch { } }
+            if (protectionRadius != null) { try { zone["radius"] = Math.Round(Convert.ToSingle(protectionRadius, CultureInfo.InvariantCulture), 1); } catch { } }
+            var name = baseName as string;
+            if (!string.IsNullOrEmpty(name)) zone["name"] = name;
+            return zone;
         }
 
         private void RebuildRaidZones()

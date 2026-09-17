@@ -25,6 +25,17 @@ sit above a launcher `1.1.7`. Read the label, not the number.
 at the top of the file — it is a comment, not something it echoes, so read it
 rather than watch for it.
 
+## 1.1.19 — plugin — 2026-09-17
+
+**Raidable Bases zones are actually reported now: 1.1.17's hooks were never called.**
+
+- The `OnRaidableBaseStarted`, `OnRaidableBaseEnded` and `OnRaidableBaseDespawned` hooks took a single `object[]`
+  parameter. Oxide passes a hook's `object[]` as the **argument list**, not as one argument, so the plugin's method was
+  offered the first element — a `Vector3` — never matched, and was never invoked: no error, no log line, and no raid ever
+  reported. They now declare the arguments positionally, as every other plugin that reads these hooks does.
+- No configuration changes, and nothing else behaves differently. If you run Raidable Bases and a panel, raids will start
+  appearing on its map as they spawn; a base that spawned before this update appears when it ends and respawns.
+
 ## 1.1.18 — plugin — 2026-09-17
 
 **The sharper render replaces an older, blurrier one.**
