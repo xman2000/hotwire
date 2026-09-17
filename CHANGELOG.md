@@ -25,6 +25,18 @@ sit above a launcher `1.1.7`. Read the label, not the number.
 at the top of the file — it is a comment, not something it echoes, so read it
 rather than watch for it.
 
+## 1.1.17 — plugin — 2026-09-17
+
+**A sharper map, and Raidable Bases zones named on it.**
+
+- **The map image is rendered sharper.** The plugin renders it to about 4096 px on a side instead of the game's own 0.5
+  scale, so the panel's map holds up when you zoom in. It is preferred over the Rust+ cached image when rendering is on
+  (the `Panel` config's map-image switch); Rust+'s image is the fallback. Off any path a server waits on, once per map.
+- **Raidable Bases zones are reported and named.** The plugin latches onto Raidable Bases' own `OnRaidableBaseStarted` and
+  `OnRaidableBaseEnded` hooks and sends each active raid's position, difficulty, radius and name (`kind: raid_zones`). The
+  panel labels Raidable Bases' own coloured dot with it — "Raidable Base — Hard" — instead of leaving it unnamed. Sent when
+  the set changes, at most once a minute, and gated by the same `Report the map` config as the markers.
+
 ## 1.1.16 — plugin — 2026-09-16
 
 **The map's layout, for a connected server's map layers.**

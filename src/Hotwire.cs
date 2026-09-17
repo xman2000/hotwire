@@ -17,7 +17,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Hotwire", "xman2000", "1.1.16")]
+    [Info("Hotwire", "xman2000", "1.1.17")]
     [Description("Scheduled restarts and updates. Announces, counts down, writes a flag, quits.")]
     internal class Hotwire : CovalencePlugin
     {
@@ -2137,6 +2137,9 @@ namespace Oxide.Plugins
                 }
             }
 
+            // Raidable Bases zones come from its hooks, not the game map read, so they are not gated on _mapOff.
+            if (_config.Panel.ReportMap && _raidZonesJson != null && _raidZonesJson != _raidZonesSentJson && now >= _raidZonesDue) { SendRaidZones(); return; }
+
             if (_config.Panel.ReportSchedule)
             {
                 if (now >= _scheduleCheckDue) { _scheduleCheckDue = now.AddSeconds(30); RefreshSchedule(); }
@@ -2885,6 +2888,13 @@ namespace Oxide.Plugins
         private string _markersJson, _markersSentJson;
         private int _markerCount;
 
+        // Raidable Bases zones, from its OnRaidableBaseStarted / OnRaidableBaseEnded hooks (ADR-0097). Keyed by rounded
+        // position, so an ended raid removes exactly the one it added. The panel labels the plugin's own unlabelled marker
+        // at that spot with these, and colours it by difficulty.
+        private readonly Dictionary<string, JObject> _raids = new Dictionary<string, JObject>();
+        private string _raidZonesJson, _raidZonesSentJson;
+        private DateTime _raidZonesDue = DateTime.MinValue;
+
         private void RefreshMap()
         {
             try
@@ -3053,6 +3063,65 @@ namespace Oxide.Plugins
                 _markersSentJson = json;
                 _mapState = $"map sent; {count} marker(s), last sent {DateTime.Now:HH:mm:ss}";
             }, () => { _markersSentJson = json; });
+        }
+
+        // ------------------------------------------------------ raidable bases
+
+        // A raid's position rounds to a key so the Ended/Despawned hook removes exactly what Started added. The hook payload is
+        // Raidable Bases' documented object[] (Location, Options.Level, ..., BaseName, ..., ProtectionRadius, ...): read by
+        // index with guards, so a different Raidable Bases shape gives fewer fields rather than throwing.
+        private static string RaidKey(object[] h)
+        {
+            return h != null && h.Length >= 1 && h[0] is Vector3 loc
+                ? loc.x.ToString("0.0", CultureInfo.InvariantCulture) + "," + loc.z.ToString("0.0", CultureInfo.InvariantCulture)
+                : null;
+        }
+
+        private static JObject RaidZone(object[] h)
+        {
+            if (h == null || h.Length < 1 || !(h[0] is Vector3 loc)) return null;
+            var zone = new JObject { ["x"] = Math.Round(loc.x, 1), ["z"] = Math.Round(loc.z, 1) };
+            if (h.Length >= 2) { try { zone["difficulty"] = Convert.ToInt32(h[1], CultureInfo.InvariantCulture); } catch { } }
+            if (h.Length >= 16) { try { zone["radius"] = Math.Round(Convert.ToSingle(h[15], CultureInfo.InvariantCulture), 1); } catch { } }
+            if (h.Length >= 13 && h[12] is string name && name.Length > 0) zone["name"] = name;
+            return zone;
+        }
+
+        private void OnRaidableBaseStarted(object[] hookObjects)
+        {
+            if (!_config.Panel.ReportMap) return;
+            var key = RaidKey(hookObjects);
+            var zone = RaidZone(hookObjects);
+            if (key == null || zone == null) return;
+            _raids[key] = zone;
+            RebuildRaidZones();
+        }
+
+        private void OnRaidableBaseEnded(object[] hookObjects) => RemoveRaid(hookObjects);
+
+        private void OnRaidableBaseDespawned(object[] hookObjects) => RemoveRaid(hookObjects);
+
+        private void RemoveRaid(object[] hookObjects)
+        {
+            var key = RaidKey(hookObjects);
+            if (key != null && _raids.Remove(key)) RebuildRaidZones();
+        }
+
+        private void RebuildRaidZones()
+        {
+            var zones = new JArray();
+            foreach (var zone in _raids.Values) zones.Add(zone);
+            _raidZonesJson = new JObject { ["zones"] = zones }.ToString(Formatting.None);
+        }
+
+        private void SendRaidZones()
+        {
+            var json = _raidZonesJson;
+            _raidZonesDue = DateTime.UtcNow.AddSeconds(60);   // at most once a minute, like the markers
+            PanelRequest("POST", PanelReportPath, PanelEnvelope("raid_zones", JObject.Parse(json)), response =>
+            {
+                _raidZonesSentJson = json;
+            }, () => { _raidZonesSentJson = json; });
         }
 
         // ---------------------------------------------------------- map layout
@@ -3375,14 +3444,21 @@ namespace Oxide.Plugins
                 }
 
                 string source;
-                var bytes = MapImageBytes(out source);
+                var bytes = MapImageBytes(size, out source);
                 if (bytes == null) return;   // said why in MapImageBytes; tried again later
 
                 SendMapImage(key, seed, size, bytes, source);
             });
         }
 
-        private byte[] MapImageBytes(out string source)
+        // The margin, in pixels of the render, the game draws around the world. MapImageRenderer keeps it fixed at any scale.
+        private const int MapOceanMarginPixels = 500;
+
+        // The panel keeps a map image at most this many pixels on a side, then downsizes; render to about this and no larger,
+        // so no detail is wasted and the upload stays small.
+        private const float MapTargetPixels = 4096f;
+
+        private byte[] MapImageBytes(long worldSize, out string source)
         {
             source = null;
             try
@@ -3390,45 +3466,51 @@ namespace Oxide.Plugins
                 var game = AppDomain.CurrentDomain.GetAssemblies().FirstOrDefault(a => a.GetName().Name == "Assembly-CSharp");
                 if (game == null) throw new InvalidOperationException("the game assembly is not loaded");
 
+                // Our own render is preferred over Rust+'s cached image: Rust+ renders at scale 0.5, and a sharper map is
+                // worth a few seconds of the server's time once per map. Rust+'s image is the fallback if rendering is off or
+                // has not settled or fails.
+                if (_config.Panel.RenderMapImage)
+                {
+                    if (Time.realtimeSinceStartup < 120f)
+                    {
+                        _imageState = "waiting for the server to settle before rendering the map image";
+                        _imageDue = DateTime.UtcNow.AddSeconds(Math.Max(10, 120 - Time.realtimeSinceStartup));
+                        return null;
+                    }
+
+                    var renderer = GameType(game, "MapImageRenderer");
+                    var render = renderer.GetMethods(BindingFlags.Public | BindingFlags.Static)
+                        .FirstOrDefault(m => m.Name == "Render" && RenderSignatureMatches(m.GetParameters()));
+                    if (render == null) throw new InvalidOperationException("the game's MapImageRenderer.Render has a different shape now");
+
+                    // Scale so the image is about MapTargetPixels on a side (world + two margins), never below the game's own
+                    // 0.5 and never absurdly large. Then: out width, out height, out background, scale, lossy, transparent,
+                    // oceanMargin -- the same call Rust+ makes, framed the same way, only sharper.
+                    var scale = worldSize > 0
+                        ? Mathf.Clamp((MapTargetPixels - 2f * MapOceanMarginPixels) / worldSize, 0.5f, 4f)
+                        : 0.5f;
+                    var args = new object[] { 0, 0, new Color(), scale, true, false, MapOceanMarginPixels };
+                    var started = DateTime.UtcNow;
+                    var rendered = render.Invoke(null, args) as byte[];
+                    if (rendered != null && rendered.Length > 0)
+                    {
+                        Puts($"Rendered the map image for the panel ({args[0]} x {args[1]} px, scale {scale:0.00}, {(DateTime.UtcNow - started).TotalSeconds:0.0}s).");
+                        source = "plugin_render";
+                        return rendered;
+                    }
+                    // The render came back empty; fall through to Rust+'s cached image if it has one.
+                }
+
                 var cache = game.GetType("CompanionServer.Handlers.Map", false);
                 var imageData = cache?.GetProperty("ImageData", BindingFlags.Public | BindingFlags.Static);
                 var cached = imageData?.GetValue(null, null) as byte[];
                 if (cached != null && cached.Length > 0) { source = "rust_plus"; return cached; }
 
-                if (!_config.Panel.RenderMapImage)
-                {
-                    _imageState = "Rust+ has no map image (is app.port -1?) and rendering it is off in the config";
-                    _imageDue = DateTime.UtcNow.AddHours(6);
-                    return null;
-                }
-
-                if (Time.realtimeSinceStartup < 120f)
-                {
-                    _imageState = "waiting for the server to settle before rendering the map image";
-                    _imageDue = DateTime.UtcNow.AddSeconds(Math.Max(10, 120 - Time.realtimeSinceStartup));
-                    return null;
-                }
-
-                var renderer = GameType(game, "MapImageRenderer");
-                var render = renderer.GetMethods(BindingFlags.Public | BindingFlags.Static)
-                    .FirstOrDefault(m => m.Name == "Render" && RenderSignatureMatches(m.GetParameters()));
-                if (render == null) throw new InvalidOperationException("the game's MapImageRenderer.Render has a different shape now");
-
-                // out width, out height, out background, scale, lossy, transparent, oceanMargin:
-                // the same arguments Rust+ uses, so the image is framed the same way.
-                var args = new object[] { 0, 0, new Color(), 0.5f, true, false, 500 };
-                var started = DateTime.UtcNow;
-                var rendered = render.Invoke(null, args) as byte[];
-                if (rendered == null || rendered.Length == 0)
-                {
-                    _imageState = "the game could not render the map image yet";
-                    _imageDue = DateTime.UtcNow.AddMinutes(30);
-                    return null;
-                }
-
-                Puts($"Rendered the map image for the panel ({args[0]} x {args[1]} px, {(DateTime.UtcNow - started).TotalSeconds:0.0}s).");
-                source = "plugin_render";
-                return rendered;
+                _imageState = _config.Panel.RenderMapImage
+                    ? "the game could not render the map image yet, and Rust+ has none cached"
+                    : "Rust+ has no map image (is app.port -1?) and rendering it is off in the config";
+                _imageDue = DateTime.UtcNow.AddMinutes(_config.Panel.RenderMapImage ? 30 : 360);
+                return null;
             }
             catch (Exception ex)
             {
