@@ -25,6 +25,16 @@ sit above a launcher `1.1.7`. Read the label, not the number.
 at the top of the file — it is a comment, not something it echoes, so read it
 rather than watch for it.
 
+## 1.1.20 — plugin — 2026-09-17
+
+**Abandoned Bases zones are reported too.**
+
+- Abandoned Bases (nivex) marks an inactive player's base with the same kind of unlabelled circle Raidable Bases uses, so
+  it gets the same treatment: the plugin latches onto `OnAbandonedBaseStarted`, `OnAbandonedBaseEnded` and
+  `OnAbandonedBaseDespawn` and reports each active zone's position and radius. They travel in the existing `raid_zones`
+  report, marked `"type": "abandoned"`; a Raidable Bases zone sends no type and means what it always did.
+- Nothing changes for a server without Abandoned Bases installed, and there are no configuration changes.
+
 ## 1.1.19 — plugin — 2026-09-17
 
 **Raidable Bases zones are actually reported now: 1.1.17's hooks were never called.**

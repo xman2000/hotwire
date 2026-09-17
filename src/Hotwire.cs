@@ -17,7 +17,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Hotwire", "xman2000", "1.1.19")]
+    [Info("Hotwire", "xman2000", "1.1.20")]
     [Description("Scheduled restarts and updates. Announces, counts down, writes a flag, quits.")]
     internal class Hotwire : CovalencePlugin
     {
@@ -2888,9 +2888,10 @@ namespace Oxide.Plugins
         private string _markersJson, _markersSentJson;
         private int _markerCount;
 
-        // Raidable Bases zones, from its OnRaidableBaseStarted / OnRaidableBaseEnded hooks (ADR-0097). Keyed by rounded
-        // position, so an ended raid removes exactly the one it added. The panel labels the plugin's own unlabelled marker
-        // at that spot with these, and colours it by difficulty.
+        // The raidable zones active now: Raidable Bases (ADR-0097) and Abandoned Bases (ADR-0055), each from its own
+        // hooks. Keyed by rounded position, so an ended raid removes exactly the one it added, and one set because the
+        // panel draws them the same way -- it labels the plugin's own unlabelled marker at that spot, and the circle is
+        // already coloured by whatever put it there.
         private readonly Dictionary<string, JObject> _raids = new Dictionary<string, JObject>();
         private string _raidZonesJson, _raidZonesSentJson;
         private DateTime _raidZonesDue = DateTime.MinValue;
@@ -3106,6 +3107,30 @@ namespace Oxide.Plugins
         {
             if (location is Vector3 loc && _raids.Remove(RaidKey(loc))) RebuildRaidZones();
         }
+
+        // Abandoned Bases (nivex, 2.2.7) makes an inactive player's base raidable, and marks it with the same kind of
+        // unlabelled circle Raidable Bases uses -- so the panel needs the same help to name it. Its hooks carry
+        // object[11] { center, radius, AllowPVP, intruders, intruderIds, entities, privs, canDropBackpack, automatedEvent,
+        // attackEvent, guid }, verified against warren's copy; we read the first two. Declared positionally for the reason
+        // ADR-0054 exists, and `object` because OnAbandonedBaseDespawn is also fired with a plain List of entities, which
+        // would throw against a typed first parameter.
+        //
+        // An abandoned base has no difficulty and no name to give: the panel labels it "Abandoned Base".
+        private void OnAbandonedBaseStarted(object center, object radius)
+        {
+            if (!_config.Panel.ReportMap) return;
+            if (!(center is Vector3 loc)) return;
+
+            var zone = new JObject { ["x"] = Math.Round(loc.x, 1), ["z"] = Math.Round(loc.z, 1), ["type"] = "abandoned" };
+            if (radius != null) { try { zone["radius"] = Math.Round(Convert.ToSingle(radius, CultureInfo.InvariantCulture), 1); } catch { } }
+
+            _raids[RaidKey(loc)] = zone;
+            RebuildRaidZones();
+        }
+
+        private void OnAbandonedBaseEnded(object center) => RemoveRaid(center);
+
+        private void OnAbandonedBaseDespawn(object center) => RemoveRaid(center);
 
         private static string RaidKey(Vector3 loc)
         {
