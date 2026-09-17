@@ -25,6 +25,14 @@ sit above a launcher `1.1.7`. Read the label, not the number.
 at the top of the file — it is a comment, not something it echoes, so read it
 rather than watch for it.
 
+## 1.1.18 — plugin — 2026-09-17
+
+**The sharper render replaces an older, blurrier one.**
+
+- When the panel already holds this map's image but at a lower resolution than the plugin now renders (1.1.17's sharper
+  render), the plugin sends the sharper one to replace it, instead of leaving the old blurry image in place. So the map gets
+  sharper on the current map, not only after the next wipe. An image already at full resolution is left alone.
+
 ## 1.1.17 — plugin — 2026-09-17
 
 **A sharper map, and Raidable Bases zones named on it.**

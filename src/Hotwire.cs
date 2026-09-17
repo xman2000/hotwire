@@ -17,7 +17,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Hotwire", "xman2000", "1.1.17")]
+    [Info("Hotwire", "xman2000", "1.1.18")]
     [Description("Scheduled restarts and updates. Announces, counts down, writes a flag, quits.")]
     internal class Hotwire : CovalencePlugin
     {
@@ -3438,9 +3438,16 @@ namespace Oxide.Plugins
                 var held = PanelData(response)["render"] as JObject;
                 if (held != null && (long?)held["seed"] == seed && (long?)held["size"] == size)
                 {
-                    _imageDoneKey = key;
-                    _imageState = "the panel has this map's image";
-                    return;
+                    // The panel has this map -- keep it, unless we can now render meaningfully sharper than what it holds.
+                    var heldWidth = (int?)held["render_width"] ?? 0;
+                    if (!_config.Panel.RenderMapImage || heldWidth >= WouldRenderWidth(size) - 64)
+                    {
+                        _imageDoneKey = key;
+                        _imageState = heldWidth > 0 ? $"the panel has this map's image ({heldWidth} px)" : "the panel has this map's image";
+                        return;
+                    }
+                    _imageState = $"the panel's image is {heldWidth} px; rendering a sharper one";
+                    // fall through to render and send a sharper image
                 }
 
                 string source;
@@ -3457,6 +3464,16 @@ namespace Oxide.Plugins
         // The panel keeps a map image at most this many pixels on a side, then downsizes; render to about this and no larger,
         // so no detail is wasted and the upload stays small.
         private const float MapTargetPixels = 4096f;
+
+        // The image width MapImageRenderer would produce for this world at our target scale: the world at that scale plus a
+        // margin each side. Used to decide whether the panel's held image is already sharp enough.
+        private static int WouldRenderWidth(long worldSize)
+        {
+            var scale = worldSize > 0
+                ? Mathf.Clamp((MapTargetPixels - 2f * MapOceanMarginPixels) / worldSize, 0.5f, 4f)
+                : 0.5f;
+            return (int)Math.Round(worldSize * scale) + 2 * MapOceanMarginPixels;
+        }
 
         private byte[] MapImageBytes(long worldSize, out string source)
         {
