@@ -96,8 +96,8 @@ $PluginUrl = 'https://raw.githubusercontent.com/xman2000/hotwire/connect-and-rep
 # ABSENT: their versions vary, so they are not pinned. They are reported as
 # "unverified (third-party)" rather than blocked -- the omission is never silent.
 $PinnedHashes = @{
-    'hotwire.bat' = '7f180e2060e3291aa32933b1cded00b1d041b9dd218b97f001e9f28792684196'
-    'Hotwire.cs'  = '6102cd7a1dc5fbc028fd69f660ed9cebaa0daf1fa4665b43a94b3ffc5ba4c3fa'
+    'hotwire.bat' = '54e7f713bc2ef2f959cfbbab11a3b9f6f3958a09daa0dbf958b77829e08d9593'
+    'Hotwire.cs'  = '95b181f256da7fdf17951979a8159671c90864350479314a457c6e26be2ab29d'
 }
 
 $Docs = [ordered]@{

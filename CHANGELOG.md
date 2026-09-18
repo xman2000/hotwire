@@ -25,6 +25,19 @@ sit above a launcher `1.1.7`. Read the label, not the number.
 at the top of the file — it is a comment, not something it echoes, so read it
 rather than watch for it.
 
+## 1.1.13 — launcher — 2026-09-18
+
+**Oxide is checked before it is installed.**
+
+- Before extracting Oxide, the launcher asks GitHub which file is Oxide's latest release and what its SHA-256 is,
+  downloads that file, and extracts it only if the two match. uMod's download link points at the same file, so this is
+  the same Oxide as before, now checked.
+- **A file that does not match is never extracted.** The server starts on the Oxide it already has, and the update is
+  tried again at the next restart, exactly as when a download fails.
+- If GitHub cannot be asked, or you have changed `FRAMEWORK_URL`, the download happens as it always did and the log says
+  it was not checked. `VERIFY_FRAMEWORK=0` turns the check off.
+- The check proves the file is the one GitHub holds for that release. It does not prove who built it.
+
 ## 1.1.26 — plugin — 2026-09-18
 
 **The panel can ask a server to check in less often.**

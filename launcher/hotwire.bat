@@ -9,7 +9,7 @@ set "CHECK_ONLY="
 if /i "%~1"=="check" set "CHECK_ONLY=1"
 
 REM ==[ H O T W I R E ]===================================================
-REM  Version 1.1.12  2026-09-13
+REM  Version 1.1.13  2026-09-18
 REM  Built by xman2000 and Claude.  MIT License.
 REM
 REM  The launcher. Starts a Rust dedicated server, relaunches it when it
@@ -267,6 +267,19 @@ set "FRAMEWORK_FEED=https://assets.umod.org/games/rust.json"
 REM   Where the framework itself is downloaded. This answers with the Windows
 REM     build of Oxide for Rust.
 set "FRAMEWORK_URL=https://umod.org/games/rust/download"
+
+REM   Check the framework against the SHA-256 its publisher lists before
+REM     extracting it. With the default FRAMEWORK_URL above, the launcher asks
+REM     GitHub which file is Oxide's latest release and what its SHA-256 is,
+REM     downloads that file, and extracts it only if the two match. A file
+REM     that does not match is never extracted: the server starts on the
+REM     framework it already has, and the update is tried again at the next
+REM     restart. If GitHub cannot be asked, or FRAMEWORK_URL has been
+REM     changed, the download happens as before and the log says it was not
+REM     checked. 0 turns the check off.
+set "VERIFY_FRAMEWORK=1"
+set "FRAMEWORK_RELEASES=https://api.github.com/repos/OxideMod/Oxide.Rust/releases/latest"
+set "FRAMEWORK_ASSET=Oxide.Rust.zip"
 
 REM   Optional commands run before and after an update, for backups or
 REM     notifications. Leave empty to do nothing.
@@ -837,19 +850,86 @@ if "!FWSKIP!"=="1" (
 
 :frameworkextract
 REM  HW-9: the framework (uMod / Oxide) is third-party and its version changes
-REM  with every Rust release, so there is no first-party hash to pin it against
-REM  here. It is fetched over HTTPS and is NOT otherwise integrity-checked: that
-REM  residual is unverified third-party code, stated plainly so it is never a
-REM  silent omission. setup pins and verifies the first-party launcher and plugin
-REM  (see $PinnedHashes in hotwire-setup.ps1); this download is not pinnable.
+REM  with every Rust release, so there is no hash of ours to pin it against.
+REM  GitHub publishes a SHA-256 for every release file, and uMod's download
+REM  link redirects to that same file, so the launcher checks the download
+REM  against it (VERIFY_FRAMEWORK). That proves the file is the one GitHub
+REM  holds for the release, not who built it: both come from GitHub. When the
+REM  check cannot be made, the download is unverified, as it always was, and
+REM  the log says so rather than staying silent. setup pins the first-party
+REM  launcher and plugin separately (see $PinnedHashes in hotwire-setup.ps1).
 REM  HW-10: the destination path goes through an environment variable, never a
 REM  PowerShell single-quoted literal, so an apostrophe in the path is safe.
-echo [%date% %time%] Downloading the framework from uMod ^(third-party, not hash-verified^).
+REM  The PowerShell below avoids the characters delayed expansion eats.
+set "FW_FROM=%FRAMEWORK_URL%"
+set "FW_SHA="
+set "FW_TAG="
+set "FW_CHECK=0"
+if "%VERIFY_FRAMEWORK%"=="0" goto :fwfetch
+if /i not "%FRAMEWORK_URL%"=="https://umod.org/games/rust/download" (
+    echo [%date% %time%] FRAMEWORK_URL has been changed, so its download cannot be checked.
+    goto :fwfetch
+)
+set "FW_CHECK=1"
+set "HOTWIRE_FWREL=%FRAMEWORK_RELEASES%"
+set "HOTWIRE_FWASSET=%FRAMEWORK_ASSET%"
+set "HOTWIRE_FWOUT=%ROOT%\logs\.framework-release.tmp"
+if exist "!HOTWIRE_FWOUT!" del "!HOTWIRE_FWOUT!"
+set "PSREL="
+set "PSREL=!PSREL!try{ [Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12 } catch {} "
+set "PSREL=!PSREL!try{ $r=Invoke-RestMethod -Uri $env:HOTWIRE_FWREL -TimeoutSec 25 -Headers @{ Accept='application/vnd.github+json' }; "
+set "PSREL=!PSREL!$a=@($r.assets | Where-Object { $_.name -eq $env:HOTWIRE_FWASSET })[0]; $d=[string]$a.digest; $u=[string]$a.browser_download_url; "
+set "PSREL=!PSREL!if($d.Length -eq 71 -and $d -like 'sha256:*' -and $u -like 'https://github.com/*'){ "
+set "PSREL=!PSREL!Set-Content -LiteralPath $env:HOTWIRE_FWOUT -Value ($u+' '+$d.Substring(7).ToLower()+' '+[string]$r.tag_name) -Encoding ASCII } } catch {} "
+powershell -NoProfile -NonInteractive -Command "!PSREL!"
+if exist "!HOTWIRE_FWOUT!" (
+    for /f "usebackq tokens=1-3" %%A in ("!HOTWIRE_FWOUT!") do (
+        set "FW_FROM=%%A"
+        set "FW_SHA=%%B"
+        set "FW_TAG=%%C"
+    )
+    del "!HOTWIRE_FWOUT!"
+)
+set "HOTWIRE_FWREL="
+set "HOTWIRE_FWASSET="
+set "HOTWIRE_FWOUT="
+set "PSREL="
+if not defined FW_SHA (
+    set "FW_FROM=%FRAMEWORK_URL%"
+    echo [%date% %time%] GitHub did not say what Oxide's latest release is, so this
+    echo [%date% %time%] download cannot be checked. Downloading from uMod as before.
+)
+
+:fwfetch
+if defined FW_SHA (
+    echo [%date% %time%] Downloading Oxide !FW_TAG! from GitHub, to check against its SHA-256.
+) else (
+    echo [%date% %time%] Downloading the framework from uMod ^(third-party, not hash-verified^).
+)
 set "HOTWIRE_ZIPROOT=%ROOT%"
-curl -fSL -A "Mozilla/5.0" "%FRAMEWORK_URL%" --output "%ROOT%\OxideMod.zip"
+curl -fSL -A "Mozilla/5.0" "!FW_FROM!" --output "%ROOT%\OxideMod.zip"
 if errorlevel 1 (
     echo [%date% %time%] Framework download failed. Keeping the install.
-) else (
+    goto :fwcleanup
+)
+if defined FW_SHA (
+    set "HOTWIRE_FWZIP=%ROOT%\OxideMod.zip"
+    set "HOTWIRE_FWSHA=!FW_SHA!"
+    powershell -NoProfile -NonInteractive -Command "$h=(Get-FileHash -Algorithm SHA256 -LiteralPath $env:HOTWIRE_FWZIP).Hash.ToLower(); if($h -eq $env:HOTWIRE_FWSHA){ exit 0 } else { Write-Output ('Downloaded SHA-256: '+$h); exit 1 }"
+    if errorlevel 1 (
+        echo [%date% %time%] The download does not match the SHA-256 GitHub lists for
+        echo [%date% %time%] Oxide !FW_TAG! ^(!FW_SHA!^). Not extracting it: the server
+        echo [%date% %time%] starts on the framework it already has, and the update
+        echo [%date% %time%] is tried again at the next restart.
+        set "HOTWIRE_FWZIP="
+        set "HOTWIRE_FWSHA="
+        goto :fwcleanup
+    )
+    set "HOTWIRE_FWZIP="
+    set "HOTWIRE_FWSHA="
+    echo [%date% %time%] SHA-256 matches GitHub's for Oxide !FW_TAG!.
+)
+(
     powershell -NoProfile -Command "Expand-Archive -Force -LiteralPath (Join-Path $env:HOTWIRE_ZIPROOT 'OxideMod.zip') -DestinationPath $env:HOTWIRE_ZIPROOT"
     if errorlevel 1 (
         echo [%date% %time%] Framework extract failed.
@@ -857,6 +937,7 @@ if errorlevel 1 (
         set "FRAMEWORK_OK=1"
     )
 )
+:fwcleanup
 set "HOTWIRE_ZIPROOT="
 if exist "%ROOT%\OxideMod.zip" del "%ROOT%\OxideMod.zip"
 
