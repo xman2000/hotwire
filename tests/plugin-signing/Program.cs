@@ -237,6 +237,19 @@ namespace PluginSigning
             Check("a hold that is not a boolean does not hold", holdMistyped != null && !Extracted.PolicyHolds(holdMistyped));
             Check("no policy does not hold", !Extracted.PolicyHolds(null));
 
+            // ---- intervals the panel sets: only ever longer than the config's, never past a cap.
+            var slow = Extracted.ReadPolicy("{\"ok\":true,\"data\":{\"command_seconds\":60,\"ban_seconds\":600,\"log_seconds\":120,\"event_seconds\":90,\"marker_seconds\":300,\"policy_seconds\":900}}");
+            Check("every interval is read", slow != null && slow.CommandSeconds == 60 && slow.BanSeconds == 600 && slow.LogSeconds == 120
+                && slow.EventSeconds == 90 && slow.MarkerSeconds == 300 && slow.PolicySeconds == 900);
+            Check("an interval missing from the answer is as the config says", free.CommandSeconds == 0 && free.PolicySeconds == 0);
+            Check("the panel's longer interval wins", Extracted.PolicyInterval(30, 10, 60, 300) == 60);
+            Check("the admin's longer interval wins", Extracted.PolicyInterval(120, 10, 60, 300) == 120);
+            Check("the panel cannot make it more often", Extracted.PolicyInterval(30, 10, 5, 300) == 30);
+            Check("the panel's interval is capped", Extracted.PolicyInterval(30, 10, 86400, 300) == 300);
+            Check("the config's floor holds", Extracted.PolicyInterval(1, 10, 0, 300) == 10);
+            Check("no answer from the panel leaves the config", Extracted.PolicyInterval(45, 10, 0, 300) == 45);
+            Check("the policy poll is never more often than five minutes", Extracted.PolicyInterval(300, 300, 60, 3600) == 300);
+
             // ---- the spool: what is kept, for how long, within what.
             Check("session, events and command answers are kept", Extracted.SpoolKeepsKind("session") && Extracted.SpoolKeepsKind("events") && Extracted.SpoolKeepsKind("command_result"));
             Check("current-state kinds are not kept", !Extracted.SpoolKeepsKind("heartbeat") && !Extracted.SpoolKeepsKind("inventory")

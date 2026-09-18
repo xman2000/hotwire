@@ -17,7 +17,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Hotwire", "xman2000", "1.1.25")]
+    [Info("Hotwire", "xman2000", "1.1.26")]
     [Description("Scheduled restarts and updates. Announces, counts down, writes a flag, quits.")]
     internal class Hotwire : CovalencePlugin
     {
@@ -3440,7 +3440,7 @@ namespace Oxide.Plugins
         {
             var json = _markersJson;
             var count = _markerCount;
-            _markersDue = DateTime.UtcNow.AddSeconds(Math.Max(30, _config.Panel.MarkerSeconds));
+            _markersDue = DateTime.UtcNow.AddSeconds(MarkerInterval());
             PanelRequest("POST", PanelReportPath, PanelEnvelope("map_markers", new JObject { ["markers"] = JArray.Parse(json) }), response =>
             {
                 _markersSentJson = json;
@@ -4297,7 +4297,7 @@ namespace Oxide.Plugins
 
         private void PollCommands()
         {
-            _commandsDue = DateTime.UtcNow.AddSeconds(Math.Max(10, _config.Panel.CommandSeconds));
+            _commandsDue = DateTime.UtcNow.AddSeconds(CommandInterval());
             PanelRequest("GET", PanelCommandsPath, null, response =>
             {
                 var commands = PanelData(response)["commands"] as JArray;
@@ -4617,22 +4617,29 @@ namespace Oxide.Plugins
 
         private const string PolicyPath = "/api/v1/policy";
         private const int PolicyPollSeconds = 300;
+        private const int PolicyPollMaxSeconds = 3600;
 
         private ReportPolicy _policy;
         private DateTime _policyDue = DateTime.MinValue;
 
-        private int HeartbeatInterval()
-        {
-            var seconds = Math.Max(10, _config.Panel.HeartbeatSeconds);
-            // Capped well under the panel's ten silent minutes, so a mistaken answer cannot make a server look down.
-            return _policy == null ? seconds : Math.Max(seconds, Math.Min(300, _policy.HeartbeatSeconds));
-        }
+        // The heartbeat's cap is well under the panel's ten silent minutes, so a
+        // mistaken answer cannot make a server look down.
+        private int HeartbeatInterval() => PolicyInterval(_config.Panel.HeartbeatSeconds, 10, _policy == null ? 0 : _policy.HeartbeatSeconds, 300);
 
-        private int PluginTimeInterval()
-        {
-            var seconds = Math.Max(30, _config.Panel.PluginTimeSeconds);
-            return _policy == null ? seconds : Math.Max(seconds, Math.Min(3600, _policy.PluginTimeSeconds));
-        }
+        private int PluginTimeInterval() => PolicyInterval(_config.Panel.PluginTimeSeconds, 30, _policy == null ? 0 : _policy.PluginTimeSeconds, 3600);
+
+        private int CommandInterval() => PolicyInterval(_config.Panel.CommandSeconds, 10, _policy == null ? 0 : _policy.CommandSeconds, 300);
+
+        private int BanInterval() => PolicyInterval(_config.Panel.BanSeconds, 30, _policy == null ? 0 : _policy.BanSeconds, 3600);
+
+        private int LogInterval() => PolicyInterval(_config.Panel.LogSeconds, 10, _policy == null ? 0 : _policy.LogSeconds, 900);
+
+        private int EventInterval() => PolicyInterval(_config.Panel.EventSeconds, 10, _policy == null ? 0 : _policy.EventSeconds, 600);
+
+        private int MarkerInterval() => PolicyInterval(_config.Panel.MarkerSeconds, 30, _policy == null ? 0 : _policy.MarkerSeconds, 3600);
+
+        // The panel can ask to be asked less often, never more often.
+        private int PolicyPollInterval() => PolicyInterval(PolicyPollSeconds, PolicyPollSeconds, _policy == null ? 0 : _policy.PolicySeconds, PolicyPollMaxSeconds);
 
         private bool PolicyAllowsCommands() => _policy == null || _policy.Commands != false;
 
@@ -4653,6 +4660,12 @@ namespace Oxide.Plugins
                     : "log " + string.Join(", ", _policy.LogLevels.OrderBy(l => l, StringComparer.Ordinal).ToArray()) + " only");
             parts.Add($"heartbeat every {HeartbeatInterval()}s");
             parts.Add($"plugin time every {PluginTimeInterval()}s");
+            parts.Add($"log every {LogInterval()}s");
+            parts.Add($"player events every {EventInterval()}s");
+            parts.Add($"map markers every {MarkerInterval()}s");
+            if (PolicyAllowsCommands()) parts.Add($"commands checked every {CommandInterval()}s");
+            if (PolicyAllowsBans()) parts.Add($"ban list checked every {BanInterval()}s");
+            parts.Add($"this policy checked every {PolicyPollInterval()}s");
             if (!PolicyAllowsCommands()) parts.Add("no command checks");
             if (!PolicyAllowsBans()) parts.Add("no ban list checks");
             if (_policy.Kinds != null)
@@ -4668,7 +4681,7 @@ namespace Oxide.Plugins
 
         private void PollPolicy()
         {
-            _policyDue = DateTime.UtcNow.AddSeconds(PolicyPollSeconds);
+            _policyDue = DateTime.UtcNow.AddSeconds(PolicyPollInterval());
             PanelRequest("GET", PolicyPath, null, response =>
             {
                 var answer = ReadPolicy(response);
@@ -4809,7 +4822,7 @@ namespace Oxide.Plugins
 
         private void SendEvents()
         {
-            var interval = Math.Max(10, _config.Panel.EventSeconds);
+            var interval = EventInterval();
             if (EffectiveSharingLevel() < 3)
             {
                 _events.Clear();
@@ -4928,7 +4941,7 @@ namespace Oxide.Plugins
 
         private void PollBans()
         {
-            _bansDue = DateTime.UtcNow.AddSeconds(Math.Max(30, _config.Panel.BanSeconds));
+            _bansDue = DateTime.UtcNow.AddSeconds(BanInterval());
             PanelRequest("GET", PanelBansPath, null, response =>
             {
                 var data = PanelData(response);
@@ -5102,7 +5115,7 @@ namespace Oxide.Plugins
         // Returns whether a request went out.
         private bool SendLog()
         {
-            var interval = Math.Max(10, _config.Panel.LogSeconds);
+            var interval = LogInterval();
             if (!PolicyAllowsKind("log"))
             {
                 // A batch built before was never committed, so its lines are read again later.
@@ -5464,6 +5477,12 @@ namespace Oxide.Plugins
             public string Hash;
             public int HeartbeatSeconds;      // 0: as the config says
             public int PluginTimeSeconds;     // 0: as the config says
+            public int CommandSeconds;        // 0: as the config says, and so on
+            public int BanSeconds;
+            public int LogSeconds;
+            public int EventSeconds;
+            public int MarkerSeconds;
+            public int PolicySeconds;         // 0: every five minutes
             public HashSet<string> LogLevels; // null: every level
             public bool? Commands;            // null: as the config says
             public bool? Bans;
@@ -5508,6 +5527,12 @@ namespace Oxide.Plugins
                     Hash = data["policy_hash"] != null && data["policy_hash"].Type == JTokenType.String ? (string)data["policy_hash"] : null,
                     HeartbeatSeconds = PositiveInt(data["heartbeat_seconds"]),
                     PluginTimeSeconds = PositiveInt(data["plugin_time_seconds"]),
+                    CommandSeconds = PositiveInt(data["command_seconds"]),
+                    BanSeconds = PositiveInt(data["ban_seconds"]),
+                    LogSeconds = PositiveInt(data["log_seconds"]),
+                    EventSeconds = PositiveInt(data["event_seconds"]),
+                    MarkerSeconds = PositiveInt(data["marker_seconds"]),
+                    PolicySeconds = PositiveInt(data["policy_seconds"]),
                     Commands = data["commands"] != null && data["commands"].Type == JTokenType.Boolean ? (bool)data["commands"] : (bool?)null,
                     Bans = data["bans"] != null && data["bans"].Type == JTokenType.Boolean ? (bool)data["bans"] : (bool?)null,
                     Hold = data["hold"] != null && data["hold"].Type == JTokenType.Boolean && (bool)data["hold"],
@@ -5528,6 +5553,17 @@ namespace Oxide.Plugins
             {
                 return null;
             }
+        }
+
+        // How often something is done: the config's interval (never below its
+        // floor), made longer by the panel's when the panel's is longer, and
+        // the panel's never taken above a cap, so a mistaken answer cannot
+        // make a server look silent or leave a command waiting for an hour.
+        // 0 from the panel means it said nothing.
+        private static int PolicyInterval(int configured, int floor, int fromPanel, int cap)
+        {
+            var seconds = Math.Max(floor, configured);
+            return fromPanel <= 0 ? seconds : Math.Max(seconds, Math.Min(cap, fromPanel));
         }
 
         private static int PositiveInt(JToken token)

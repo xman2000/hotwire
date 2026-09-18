@@ -25,6 +25,18 @@ sit above a launcher `1.1.7`. Read the label, not the number.
 at the top of the file — it is a comment, not something it echoes, so read it
 rather than watch for it.
 
+## 1.1.26 — plugin — 2026-09-18
+
+**The panel can ask a server to check in less often.**
+
+- The report policy the plugin already reads can now lengthen six more intervals: command checks, ban-list checks, log
+  batches, player events, map markers, and how often the policy itself is checked. Today every value matches what the
+  plugin already did by default, so nothing changes yet.
+- **Only ever less often.** The longer of your config's interval and the panel's wins, as with the heartbeat, and each of
+  the panel's is capped (commands 5 minutes, log 15, player events 10, the ban list, map markers and the policy an hour),
+  so a mistaken answer cannot leave a restart waiting or make a server look silent.
+- `hotwire check` lists every interval in force under the report policy.
+
 ## 1.1.25 — plugin — 2026-09-18
 
 **No change in behaviour.** One more comment reworded.
