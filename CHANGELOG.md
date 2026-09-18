@@ -25,6 +25,30 @@ sit above a launcher `1.1.7`. Read the label, not the number.
 at the top of the file — it is a comment, not something it echoes, so read it
 rather than watch for it.
 
+## 1.1.23 — plugin — 2026-09-18
+
+**Reports that cannot be sent again are kept on disk, for up to 30 days.**
+
+- **A panel outage no longer loses them.** A boot or shutdown report, player joins, leaves and chat, and a command's
+  answer are generated once. When the panel cannot be reached, is slow, or asks the server to slow down, they are written
+  to `oxide/data/Hotwire/spool/` and sent later, oldest first. A report the panel refuses outright is still let go, since
+  it would be refused again. The heartbeat, the plugin list, the map and the rest are never kept: they are sent as they
+  stand once the panel is back.
+- **A restart during an outage no longer loses the previous run's report** either: it is kept before the new run's
+  record replaces it.
+- **Held on request.** The panel's report policy can now ask a server to hold what it may not send: a server beyond its
+  account's plan keeps its reports, and holds its place in the Oxide log, so that nothing is missing if the account can
+  use it again within 30 days.
+- **Polite catching up.** Held reports go out one at a time, only when nothing else is due and no more often than every
+  five seconds, and the same pacing applies to a log that is days behind. A server back after a long time does not send
+  everything at once.
+- **Bounded.** Anything held for more than 30 days is deleted unsent, and so are Oxide log files more than 30 days old;
+  the spool never grows beyond 50 MB or 5,000 reports, oldest deleted first. The log files themselves stay on the
+  server.
+- **Visible.** The heartbeat tells the panel how many reports are held, how old the oldest is and how many were deleted
+  unsent, and `hotwire check` shows the same under "held reports". Queued player events are kept across a plugin reload
+  too.
+
 ## 1.1.22 — plugin — 2026-09-18
 
 **The panel can tell a server to send only some kinds of report.**

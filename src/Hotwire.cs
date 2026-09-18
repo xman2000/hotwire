@@ -17,7 +17,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Hotwire", "xman2000", "1.1.22")]
+    [Info("Hotwire", "xman2000", "1.1.23")]
     [Description("Scheduled restarts and updates. Announces, counts down, writes a flag, quits.")]
     internal class Hotwire : CovalencePlugin
     {
@@ -677,6 +677,17 @@ namespace Oxide.Plugins
             _frameworkTimer?.Destroy();
             _panelTimer?.Destroy();
             _sessionTimer?.Destroy();
+
+            // Player events still queued would go with the plugin: keep them to send after the reload.
+            try
+            {
+                if (_panel != null && _events.Count > 0 && (PolicyAllowsKind("events") || PolicyHolds(_policy)))
+                    SpoolQueuedEvents(true);
+            }
+            catch (Exception ex)
+            {
+                PrintWarning($"Panel: queued player events could not be kept for later ({ex.Message}).");
+            }
 
             CloseAllMenus();   // goes with the menu
 
@@ -2082,6 +2093,7 @@ namespace Oxide.Plugins
                 if (!_config.Panel.Enabled) return;
 
                 RefreshPanelLink();
+                if (_panel != null && !_panelBusy && _panelFailures > 0) SpoolWhileUnreachable();
                 if (_panel == null || _panelBusy || DateTime.UtcNow < _panelNextAttempt) return;
 
                 PanelPump();
@@ -2102,9 +2114,16 @@ namespace Oxide.Plugins
             if (_commandResults.Count > 0)
             {
                 if (PolicyAllowsKind("command_result")) { SendCommandResult(); return; }
-                // Not held for later: the panel lets an unanswered command expire.
-                Puts($"Panel: {_commandResults.Count} command answer{(_commandResults.Count == 1 ? " is" : "s are")} not sent: the panel's report policy does not include them.");
-                _commandResults.Clear();
+                if (PolicyHolds(_policy))
+                {
+                    while (_commandResults.Count > 0) SpoolReport(PanelEnvelope("command_result", _commandResults.Dequeue()));
+                }
+                else
+                {
+                    // Not held for later: the panel lets an unanswered command expire.
+                    Puts($"Panel: {_commandResults.Count} command answer{(_commandResults.Count == 1 ? " is" : "s are")} not sent: the panel's report policy does not include them.");
+                    _commandResults.Clear();
+                }
             }
 
             // The game is going down. Only acknowledgements still go out.
@@ -2127,7 +2146,11 @@ namespace Oxide.Plugins
             // What to send, and how often, for this account's plan.
             if (now >= _policyDue) { PollPolicy(); return; }
 
-            if (SessionReportDue() && PolicyAllowsKind("session")) { SendSession(); return; }
+            if (SessionReportDue())
+            {
+                if (PolicyAllowsKind("session")) { SendSession(); return; }
+                if (PolicyHolds(_policy)) SpoolSessionReports();
+            }
 
             if (_config.Panel.ReportMap && !_mapOff)
             {
@@ -2158,16 +2181,24 @@ namespace Oxide.Plugins
             if (_config.Panel.AcceptCommands && PolicyAllowsCommands() && now >= _commandsDue) { PollCommands(); return; }
             if (_config.Panel.SendPlayers && now >= _playersCheckDue) { _playersCheckDue = now.AddSeconds(30); RefreshPlayers(); }
             if (_playersJson != null && _playersJson != _playersSentJson && now >= _playersSendNotBefore && PolicyAllowsKind("players")) { SendPlayers(); return; }
-            if (_events.Count > 0 && !PolicyAllowsKind("events")) _events.Clear();   // not held for later
+            if (_events.Count > 0 && !PolicyAllowsKind("events"))
+            {
+                if (PolicyHolds(_policy)) SpoolQueuedEvents(false);
+                else _events.Clear();   // not held for later
+            }
             if (_events.Count > 0 && now >= _eventsDue) { SendEvents(); return; }
             if (_config.Panel.ReportPluginTime && now >= _pluginTimeDue)
             {
                 if (PolicyAllowsKind("plugin_time")) { if (SendPluginTime()) return; }
                 else ForgetPluginTotals();
             }
-            // Runs when the log is not allowed too: it walks the log and counts what it passes.
-            if (_config.Panel.SendLog && now >= _logDue) { SendLog(); return; }
-            if (_config.Panel.EnforceBans && PolicyAllowsBans() && now >= _bansDue) { PollBans(); }
+            // Runs when the log is not allowed too: it walks the log and counts what it passes,
+            // or, when the policy holds, leaves the cursor where it is.
+            if (_config.Panel.SendLog && now >= _logDue && SendLog()) return;
+            if (_config.Panel.EnforceBans && PolicyAllowsBans() && now >= _bansDue) { PollBans(); return; }
+
+            // Nothing live is due: one held report, if there are any.
+            DrainSpool();
         }
 
         // Reads panel.json again only when it changes, so connecting, detaching
@@ -2324,7 +2355,7 @@ namespace Oxide.Plugins
         // signature verifies. Used for the answers the plugin acts on -- commands,
         // bans, the sharing level -- where a forged reply would be dangerous. A
         // reply that cannot be verified is dropped and retried, never acted on.
-        private void PanelRequest(string method, string path, string body, Action<string> onAccepted, Action onRefused = null, float timeoutSeconds = 20f, bool signedResponse = false)
+        private void PanelRequest(string method, string path, string body, Action<string> onAccepted, Action onRefused = null, float timeoutSeconds = 20f, bool signedResponse = false, Action<int> onFailed = null)
         {
             var link = _panel;
             var timestamp = ((long)(DateTime.UtcNow - UnixEpoch).TotalSeconds).ToString(CultureInfo.InvariantCulture);
@@ -2380,6 +2411,7 @@ namespace Oxide.Plugins
                     }
 
                     if (onRefused != null && (code == 400 || code == 413 || code == 422)) onRefused();
+                    onFailed?.Invoke(code);
                     PanelFailed(code, response);
                 }
                 catch (Exception ex)
@@ -2458,13 +2490,302 @@ namespace Oxide.Plugins
             return PanelBody(NewReportId(), DateTime.UtcNow, Version.ToString(), kind, payload);
         }
 
+        // ---------------------------------------------------------- spool
+
+        // Reports that cannot be sent again -- a session, player events, a
+        // command's answer -- are kept on this machine when the panel cannot take
+        // them, or when the panel's report policy says to hold them, and sent
+        // later, oldest first, one at a time. Kept for thirty days at most and
+        // within a disk bound, oldest let go first.
+        private const string SpoolStateFile = "Hotwire/panel_spool";
+        private const int SpoolDrainSeconds = 5;
+
+        private sealed class SpoolState
+        {
+            public long Expired;
+            public long Overflowed;
+            public string PanelUrl;
+        }
+
+        private SpoolState _spoolState;
+        // A backlog goes out one report or log batch at a time, never back to back.
+        private DateTime _catchUpDue = DateTime.MinValue;
+        private bool _spoolWarned;
+
+        private static string SpoolDirectory() => Path.Combine(Interface.Oxide.DataDirectory, "Hotwire", "spool");
+
+        private SpoolState SpoolCounts()
+        {
+            return _spoolState ?? (_spoolState = ReadData<SpoolState>(SpoolStateFile) ?? new SpoolState());
+        }
+
+        private void SpoolProblem(string what, Exception ex)
+        {
+            if (_spoolWarned) return;
+            _spoolWarned = true;
+            PrintWarning($"Panel: could not {what} ({ex.Message}). Reporting carries on; held reports may be lost.");
+        }
+
+        // Keeps one report, exactly as it would have been sent.
+        private void SpoolReport(string body)
+        {
+            try
+            {
+                var envelope = JObject.Parse(body);
+                var id = (string)envelope["report_id"] ?? NewReportId();
+                DateTime sent;
+                if (!DateTime.TryParse((string)envelope["sent_at"], CultureInfo.InvariantCulture,
+                        DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out sent))
+                    sent = DateTime.UtcNow;
+
+                var dir = SpoolDirectory();
+                Directory.CreateDirectory(dir);
+                var path = Path.Combine(dir, SpoolFileName(sent, id));
+                var temp = path + ".tmp";
+                File.WriteAllText(temp, body, new UTF8Encoding(false));
+                if (File.Exists(path)) File.Delete(path);
+                File.Move(temp, path);
+
+                var state = SpoolCounts();
+                if (_panel != null && state.PanelUrl != _panel.Url)
+                {
+                    state.PanelUrl = _panel.Url;
+                    WriteData(SpoolStateFile, state);
+                }
+                SpoolPruneNow();
+            }
+            catch (Exception ex)
+            {
+                SpoolProblem("keep a report to send later", ex);
+            }
+        }
+
+        private static List<SpoolEntry> SpoolEntries()
+        {
+            var dir = SpoolDirectory();
+            if (!Directory.Exists(dir)) return new List<SpoolEntry>();
+            var entries = new List<SpoolEntry>();
+            foreach (var path in Directory.GetFiles(dir, "*.json"))
+            {
+                var time = SpoolFileTime(Path.GetFileName(path));
+                if (time == null) continue;
+                entries.Add(new SpoolEntry { Path = path, SentUtc = time.Value, Bytes = new FileInfo(path).Length });
+            }
+            return entries.OrderBy(e => Path.GetFileName(e.Path), StringComparer.Ordinal).ToList();
+        }
+
+        // Lets go of what is too old or does not fit, and counts it.
+        private void SpoolPruneNow()
+        {
+            List<SpoolEntry> expired, overflowed;
+            SpoolPrune(SpoolEntries(), DateTime.UtcNow, out expired, out overflowed);
+            if (expired.Count == 0 && overflowed.Count == 0) return;
+
+            foreach (var entry in expired.Concat(overflowed)) SpoolDelete(entry.Path);
+            var state = SpoolCounts();
+            state.Expired += expired.Count;
+            state.Overflowed += overflowed.Count;
+            WriteData(SpoolStateFile, state);
+            if (expired.Count > 0)
+                Puts($"Panel: {expired.Count} held report{(expired.Count == 1 ? " was" : "s were")} older than {SpoolMaxDays} days and {(expired.Count == 1 ? "was" : "were")} deleted unsent.");
+            if (overflowed.Count > 0)
+                Puts($"Panel: {overflowed.Count} of the oldest held report{(overflowed.Count == 1 ? " was" : "s were")} deleted unsent to keep the spool within {SpoolMaxBytes / (1024 * 1024)} MB.");
+        }
+
+        private static void SpoolDelete(string path)
+        {
+            try { if (File.Exists(path)) File.Delete(path); }
+            catch { /* tried again at the next prune */ }
+        }
+
+        // Disconnecting, or connecting to another panel, lets go of what was
+        // held for the old one: it belongs to that panel, not this one.
+        private void SpoolForget(string why)
+        {
+            try
+            {
+                var entries = SpoolEntries();
+                foreach (var entry in entries) SpoolDelete(entry.Path);
+                _spoolState = new SpoolState { PanelUrl = _panel?.Url };
+                WriteData(SpoolStateFile, _spoolState);
+                if (entries.Count > 0) Puts($"Panel: {entries.Count} held report{(entries.Count == 1 ? " was" : "s were")} deleted unsent: {why}.");
+            }
+            catch (Exception ex)
+            {
+                SpoolProblem("clear the held reports", ex);
+            }
+        }
+
+        // Sends the oldest held report, if nothing live is due and the last
+        // catch-up send was long enough ago. Returns whether a request went out.
+        private bool DrainSpool()
+        {
+            if (_panel == null || DateTime.UtcNow < _catchUpDue) return false;
+
+            List<SpoolEntry> entries;
+            try
+            {
+                var state = SpoolCounts();
+                if (state.PanelUrl != null && state.PanelUrl != _panel.Url)
+                {
+                    SpoolForget("this server now reports to a different panel");
+                    return false;
+                }
+                SpoolPruneNow();
+                entries = SpoolEntries();
+            }
+            catch (Exception ex)
+            {
+                SpoolProblem("read the held reports", ex);
+                return false;
+            }
+
+            foreach (var entry in entries)
+            {
+                string body, kind;
+                try
+                {
+                    body = File.ReadAllText(entry.Path, Encoding.UTF8);
+                    kind = (string)JObject.Parse(body)["kind"];
+                }
+                catch
+                {
+                    SpoolDelete(entry.Path);   // unreadable: it could never be sent
+                    continue;
+                }
+
+                // Today's policy applies to what was held yesterday.
+                if (!PolicyAllowsKind(kind))
+                {
+                    if (PolicyHolds(_policy)) return false;   // still held: wait
+                    SpoolDelete(entry.Path);
+                    continue;
+                }
+
+                var path = entry.Path;
+                _catchUpDue = DateTime.UtcNow.AddSeconds(SpoolDrainSeconds);
+                PanelRequest("POST", PanelReportPath, body, response => SpoolDelete(path), onFailed: code =>
+                {
+                    // A refusal would be refused again; anything else waits for the next pass.
+                    if (!SpoolKeepsStatus(code)) SpoolDelete(path);
+                });
+                return true;
+            }
+            return false;
+        }
+
+        // For the heartbeat. Left out when nothing is held and nothing was let go.
+        private JObject SpoolSummary()
+        {
+            try
+            {
+                var entries = SpoolEntries();
+                var state = SpoolCounts();
+                if (entries.Count == 0 && state.Expired == 0 && state.Overflowed == 0) return null;
+                return new JObject
+                {
+                    ["pending"] = entries.Count,
+                    ["oldest"] = entries.Count == 0 ? JValue.CreateNull() : (JToken)SessionTime(entries[0].SentUtc),
+                    ["expired"] = state.Expired,
+                    ["overflowed"] = state.Overflowed
+                };
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        // The panel has been told what was let go, and nothing is held: start counting afresh.
+        private void SpoolCountsDelivered()
+        {
+            var state = SpoolCounts();
+            if (state.Expired == 0 && state.Overflowed == 0) return;
+            state.Expired = 0;
+            state.Overflowed = 0;
+            WriteData(SpoolStateFile, state);
+        }
+
+        private string SpoolDescription()
+        {
+            try
+            {
+                var entries = SpoolEntries();
+                var state = SpoolCounts();
+                var held = entries.Count == 0
+                    ? "nothing held"
+                    : $"{entries.Count} held, oldest from {entries[0].SentUtc.ToLocalTime():yyyy-MM-dd HH:mm}";
+                var dropped = state.Expired + state.Overflowed > 0
+                    ? $"; {state.Expired} deleted unsent for age, {state.Overflowed} for space"
+                    : "";
+                return $"{held}{dropped} (keeps up to {SpoolMaxDays} days, {SpoolMaxBytes / (1024 * 1024)} MB)";
+            }
+            catch (Exception ex)
+            {
+                return $"cannot be read ({ex.Message})";
+            }
+        }
+
+        // While the panel cannot be reached, what cannot be sent again goes to
+        // disk, so a reload or a restart in the meantime does not lose it.
+        private void SpoolWhileUnreachable()
+        {
+            if (SessionReportDue() && (PolicyAllowsKind("session") || PolicyHolds(_policy))) SpoolSessionReports();
+            if (_events.Count > 0 && (PolicyAllowsKind("events") || PolicyHolds(_policy))) SpoolQueuedEvents(false);
+        }
+
+        private void SpoolSessionReports()
+        {
+            for (var i = 0; i < 2 && SessionReportDue(); i++)
+            {
+                Action done;
+                var body = BuildSessionReport(out done);
+                SpoolReport(body);
+                done();
+            }
+        }
+
+        // Held events go to disk a report's worth at a time, or once the oldest
+        // has waited an hour -- not every few seconds -- so a month of them stays
+        // a few hundred files. With `all`, whatever is queued goes now.
+        private void SpoolQueuedEvents(bool all)
+        {
+            if (EffectiveSharingLevel() < 3)
+            {
+                _events.Clear();
+                return;
+            }
+
+            while (_events.Count > 0 && (all || _events.Count >= EventsPerReport || OldestEventAge() >= TimeSpan.FromHours(1)))
+            {
+                var batch = _events.Take(EventsPerReport).ToList();
+                SpoolReport(PanelEnvelope("events", new JObject { ["events"] = new JArray(batch) }));
+                _events.RemoveAll(e => batch.Contains(e));
+            }
+        }
+
+        private TimeSpan OldestEventAge()
+        {
+            DateTime at;
+            if (_events.Count == 0) return TimeSpan.Zero;
+            return DateTime.TryParse((string)_events[0]["at"], CultureInfo.InvariantCulture,
+                DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out at)
+                ? DateTime.UtcNow - at
+                : TimeSpan.FromHours(1);
+        }
+
         // ---------------------------------------------------------- heartbeat
 
         private void SendHeartbeat()
         {
             _heartbeatDue = DateTime.UtcNow.AddSeconds(HeartbeatInterval());
-            PanelRequest("POST", PanelReportPath, PanelEnvelope("heartbeat", HeartbeatPayload()), response =>
+            var payload = HeartbeatPayload();
+            var spool = SpoolSummary();
+            if (spool != null) payload["spool"] = spool;
+            PanelRequest("POST", PanelReportPath, PanelEnvelope("heartbeat", payload), response =>
             {
+                // What was let go has been told, and nothing is held: count afresh.
+                if (spool != null && (int)spool["pending"] == 0) SpoolCountsDelivered();
                 if (!_panelReporting)
                     Puts("The panel accepted a heartbeat. This server is reporting.");
                 _panelReporting = true;
@@ -2651,6 +2972,10 @@ namespace Oxide.Plugins
                     BootSeconds = initial ? Math.Round((now - started).TotalSeconds, 2) : (double?)null
                 };
 
+                // What the last process never reported would be overwritten here:
+                // keep it to send later instead, if this server reports anywhere.
+                if (saved != null && _config.Panel.Enabled && File.Exists(PanelFile())) SpoolUnreportedSessions(saved);
+
                 if (saved != null && saved.StartedUtc != default(DateTime))
                 {
                     _session.PreviousStartedUtc = saved.StartedUtc;
@@ -2694,9 +3019,22 @@ namespace Oxide.Plugins
         // by when each run started.
         private void SendSession()
         {
+            Action done;
+            var body = BuildSessionReport(out done);
+            PanelRequest("POST", PanelReportPath, body, response => done(), () => done(), onFailed: code =>
+            {
+                // Generated once: kept to send later rather than lost, and not also retried from memory.
+                if (!SpoolKeepsStatus(code)) return;
+                SpoolReport(body);
+                done();
+            });
+        }
+
+        // The next session report due: the previous run first, then this boot.
+        private string BuildSessionReport(out Action done)
+        {
             var session = _session;
             JObject payload;
-            Action done;
 
             if (session.PreviousPending && session.PreviousStartedUtc != null)
             {
@@ -2732,7 +3070,35 @@ namespace Oxide.Plugins
                 };
             }
 
-            PanelRequest("POST", PanelReportPath, PanelEnvelope("session", payload), response => done(), () => done());
+            return PanelEnvelope("session", payload);
+        }
+
+        // Runs from before the previous process that were never told. Only what
+        // is known is kept: a boot's plugin list is gone with its process.
+        private void SpoolUnreportedSessions(SessionMarker saved)
+        {
+            try
+            {
+                if (saved.PreviousPending && saved.PreviousStartedUtc != null)
+                {
+                    SpoolReport(PanelEnvelope("session", new JObject
+                    {
+                        ["started_at"] = SessionTime(saved.PreviousStartedUtc.Value),
+                        ["ended_at"] = SessionTime(saved.PreviousEndedUtc ?? saved.PreviousStartedUtc.Value),
+                        ["clean_shutdown"] = saved.PreviousClean
+                    }));
+                }
+                if (!saved.BootReported && saved.StartedUtc != default(DateTime))
+                {
+                    var boot = new JObject { ["started_at"] = SessionTime(saved.StartedUtc) };
+                    if (saved.BootSeconds != null) boot["boot_seconds"] = saved.BootSeconds.Value;
+                    SpoolReport(PanelEnvelope("session", boot));
+                }
+            }
+            catch (Exception ex)
+            {
+                SpoolProblem("keep the previous run's session report", ex);
+            }
         }
 
         private static string SessionTime(DateTime utc)
@@ -4107,12 +4473,19 @@ namespace Oxide.Plugins
         private void SendCommandResult()
         {
             var payload = _commandResults.Peek();
-            PanelRequest("POST", PanelReportPath, PanelEnvelope("command_result", payload), response =>
+            var body = PanelEnvelope("command_result", payload);
+            PanelRequest("POST", PanelReportPath, body, response =>
             {
                 if (_commandResults.Count > 0 && ReferenceEquals(_commandResults.Peek(), payload)) _commandResults.Dequeue();
             }, () =>
             {
                 if (_commandResults.Count > 0 && ReferenceEquals(_commandResults.Peek(), payload)) _commandResults.Dequeue();
+            }, onFailed: code =>
+            {
+                // Kept on disk, not retried from memory, so it is never sent twice.
+                if (!SpoolKeepsStatus(code)) return;
+                if (_commandResults.Count > 0 && ReferenceEquals(_commandResults.Peek(), payload)) _commandResults.Dequeue();
+                SpoolReport(body);
             });
         }
 
@@ -4287,6 +4660,8 @@ namespace Oxide.Plugins
                 parts.Add(_policy.Kinds.Count == 0
                     ? "no reports at all"
                     : "only " + string.Join(", ", _policy.Kinds.OrderBy(k => k, StringComparer.Ordinal).ToArray()) + " reports");
+            if (_policy.Hold && _policy.Kinds != null)
+                parts.Add($"the rest held here for up to {SpoolMaxDays} days");
 
             var name = string.IsNullOrEmpty(_policy.Name) ? "unnamed" : _policy.Name;
             return $"{name}: {string.Join(", ", parts.ToArray())} (from the panel {_policy.ReceivedUtc.ToLocalTime():yyyy-MM-dd HH:mm})";
@@ -4417,7 +4792,8 @@ namespace Oxide.Plugins
 
         private void QueueEvent(bool enabled, string kind, string actor, JObject data)
         {
-            if (!enabled || _panel == null || !_config.Panel.Enabled || EffectiveSharingLevel() < 3 || !PolicyAllowsKind("events")) return;
+            if (!enabled || _panel == null || !_config.Panel.Enabled || EffectiveSharingLevel() < 3) return;
+            if (!PolicyAllowsKind("events") && !PolicyHolds(_policy)) return;
             if (_events.Count >= MaxQueuedEvents)
             {
                 _events.RemoveAt(0);
@@ -4445,7 +4821,8 @@ namespace Oxide.Plugins
 
             var batch = _events.Take(EventsPerReport).ToList();
             var payload = new JObject { ["events"] = new JArray(batch) };
-            PanelRequest("POST", PanelReportPath, PanelEnvelope("events", payload), response =>
+            var body = PanelEnvelope("events", payload);
+            PanelRequest("POST", PanelReportPath, body, response =>
             {
                 _events.RemoveAll(e => batch.Contains(e));
                 _eventsSent += batch.Count;
@@ -4456,6 +4833,13 @@ namespace Oxide.Plugins
             {
                 // Refused: the same events would be refused again, so they are let go.
                 PrintWarning($"Panel: {batch.Count} player event{(batch.Count == 1 ? " was" : "s were")} refused (HTTP {_panelLastCode}) and will not be sent again.");
+                _events.RemoveAll(e => batch.Contains(e));
+                _eventsDue = DateTime.UtcNow.AddSeconds(interval);
+            }, onFailed: code =>
+            {
+                // Kept on disk and taken out of the queue, so they are sent once, later.
+                if (!SpoolKeepsStatus(code)) return;
+                SpoolReport(body);
                 _events.RemoveAll(e => batch.Contains(e));
                 _eventsDue = DateTime.UtcNow.AddSeconds(interval);
             });
@@ -4693,6 +5077,7 @@ namespace Oxide.Plugins
         private long _logHeldOffset = -1;
         private int _panelLastCode;
         private bool _logSkippedMore;
+        private bool _logMore;
         // A count of lines kept back by the policy is told on its own after an
         // hour at the latest, so it does not wait for the next warning.
         private const int LogNotSentFlushSeconds = 3600;
@@ -4715,35 +5100,56 @@ namespace Oxide.Plugins
         // Sends the next batch of Oxide's log. A batch the panel has not
         // accepted is sent again as it was, with the same report id, so a retry
         // never stores a line twice.
-        private void SendLog()
+        // Returns whether a request went out.
+        private bool SendLog()
         {
             var interval = Math.Max(10, _config.Panel.LogSeconds);
             if (!PolicyAllowsKind("log"))
             {
-                // Walk on and count, so nothing piles up; the counts go with the
-                // first batch once the log is allowed again. A batch built before
-                // was never committed, so its lines are counted, not lost.
+                // A batch built before was never committed, so its lines are read again later.
                 _logPending = null;
+                if (PolicyHolds(_policy))
+                {
+                    // Held: the cursor stays where it is, so the lines go when the log is allowed again.
+                    _logDue = DateTime.UtcNow.AddSeconds(interval);
+                    _logState = $"held: the panel's report policy does not include the log; lines wait here, up to {SpoolMaxDays} days";
+                    return false;
+                }
+
+                // Walk on and count, so nothing piles up; the counts go with the
+                // first batch once the log is allowed again.
                 BuildLogBatch();
                 _logDue = _logSkippedMore ? DateTime.UtcNow : DateTime.UtcNow.AddSeconds(interval);
                 _logState = "not sent: the panel's report policy does not include the log; lines are counted";
-                return;
+                return false;
             }
+
+            // Behind (an earlier day's file, or more than one batch waiting): one
+            // batch at a time, never back to back, so a long catch-up is gentle.
+            var catchingUp = LogBehind();
+            if (catchingUp && DateTime.UtcNow < _catchUpDue)
+            {
+                _logDue = _catchUpDue;
+                return false;
+            }
+
             if (_logPending == null) _logPending = BuildLogBatch();
             if (_logPending == null)
             {
                 // Lines the policy kept here were passed over: read on at the next tick.
                 _logDue = _logSkippedMore ? DateTime.UtcNow : DateTime.UtcNow.AddSeconds(interval);
-                return;
+                return false;
             }
 
             var batch = _logPending;
+            if (catchingUp || batch.More) _catchUpDue = DateTime.UtcNow.AddSeconds(SpoolDrainSeconds);
             PanelRequest("POST", PanelReportPath, batch.Body, response =>
             {
                 CommitLogBatch(batch);
                 _logLinesSent += batch.Lines;
                 _logState = $"{_logLinesSent} line{(_logLinesSent == 1 ? "" : "s")} sent since load, last at {DateTime.Now:HH:mm:ss}";
-                _logDue = batch.More ? DateTime.UtcNow : DateTime.UtcNow.AddSeconds(interval);
+                _logMore = batch.More;
+                _logDue = batch.More || LogBehind() ? _catchUpDue : DateTime.UtcNow.AddSeconds(interval);
             }, () =>
             {
                 if (_panelLastCode == 413 && batch.Walked > 1)
@@ -4760,6 +5166,16 @@ namespace Oxide.Plugins
                 PrintWarning($"Panel: {batch.Lines} log line{(batch.Lines == 1 ? " was" : "s were")} refused (HTTP {_panelLastCode}) and will not be sent again.");
                 CommitLogBatch(batch);
             }, 60f);
+            return true;
+        }
+
+        // Whether the log is behind: the last batch left more to send, or the
+        // cursor is still in an earlier day's file.
+        private bool LogBehind()
+        {
+            if (_logMore) return true;
+            if (_logCursor == null) return false;
+            return string.CompareOrdinal(_logCursor.File ?? "", OxideLogName(DateTime.Now)) < 0;
         }
 
         private void CommitLogBatch(LogSendBatch batch)
@@ -4842,6 +5258,17 @@ namespace Oxide.Plugins
             LoadLogCursor();
             var dir = Interface.Oxide.LogDirectory;
             var today = OxideLogName(DateTime.Now);
+
+            // Back after more than thirty days: the older files are skipped, not
+            // read. They stay on this machine; only the panel does without them.
+            if (LogFileTooOld(_logCursor.File, DateTime.Now))
+            {
+                var skippedFrom = _logCursor.File;
+                _logCursor.File = NextOxideLog(dir, OxideLogName(DateTime.Now.Date.AddDays(-SpoolMaxDays - 1))) ?? today;
+                _logCursor.Offset = 0;
+                WriteData(LogDataFile, _logCursor);
+                Puts($"Panel: log files from {skippedFrom} until {_logCursor.File} are more than {SpoolMaxDays} days old and are not sent. They stay in oxide/logs.");
+            }
 
             for (var hops = 0; hops < 400; hops++)
             {
@@ -5042,6 +5469,7 @@ namespace Oxide.Plugins
             public bool? Commands;            // null: as the config says
             public bool? Bans;
             public HashSet<string> Kinds;     // null: every kind
+            public bool Hold;                 // keep what Kinds stops, to send later
             public DateTime ReceivedUtc;
         }
 
@@ -5049,6 +5477,12 @@ namespace Oxide.Plugins
         private static bool PolicyAllowsKindOf(ReportPolicy policy, string kind)
         {
             return policy == null || policy.Kinds == null || policy.Kinds.Contains(kind);
+        }
+
+        // Whether what the policy stops is kept here, to send when it is allowed again.
+        private static bool PolicyHolds(ReportPolicy policy)
+        {
+            return policy != null && policy.Hold;
         }
 
         // A line with no level cannot be classified, so it is sent.
@@ -5077,6 +5511,7 @@ namespace Oxide.Plugins
                     PluginTimeSeconds = PositiveInt(data["plugin_time_seconds"]),
                     Commands = data["commands"] != null && data["commands"].Type == JTokenType.Boolean ? (bool)data["commands"] : (bool?)null,
                     Bans = data["bans"] != null && data["bans"].Type == JTokenType.Boolean ? (bool)data["bans"] : (bool?)null,
+                    Hold = data["hold"] != null && data["hold"].Type == JTokenType.Boolean && (bool)data["hold"],
                     ReceivedUtc = DateTime.UtcNow
                 };
 
@@ -5105,6 +5540,81 @@ namespace Oxide.Plugins
                 return value > 0 && value <= int.MaxValue ? (int)value : 0;
             }
             catch { return 0; }   // larger than a long
+        }
+
+        #endregion
+
+        #region Spool rules
+
+        // No game or Oxide types: checked outside the game, like the regions below.
+
+        // Kept for thirty days, then let go unsent: a server back after a long
+        // time must not flood the panel, and the customer's disk is not ours.
+        private const int SpoolMaxDays = 30;
+        private const long SpoolMaxBytes = 50L * 1024 * 1024;
+        private const int SpoolMaxFiles = 5000;
+
+        private sealed class SpoolEntry
+        {
+            public string Path;
+            public DateTime SentUtc;
+            public long Bytes;
+        }
+
+        // Only reports that cannot be sent again are kept. The rest report the
+        // current state, which the next pass sends afresh.
+        private static bool SpoolKeepsKind(string kind)
+        {
+            return kind == "session" || kind == "events" || kind == "command_result";
+        }
+
+        // No answer, a timeout, "slow down" or a server error: the same report
+        // may be taken later. Any other refusal would be refused again.
+        private static bool SpoolKeepsStatus(int code)
+        {
+            return code <= 0 || code == 429 || (code >= 500 && code <= 599);
+        }
+
+        // Names sort oldest first: when the report was made, then its id.
+        private static string SpoolFileName(DateTime sentUtc, string reportId)
+        {
+            return sentUtc.ToUniversalTime().ToString("yyyyMMdd'T'HHmmssfff", CultureInfo.InvariantCulture) + "_" + reportId + ".json";
+        }
+
+        private static DateTime? SpoolFileTime(string fileName)
+        {
+            DateTime time;
+            if (fileName == null || fileName.Length < 18) return null;
+            return DateTime.TryParseExact(fileName.Substring(0, 18), "yyyyMMdd'T'HHmmssfff", CultureInfo.InvariantCulture,
+                DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out time) ? time : (DateTime?)null;
+        }
+
+        // Which kept reports go unsent: anything older than thirty days, then the
+        // oldest until what is left fits. Entries are oldest first.
+        private static void SpoolPrune(List<SpoolEntry> entries, DateTime nowUtc, out List<SpoolEntry> expired, out List<SpoolEntry> overflowed)
+        {
+            var limit = TimeSpan.FromDays(SpoolMaxDays);
+            expired = entries.Where(e => nowUtc - e.SentUtc > limit).ToList();
+            var kept = entries.Where(e => nowUtc - e.SentUtc <= limit).ToList();
+            overflowed = new List<SpoolEntry>();
+            var bytes = kept.Sum(e => e.Bytes);
+            var i = 0;
+            while (i < kept.Count && (kept.Count - i > SpoolMaxFiles || bytes > SpoolMaxBytes))
+            {
+                overflowed.Add(kept[i]);
+                bytes -= kept[i].Bytes;
+                i++;
+            }
+        }
+
+        // A log file whose name says it is more than thirty days old is skipped,
+        // not read. A name that is not a date is never skipped.
+        private static bool LogFileTooOld(string fileName, DateTime localToday)
+        {
+            DateTime date;
+            if (fileName == null || fileName.Length < 16) return false;
+            if (!DateTime.TryParseExact(fileName.Substring(6, 10), "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out date)) return false;
+            return date < localToday.Date.AddDays(-SpoolMaxDays);
         }
 
         #endregion
@@ -6717,6 +7227,7 @@ namespace Oxide.Plugins
                 lines.Add($"  joins & chat : {_eventsState}");
                 lines.Add($"  plugin time  : {_pluginTimeState}");
                 lines.Add($"  session      : {_sessionState}");
+                lines.Add($"  held reports : {SpoolDescription()}");
             }
 
             player.Reply(string.Join("\n", lines.ToArray()));

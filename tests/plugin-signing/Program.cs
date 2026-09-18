@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.IO;
 using System.Text.RegularExpressions;
 using Newtonsoft.Json;
@@ -226,6 +228,56 @@ namespace PluginSigning
             Check("kinds that is not a list sends every kind", mistyped != null && mistyped.Kinds == null && Extracted.PolicyAllowsKindOf(mistyped, "log"));
             var mixed = Extracted.ReadPolicy("{\"ok\":true,\"data\":{\"kinds\":[\"heartbeat\",3]}}");
             Check("a kinds list with a non-string sends every kind", mixed != null && mixed.Kinds == null && Extracted.PolicyAllowsKindOf(mixed, "log"));
+
+            // ---- hold: a paused server keeps what it may not send.
+            var held = Extracted.ReadPolicy("{\"ok\":true,\"data\":{\"policy\":\"paused\",\"kinds\":[\"heartbeat\"],\"hold\":true}}");
+            Check("hold true is read", held != null && Extracted.PolicyHolds(held));
+            Check("no hold field does not hold", !Extracted.PolicyHolds(free) && !Extracted.PolicyHolds(paused));
+            var holdMistyped = Extracted.ReadPolicy("{\"ok\":true,\"data\":{\"hold\":\"yes\"}}");
+            Check("a hold that is not a boolean does not hold", holdMistyped != null && !Extracted.PolicyHolds(holdMistyped));
+            Check("no policy does not hold", !Extracted.PolicyHolds(null));
+
+            // ---- the spool: what is kept, for how long, within what.
+            Check("session, events and command answers are kept", Extracted.SpoolKeepsKind("session") && Extracted.SpoolKeepsKind("events") && Extracted.SpoolKeepsKind("command_result"));
+            Check("current-state kinds are not kept", !Extracted.SpoolKeepsKind("heartbeat") && !Extracted.SpoolKeepsKind("inventory")
+                && !Extracted.SpoolKeepsKind("log") && !Extracted.SpoolKeepsKind("players") && !Extracted.SpoolKeepsKind("plugin_time") && !Extracted.SpoolKeepsKind("schedule"));
+            Check("no answer, 429 and 5xx are kept", Extracted.SpoolKeepsStatus(0) && Extracted.SpoolKeepsStatus(-1) && Extracted.SpoolKeepsStatus(429)
+                && Extracted.SpoolKeepsStatus(500) && Extracted.SpoolKeepsStatus(503) && Extracted.SpoolKeepsStatus(599));
+            Check("other refusals are not kept", !Extracted.SpoolKeepsStatus(400) && !Extracted.SpoolKeepsStatus(401) && !Extracted.SpoolKeepsStatus(413)
+                && !Extracted.SpoolKeepsStatus(422) && !Extracted.SpoolKeepsStatus(200) && !Extracted.SpoolKeepsStatus(600));
+            var sent = new DateTime(2026, 9, 18, 4, 11, 0, 123, DateTimeKind.Utc);
+            var fileName = Extracted.SpoolFileName(sent, "0193f2c1-8a4e-7c1a-9f3b-2d5e6a7b8c9d");
+            Check("a spool file name carries when the report was made", Extracted.SpoolFileTime(fileName) == sent, fileName);
+            Check("spool file names sort oldest first", string.CompareOrdinal(Extracted.SpoolFileName(sent, "b"), Extracted.SpoolFileName(sent.AddMilliseconds(1), "a")) < 0);
+            Check("a name that is not ours has no time", Extracted.SpoolFileTime("notes.json") == null && Extracted.SpoolFileTime(null) == null);
+
+            var spoolNow = new DateTime(2026, 9, 18, 12, 0, 0, DateTimeKind.Utc);
+            var entries = new List<Extracted.SpoolEntry>
+            {
+                new Extracted.SpoolEntry { Path = "a", SentUtc = spoolNow.AddDays(-31), Bytes = 10 },
+                new Extracted.SpoolEntry { Path = "b", SentUtc = spoolNow.AddDays(-30).AddMinutes(1), Bytes = 10 },
+                new Extracted.SpoolEntry { Path = "c", SentUtc = spoolNow.AddDays(-1), Bytes = 10 },
+            };
+            List<Extracted.SpoolEntry> expired, overflowed;
+            Extracted.SpoolPrune(entries, spoolNow, out expired, out overflowed);
+            Check("older than 30 days is let go unsent", expired.Count == 1 && expired[0].Path == "a" && overflowed.Count == 0);
+            var bigSpool = new List<Extracted.SpoolEntry>
+            {
+                new Extracted.SpoolEntry { Path = "old", SentUtc = spoolNow.AddDays(-3), Bytes = 30L * 1024 * 1024 },
+                new Extracted.SpoolEntry { Path = "mid", SentUtc = spoolNow.AddDays(-2), Bytes = 15L * 1024 * 1024 },
+                new Extracted.SpoolEntry { Path = "new", SentUtc = spoolNow.AddDays(-1), Bytes = 15L * 1024 * 1024 },
+            };
+            Extracted.SpoolPrune(bigSpool, spoolNow, out expired, out overflowed);
+            Check("over 50 MB, the oldest go until it fits", expired.Count == 0 && overflowed.Count == 1 && overflowed[0].Path == "old");
+            var many = Enumerable.Range(0, 5003).Select(i => new Extracted.SpoolEntry { Path = i.ToString("D5"), SentUtc = spoolNow.AddMinutes(-6000 + i), Bytes = 100 }).ToList();
+            Extracted.SpoolPrune(many, spoolNow, out expired, out overflowed);
+            Check("over 5,000 files, the oldest go", overflowed.Count == 3 && overflowed[0].Path == "00000" && overflowed[2].Path == "00002");
+
+            var today = new DateTime(2026, 9, 18);
+            Check("a log file from 31 days ago is skipped", Extracted.LogFileTooOld("oxide_2026-08-18.txt", today));
+            Check("a log file from 30 days ago is read", !Extracted.LogFileTooOld("oxide_2026-08-19.txt", today));
+            Check("today's log file is read", !Extracted.LogFileTooOld("oxide_2026-09-18.txt", today));
+            Check("a file name that is not a date is never skipped", !Extracted.LogFileTooOld("oxide_latest.txt", today) && !Extracted.LogFileTooOld(null, today));
 
             Console.WriteLine(_failed == 0 ? "All checks passed." : _failed + " check(s) FAILED.");
             return _failed == 0 ? 0 : 1;
