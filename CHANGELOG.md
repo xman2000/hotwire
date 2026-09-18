@@ -25,6 +25,19 @@ sit above a launcher `1.1.7`. Read the label, not the number.
 at the top of the file — it is a comment, not something it echoes, so read it
 rather than watch for it.
 
+## 1.1.27 — plugin — 2026-09-18
+
+**In-game reports reach the panel, when you ask for them.**
+
+- When a player presses F7 and reports another, the plugin sends who reported whom, the kind of report, the subject and
+  the message, with the rest of the player events. The panel collects them from every server into one inbox.
+- **Off until you turn it on** in the panel's account settings, and only at the "identified" player-data level, because a
+  report names two players. Turning it off stops them at once, and anything queued is let go.
+- `Send in-game reports when the panel asks for them` in the config keeps them on this server whatever the panel says.
+- Card numbers and SSNs are masked in what the player wrote, as in chat. Nothing changes for the player: the game's own
+  report goes where it always did.
+- `hotwire check` says whether in-game reports are sent.
+
 ## 1.1.13 — launcher — 2026-09-18
 
 **Oxide is checked before it is installed.**

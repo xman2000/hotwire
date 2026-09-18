@@ -17,7 +17,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Hotwire", "xman2000", "1.1.26")]
+    [Info("Hotwire", "xman2000", "1.1.27")]
     [Description("Scheduled restarts and updates. Announces, counts down, writes a flag, quits.")]
     internal class Hotwire : CovalencePlugin
     {
@@ -204,6 +204,13 @@ namespace Oxide.Plugins
             // masked first. Chat commands are not chat and are never sent.
             [JsonProperty("Send chat")]
             public bool SendChat = true;
+
+            // In-game (F7) reports: who reported whom, the kind, the subject and
+            // the message. Sent only when the account's owner has turned them on
+            // in the panel and the level is "identified"; false here keeps them
+            // on this server whatever the panel says.
+            [JsonProperty("Send in-game reports when the panel asks for them")]
+            public bool SendReports = true;
 
             [JsonProperty("Send player joins, leaves and chat every this many seconds")]
             public int EventSeconds = 30;
@@ -4519,6 +4526,7 @@ namespace Oxide.Plugins
             public int Level;
             public string LevelHash;
             public string Salt;
+            public bool Reports;              // in-game reports may leave; only a literal true
             public DateTime ReceivedUtc;
         }
 
@@ -4537,13 +4545,20 @@ namespace Oxide.Plugins
             return a.Level;
         }
 
+        // In-game reports leave only at level 3, when the panel said a literal
+        // true and this config has not turned them off.
+        private bool ReportsAllowed()
+        {
+            return _config.Panel.SendReports && EffectiveSharingLevel() == 3 && _sharing != null && _sharing.Reports;
+        }
+
         private string SharingDescription()
         {
             var level = EffectiveSharingLevel();
             var names = new[] { "counts only (0)", "anonymous (1)", "pseudonymous (2)", "identified (3)" };
             if (_sharing == null || _panel == null || _sharing.KeyId != _panel.KeyId)
                 return names[0] + " until the panel answers";
-            return $"{names[level]}, from the panel {_sharing.ReceivedUtc.ToLocalTime():yyyy-MM-dd HH:mm}";
+            return $"{names[level]}, in-game reports {(ReportsAllowed() ? "sent" : "not sent")}, from the panel {_sharing.ReceivedUtc.ToLocalTime():yyyy-MM-dd HH:mm}";
         }
 
         private static bool IsSalt(string salt)
@@ -4580,6 +4595,7 @@ namespace Oxide.Plugins
                         Level = ok && level >= 0 && level <= 3 ? level : 0,
                         LevelHash = data == null ? null : (string)data["level_hash"],
                         Salt = data == null ? null : (string)data["salt"],
+                        Reports = ok && data != null && data["reports"] != null && data["reports"].Type == JTokenType.Boolean && (bool)data["reports"],
                         ReceivedUtc = DateTime.UtcNow
                     };
                     if (answer.Level == 2 && !IsSalt(answer.Salt)) answer.Level = 0;
@@ -4589,12 +4605,19 @@ namespace Oxide.Plugins
                     answer = new SharingAnswer { KeyId = link.KeyId, Level = 0, ReceivedUtc = DateTime.UtcNow };
                 }
 
-                var changed = _sharing == null || _sharing.KeyId != answer.KeyId || _sharing.LevelHash != answer.LevelHash || _sharing.Level != answer.Level;
+                var changed = _sharing == null || _sharing.KeyId != answer.KeyId || _sharing.LevelHash != answer.LevelHash || _sharing.Level != answer.Level || _sharing.Reports != answer.Reports;
                 if (!changed) { _sharing.ReceivedUtc = answer.ReceivedUtc; return; }
 
                 var before = _sharing == null || _sharing.KeyId != link.KeyId ? -1 : _sharing.Level;
+                var reportsBefore = _sharing != null && _sharing.KeyId == link.KeyId && _sharing.Reports;
                 _sharing = answer;
                 WriteData(SharingDataFile, _sharing);
+                if (reportsBefore != answer.Reports)
+                {
+                    Puts(answer.Reports ? "In-game reports: the panel asks for them, so they are sent." : "In-game reports: not sent.");
+                    // Reports queued while they were allowed never leave once they are not.
+                    if (!answer.Reports) _events.RemoveAll(e => (string)e["kind"] == "report");
+                }
                 if (before != answer.Level)
                 {
                     Puts($"Player data sharing level from the panel: {SharingDescription()}.");
@@ -4799,6 +4822,24 @@ namespace Oxide.Plugins
             {
                 ["channel"] = channel == null ? "unknown" : channel.ToString().ToLowerInvariant(),
                 ["text"] = MaskSourceGates(message)
+            });
+        }
+
+        // An F7 report. The game calls this for every report, whatever its report
+        // convars say. Returns nothing, so it never changes what the game does.
+        private void OnPlayerReported(BasePlayer reporter, string targetName, string targetId, string subject, string message, string type)
+        {
+            if (reporter == null || !ReportsAllowed()) return;
+            var text = message ?? "";
+            if (text.Length > 4000) text = text.Substring(0, 4000);
+            QueueEvent(true, "report", reporter.UserIDString, new JObject
+            {
+                ["reporter_name"] = MaskSourceGates(reporter.displayName ?? ""),
+                ["target_id"] = targetId ?? "",
+                ["target_name"] = MaskSourceGates(targetName ?? ""),
+                ["type"] = type ?? "",
+                ["subject"] = MaskSourceGates(subject ?? ""),
+                ["message"] = MaskSourceGates(text)
             });
         }
 
