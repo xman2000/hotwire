@@ -190,6 +190,25 @@ namespace PluginSigning
                 !Extracted.PanelVerifyResponse(rSecret, rStatus, rTs, rNonce, "{\"signed\":\"x\"}", out dropped) && dropped == null);
             Check("empty/garbage is rejected", !Extracted.PanelVerifyResponse(rSecret, rStatus, rTs, rNonce, "not json", out dropped) && dropped == null);
 
+            // ---- the report policy, as GET /api/v1/policy answers it.
+            var free = Extracted.ReadPolicy("{\"ok\":true,\"message\":\"OK\",\"data\":{\"policy\":\"free\",\"heartbeat_seconds\":60,\"plugin_time_seconds\":300,\"log_levels\":[\"warning\",\"error\"],\"commands\":false,\"bans\":false,\"policy_hash\":\"sha256:aa\"}}");
+            Check("the free policy is read", free != null && free.Name == "free" && free.HeartbeatSeconds == 60 && free.PluginTimeSeconds == 300
+                && free.Commands == false && free.Bans == false && free.Hash == "sha256:aa");
+            Check("free sends warnings and errors, whatever their case", Extracted.PolicyAllowsLevel(free, "warning") && Extracted.PolicyAllowsLevel(free, "Error"));
+            Check("free keeps info and chat here", !Extracted.PolicyAllowsLevel(free, "info") && !Extracted.PolicyAllowsLevel(free, "chat"));
+            Check("a line with no level is sent", Extracted.PolicyAllowsLevel(free, null));
+            var pro = Extracted.ReadPolicy("{\"ok\":true,\"message\":\"OK\",\"data\":{\"policy\":\"pro\",\"heartbeat_seconds\":30,\"plugin_time_seconds\":60,\"log_levels\":null,\"commands\":true,\"bans\":true,\"policy_hash\":\"sha256:bb\"}}");
+            Check("pro sends every level", pro != null && pro.LogLevels == null && Extracted.PolicyAllowsLevel(pro, "info") && pro.Commands == true);
+            Check("no policy sends every level", Extracted.PolicyAllowsLevel(null, "info"));
+            var odd2 = Extracted.ReadPolicy("{\"ok\":true,\"data\":{\"heartbeat_seconds\":\"60\",\"plugin_time_seconds\":-5,\"log_levels\":[\"warning\",3],\"commands\":\"no\"}}");
+            Check("a mistyped field leaves that aspect to the config", odd2 != null && odd2.HeartbeatSeconds == 0 && odd2.PluginTimeSeconds == 0
+                && odd2.LogLevels == null && odd2.Commands == null && odd2.Bans == null);
+            var big = Extracted.ReadPolicy("{\"ok\":true,\"data\":{\"heartbeat_seconds\":99999999999999999999999,\"bans\":false}}");
+            Check("a number too large for a long is ignored, not the whole answer", big != null && big.HeartbeatSeconds == 0 && big.Bans == false);
+            Check("an answer with ok false cannot be read", Extracted.ReadPolicy("{\"ok\":false,\"data\":{\"commands\":false}}") == null);
+            Check("an answer without data cannot be read", Extracted.ReadPolicy("{\"ok\":true}") == null);
+            Check("garbage cannot be read", Extracted.ReadPolicy("not json") == null && Extracted.ReadPolicy("") == null);
+
             Console.WriteLine(_failed == 0 ? "All checks passed." : _failed + " check(s) FAILED.");
             return _failed == 0 ? 0 : 1;
         }

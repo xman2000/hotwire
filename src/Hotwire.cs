@@ -17,7 +17,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Hotwire", "xman2000", "1.1.20")]
+    [Info("Hotwire", "xman2000", "1.1.21")]
     [Description("Scheduled restarts and updates. Announces, counts down, writes a flag, quits.")]
     internal class Hotwire : CovalencePlugin
     {
@@ -2118,6 +2118,9 @@ namespace Oxide.Plugins
             // How much player data may leave this machine, before anything that could carry any.
             if (now >= _sharingDue) { PollSharing(); return; }
 
+            // What to send, and how often, for this account's plan.
+            if (now >= _policyDue) { PollPolicy(); return; }
+
             if (SessionReportDue()) { SendSession(); return; }
 
             if (_config.Panel.ReportMap && !_mapOff)
@@ -2146,13 +2149,13 @@ namespace Oxide.Plugins
                 if (_scheduleJson != null && _scheduleJson != _scheduleSentJson) { SendSchedule(); return; }
             }
 
-            if (_config.Panel.AcceptCommands && now >= _commandsDue) { PollCommands(); return; }
+            if (_config.Panel.AcceptCommands && PolicyAllowsCommands() && now >= _commandsDue) { PollCommands(); return; }
             if (_config.Panel.SendPlayers && now >= _playersCheckDue) { _playersCheckDue = now.AddSeconds(30); RefreshPlayers(); }
             if (_playersJson != null && _playersJson != _playersSentJson && now >= _playersSendNotBefore) { SendPlayers(); return; }
             if (_events.Count > 0 && now >= _eventsDue) { SendEvents(); return; }
             if (_config.Panel.ReportPluginTime && now >= _pluginTimeDue && SendPluginTime()) return;
             if (_config.Panel.SendLog && now >= _logDue) { SendLog(); return; }
-            if (_config.Panel.EnforceBans && now >= _bansDue) { PollBans(); }
+            if (_config.Panel.EnforceBans && PolicyAllowsBans() && now >= _bansDue) { PollBans(); }
         }
 
         // Reads panel.json again only when it changes, so connecting, detaching
@@ -2193,6 +2196,8 @@ namespace Oxide.Plugins
             _layoutDue = DateTime.MinValue;
             _scheduleSentJson = null;
             _sharingDue = DateTime.MinValue;
+            _policy = null;
+            _policyDue = DateTime.MinValue;
             _logPending = null;
             _logDue = DateTime.MinValue;
             _playersJson = null;
@@ -2445,7 +2450,7 @@ namespace Oxide.Plugins
 
         private void SendHeartbeat()
         {
-            _heartbeatDue = DateTime.UtcNow.AddSeconds(Math.Max(10, _config.Panel.HeartbeatSeconds));
+            _heartbeatDue = DateTime.UtcNow.AddSeconds(HeartbeatInterval());
             PanelRequest("POST", PanelReportPath, PanelEnvelope("heartbeat", HeartbeatPayload()), response =>
             {
                 if (!_panelReporting)
@@ -4215,6 +4220,83 @@ namespace Oxide.Plugins
             }, signedResponse: true);
         }
 
+        // ---------------------------------------------------------- report policy
+
+        // What the panel asks this server to send, and how often, for the
+        // account's plan. It only ever lowers what this config allows: the
+        // longer interval wins, and a switch is on only when both say on. It is
+        // never about player data (that is the sharing level) and never changes
+        // what the server does. Until an answer arrives, or when one cannot be
+        // read, everything the config allows is sent, as before.
+
+        private const string PolicyPath = "/api/v1/policy";
+        private const int PolicyPollSeconds = 300;
+
+        private ReportPolicy _policy;
+        private DateTime _policyDue = DateTime.MinValue;
+
+        private int HeartbeatInterval()
+        {
+            var seconds = Math.Max(10, _config.Panel.HeartbeatSeconds);
+            // Capped well under the panel's ten silent minutes, so a mistaken answer cannot make a server look down.
+            return _policy == null ? seconds : Math.Max(seconds, Math.Min(300, _policy.HeartbeatSeconds));
+        }
+
+        private int PluginTimeInterval()
+        {
+            var seconds = Math.Max(30, _config.Panel.PluginTimeSeconds);
+            return _policy == null ? seconds : Math.Max(seconds, Math.Min(3600, _policy.PluginTimeSeconds));
+        }
+
+        private bool PolicyAllowsCommands() => _policy == null || _policy.Commands != false;
+
+        private bool PolicyAllowsBans() => _policy == null || _policy.Bans != false;
+
+        private bool PolicyAllowsLogLevel(string level) => PolicyAllowsLevel(_policy, level);
+
+        private string PolicyDescription()
+        {
+            if (_policy == null) return "none yet: sending everything the config allows";
+
+            var parts = new List<string>();
+            if (_policy.LogLevels != null)
+                parts.Add(_policy.LogLevels.Count == 0
+                    ? "no log lines"
+                    : "log " + string.Join(", ", _policy.LogLevels.OrderBy(l => l, StringComparer.Ordinal).ToArray()) + " only");
+            parts.Add($"heartbeat every {HeartbeatInterval()}s");
+            parts.Add($"plugin time every {PluginTimeInterval()}s");
+            if (!PolicyAllowsCommands()) parts.Add("no command checks");
+            if (!PolicyAllowsBans()) parts.Add("no ban list checks");
+
+            var name = string.IsNullOrEmpty(_policy.Name) ? "unnamed" : _policy.Name;
+            return $"{name}: {string.Join(", ", parts.ToArray())} (from the panel {_policy.ReceivedUtc.ToLocalTime():yyyy-MM-dd HH:mm})";
+        }
+
+        private void PollPolicy()
+        {
+            _policyDue = DateTime.UtcNow.AddSeconds(PolicyPollSeconds);
+            PanelRequest("GET", PolicyPath, null, response =>
+            {
+                var answer = ReadPolicy(response);
+                if (answer == null)
+                {
+                    // An answer that cannot be read: send everything the config allows.
+                    if (_policy != null) Puts("The panel's report policy could not be read. Sending everything the config allows.");
+                    _policy = null;
+                    return;
+                }
+
+                if (_policy != null && answer.Hash != null && answer.Hash == _policy.Hash)
+                {
+                    _policy.ReceivedUtc = answer.ReceivedUtc;
+                    return;
+                }
+
+                _policy = answer;
+                Puts($"Report policy from the panel: {PolicyDescription()}.");
+            }, signedResponse: true);
+        }
+
         // ---------------------------------------------------------- players
 
         // Who is online, sent when the set of players or a name changes. Only at
@@ -4384,7 +4466,7 @@ namespace Oxide.Plugins
         private bool SendPluginTime()
         {
             var now = DateTime.UtcNow;
-            _pluginTimeDue = now.AddSeconds(Math.Max(30, _config.Panel.PluginTimeSeconds));
+            _pluginTimeDue = now.AddSeconds(PluginTimeInterval());
 
             var current = new Dictionary<Plugin, PluginTotals>();
             var list = new JArray();
@@ -4549,6 +4631,10 @@ namespace Oxide.Plugins
             public long Seq;
             public string File;
             public long Offset;
+            // Lines the report policy kept on this machine, by level, not yet
+            // told to the panel. They ride along with the next batch that goes.
+            public Dictionary<string, long> NotSent;
+            public DateTime NotSentSinceUtc;
         }
 
         private sealed class LogSendBatch
@@ -4558,6 +4644,7 @@ namespace Oxide.Plugins
             public long EndOffset;
             public long EndSeq;
             public int Lines;
+            public int Walked;
             public bool More;
         }
 
@@ -4575,6 +4662,10 @@ namespace Oxide.Plugins
         private string _logHeldFile;
         private long _logHeldOffset = -1;
         private int _panelLastCode;
+        private bool _logSkippedMore;
+        // A count of lines kept back by the policy is told on its own after an
+        // hour at the latest, so it does not wait for the next warning.
+        private const int LogNotSentFlushSeconds = 3600;
         private long _logLinesSent;
         private string _logState = "nothing sent yet";
 
@@ -4584,6 +4675,10 @@ namespace Oxide.Plugins
             var text = EffectiveSharingLevel() >= 3
                 ? "line text sent; card numbers and SSNs masked"
                 : "line text sent; card numbers, SSNs and Steam IDs removed";
+            if (_policy != null && _policy.LogLevels != null)
+                text += _policy.LogLevels.Count == 0
+                    ? "; the panel's policy sends no lines"
+                    : "; the panel's policy sends " + string.Join(", ", _policy.LogLevels.OrderBy(l => l, StringComparer.Ordinal).ToArray()) + " only";
             return $"{_logState}; {text}";
         }
 
@@ -4596,7 +4691,8 @@ namespace Oxide.Plugins
             if (_logPending == null) _logPending = BuildLogBatch();
             if (_logPending == null)
             {
-                _logDue = DateTime.UtcNow.AddSeconds(interval);
+                // Lines the policy kept here were passed over: read on at the next tick.
+                _logDue = _logSkippedMore ? DateTime.UtcNow : DateTime.UtcNow.AddSeconds(interval);
                 return;
             }
 
@@ -4609,10 +4705,10 @@ namespace Oxide.Plugins
                 _logDue = batch.More ? DateTime.UtcNow : DateTime.UtcNow.AddSeconds(interval);
             }, () =>
             {
-                if (_panelLastCode == 413 && batch.Lines > 1)
+                if (_panelLastCode == 413 && batch.Walked > 1)
                 {
                     // Too large for the panel's web server: split it, never drop it.
-                    _logBatchLines = Math.Max(1, batch.Lines / 2);
+                    _logBatchLines = Math.Max(1, batch.Walked / 2);
                     _logPending = null;
                     _logDue = DateTime.MinValue;
                     return;
@@ -4632,6 +4728,8 @@ namespace Oxide.Plugins
             _logCursor.File = batch.File;
             _logCursor.Offset = batch.EndOffset;
             _logCursor.Seq = batch.EndSeq;
+            // The batch carried every count kept back so far.
+            _logCursor.NotSent = null;
             WriteData(LogDataFile, _logCursor);
         }
 
@@ -4699,6 +4797,7 @@ namespace Oxide.Plugins
         // it), wait one more pass.
         private LogSendBatch BuildLogBatch()
         {
+            _logSkippedMore = false;
             LoadLogCursor();
             var dir = Interface.Oxide.LogDirectory;
             var today = OxideLogName(DateTime.Now);
@@ -4809,9 +4908,21 @@ namespace Oxide.Plugins
             while (true)
             {
                 var lines = new JArray();
+                var notSent = _logCursor.NotSent == null
+                    ? new Dictionary<string, long>(StringComparer.Ordinal)
+                    : new Dictionary<string, long>(_logCursor.NotSent, StringComparer.Ordinal);
                 for (var i = 0; i < count; i++)
                 {
                     var entry = entries[i];
+                    // A line the policy keeps here still takes its seq, so a line's
+                    // seq never depends on which policy was in force.
+                    if (!PolicyAllowsLogLevel(entry.Line.Level))
+                    {
+                        long n;
+                        notSent.TryGetValue(entry.Line.Level, out n);
+                        notSent[entry.Line.Level] = n + 1;
+                        continue;
+                    }
                     var body = MaskSourceGates(entry.Body.ToString());
                     var line = new JObject { ["seq"] = _logCursor.Seq + i + 1 };
                     var at = LogLineUtc(fileDate, entry.Line.Hour, entry.Line.Minute, TimeZoneInfo.Local);
@@ -4825,6 +4936,25 @@ namespace Oxide.Plugins
                     lines.Add(line);
                 }
 
+                var endOffset = count < entries.Count ? entries[count].Start : end;
+                var endSeq = _logCursor.Seq + count;
+                var more = count < entries.Count || !atEnd || (finished && NextOxideLog(dir, file) != null);
+
+                if (lines.Count == 0)
+                {
+                    // Nothing here the policy sends. Move past it and keep the
+                    // counts with the cursor, so a reload does not lose them.
+                    if (_logCursor.NotSent == null) _logCursor.NotSentSinceUtc = DateTime.UtcNow;
+                    _logCursor.NotSent = notSent;
+                    _logCursor.File = file;
+                    _logCursor.Offset = endOffset;
+                    _logCursor.Seq = endSeq;
+                    WriteData(LogDataFile, _logCursor);
+                    _logSkippedMore = more;
+
+                    if (more || (DateTime.UtcNow - _logCursor.NotSentSinceUtc).TotalSeconds < LogNotSentFlushSeconds) return null;
+                }
+
                 var payload = new JObject
                 {
                     ["stream"] = "oxide",
@@ -4833,6 +4963,7 @@ namespace Oxide.Plugins
                     ["lines"] = lines,
                     ["withheld"] = 0
                 };
+                if (notSent.Count > 0) payload["not_sent"] = JObject.FromObject(notSent);
                 var envelope = PanelEnvelope("log", payload);
                 if (envelope.Length > LogMaxBodyChars && count > 1)
                 {
@@ -4844,13 +4975,84 @@ namespace Oxide.Plugins
                 {
                     Body = envelope,
                     File = file,
-                    EndOffset = count < entries.Count ? entries[count].Start : end,
-                    EndSeq = _logCursor.Seq + count,
-                    Lines = count,
-                    More = count < entries.Count || !atEnd || (finished && NextOxideLog(dir, file) != null)
+                    EndOffset = lines.Count == 0 ? _logCursor.Offset : endOffset,
+                    EndSeq = lines.Count == 0 ? _logCursor.Seq : endSeq,
+                    Lines = lines.Count,
+                    Walked = lines.Count == 0 ? 0 : count,
+                    More = more
                 };
             }
         }
+
+        #region Report policy
+
+        // No game or Oxide types: checked outside the game, like the regions below.
+
+        private sealed class ReportPolicy
+        {
+            public string Name;
+            public string Hash;
+            public int HeartbeatSeconds;      // 0: as the config says
+            public int PluginTimeSeconds;     // 0: as the config says
+            public HashSet<string> LogLevels; // null: every level
+            public bool? Commands;            // null: as the config says
+            public bool? Bans;
+            public DateTime ReceivedUtc;
+        }
+
+        // A line with no level cannot be classified, so it is sent.
+        private static bool PolicyAllowsLevel(ReportPolicy policy, string level)
+        {
+            if (policy == null || policy.LogLevels == null || string.IsNullOrEmpty(level)) return true;
+            return policy.LogLevels.Contains(level.ToLowerInvariant());
+        }
+
+        // Null when the answer cannot be read. A field that is missing or not
+        // of its type leaves that one thing as the config has it.
+        private static ReportPolicy ReadPolicy(string response)
+        {
+            try
+            {
+                var envelope = JObject.Parse(response);
+                var ok = envelope["ok"] != null && envelope["ok"].Type == JTokenType.Boolean && (bool)envelope["ok"];
+                var data = envelope["data"] as JObject;
+                if (!ok || data == null) return null;
+
+                var policy = new ReportPolicy
+                {
+                    Name = data["policy"] != null && data["policy"].Type == JTokenType.String ? (string)data["policy"] : null,
+                    Hash = data["policy_hash"] != null && data["policy_hash"].Type == JTokenType.String ? (string)data["policy_hash"] : null,
+                    HeartbeatSeconds = PositiveInt(data["heartbeat_seconds"]),
+                    PluginTimeSeconds = PositiveInt(data["plugin_time_seconds"]),
+                    Commands = data["commands"] != null && data["commands"].Type == JTokenType.Boolean ? (bool)data["commands"] : (bool?)null,
+                    Bans = data["bans"] != null && data["bans"].Type == JTokenType.Boolean ? (bool)data["bans"] : (bool?)null,
+                    ReceivedUtc = DateTime.UtcNow
+                };
+
+                var levels = data["log_levels"] as JArray;
+                if (levels != null && levels.All(l => l.Type == JTokenType.String))
+                    policy.LogLevels = new HashSet<string>(levels.Select(l => ((string)l).ToLowerInvariant()), StringComparer.Ordinal);
+
+                return policy;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static int PositiveInt(JToken token)
+        {
+            if (token == null || token.Type != JTokenType.Integer) return 0;
+            try
+            {
+                var value = (long)token;
+                return value > 0 && value <= int.MaxValue ? (int)value : 0;
+            }
+            catch { return 0; }   // larger than a long
+        }
+
+        #endregion
 
         #region Manifest
 
@@ -6447,8 +6649,9 @@ namespace Oxide.Plugins
             if (_panel != null)
             {
                 lines.Add($"  plugins sent : {_inventoryState}");
-                lines.Add($"  commands     : {_commandsState}");
-                lines.Add($"  ban list     : {_bansState}");
+                lines.Add($"  policy       : {PolicyDescription()}");
+                lines.Add($"  commands     : {(_config.Panel.AcceptCommands && !PolicyAllowsCommands() ? "not checked: the account's plan does not include commands" : _commandsState)}");
+                lines.Add($"  ban list     : {(_config.Panel.EnforceBans && !PolicyAllowsBans() ? "not checked: the account's plan does not include ban sync" : _bansState)}");
                 lines.Add($"  map          : {_mapState}");
                 lines.Add($"  map layout   : {_layoutState}");
                 lines.Add($"  map image    : {_imageState}");

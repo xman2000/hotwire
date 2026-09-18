@@ -25,6 +25,25 @@ sit above a launcher `1.1.7`. Read the label, not the number.
 at the top of the file — it is a comment, not something it echoes, so read it
 rather than watch for it.
 
+## 1.1.21 — plugin — 2026-09-18
+
+**The plugin sends only what the account's plan uses.**
+
+- The plugin asks the panel for its report policy every five minutes, and once as soon as the panel accepts the first
+  heartbeat. The answer says which Oxide log levels to send, how often to send a heartbeat and plugin time, and whether
+  to ask for queued commands and the ban list at all.
+- **A policy only ever lowers what the config allows.** The longer of the two intervals wins, and commands and the ban
+  list are checked only when the config and the policy both say so. It never turns on anything the config turned off,
+  and it has nothing to do with player data, which stays with the sharing level.
+- **Log lines left behind are counted.** A line at a level the policy does not send stays in the server's own log file
+  and is counted, per level, in the next batch that goes (`not_sent`). A quiet server tells the panel the count on its
+  own at most an hour later. Every line keeps the same sequence number whichever policy is in force.
+- **Until the panel answers, nothing changes.** Before the first answer, or when an answer cannot be read, the plugin
+  sends everything the config allows, as 1.1.20 did. A failed check keeps the policy already in force, and an answer
+  whose signature does not verify is refused. The heartbeat is never spaced out past five minutes, whatever the answer.
+- `hotwire check` has a `policy` line, and says when commands or the ban list are not checked because of it.
+- No configuration changes.
+
 ## 1.1.20 — plugin — 2026-09-17
 
 **Abandoned Bases zones are reported too.**
