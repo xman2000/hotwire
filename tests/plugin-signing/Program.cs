@@ -209,6 +209,24 @@ namespace PluginSigning
             Check("an answer without data cannot be read", Extracted.ReadPolicy("{\"ok\":true}") == null);
             Check("garbage cannot be read", Extracted.ReadPolicy("not json") == null && Extracted.ReadPolicy("") == null);
 
+            // ---- which report kinds may be sent (a paused server sends only its heartbeat).
+            Check("no kinds field sends every kind", free.Kinds == null && Extracted.PolicyAllowsKindOf(free, "inventory") && Extracted.PolicyAllowsKindOf(free, "log"));
+            Check("no policy sends every kind", Extracted.PolicyAllowsKindOf(null, "players"));
+            var paused = Extracted.ReadPolicy("{\"ok\":true,\"data\":{\"policy\":\"paused\",\"heartbeat_seconds\":240,\"plugin_time_seconds\":3600,\"log_levels\":[],\"commands\":false,\"bans\":false,\"kinds\":[\"heartbeat\"],\"policy_hash\":\"sha256:cc\"}}");
+            Check("the paused policy is read", paused != null && paused.Name == "paused" && paused.Kinds != null && paused.Kinds.Count == 1 && paused.HeartbeatSeconds == 240);
+            Check("paused sends its heartbeat", Extracted.PolicyAllowsKindOf(paused, "heartbeat"));
+            Check("paused sends nothing else", !Extracted.PolicyAllowsKindOf(paused, "inventory") && !Extracted.PolicyAllowsKindOf(paused, "log")
+                && !Extracted.PolicyAllowsKindOf(paused, "map_render") && !Extracted.PolicyAllowsKindOf(paused, "command_result"));
+            Check("kinds are matched exactly", !Extracted.PolicyAllowsKindOf(paused, "Heartbeat"));
+            var none = Extracted.ReadPolicy("{\"ok\":true,\"data\":{\"kinds\":[]}}");
+            Check("an empty kinds list sends no reports at all", none != null && none.Kinds != null && none.Kinds.Count == 0 && !Extracted.PolicyAllowsKindOf(none, "heartbeat"));
+            var nullKinds = Extracted.ReadPolicy("{\"ok\":true,\"data\":{\"kinds\":null}}");
+            Check("kinds null sends every kind", nullKinds != null && nullKinds.Kinds == null && Extracted.PolicyAllowsKindOf(nullKinds, "players"));
+            var mistyped = Extracted.ReadPolicy("{\"ok\":true,\"data\":{\"kinds\":\"heartbeat\"}}");
+            Check("kinds that is not a list sends every kind", mistyped != null && mistyped.Kinds == null && Extracted.PolicyAllowsKindOf(mistyped, "log"));
+            var mixed = Extracted.ReadPolicy("{\"ok\":true,\"data\":{\"kinds\":[\"heartbeat\",3]}}");
+            Check("a kinds list with a non-string sends every kind", mixed != null && mixed.Kinds == null && Extracted.PolicyAllowsKindOf(mixed, "log"));
+
             Console.WriteLine(_failed == 0 ? "All checks passed." : _failed + " check(s) FAILED.");
             return _failed == 0 ? 0 : 1;
         }

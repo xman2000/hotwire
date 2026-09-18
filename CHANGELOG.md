@@ -25,6 +25,27 @@ sit above a launcher `1.1.7`. Read the label, not the number.
 at the top of the file — it is a comment, not something it echoes, so read it
 rather than watch for it.
 
+## 1.1.22 — plugin — 2026-09-18
+
+**The panel can tell a server to send only some kinds of report.**
+
+- The report policy can now name the kinds of report the plugin may send. An account that holds more servers than its
+  plan allows keeps one server fully reporting; the others are told to send only their heartbeat, so the panel still
+  knows whether they are up. When the account can use them again, the next policy check restores full reporting on its
+  own; nothing on the server needs touching.
+- **A report that is not allowed is not saved up.** The plugin list, the map, the schedule, players and the rest are read
+  afresh and sent as they stand once they are allowed again. Player joins, leaves and chat are not collected meanwhile,
+  a command answer that cannot be sent is let go (the panel expires the command), and plugin time starts measuring again
+  from the moment it is allowed.
+- **The log keeps its place.** While the log is not sent, the plugin still reads on through it and counts the lines, per
+  level, and the first batch sent afterwards carries the count, so nothing piles up and nothing goes missing without a
+  trace.
+- **Nothing changes until the panel says so.** No kinds list, or one that cannot be read, sends every kind the config
+  allows, as 1.1.21 did. The policy still only ever sends less than the config allows, never more, and the checks for the
+  policy and the player data level are never stopped.
+- `hotwire check`'s `policy` line says when only some reports are sent.
+- No configuration changes.
+
 ## 1.1.21 — plugin — 2026-09-18
 
 **The plugin sends only what the account's plan uses.**
