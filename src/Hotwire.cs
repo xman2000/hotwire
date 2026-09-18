@@ -17,7 +17,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Hotwire", "xman2000", "1.1.23")]
+    [Info("Hotwire", "xman2000", "1.1.24")]
     [Description("Scheduled restarts and updates. Announces, counts down, writes a flag, quits.")]
     internal class Hotwire : CovalencePlugin
     {
@@ -2273,10 +2273,9 @@ namespace Oxide.Plugins
                 return;
             }
 
-            // HW-15: the panel address must be https. Oxide disables TLS certificate
-            // validation process-wide, so http:// would send this server's reports in
-            // the clear and let any on-path machine answer as the panel. Refusing is
-            // safe: reporting is never on the boot path, so the server is unaffected.
+            // The panel address must be https: http:// would send this server's
+            // reports unencrypted. Refusing is safe: reporting is never on the boot
+            // path, so the server is unaffected.
             if (url.StartsWith("http://", StringComparison.OrdinalIgnoreCase))
             {
                 PanelRefuse($"the panel address in {path} uses http://, which is not encrypted and cannot be trusted. " +

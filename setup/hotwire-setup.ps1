@@ -2229,9 +2229,8 @@ function Read-State ($r) {
     return $null
 }
 
-# HW-15: the panel address must be https. Oxide disables TLS certificate validation process-wide, so an
-# http:// panel would send this server's reports in the clear and let an on-path machine answer as the
-# panel. The default is already https, so this only ever trips an explicit http:// (or non-web) address.
+# The panel address must be https: an http:// address would send this server's reports unencrypted.
+# The default is already https, so this only ever trips an explicit http:// (or non-web) address.
 function Assert-HttpsPanel([string]$Url) {
     if ($Url -match '^http://') {
         Stop-Politely "using the panel address $Url" "it is http://, which is not encrypted and cannot be trusted" `
