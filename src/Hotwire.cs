@@ -17,7 +17,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Hotwire", "xman2000", "1.1.27")]
+    [Info("Hotwire", "xman2000", "1.1.28")]
     [Description("Scheduled restarts and updates. Announces, counts down, writes a flag, quits.")]
     internal class Hotwire : CovalencePlugin
     {
@@ -7098,6 +7098,7 @@ namespace Oxide.Plugins
                 case "status": CmdStatus(player); return;
                 case "menu": CmdMenu(player); return;   // goes with the menu
                 case "check": CmdCheck(player); return;
+                case "connect": CmdConnect(player, args); return;
                 case "list": CmdList(player); return;
                 case "now": CmdNow(player, args); return;
                 case "cancel": CmdCancel(player); return;
@@ -7601,6 +7602,192 @@ namespace Oxide.Plugins
             public void RemoveAt(int index) => _inner.RemoveAt(index);
         }
 
+        // ---------------------------------------------------------------- connect
+
+        // "hotwire connect <code> [panel address]" connects this server to the
+        // panel from the server console, RCON, or the in-game console of an
+        // admin: the same code hotwire-setup asks for, without leaving the game.
+        // It connects the plugin only; the launcher is connected by setup. It
+        // uses the install id setup keeps in hotwire/install_id, and writes one
+        // there if there is none, so connecting either way adopts the same
+        // server in the panel rather than making a second. The code is good
+        // for one hour and one server, and is spent once it is used.
+
+        private const string DefaultPanelUrl = "https://hotpanel.on-forge.com";
+        private const string EnrollPath = "/api/v1/enroll";
+        private bool _connecting;
+
+        private void CmdConnect(IPlayer player, string[] args)
+        {
+            if (!player.IsServer && !player.IsAdmin)
+            {
+                player.Reply("Only the server console, RCON, or an admin can connect this server to the panel.");
+                return;
+            }
+
+            if (args.Length < 2)
+            {
+                player.Reply("Usage: hotwire connect <code> [panel address]. Make a code in the panel: Servers, Connect a server.");
+                return;
+            }
+
+            var code = args[1].Trim();
+            if (code.Length < 4 || code.Length > 64)
+            {
+                player.Reply("That does not look like a connection code. It looks like HW-4K2P-9XQR.");
+                return;
+            }
+
+            var url = (args.Length > 2 ? args[2] : DefaultPanelUrl).Trim().TrimEnd('/');
+            if (!url.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+            {
+                player.Reply("The panel address must start with https://.");
+                return;
+            }
+
+            var root = ServerRoot();
+            if (root == null)
+            {
+                player.Reply("The server's folder cannot be determined, so the connection could not be tied to it. Set \"Server root\" in the config.");
+                return;
+            }
+
+            if (_connecting)
+            {
+                player.Reply("A connection is already being made. Wait for its answer.");
+                return;
+            }
+
+            var installId = ReadOrMakeInstallId(root);
+            if (installId == null)
+            {
+                player.Reply($"Could not write {Path.Combine(root, "hotwire", "install_id")}. Check the server's folder is writable.");
+                return;
+            }
+
+            var name = server.Name;
+            if (string.IsNullOrWhiteSpace(name)) name = Path.GetFileName(root.TrimEnd('/', '\\'));
+            if (name.Length > 255) name = name.Substring(0, 255);
+
+            var body = new JObject
+            {
+                ["token"] = code,
+                ["install_id"] = installId,
+                ["identity"] = name,
+                ["name"] = name,
+                ["components"] = new JArray("plugin")
+            }.ToString(Formatting.None);
+
+            _connecting = true;
+            player.Reply($"Connecting to {url} ...");
+            var headers = new Dictionary<string, string> { { "Accept", "application/json" }, { "Content-Type", "application/json" } };
+            webrequest.Enqueue(url + EnrollPath, body, (status, response) =>
+            {
+                _connecting = false;
+                try
+                {
+                    FinishConnect(player, url, root, status, response);
+                }
+                catch (Exception ex)
+                {
+                    player.Reply($"The panel's answer could not be used ({ex.Message}). Nothing was changed.");
+                }
+            }, this, Oxide.Core.Libraries.RequestMethod.POST, headers, 30f);
+        }
+
+        private void FinishConnect(IPlayer player, string url, string root, int status, string response)
+        {
+            if (status != 201)
+            {
+                string message = null;
+                try { message = (string)JObject.Parse(response)["message"]; } catch { }
+                switch (status)
+                {
+                    case 0: player.Reply($"The panel at {url} could not be reached. Nothing was changed; the server is unaffected."); return;
+                    case 422: player.Reply($"The panel refused the code: {message ?? "invalid or expired"}. Codes last an hour and work once; make a fresh one."); return;
+                    case 429: player.Reply("The panel is limiting requests from this address. Wait a minute and try again."); return;
+                    default: player.Reply($"The panel answered HTTP {status}: {message ?? "no message"}. Nothing was changed."); return;
+                }
+            }
+
+            var data = JObject.Parse(response)["data"] as JObject;
+            var keys = data == null ? null : data["keys"] as JArray;
+            var key = keys == null ? null : keys.OfType<JObject>().FirstOrDefault(k => (string)k["component"] == "plugin");
+            var keyId = key == null ? null : (string)key["key_id"];
+            var secret = key == null ? null : (string)key["secret"];
+            if (string.IsNullOrWhiteSpace(keyId) || string.IsNullOrWhiteSpace(secret))
+            {
+                player.Reply("The panel's answer has no key for the plugin. Nothing was changed.");
+                return;
+            }
+
+            // The address the panel names is used only when it is the same
+            // server that was asked, so an answer cannot send this server's
+            // reports somewhere else.
+            var said = data["panel_url"] == null ? null : ((string)data["panel_url"]).Trim().TrimEnd('/');
+            if (!string.IsNullOrEmpty(said) && SameHost(said, url)) url = said;
+
+            var path = PanelFile();
+            Directory.CreateDirectory(Path.GetDirectoryName(path));
+            if (File.Exists(path))
+                File.Copy(path, path + ".backup-" + DateTime.UtcNow.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture), true);
+
+            var file = new JObject { ["key_id"] = keyId, ["secret"] = secret, ["panel_url"] = url, ["folder"] = root };
+            var tmp = path + ".tmp";
+            File.WriteAllText(tmp, file.ToString(Formatting.Indented) + "\n");
+            if (File.Exists(path)) File.Delete(path);
+            File.Move(tmp, path);
+
+            var server = data["server"] as JObject;
+            var adopted = server != null && server["adopted"] != null && server["adopted"].Type == JTokenType.Boolean && (bool)server["adopted"];
+            player.Reply(adopted
+                ? "Reconnected to the server the panel already knew. Its history is kept, and its old keys no longer work."
+                : "Connected. This server appears in the panel within a minute.");
+            player.Reply("Only the plugin is connected. hotwire-setup connects the launcher, if you use it.");
+        }
+
+        private static bool SameHost(string a, string b)
+        {
+            Uri ua, ub;
+            return Uri.TryCreate(a, UriKind.Absolute, out ua) && Uri.TryCreate(b, UriKind.Absolute, out ub)
+                && ua.Scheme == Uri.UriSchemeHttps && string.Equals(ua.Host, ub.Host, StringComparison.OrdinalIgnoreCase);
+        }
+
+        // The install id setup keeps in <root>/hotwire/install_id, as
+        // {"install_id": "...", "folder": "..."}. One recorded for another
+        // folder belongs to the server this was copied from, so a new one is
+        // made. Null when it cannot be written.
+        private static string ReadOrMakeInstallId(string root)
+        {
+            var dir = Path.Combine(root, "hotwire");
+            var file = Path.Combine(dir, "install_id");
+            try
+            {
+                if (File.Exists(file))
+                {
+                    var record = JObject.Parse(File.ReadAllText(file));
+                    var id = (string)record["install_id"];
+                    var folder = (string)record["folder"];
+                    Guid parsed;
+                    if (Guid.TryParse(id, out parsed) && (string.IsNullOrWhiteSpace(folder) || SameFolder(folder, root)))
+                        return parsed.ToString();
+                }
+            }
+            catch { }
+
+            try
+            {
+                var made = Guid.NewGuid().ToString();
+                Directory.CreateDirectory(dir);
+                File.WriteAllText(file, new JObject { ["install_id"] = made, ["folder"] = root }.ToString(Formatting.Indented) + "\n");
+                return made;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
         private bool Allowed(IPlayer player, string perm)
         {
             if (player.IsServer) return true;
@@ -7881,7 +8068,7 @@ namespace Oxide.Plugins
                 ["ClocksChange"] = "The clocks change before then.",
                 ["MenuClocksChangeShort"] = "clocks change before then",
 
-                ["Usage"] = "hotwire status | menu | check | list | now [update|validate] [seconds] | cancel | " +
+                ["Usage"] = "hotwire status | menu | check | connect <code> | list | now [update|validate] [seconds] | cancel | " +
                             "add <restart|update|validate> <HH:mm> [pattern] | set <restart|update> <index> " +
                             "<time|pattern|validate> <value> | remove <restart|update> <index> | " +
                             "enable|disable <restart|update> <index>",

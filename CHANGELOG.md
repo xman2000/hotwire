@@ -25,6 +25,18 @@ sit above a launcher `1.1.7`. Read the label, not the number.
 at the top of the file — it is a comment, not something it echoes, so read it
 rather than watch for it.
 
+## 1.1.28 — plugin — 2026-09-18
+
+**Connect to the panel from the game.**
+
+- `hotwire connect <code>` in the server console, over RCON, or in the F1 console as an admin connects the server with
+  the code from the panel's **Connect a server**, without running `hotwire-setup`. A panel other than the default can be
+  named after the code.
+- It connects the plugin only; `hotwire-setup connect` also connects the launcher. Both use the install id kept in
+  `hotwire/install_id`, so connecting one way and later the other keeps the same server in the panel, with its history.
+- It writes `oxide/data/Hotwire/panel.json` as setup does, keeping any earlier one as a dated backup, and tells you what
+  the panel said. A code that is wrong or spent changes nothing.
+
 ## 1.1.27 — plugin — 2026-09-18
 
 **In-game reports reach the panel, when you ask for them.**
