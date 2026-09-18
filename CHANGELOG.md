@@ -25,6 +25,10 @@ sit above a launcher `1.1.7`. Read the label, not the number.
 at the top of the file — it is a comment, not something it echoes, so read it
 rather than watch for it.
 
+## 1.1.25 — plugin — 2026-09-18
+
+**No change in behaviour.** One more comment reworded.
+
 ## 1.1.24 — plugin — 2026-09-18
 
 **No change in behaviour.** Comments reworded in the plugin and in `hotwire-setup.ps1`. Numbered so that every build of

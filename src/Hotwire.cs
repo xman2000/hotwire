@@ -17,7 +17,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Hotwire", "xman2000", "1.1.24")]
+    [Info("Hotwire", "xman2000", "1.1.25")]
     [Description("Scheduled restarts and updates. Announces, counts down, writes a flag, quits.")]
     internal class Hotwire : CovalencePlugin
     {
@@ -6009,11 +6009,10 @@ namespace Oxide.Plugins
                 return Hex(sha.ComputeHash(Encoding.UTF8.GetBytes(text)));
         }
 
-        // HW-1 / ADR-0085: the panel signs the answers a plugin acts on, so a
-        // forged reply cannot unload a plugin, ban players fleet-wide or raise the
-        // sharing level. Oxide disables TLS validation process-wide AND its
-        // webrequest callback cannot read a response header, so the signature
-        // travels in the body: when the plugin opts in (X-Hotwire-Signed-Response),
+        // The panel signs the answers a plugin acts on, so a forged reply cannot
+        // unload a plugin, ban players fleet-wide or raise the sharing level.
+        // Oxide's webrequest callback cannot read a response header, so the
+        // signature travels in the body: when the plugin opts in (X-Hotwire-Signed-Response),
         // the panel wraps the real answer as
         //     {"signed":"<the real body, verbatim>","sig":"<hex HMAC-SHA256>"}
         // and signs, with the SAME per-server secret, the canonical form below,
