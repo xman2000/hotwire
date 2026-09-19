@@ -17,7 +17,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Hotwire", "xman2000", "1.1.28")]
+    [Info("Hotwire", "xman2000", "1.1.29")]
     [Description("Scheduled restarts and updates. Announces, counts down, writes a flag, quits.")]
     internal class Hotwire : CovalencePlugin
     {
@@ -188,6 +188,16 @@ namespace Oxide.Plugins
             // file on this machine stays the full record either way.
             [JsonProperty("Send the Oxide log")]
             public bool SendLog = true;
+
+            // What the game server writes to its console that Oxide does not:
+            // saves, joins and leaves, Rust's own warnings and errors, anything
+            // another mod prints. Oxide's lines are sent once, from its own log,
+            // and chat never goes this way (it has its own setting). IP addresses
+            // are masked, card numbers and SSNs too, and Steam IDs below the
+            // "identified" level. Kept in oxide/logs/hotwire_log_<date>.txt until
+            // the panel has it.
+            [JsonProperty("Send the server console")]
+            public bool SendConsole = true;
 
             [JsonProperty("Send the log every this many seconds")]
             public int LogSeconds = 60;
@@ -679,6 +689,10 @@ namespace Oxide.Plugins
 
         private void Unload()
         {
+            // First, before anything that could throw: the game must not call into
+            // an unloaded plugin.
+            try { StopConsoleCapture(); } catch { }
+
             _scanTimer?.Destroy();
             _countdownTimer?.Destroy();
             _frameworkTimer?.Destroy();
@@ -694,6 +708,21 @@ namespace Oxide.Plugins
             catch (Exception ex)
             {
                 PrintWarning($"Panel: queued player events could not be kept for later ({ex.Message}).");
+            }
+
+            // The console stops being taken, and what was taken goes to the spool,
+            // to be sent after the reload.
+            try
+            {
+                if (_panel != null && !_consoleQueue.IsEmpty)
+                {
+                    LoadLogCursor();
+                    FlushConsole(true);
+                }
+            }
+            catch (Exception ex)
+            {
+                PrintWarning($"Panel: the last console lines could not be kept for later ({ex.Message}).");
             }
 
             CloseAllMenus();   // goes with the menu
@@ -2100,6 +2129,9 @@ namespace Oxide.Plugins
                 if (!_config.Panel.Enabled) return;
 
                 RefreshPanelLink();
+                // The log's spool fills whether or not the panel can be reached.
+                try { TickLogSpool(); }
+                catch (Exception ex) { PrintWarning($"Panel: the log spool could not be updated this tick ({ex.Message})."); }
                 if (_panel != null && !_panelBusy && _panelFailures > 0) SpoolWhileUnreachable();
                 if (_panel == null || _panelBusy || DateTime.UtcNow < _panelNextAttempt) return;
 
@@ -2201,7 +2233,7 @@ namespace Oxide.Plugins
             }
             // Runs when the log is not allowed too: it walks the log and counts what it passes,
             // or, when the policy holds, leaves the cursor where it is.
-            if (_config.Panel.SendLog && now >= _logDue && SendLog()) return;
+            if ((_config.Panel.SendLog || _config.Panel.SendConsole) && now >= _logDue && SendLog()) return;
             if (_config.Panel.EnforceBans && PolicyAllowsBans() && now >= _bansDue) { PollBans(); return; }
 
             // Nothing live is due: one held report, if there are any.
@@ -5082,24 +5114,57 @@ namespace Oxide.Plugins
             if (player != null && player.IsConnected) player.Kick(reason);
         }
 
-        // ---------------------------------------------------------- oxide log
+        // ---------------------------------------------------------------- the log
 
+        // One pipe for everything the server logs, from two sources:
+        //  - Oxide's lines, read from its own file (oxide/logs/oxide_<date>.txt):
+        //    complete from the moment the server started, compile failures from
+        //    before this plugin loaded included, nothing lost to a crash.
+        //  - The game's console, taken as it is written (Unity's log callback):
+        //    saves, joins and leaves, Rust's own warnings and errors, anything
+        //    another mod prints. Oxide's lines come round this way too and are
+        //    left to the file; chat is never taken (it has its own setting).
+        // Both are appended to one spool on this machine (oxide/logs/
+        // hotwire_log_<date>.txt). The sender reads only the spool: one cursor,
+        // one sequence, one set of rules, and whatever the panel has not taken
+        // yet waits there -- through an outage, a reload or a held policy.
         private const string LogDataFile = "Hotwire/panel_log";
         private const int LogMaxReadBytes = 262144;
         private const int LogMaxBodyChars = 1000000;
+        // A day's spool never grows past this; lines past it are counted as not sent.
+        private const long LogSpoolMaxBytesPerDay = 64L * 1024 * 1024;
+        // The console is taken on the game's own threads: one enqueue a line, no
+        // more. At most this many wait for the next tick; a flood past it is
+        // counted, not kept.
+        private const int ConsoleQueueMax = 20000;
+        // Written to the spool on the main thread, at most this many a tick, so a
+        // flood cannot hold a frame.
+        private const int ConsoleFlushMax = 5000;
+        private const int ConsoleMaxLineChars = 16384;
+        // A console line waits this long before it is written, so the Oxide line
+        // it may be an echo of has certainly been seen.
+        private static readonly long ConsoleSettleTicks = TimeSpan.FromSeconds(1).Ticks;
+        private static readonly long EchoKeepTicks = TimeSpan.FromSeconds(30).Ticks;
 
-        // Where the log has been sent up to, kept across reloads so nothing is
-        // sent twice. The session is this server process: a reload keeps it, a
-        // restart starts a new one.
+        // Where the log has got to, kept across reloads so nothing is sent twice.
+        // The session is this server process: a reload keeps it, a restart
+        // starts a new one.
         private sealed class LogCursor
         {
             public string SessionKey;
             public long ProcessStartTicks;
             public long Seq;
-            public string File;
-            public long Offset;
-            // Lines the report policy kept on this machine, by level, not yet
-            // told to the panel. They ride along with the next batch that goes.
+            // How far Oxide's file has been read into the spool. Before the spool
+            // this was how far it had been sent: the same place, so the update to
+            // the spool neither repeats nor skips a line. The names stay.
+            [JsonProperty("File")] public string ImportFile;
+            [JsonProperty("Offset")] public long ImportOffset;
+            // How far the spool has been sent.
+            public string SpoolFile;
+            public long SpoolOffset;
+            // Lines not sent, by level, not yet told to the panel: kept here by
+            // the report policy, or past a bound. They ride along with the next
+            // batch that goes.
             public Dictionary<string, long> NotSent;
             public DateTime NotSentSinceUtc;
         }
@@ -5107,12 +5172,13 @@ namespace Oxide.Plugins
         private sealed class LogSendBatch
         {
             public string Body;
-            public string File;
+            public string SpoolFile;
             public long EndOffset;
             public long EndSeq;
             public int Lines;
             public int Walked;
             public bool More;
+            public Dictionary<string, long> NotSentCarried;
         }
 
         private sealed class LogEntry
@@ -5120,6 +5186,31 @@ namespace Oxide.Plugins
             public long Start;
             public OxideLine Line;
             public StringBuilder Body;
+        }
+
+        private struct ConsoleCapture
+        {
+            public long Ticks;
+            public int Type;
+            public string Text;
+            public string Stack;
+        }
+
+        // Every Oxide message, as Oxide hands it to its loggers: the same text it
+        // then gives the game's console, so the two can be matched exactly.
+        private sealed class OxideEcho : Oxide.Core.Logging.Logger
+        {
+            private readonly Hotwire _owner;
+
+            public OxideEcho(Hotwire owner) : base(true)
+            {
+                _owner = owner;
+            }
+
+            protected override void ProcessMessage(Oxide.Core.Logging.Logger.LogMessage message)
+            {
+                _owner.RememberOxideLine(message.ConsoleMessage);
+            }
         }
 
         private LogCursor _logCursor;
@@ -5131,18 +5222,31 @@ namespace Oxide.Plugins
         private int _panelLastCode;
         private bool _logSkippedMore;
         private bool _logMore;
-        // A count of lines kept back by the policy is told on its own after an
-        // hour at the latest, so it does not wait for the next warning.
+        // A count of lines kept back is told on its own after an hour at the
+        // latest, so it does not wait for the next line that goes.
         private const int LogNotSentFlushSeconds = 3600;
         private long _logLinesSent;
         private string _logState = "nothing sent yet";
+        private DateTime _logPruneDue = DateTime.MinValue;
+
+        private readonly System.Collections.Concurrent.ConcurrentQueue<ConsoleCapture> _consoleQueue = new System.Collections.Concurrent.ConcurrentQueue<ConsoleCapture>();
+        private int _consoleQueued;
+        private long _consoleDroppedError, _consoleDroppedWarning, _consoleDroppedInfo;
+        private long _consoleKept, _consoleOxide, _consoleChat, _spoolPastBound;
+        [ThreadStatic] private static bool _inConsoleCallback;
+        private volatile bool _consoleOn;
+        private bool _consoleHooked;
+        private OxideEcho _oxideEcho;
+        private readonly object _echoLock = new object();
+        private readonly EchoSet _echo = new EchoSet();
+        private bool _echoReady;
 
         private string LogDescription()
         {
-            if (!_config.Panel.SendLog) return "off in the config";
+            if (!_config.Panel.SendLog && !_config.Panel.SendConsole) return "off in the config";
             var text = EffectiveSharingLevel() >= 3
-                ? "line text sent; card numbers and SSNs masked"
-                : "line text sent; card numbers, SSNs and Steam IDs removed";
+                ? "line text sent; card numbers, SSNs and IP addresses masked"
+                : "line text sent; card numbers, SSNs and IP addresses masked, Steam IDs removed";
             if (_policy != null && _policy.LogLevels != null)
                 text += _policy.LogLevels.Count == 0
                     ? "; the panel's policy sends no lines"
@@ -5150,10 +5254,391 @@ namespace Oxide.Plugins
             return $"{_logState}; {text}";
         }
 
-        // Sends the next batch of Oxide's log. A batch the panel has not
-        // accepted is sent again as it was, with the same report id, so a retry
-        // never stores a line twice.
-        // Returns whether a request went out.
+        private string ConsoleDescription()
+        {
+            if (!_config.Panel.SendConsole) return "off in the config";
+            if (!_consoleHooked) return "not taken: not connected to a panel";
+            var dropped = _consoleDroppedError + _consoleDroppedWarning + _consoleDroppedInfo + _spoolPastBound;
+            return $"{_consoleKept} line{(_consoleKept == 1 ? "" : "s")} kept since load; {_consoleOxide} Oxide line{(_consoleOxide == 1 ? "" : "s")} left to Oxide's log, " +
+                   $"{_consoleChat} chat line{(_consoleChat == 1 ? "" : "s")} not taken" + (dropped > 0 ? $", {dropped} past the bounds and counted" : "");
+        }
+
+        // Runs on every panel tick, reachable or not: the spool is how nothing is
+        // lost while the panel cannot be reached. Only while connected, so a
+        // server that is not connected writes nothing.
+        private void TickLogSpool()
+        {
+            var connected = _panel != null;
+            SetConsoleCapture(connected && _config.Panel.SendConsole);
+            if (!connected) return;
+
+            LoadLogCursor();
+            if (_consoleHooked || !_consoleQueue.IsEmpty) FlushConsole(false);
+            if (_config.Panel.SendLog) ImportOxideLog();
+            if (DateTime.UtcNow >= _logPruneDue)
+            {
+                _logPruneDue = DateTime.UtcNow.AddHours(1);
+                PruneLogSpool();
+            }
+        }
+
+        private void SetConsoleCapture(bool wanted)
+        {
+            if (wanted == _consoleHooked) return;
+            if (!wanted)
+            {
+                StopConsoleCapture();
+                return;
+            }
+
+            try
+            {
+                lock (_echoLock) { _echoReady = false; _echo.Clear(); }
+                // Adding a logger hands it every message Oxide cached from its
+                // start; those arrive before _echoReady and are ignored.
+                _oxideEcho = new OxideEcho(this);
+                Interface.Oxide.RootLogger.AddLogger(_oxideEcho);
+                lock (_echoLock) _echoReady = true;
+                _consoleOn = true;
+                Application.logMessageReceivedThreaded += OnConsoleLine;
+                _consoleHooked = true;
+            }
+            catch (Exception ex)
+            {
+                StopConsoleCapture();
+                PrintWarning($"Panel: the server console cannot be taken ({ex.Message}). Oxide's log is still sent.");
+            }
+        }
+
+        private void StopConsoleCapture()
+        {
+            _consoleOn = false;
+            try { Application.logMessageReceivedThreaded -= OnConsoleLine; } catch { }
+            if (_oxideEcho != null)
+            {
+                try { Interface.Oxide.RootLogger.RemoveLogger(_oxideEcho); } catch { }
+                _oxideEcho = null;
+            }
+            lock (_echoLock) _echoReady = false;
+            _consoleHooked = false;
+        }
+
+        // Called on whichever thread logged, the game's main thread or another,
+        // for every line the game writes. It only queues the line: no logging
+        // (that would call it again), no Oxide call, nothing that can throw.
+        private void OnConsoleLine(string text, string stackTrace, LogType type)
+        {
+            if (_inConsoleCallback || !_consoleOn) return;
+            _inConsoleCallback = true;
+            try
+            {
+                var kind = (int)type;
+                if (System.Threading.Interlocked.Increment(ref _consoleQueued) > ConsoleQueueMax)
+                {
+                    System.Threading.Interlocked.Decrement(ref _consoleQueued);
+                    if (kind == 2) System.Threading.Interlocked.Increment(ref _consoleDroppedWarning);
+                    else if (kind == 3) System.Threading.Interlocked.Increment(ref _consoleDroppedInfo);
+                    else System.Threading.Interlocked.Increment(ref _consoleDroppedError);
+                    return;
+                }
+                _consoleQueue.Enqueue(new ConsoleCapture { Ticks = DateTime.UtcNow.Ticks, Type = kind, Text = text, Stack = kind == 2 || kind == 3 ? null : stackTrace });
+            }
+            catch
+            {
+                // Never back into the game's logging.
+            }
+            finally
+            {
+                _inConsoleCallback = false;
+            }
+        }
+
+        private void RememberOxideLine(string consoleMessage)
+        {
+            lock (_echoLock)
+            {
+                if (_echoReady) _echo.Add(consoleMessage, DateTime.UtcNow.Ticks);
+            }
+        }
+
+        // Writes what the console has said, once it has settled, to the spool.
+        // `all` at an unload takes everything still queued.
+        private void FlushConsole(bool all)
+        {
+            var cutoff = all ? long.MaxValue : DateTime.UtcNow.Ticks - ConsoleSettleTicks;
+            var lines = new List<KeyValuePair<string, string>>();
+            var handled = 0;
+            ConsoleCapture line;
+            while (handled < ConsoleFlushMax && _consoleQueue.TryPeek(out line) && line.Ticks <= cutoff && _consoleQueue.TryDequeue(out line))
+            {
+                handled++;
+                System.Threading.Interlocked.Decrement(ref _consoleQueued);
+                var text = line.Text ?? "";
+                bool oxide;
+                lock (_echoLock) oxide = _echo.TryConsume(text);
+                if (oxide) { _consoleOxide++; continue; }
+                if (IsChatLine(text)) { _consoleChat++; continue; }
+
+                if (!string.IsNullOrEmpty(line.Stack)) text = text + "\n" + line.Stack.TrimEnd('\n', '\r', ' ');
+                if (text.Length > ConsoleMaxLineChars) text = text.Substring(0, ConsoleMaxLineChars) + $" [cut at {ConsoleMaxLineChars} of {text.Length} characters]";
+                var level = ConsoleLevel(line.Type);
+                var at = new DateTime(line.Ticks, DateTimeKind.Utc).ToString("yyyy'-'MM'-'dd'T'HH':'mm':'ss'.'fff'Z'", CultureInfo.InvariantCulture);
+                lines.Add(new KeyValuePair<string, string>(level, SpoolLogLine('e', at, level, null, text)));
+            }
+            lock (_echoLock) _echo.Expire(DateTime.UtcNow.Ticks - EchoKeepTicks);
+
+            // A flood past the queue's bound, counted on the game's threads.
+            AddNotSent("error", System.Threading.Interlocked.Exchange(ref _consoleDroppedError, 0));
+            AddNotSent("warning", System.Threading.Interlocked.Exchange(ref _consoleDroppedWarning, 0));
+            AddNotSent("info", System.Threading.Interlocked.Exchange(ref _consoleDroppedInfo, 0));
+
+            _consoleKept += AppendLogSpool(lines);
+        }
+
+        // Appends whole lines to today's spool, within the day's bound; a line past
+        // it is counted as not sent. Returns how many were written.
+        private int AppendLogSpool(List<KeyValuePair<string, string>> lines)
+        {
+            if (lines.Count == 0) return 0;
+            var path = Path.Combine(Interface.Oxide.LogDirectory, LogSpoolName(DateTime.Now));
+            long size;
+            try { size = File.Exists(path) ? new FileInfo(path).Length : 0; }
+            catch { size = 0; }
+
+            var sb = new StringBuilder();
+            var written = 0;
+            foreach (var pair in lines)
+            {
+                var bytes = Encoding.UTF8.GetByteCount(pair.Value) + 1;
+                if (size + bytes > LogSpoolMaxBytesPerDay)
+                {
+                    AddNotSent(pair.Key, 1);
+                    _spoolPastBound++;
+                    continue;
+                }
+                size += bytes;
+                sb.Append(pair.Value).Append('\n');
+                written++;
+            }
+
+            if (sb.Length > 0)
+            {
+                try { File.AppendAllText(path, sb.ToString(), new UTF8Encoding(false)); }
+                catch (Exception ex)
+                {
+                    PrintWarning($"Panel: {written} log line{(written == 1 ? "" : "s")} could not be kept in {path} ({ex.Message}) and will not be sent.");
+                    return 0;
+                }
+            }
+            if (_logCursor != null && _logCursor.NotSent != null) WriteData(LogDataFile, _logCursor);
+            return written;
+        }
+
+        private void AddNotSent(string level, long count)
+        {
+            if (count <= 0 || _logCursor == null) return;
+            if (_logCursor.NotSent == null)
+            {
+                _logCursor.NotSent = new Dictionary<string, long>(StringComparer.Ordinal);
+                _logCursor.NotSentSinceUtc = DateTime.UtcNow;
+            }
+            long n;
+            _logCursor.NotSent.TryGetValue(level ?? "none", out n);
+            _logCursor.NotSent[level ?? "none"] = n + count;
+        }
+
+        // Reads what Oxide has written since the import cursor into the spool, a
+        // bounded amount a tick. Only whole lines are read; a line still being
+        // written, and the last entry of today's file (a stack trace may still be
+        // arriving under it), wait one more pass.
+        private void ImportOxideLog()
+        {
+            var dir = Interface.Oxide.LogDirectory;
+            var today = OxideLogName(DateTime.Now);
+
+            // Back after more than thirty days: the older files are skipped, not
+            // read. They stay on this machine; only the panel does without them.
+            if (LogFileTooOld(_logCursor.ImportFile, DateTime.Now))
+            {
+                var skippedFrom = _logCursor.ImportFile;
+                _logCursor.ImportFile = NextOxideLog(dir, OxideLogName(DateTime.Now.Date.AddDays(-SpoolMaxDays - 1))) ?? today;
+                _logCursor.ImportOffset = 0;
+                WriteData(LogDataFile, _logCursor);
+                Puts($"Panel: log files from {skippedFrom} until {_logCursor.ImportFile} are more than {SpoolMaxDays} days old and are not sent. They stay in oxide/logs.");
+            }
+
+            for (var hops = 0; hops < 400; hops++)
+            {
+                var current = Path.Combine(dir, _logCursor.ImportFile);
+                var length = File.Exists(current) ? new FileInfo(current).Length : -1;
+                if (length >= 0 && _logCursor.ImportOffset > length) _logCursor.ImportOffset = 0;   // the file was replaced
+                if (length >= 0 && _logCursor.ImportOffset < length) break;
+                if (string.CompareOrdinal(_logCursor.ImportFile, today) >= 0) return;
+
+                var next = NextOxideLog(dir, _logCursor.ImportFile);
+                if (next == null) return;
+                _logCursor.ImportFile = next;
+                _logCursor.ImportOffset = 0;
+                WriteData(LogDataFile, _logCursor);
+            }
+
+            var file = _logCursor.ImportFile;
+            var path = Path.Combine(dir, file);
+            if (!File.Exists(path)) return;
+
+            byte[] buffer;
+            int read = 0;
+            long fileLength;
+            using (var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
+            {
+                fileLength = stream.Length;
+                if (_logCursor.ImportOffset >= fileLength) return;
+                stream.Seek(_logCursor.ImportOffset, SeekOrigin.Begin);
+                buffer = new byte[(int)Math.Min(LogMaxReadBytes, fileLength - _logCursor.ImportOffset)];
+                while (read < buffer.Length)
+                {
+                    var n = stream.Read(buffer, read, buffer.Length - read);
+                    if (n <= 0) break;
+                    read += n;
+                }
+            }
+
+            var finished = string.CompareOrdinal(file, today) < 0;
+            var atEnd = _logCursor.ImportOffset + read >= fileLength;
+            DateTime fileDate;
+            if (file.Length < 16 || !DateTime.TryParseExact(file.Substring(6, 10), "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out fileDate))
+                fileDate = DateTime.MinValue;
+
+            var raw = new List<KeyValuePair<long, string>>();
+            var pos = 0;
+            for (var i = 0; i < read; i++)
+            {
+                if (buffer[i] != (byte)'\n') continue;
+                var len = i - pos;
+                if (len > 0 && buffer[i - 1] == (byte)'\r') len--;
+                raw.Add(new KeyValuePair<long, string>(_logCursor.ImportOffset + pos, Encoding.UTF8.GetString(buffer, pos, len)));
+                pos = i + 1;
+            }
+            var consumed = _logCursor.ImportOffset + pos;
+            if (finished && atEnd && pos < read)
+            {
+                raw.Add(new KeyValuePair<long, string>(_logCursor.ImportOffset + pos, Encoding.UTF8.GetString(buffer, pos, read - pos)));
+                consumed = _logCursor.ImportOffset + read;
+            }
+
+            if (raw.Count == 0)
+            {
+                if (read == LogMaxReadBytes)
+                {
+                    // One line longer than a whole read: it cannot be sent whole, so it is skipped.
+                    PrintWarning($"Panel: a line in {file} is longer than {LogMaxReadBytes} bytes and is not sent.");
+                    _logCursor.ImportOffset += read;
+                    WriteData(LogDataFile, _logCursor);
+                }
+                return;
+            }
+
+            var entries = new List<LogEntry>();
+            foreach (var pair in raw)
+            {
+                var parsed = ParseOxideLine(pair.Value);
+                if (parsed.Recognised || entries.Count == 0)
+                    entries.Add(new LogEntry { Start = pair.Key, Line = parsed, Body = new StringBuilder(parsed.Body) });
+                else
+                    entries[entries.Count - 1].Body.Append('\n').Append(pair.Value);
+            }
+
+            long end = consumed;
+            if (!(finished && atEnd))
+            {
+                var last = entries[entries.Count - 1];
+                var waited = _logHeldFile == file && _logHeldOffset == last.Start;
+                if (atEnd && !waited)
+                {
+                    _logHeldFile = file;
+                    _logHeldOffset = last.Start;
+                    entries.RemoveAt(entries.Count - 1);
+                    end = last.Start;
+                }
+                else if (!atEnd && entries.Count > 1)
+                {
+                    entries.RemoveAt(entries.Count - 1);
+                    end = last.Start;
+                }
+            }
+            if (entries.Count == 0) return;
+
+            var lines = new List<KeyValuePair<string, string>>(entries.Count);
+            foreach (var entry in entries)
+            {
+                var at = LogLineUtc(fileDate, entry.Line.Hour, entry.Line.Minute, TimeZoneInfo.Local);
+                lines.Add(new KeyValuePair<string, string>(entry.Line.Level ?? "none", SpoolLogLine('o', at, entry.Line.Level, entry.Line.Source, entry.Body.ToString())));
+            }
+            AppendLogSpool(lines);
+
+            _logCursor.ImportFile = file;
+            _logCursor.ImportOffset = end;
+            WriteData(LogDataFile, _logCursor);
+        }
+
+        private static string NextLogSpool(string dir, string after)
+        {
+            try
+            {
+                DateTime date;
+                return Directory.GetFiles(dir, "hotwire_log_????-??-??.txt")
+                    .Select(Path.GetFileName)
+                    .Where(name => LogSpoolDate(name, out date) && string.CompareOrdinal(name, after) > 0)
+                    .OrderBy(name => name, StringComparer.Ordinal)
+                    .FirstOrDefault();
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        // Spool files already sent, and any past thirty days, are removed; and
+        // while what is left is over its bound, the oldest unsent days go too,
+        // never today's. Only this plugin's own files, by their exact name, in
+        // Oxide's log folder.
+        private const long LogSpoolMaxBytes = 256L * 1024 * 1024;
+
+        private void PruneLogSpool()
+        {
+            if (_logCursor == null) return;
+            try
+            {
+                var oldest = DateTime.Now.Date.AddDays(-SpoolMaxDays);
+                var today = LogSpoolName(DateTime.Now);
+                var kept = new List<KeyValuePair<string, long>>();
+                foreach (var path in Directory.GetFiles(Interface.Oxide.LogDirectory, "hotwire_log_????-??-??.txt").OrderBy(p => p, StringComparer.Ordinal))
+                {
+                    var name = Path.GetFileName(path);
+                    DateTime date;
+                    if (!LogSpoolDate(name, out date)) continue;
+                    if (string.CompareOrdinal(name, _logCursor.SpoolFile ?? "") < 0 || date < oldest) File.Delete(path);
+                    else kept.Add(new KeyValuePair<string, long>(path, new FileInfo(path).Length));
+                }
+
+                var total = kept.Sum(k => k.Value);
+                foreach (var file in kept)
+                {
+                    if (total <= LogSpoolMaxBytes || Path.GetFileName(file.Key) == today) break;
+                    File.Delete(file.Key);
+                    total -= file.Value;
+                    PrintWarning($"Panel: {Path.GetFileName(file.Key)} was removed unsent: the log waiting for the panel is past {LogSpoolMaxBytes / (1024 * 1024)} MB. The server's own logs are untouched.");
+                }
+            }
+            catch (Exception ex)
+            {
+                PrintWarning($"Panel: old log spool files could not be removed ({ex.Message}).");
+            }
+        }
+
+        // Sends the next batch of the spool. A batch the panel has not accepted is
+        // sent again as it was, with the same report id, so a retry never stores
+        // a line twice. Returns whether a request went out.
         private bool SendLog()
         {
             var interval = LogInterval();
@@ -5177,7 +5662,7 @@ namespace Oxide.Plugins
                 return false;
             }
 
-            // Behind (an earlier day's file, or more than one batch waiting): one
+            // Behind (an earlier day's spool, or more than one batch waiting): one
             // batch at a time, never back to back, so a long catch-up is gentle.
             var catchingUp = LogBehind();
             if (catchingUp && DateTime.UtcNow < _catchUpDue)
@@ -5223,23 +5708,34 @@ namespace Oxide.Plugins
         }
 
         // Whether the log is behind: the last batch left more to send, or the
-        // cursor is still in an earlier day's file.
+        // cursor is still in an earlier day's spool.
         private bool LogBehind()
         {
             if (_logMore) return true;
             if (_logCursor == null) return false;
-            return string.CompareOrdinal(_logCursor.File ?? "", OxideLogName(DateTime.Now)) < 0;
+            return string.CompareOrdinal(_logCursor.SpoolFile ?? "", LogSpoolName(DateTime.Now)) < 0;
         }
 
         private void CommitLogBatch(LogSendBatch batch)
         {
             if (!ReferenceEquals(batch, _logPending)) return;
             _logPending = null;
-            _logCursor.File = batch.File;
-            _logCursor.Offset = batch.EndOffset;
+            _logCursor.SpoolFile = batch.SpoolFile;
+            _logCursor.SpoolOffset = batch.EndOffset;
             _logCursor.Seq = batch.EndSeq;
-            // The batch carried every count kept back so far.
-            _logCursor.NotSent = null;
+            // The batch carried these counts; any counted since stay for the next.
+            if (_logCursor.NotSent != null && batch.NotSentCarried != null)
+            {
+                foreach (var pair in batch.NotSentCarried)
+                {
+                    long n;
+                    if (!_logCursor.NotSent.TryGetValue(pair.Key, out n)) continue;
+                    if (n - pair.Value > 0) _logCursor.NotSent[pair.Key] = n - pair.Value;
+                    else _logCursor.NotSent.Remove(pair.Key);
+                }
+                if (_logCursor.NotSent.Count == 0) _logCursor.NotSent = null;
+                else _logCursor.NotSentSinceUtc = DateTime.UtcNow;
+            }
             WriteData(LogDataFile, _logCursor);
         }
 
@@ -5248,11 +5744,24 @@ namespace Oxide.Plugins
             if (_logCursor != null) return;
 
             var saved = ReadData<LogCursor>(LogDataFile);
-            if (saved == null || string.IsNullOrEmpty(saved.File))
+            // The names come from a file on disk and go into a path: only the two
+            // exact forms this plugin writes are read, never anything else.
+            DateTime named;
+            if (saved != null && !IsOxideLogName(saved.ImportFile)) saved.ImportFile = null;
+            if (saved != null && !LogSpoolDate(saved.SpoolFile, out named)) saved.SpoolFile = null;
+            if (saved == null || string.IsNullOrEmpty(saved.ImportFile))
             {
-                // First time: today's file from its start, so this boot's
+                // First time: today's Oxide file from its start, so this boot's
                 // compile failures are included.
-                saved = new LogCursor { File = OxideLogName(DateTime.Now), Offset = 0 };
+                saved = saved ?? new LogCursor();
+                saved.ImportFile = OxideLogName(DateTime.Now);
+                saved.ImportOffset = 0;
+            }
+            if (string.IsNullOrEmpty(saved.SpoolFile))
+            {
+                // First time with the spool: it starts empty, today.
+                saved.SpoolFile = LogSpoolName(DateTime.Now);
+                saved.SpoolOffset = 0;
             }
 
             var start = ProcessStartTicks();
@@ -5280,6 +5789,13 @@ namespace Oxide.Plugins
             }
         }
 
+        private static bool IsOxideLogName(string fileName)
+        {
+            DateTime date;
+            return fileName != null && fileName.Length == 20 && fileName.StartsWith("oxide_", StringComparison.Ordinal) && fileName.EndsWith(".txt", StringComparison.Ordinal)
+                && DateTime.TryParseExact(fileName.Substring(6, 10), "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out date);
+        }
+
         private static string OxideLogName(DateTime localDate)
         {
             return "oxide_" + localDate.ToString("yyyy'-'MM'-'dd", CultureInfo.InvariantCulture) + ".txt";
@@ -5291,7 +5807,7 @@ namespace Oxide.Plugins
             {
                 return Directory.GetFiles(dir, "oxide_????-??-??.txt")
                     .Select(Path.GetFileName)
-                    .Where(name => string.CompareOrdinal(name, after) > 0)
+                    .Where(name => IsOxideLogName(name) && string.CompareOrdinal(name, after) > 0)
                     .OrderBy(name => name, StringComparer.Ordinal)
                     .FirstOrDefault();
             }
@@ -5301,44 +5817,34 @@ namespace Oxide.Plugins
             }
         }
 
-        // Reads what Oxide has written since the cursor, a bounded amount per
-        // batch. Only whole lines are read; a line still being written, and the
-        // last entry of today's file (a stack trace may still be arriving under
-        // it), wait one more pass.
+        // The next batch from the spool: a run of lines from one stream (Oxide or
+        // the console), as many as a batch takes, with what the policy keeps
+        // here counted instead.
         private LogSendBatch BuildLogBatch()
         {
             _logSkippedMore = false;
             LoadLogCursor();
             var dir = Interface.Oxide.LogDirectory;
-            var today = OxideLogName(DateTime.Now);
-
-            // Back after more than thirty days: the older files are skipped, not
-            // read. They stay on this machine; only the panel does without them.
-            if (LogFileTooOld(_logCursor.File, DateTime.Now))
-            {
-                var skippedFrom = _logCursor.File;
-                _logCursor.File = NextOxideLog(dir, OxideLogName(DateTime.Now.Date.AddDays(-SpoolMaxDays - 1))) ?? today;
-                _logCursor.Offset = 0;
-                WriteData(LogDataFile, _logCursor);
-                Puts($"Panel: log files from {skippedFrom} until {_logCursor.File} are more than {SpoolMaxDays} days old and are not sent. They stay in oxide/logs.");
-            }
+            var today = LogSpoolName(DateTime.Now);
 
             for (var hops = 0; hops < 400; hops++)
             {
-                var current = Path.Combine(dir, _logCursor.File);
+                DateTime date;
+                var tooOld = LogSpoolDate(_logCursor.SpoolFile, out date) && date < DateTime.Now.Date.AddDays(-SpoolMaxDays);
+                var current = Path.Combine(dir, _logCursor.SpoolFile);
                 var length = File.Exists(current) ? new FileInfo(current).Length : -1;
-                if (length >= 0 && _logCursor.Offset > length) _logCursor.Offset = 0;   // the file was replaced
-                if (length >= 0 && _logCursor.Offset < length) break;
-                if (string.CompareOrdinal(_logCursor.File, today) >= 0) break;
+                if (length >= 0 && _logCursor.SpoolOffset > length) _logCursor.SpoolOffset = 0;   // the file was replaced
+                if (!tooOld && length >= 0 && _logCursor.SpoolOffset < length) break;
+                if (!tooOld && string.CompareOrdinal(_logCursor.SpoolFile, today) >= 0) return null;
 
-                var next = NextOxideLog(dir, _logCursor.File);
-                if (next == null) break;
-                _logCursor.File = next;
-                _logCursor.Offset = 0;
+                var next = NextLogSpool(dir, _logCursor.SpoolFile) ?? (string.CompareOrdinal(_logCursor.SpoolFile, today) < 0 ? today : null);
+                if (next == null) return null;
+                _logCursor.SpoolFile = next;
+                _logCursor.SpoolOffset = 0;
                 WriteData(LogDataFile, _logCursor);
             }
 
-            var file = _logCursor.File;
+            var file = _logCursor.SpoolFile;
             var path = Path.Combine(dir, file);
             if (!File.Exists(path)) return null;
 
@@ -5348,9 +5854,9 @@ namespace Oxide.Plugins
             using (var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
             {
                 fileLength = stream.Length;
-                if (_logCursor.Offset >= fileLength) return null;
-                stream.Seek(_logCursor.Offset, SeekOrigin.Begin);
-                buffer = new byte[(int)Math.Min(LogMaxReadBytes, fileLength - _logCursor.Offset)];
+                if (_logCursor.SpoolOffset >= fileLength) return null;
+                stream.Seek(_logCursor.SpoolOffset, SeekOrigin.Begin);
+                buffer = new byte[(int)Math.Min(LogMaxReadBytes, fileLength - _logCursor.SpoolOffset)];
                 while (read < buffer.Length)
                 {
                     var n = stream.Read(buffer, read, buffer.Length - read);
@@ -5358,130 +5864,108 @@ namespace Oxide.Plugins
                     read += n;
                 }
             }
+            var atEnd = _logCursor.SpoolOffset + read >= fileLength;
 
-            var finished = string.CompareOrdinal(file, today) < 0;
-            var atEnd = _logCursor.Offset + read >= fileLength;
-            DateTime fileDate;
-            if (file.Length < 16 || !DateTime.TryParseExact(file.Substring(6, 10), "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out fileDate))
-                fileDate = DateTime.MinValue;
-
-            var raw = new List<KeyValuePair<long, string>>();
+            // Every spool line is written whole, so only a crash mid-write leaves
+            // half of one; it is passed over once the day is done.
+            var entries = new List<KeyValuePair<long, SpooledLine>>();
             var pos = 0;
+            long unreadable = 0;
             for (var i = 0; i < read; i++)
             {
                 if (buffer[i] != (byte)'\n') continue;
-                var len = i - pos;
-                if (len > 0 && buffer[i - 1] == (byte)'\r') len--;
-                raw.Add(new KeyValuePair<long, string>(_logCursor.Offset + pos, Encoding.UTF8.GetString(buffer, pos, len)));
+                var parsed = ReadSpoolLogLine(Encoding.UTF8.GetString(buffer, pos, i - pos));
+                if (parsed == null) unreadable++;
+                else entries.Add(new KeyValuePair<long, SpooledLine>(_logCursor.SpoolOffset + pos, parsed));
                 pos = i + 1;
             }
-            var consumed = _logCursor.Offset + pos;
-            if (finished && atEnd && pos < read)
-            {
-                raw.Add(new KeyValuePair<long, string>(_logCursor.Offset + pos, Encoding.UTF8.GetString(buffer, pos, read - pos)));
-                consumed = _logCursor.Offset + read;
-            }
+            long consumed = _logCursor.SpoolOffset + pos;
+            if (atEnd && pos < read && string.CompareOrdinal(file, today) < 0) { unreadable++; consumed = _logCursor.SpoolOffset + read; }
+            if (unreadable > 0) AddNotSent("none", unreadable);
 
-            if (raw.Count == 0)
+            if (entries.Count == 0)
             {
-                if (read == LogMaxReadBytes)
+                if (consumed > _logCursor.SpoolOffset)
                 {
-                    // One line longer than a whole read: it cannot be sent whole, so it is skipped.
+                    _logCursor.SpoolOffset = consumed;
+                    WriteData(LogDataFile, _logCursor);
+                    _logSkippedMore = !atEnd;
+                }
+                else if (read == LogMaxReadBytes)
+                {
                     PrintWarning($"Panel: a line in {file} is longer than {LogMaxReadBytes} bytes and is not sent.");
-                    _logCursor.Offset += read;
+                    _logCursor.SpoolOffset += read;
                     WriteData(LogDataFile, _logCursor);
                 }
                 return null;
             }
 
-            var entries = new List<LogEntry>();
-            foreach (var pair in raw)
-            {
-                var parsed = ParseOxideLine(pair.Value);
-                if (parsed.Recognised || entries.Count == 0)
-                    entries.Add(new LogEntry { Start = pair.Key, Line = parsed, Body = new StringBuilder(parsed.Body) });
-                else
-                    entries[entries.Count - 1].Body.Append('\n').Append(pair.Value);
-            }
-
-            long end = consumed;
-            if (!(finished && atEnd))
-            {
-                var last = entries[entries.Count - 1];
-                var waited = _logHeldFile == file && _logHeldOffset == last.Start;
-                if (atEnd && !waited)
-                {
-                    _logHeldFile = file;
-                    _logHeldOffset = last.Start;
-                    entries.RemoveAt(entries.Count - 1);
-                    end = last.Start;
-                }
-                else if (!atEnd && entries.Count > 1)
-                {
-                    entries.RemoveAt(entries.Count - 1);
-                    end = last.Start;
-                }
-            }
-            if (entries.Count == 0) return null;
+            // One stream a batch: the run of lines from the first line's stream.
+            var streamChar = entries[0].Value.Stream;
+            var run = 1;
+            while (run < entries.Count && entries[run].Value.Stream == streamChar) run++;
 
             var level = EffectiveSharingLevel();
             var logAllowed = PolicyAllowsKind("log");
-            var count = Math.Min(entries.Count, _logBatchLines);
+            var count = Math.Min(run, _logBatchLines);
             while (true)
             {
                 var lines = new JArray();
                 var notSent = _logCursor.NotSent == null
                     ? new Dictionary<string, long>(StringComparer.Ordinal)
                     : new Dictionary<string, long>(_logCursor.NotSent, StringComparer.Ordinal);
+                var keptHere = new Dictionary<string, long>(StringComparer.Ordinal);
                 for (var i = 0; i < count; i++)
                 {
-                    var entry = entries[i];
+                    var entry = entries[i].Value;
                     // A line the policy keeps here still takes its seq, so a line's
                     // seq never depends on which policy was in force.
-                    if (!logAllowed || !PolicyAllowsLogLevel(entry.Line.Level))
+                    if (!logAllowed || !PolicyAllowsLogLevel(entry.Level))
                     {
                         // A line with no level is only kept here when no log is sent at all.
-                        var key = entry.Line.Level ?? "none";
+                        var key = entry.Level ?? "none";
                         long n;
                         notSent.TryGetValue(key, out n);
                         notSent[key] = n + 1;
+                        keptHere.TryGetValue(key, out n);
+                        keptHere[key] = n + 1;
                         continue;
                     }
-                    var body = MaskSourceGates(entry.Body.ToString());
-                    var line = new JObject { ["seq"] = _logCursor.Seq + i + 1 };
-                    var at = LogLineUtc(fileDate, entry.Line.Hour, entry.Line.Minute, TimeZoneInfo.Local);
-                    if (at != null) line["at"] = at;
-                    line["level"] = entry.Line.Level == null ? JValue.CreateNull() : (JToken)entry.Line.Level;
-                    line["source"] = entry.Line.Source == null ? JValue.CreateNull() : (JToken)entry.Line.Source;
                     // Every line's text is sent. What can be picked out is removed
-                    // first: card numbers and SSNs always (above), and a Steam ID
-                    // below the identified level. Nothing else is held back.
+                    // first: card numbers, SSNs and IP addresses always, the value
+                    // of an RCON command that sets a secret, and a Steam ID below
+                    // the identified level. Nothing else is held back.
+                    var body = MaskIps(MaskSourceGates(entry.Stream == 'e' ? MaskRconSecrets(entry.Text) : entry.Text));
+                    var line = new JObject { ["seq"] = _logCursor.Seq + i + 1 };
+                    if (entry.At != null) line["at"] = entry.At;
+                    line["level"] = entry.Level == null ? JValue.CreateNull() : (JToken)entry.Level;
+                    line["source"] = entry.Source == null ? JValue.CreateNull() : (JToken)entry.Source;
                     line["message"] = level >= 3 ? body : BlockSteamIds(body);
                     lines.Add(line);
                 }
 
-                var endOffset = count < entries.Count ? entries[count].Start : end;
+                var endOffset = count < entries.Count ? entries[count].Key : consumed;
                 var endSeq = _logCursor.Seq + count;
-                var more = count < entries.Count || !atEnd || (finished && NextOxideLog(dir, file) != null);
+                var more = count < entries.Count || !atEnd || NextLogSpool(dir, file) != null;
 
                 if (lines.Count == 0)
                 {
                     // Nothing here the policy sends. Move past it and keep the
                     // counts with the cursor, so a reload does not lose them.
-                    if (_logCursor.NotSent == null) _logCursor.NotSentSinceUtc = DateTime.UtcNow;
-                    _logCursor.NotSent = notSent;
-                    _logCursor.File = file;
-                    _logCursor.Offset = endOffset;
+                    foreach (var pair in keptHere) AddNotSent(pair.Key, pair.Value);
+                    _logCursor.SpoolFile = file;
+                    _logCursor.SpoolOffset = endOffset;
                     _logCursor.Seq = endSeq;
                     WriteData(LogDataFile, _logCursor);
                     _logSkippedMore = more;
 
-                    if (!logAllowed || more || (DateTime.UtcNow - _logCursor.NotSentSinceUtc).TotalSeconds < LogNotSentFlushSeconds) return null;
+                    if (!logAllowed || more || _logCursor.NotSent == null || (DateTime.UtcNow - _logCursor.NotSentSinceUtc).TotalSeconds < LogNotSentFlushSeconds) return null;
+                    notSent = new Dictionary<string, long>(_logCursor.NotSent, StringComparer.Ordinal);
                 }
 
                 var payload = new JObject
                 {
-                    ["stream"] = "oxide",
+                    ["stream"] = streamChar == 'e' ? "engine" : "oxide",
                     ["session_key"] = _logCursor.SessionKey,
                     ["sharing_level"] = level,
                     ["lines"] = lines,
@@ -5495,15 +5979,26 @@ namespace Oxide.Plugins
                     continue;
                 }
 
+                // Carried: what was counted before this batch, and what it keeps
+                // here itself, which only becomes the cursor's when it is accepted.
+                if (lines.Count > 0)
+                    foreach (var pair in keptHere)
+                    {
+                        long n;
+                        notSent.TryGetValue(pair.Key, out n);
+                        if (n - pair.Value > 0) notSent[pair.Key] = n - pair.Value; else notSent.Remove(pair.Key);
+                    }
+
                 return new LogSendBatch
                 {
                     Body = envelope,
-                    File = file,
-                    EndOffset = lines.Count == 0 ? _logCursor.Offset : endOffset,
+                    SpoolFile = file,
+                    EndOffset = lines.Count == 0 ? _logCursor.SpoolOffset : endOffset,
                     EndSeq = lines.Count == 0 ? _logCursor.Seq : endSeq,
                     Lines = lines.Count,
                     Walked = lines.Count == 0 ? 0 : count,
-                    More = more
+                    More = more,
+                    NotSentCarried = notSent
                 };
             }
         }
@@ -5959,6 +6454,10 @@ namespace Oxide.Plugins
         // arrival; this keeps them off the wire in the first place.
         private static string MaskSourceGates(string body)
         {
+            // A card has at least 13 digits and an SSN 9, joined at most by spaces
+            // or hyphens: a line with no such run has nothing to mask, and most
+            // lines have none. Checked without allocating.
+            if (!HasLongDigitRun(body, 9)) return body;
             var chars = body.ToCharArray();
             for (var i = 0; i < chars.Length; i++)
             {
@@ -5990,6 +6489,20 @@ namespace Oxide.Plugins
                 i += 10;
             }
             return new string(chars);
+        }
+
+        private static bool HasLongDigitRun(string s, int digits)
+        {
+            if (string.IsNullOrEmpty(s)) return false;
+            var run = 0;
+            for (var i = 0; i < s.Length; i++)
+            {
+                var c = s[i];
+                if (c >= '0' && c <= '9') { if (++run >= digits) return true; continue; }
+                if ((c == ' ' || c == '-') && run > 0 && i + 1 < s.Length && s[i + 1] >= '0' && s[i + 1] <= '9') continue;
+                run = 0;
+            }
+            return false;
         }
 
         private static bool PassesLuhn(char[] chars, List<int> positions)
@@ -6035,6 +6548,289 @@ namespace Oxide.Plugins
             bytes[8] = (byte)((bytes[8] & 0x3F) | 0x80);
             var h = Hex(bytes);
             return h.Substring(0, 8) + "-" + h.Substring(8, 4) + "-" + h.Substring(12, 4) + "-" + h.Substring(16, 4) + "-" + h.Substring(20);
+        }
+
+        #endregion
+
+        #region Console log
+
+        // No game or Oxide types: compiled and checked outside the game. No
+        // regular expressions either; these run on the game thread.
+
+        // Rust prints chat to its console as "[<channel>] <name> : <text>"
+        // (ConVar.Chat, its ChatChannel names). Chat has its own setting and its
+        // own gates, so it never travels as a log line.
+        private static readonly string[] ChatChannels = { "Global", "Team", "Server", "Cards", "Local", "Clan", "ExternalDM" };
+
+        private static bool IsChatLine(string text)
+        {
+            if (string.IsNullOrEmpty(text) || text[0] != '[') return false;
+            var close = text.IndexOf("] ", 1, StringComparison.Ordinal);
+            if (close < 2 || close > 12) return false;
+            if (Array.IndexOf(ChatChannels, text.Substring(1, close - 1)) < 0) return false;
+            return text.IndexOf(" : ", close + 2, StringComparison.Ordinal) >= 0;
+        }
+
+        // Unity's LogType by number (Error 0, Assert 1, Warning 2, Log 3,
+        // Exception 4), named the way Oxide names its levels.
+        private static string ConsoleLevel(int unityLogType)
+        {
+            switch (unityLogType)
+            {
+                case 2: return "warning";
+                case 3: return "info";
+                default: return "error";
+            }
+        }
+
+        // A player's address is never needed to run a server from the panel, so
+        // every IPv4 address, and every IPv6 address written with its colons,
+        // becomes [blocked:network] -- the panel's own marker, as for a Steam ID
+        // -- at every player data level. The port after one is kept.
+        // A version number such as 2.1.3.4.5 is not an address and stays.
+        private static string MaskIps(string s)
+        {
+            // Every address has a dot or a colon: most lines have neither to check.
+            if (string.IsNullOrEmpty(s) || (s.IndexOf('.') < 0 && s.IndexOf(':') < 0)) return s;
+            StringBuilder sb = null;
+            var copied = 0;
+            var i = 0;
+            while (i < s.Length)
+            {
+                int end;
+                var c = s[i];
+                var found = false;
+                if (c >= '0' && c <= '9' && !IsDigit(s, i - 1) && !(i > 0 && s[i - 1] == '.') && Ipv4At(s, i, out end)) found = true;
+                else if ((IsHex(c) || c == ':') && (i == 0 || !(IsHex(s[i - 1]) || s[i - 1] == ':' || char.IsLetterOrDigit(s[i - 1]) || s[i - 1] == '_')) && Ipv6At(s, i, out end)) found = true;
+                else end = i + 1;
+
+                if (found)
+                {
+                    if (sb == null) sb = new StringBuilder(s.Length);
+                    sb.Append(s, copied, i - copied).Append("[blocked:network]");
+                    copied = end;
+                }
+                i = end;
+            }
+            if (sb == null) return s;
+            sb.Append(s, copied, s.Length - copied);
+            return sb.ToString();
+        }
+
+        private static bool IsHex(char c) => (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+
+        private static bool Ipv4At(string s, int i, out int end)
+        {
+            end = i;
+            var j = i;
+            for (var part = 0; part < 4; part++)
+            {
+                var start = j;
+                var value = 0;
+                while (IsDigit(s, j) && j - start < 3) { value = value * 10 + (s[j] - '0'); j++; }
+                if (j == start || IsDigit(s, j) || value > 255) return false;
+                if (part == 3) break;
+                if (j >= s.Length || s[j] != '.') return false;
+                j++;
+            }
+            if (j < s.Length && s[j] == '.' && IsDigit(s, j + 1)) return false;   // a longer dotted number
+            end = j;
+            return true;
+        }
+
+        // Hex groups of up to four digits between colons: all eight of them, or
+        // fewer with "::". A time such as 12:34:56 has neither.
+        private static bool Ipv6At(string s, int i, out int end)
+        {
+            end = i;
+            var j = i;
+            var colons = 0;
+            while (j < s.Length && (IsHex(s[j]) || s[j] == ':')) { if (s[j] == ':') colons++; j++; }
+            if (colons < 2) { end = j; return false; }
+            // An IPv4 tail ("::ffff:10.0.0.1") is left to the IPv4 check.
+            if (j < s.Length && s[j] == '.')
+            {
+                var colon = s.LastIndexOf(':', j - 1, j - i);
+                if (colon < i) return false;
+                j = colon + 1;
+            }
+            else if (j < s.Length && (char.IsLetterOrDigit(s[j]) || s[j] == '_')) return false;
+
+            var text = s.Substring(i, j - i);
+            colons = 0;
+            foreach (var ch in text) if (ch == ':') colons++;
+            var compressed = text.IndexOf("::", StringComparison.Ordinal) >= 0;
+            if (colons < 2 || (!compressed && colons != 7) || text.IndexOf(":::", StringComparison.Ordinal) >= 0) return false;
+            foreach (var group in text.Split(':'))
+                if (group.Length > 4) return false;
+            end = j;
+            return true;
+        }
+
+        // Rust writes every RCON command into its console as it runs it:
+        // "[RCON][<connection>] <command>", and "[rcon] <address>: <command>" when
+        // rcon.print is on. A command that sets a password, a token or a key
+        // would carry its value off the machine, so after such a command's name
+        // the rest of the line becomes [blocked:credential], the panel's own
+        // marker. The command's name stays, so the line still says what was run.
+        private static readonly string[] CredentialWords = { "password", "passwd", "token", "secret", "apikey", "api_key", "api-key", "webhook", "key" };
+
+        private static string MaskRconSecrets(string text)
+        {
+            if (string.IsNullOrEmpty(text) || text.Length < 8 || (text[0] != '[')) return text;
+            int command;
+            if (text.StartsWith("[RCON][", StringComparison.Ordinal))
+            {
+                var close = text.IndexOf("] ", 7, StringComparison.Ordinal);
+                if (close < 0) return text;
+                command = close + 2;
+            }
+            else if (text.StartsWith("[rcon] ", StringComparison.Ordinal))
+            {
+                var colon = text.IndexOf(": ", 7, StringComparison.Ordinal);
+                if (colon < 0) return text;
+                command = colon + 2;
+            }
+            else return text;
+
+            while (command < text.Length && text[command] == ' ') command++;
+            var nameEnd = command;
+            while (nameEnd < text.Length && text[nameEnd] != ' ' && text[nameEnd] != '\t' && text[nameEnd] != '"') nameEnd++;
+            if (nameEnd >= text.Length) return text;   // no value after the name
+            var name = text.Substring(command, nameEnd - command).ToLowerInvariant();
+            foreach (var word in CredentialWords)
+                if (name.IndexOf(word, StringComparison.Ordinal) >= 0)
+                    return text.Substring(0, nameEnd) + " [blocked:credential]";
+            return text;
+        }
+
+        // One entry of the spool on one line: stream, time, level, source and
+        // text, tab separated, with backslash, tab, CR and LF escaped.
+        private sealed class SpooledLine
+        {
+            public char Stream;
+            public string At;
+            public string Level;
+            public string Source;
+            public string Text = "";
+        }
+
+        private static string SpoolLogLine(char stream, string at, string level, string source, string text)
+        {
+            return stream + "\t" + EscapeSpool(at) + "\t" + EscapeSpool(level) + "\t" + EscapeSpool(source) + "\t" + EscapeSpool(text);
+        }
+
+        private static SpooledLine ReadSpoolLogLine(string line)
+        {
+            if (line == null || line.Length < 5 || line[1] != '\t') return null;
+            var fields = line.Split('\t');
+            if (fields.Length != 5 || fields[0].Length != 1) return null;
+            return new SpooledLine
+            {
+                Stream = fields[0][0],
+                At = fields[1].Length == 0 ? null : UnescapeSpool(fields[1]),
+                Level = fields[2].Length == 0 ? null : UnescapeSpool(fields[2]),
+                Source = fields[3].Length == 0 ? null : UnescapeSpool(fields[3]),
+                Text = UnescapeSpool(fields[4])
+            };
+        }
+
+        private static string EscapeSpool(string s)
+        {
+            if (string.IsNullOrEmpty(s)) return "";
+            if (s.IndexOf('\\') < 0 && s.IndexOf('\t') < 0 && s.IndexOf('\n') < 0 && s.IndexOf('\r') < 0) return s;
+            var sb = new StringBuilder(s.Length + 8);
+            foreach (var c in s)
+            {
+                switch (c)
+                {
+                    case '\\': sb.Append("\\\\"); break;
+                    case '\t': sb.Append("\\t"); break;
+                    case '\n': sb.Append("\\n"); break;
+                    case '\r': sb.Append("\\r"); break;
+                    default: sb.Append(c); break;
+                }
+            }
+            return sb.ToString();
+        }
+
+        private static string UnescapeSpool(string s)
+        {
+            if (s.IndexOf('\\') < 0) return s;
+            var sb = new StringBuilder(s.Length);
+            for (var i = 0; i < s.Length; i++)
+            {
+                if (s[i] != '\\' || i + 1 >= s.Length) { sb.Append(s[i]); continue; }
+                var next = s[++i];
+                sb.Append(next == 't' ? '\t' : next == 'n' ? '\n' : next == 'r' ? '\r' : next);
+            }
+            return sb.ToString();
+        }
+
+        // The spool's file for a day, by the machine's own date, as Oxide names
+        // its log files; and that date back from a name, or none.
+        private static string LogSpoolName(DateTime localDate)
+        {
+            return "hotwire_log_" + localDate.ToString("yyyy'-'MM'-'dd", CultureInfo.InvariantCulture) + ".txt";
+        }
+
+        private static bool LogSpoolDate(string fileName, out DateTime date)
+        {
+            date = DateTime.MinValue;
+            return fileName != null && fileName.Length == 26 && fileName.StartsWith("hotwire_log_", StringComparison.Ordinal)
+                && DateTime.TryParseExact(fileName.Substring(12, 10), "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out date);
+        }
+
+        // Oxide's own lines as it hands them to the console, kept a short while
+        // to be recognised when the same text comes back through the game's log
+        // callback: those are sent once, from Oxide's own log file. Bounded; a
+        // flood past the bound forgets the oldest, which at worst lets an Oxide
+        // line through twice.
+        private sealed class EchoSet
+        {
+            private const int Max = 4096;
+            private readonly Dictionary<string, Queue<long>> _seen = new Dictionary<string, Queue<long>>(StringComparer.Ordinal);
+            private int _count;
+
+            public int Count => _count;
+
+            public void Add(string text, long ticks)
+            {
+                if (text == null) return;
+                if (_count >= Max) Clear();
+                Queue<long> times;
+                if (!_seen.TryGetValue(text, out times)) _seen[text] = times = new Queue<long>();
+                times.Enqueue(ticks);
+                _count++;
+            }
+
+            public bool TryConsume(string text)
+            {
+                Queue<long> times;
+                if (text == null || !_seen.TryGetValue(text, out times) || times.Count == 0) return false;
+                times.Dequeue();
+                _count--;
+                if (times.Count == 0) _seen.Remove(text);
+                return true;
+            }
+
+            public void Expire(long beforeTicks)
+            {
+                if (_count == 0) return;
+                List<string> empty = null;
+                foreach (var pair in _seen)
+                {
+                    while (pair.Value.Count > 0 && pair.Value.Peek() < beforeTicks) { pair.Value.Dequeue(); _count--; }
+                    if (pair.Value.Count == 0) (empty ?? (empty = new List<string>())).Add(pair.Key);
+                }
+                if (empty != null) foreach (var key in empty) _seen.Remove(key);
+            }
+
+            public void Clear()
+            {
+                _seen.Clear();
+                _count = 0;
+            }
         }
 
         #endregion
@@ -7298,7 +8094,8 @@ namespace Oxide.Plugins
                 lines.Add($"  map image    : {_imageState}");
                 lines.Add($"  schedule     : {_scheduleState}");
                 lines.Add($"  player data  : {SharingDescription()}");
-                lines.Add($"  oxide log    : {LogDescription()}");
+                lines.Add($"  log          : {LogDescription()}");
+                lines.Add($"  console      : {ConsoleDescription()}");
                 lines.Add($"  who's online : {_playersState}");
                 lines.Add($"  joins & chat : {_eventsState}");
                 lines.Add($"  plugin time  : {_pluginTimeState}");

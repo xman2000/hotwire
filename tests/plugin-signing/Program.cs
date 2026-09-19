@@ -117,6 +117,72 @@ namespace PluginSigning
             Check("chat is suspected from the level", Extracted.SuspectedPii("hello", "chat").Contains("chat"));
             Check("a version number is not an address", !Extracted.SuspectedPii("v2.1.3.4.5", "info").Contains("network"));
 
+            // The server console.
+            Check("Rust's global chat is chat", Extracted.IsChatLine("[Global] Bob : hello there"));
+            Check("team, clan and card-table chat are chat", Extracted.IsChatLine("[Team] Bob : x") && Extracted.IsChatLine("[Clan] Bob : x") && Extracted.IsChatLine("[Cards] Bob : x"));
+            Check("a plugin's bracketed line is not chat", !Extracted.IsChatLine("[RaidableBases] Easy_1 @ G5 : 12 items"));
+            Check("a channel with no ' : ' is not chat", !Extracted.IsChatLine("[Server] started"));
+            Check("the Unity log types map to levels", Extracted.ConsoleLevel(0) == "error" && Extracted.ConsoleLevel(1) == "error" && Extracted.ConsoleLevel(2) == "warning" && Extracted.ConsoleLevel(3) == "info" && Extracted.ConsoleLevel(4) == "error");
+
+            var joined = Extracted.MaskIps("203.0.113.9:61234/76561198211375245/Bob joined [windows/76561198211375245]");
+            Check("a player's IPv4 is masked and its port kept", joined == "[blocked:network]:61234/76561198211375245/Bob joined [windows/76561198211375245]", joined);
+            Check("a version number is not an address", Extracted.MaskIps("Oxide 2.0.4149.1 and 1.2.3.4.5") == "Oxide 2.0.4149.1 and 1.2.3.4.5", Extracted.MaskIps("Oxide 2.0.4149.1 and 1.2.3.4.5"));
+            Check("an octet over 255 is not an address", Extracted.MaskIps("999.1.1.1") == "999.1.1.1");
+            Check("a time is not an IPv6 address", Extracted.MaskIps("at 12:34:56 and 01:02") == "at 12:34:56 and 01:02");
+            Check("a full IPv6 address is masked", Extracted.MaskIps("from 2001:0db8:85a3:0000:0000:8a2e:0370:7334 ok") == "from [blocked:network] ok", Extracted.MaskIps("from 2001:0db8:85a3:0000:0000:8a2e:0370:7334 ok"));
+            Check("a compressed IPv6 address is masked", Extracted.MaskIps("rcon from 2001:db8::1, ::1") == "rcon from [blocked:network], [blocked:network]", Extracted.MaskIps("rcon from 2001:db8::1, ::1"));
+            Check("an IPv4-mapped IPv6 address leaves nothing of the address", !Extracted.MaskIps("::ffff:10.0.0.7").Contains("10.0"), Extracted.MaskIps("::ffff:10.0.0.7"));
+            Check("a hex word is not an address", Extracted.MaskIps("0xdecafbad cafe:beef") == "0xdecafbad cafe:beef", Extracted.MaskIps("0xdecafbad cafe:beef"));
+            Check("text with no address is returned as it was", ReferenceEquals(Extracted.MaskIps("Saved 77,765 ents"), "Saved 77,765 ents") || Extracted.MaskIps("Saved 77,765 ents") == "Saved 77,765 ents");
+
+            Check("an RCON command that sets a password keeps its name, not its value",
+                Extracted.MaskRconSecrets("[RCON][203.0.113.9:5678] rcon.password \"hunter2\"") == "[RCON][203.0.113.9:5678] rcon.password [blocked:credential]",
+                Extracted.MaskRconSecrets("[RCON][203.0.113.9:5678] rcon.password \"hunter2\""));
+            Check("the websocket form is masked too", Extracted.MaskRconSecrets("[rcon] 10.0.0.1:5000: discord.token abc123") == "[rcon] 10.0.0.1:5000: discord.token [blocked:credential]");
+            Check("an ordinary RCON command is left as it was", Extracted.MaskRconSecrets("[RCON][x] server.writecfg") == "[RCON][x] server.writecfg" && Extracted.MaskRconSecrets("[RCON][x] say hello all") == "[RCON][x] say hello all");
+            Check("a line that is not an RCON command is left as it was", Extracted.MaskRconSecrets("Saved 77,765 ents") == "Saved 77,765 ents" && Extracted.MaskRconSecrets("[Global] Bob : my password is x") == "[Global] Bob : my password is x");
+
+            var spooled = Extracted.SpoolLogLine('e', "2026-09-19T21:10:05.123Z", "error", "a\tb", "first\nsecond\tthird \\ end\r");
+            var back = Extracted.ReadSpoolLogLine(spooled);
+            Check("a spool line is one line", spooled.IndexOf('\n') < 0 && spooled.IndexOf('\r') < 0);
+            Check("a spool line reads back exactly", back != null && back.Stream == 'e' && back.At == "2026-09-19T21:10:05.123Z" && back.Level == "error" && back.Source == "a\tb" && back.Text == "first\nsecond\tthird \\ end\r");
+            var bare = Extracted.ReadSpoolLogLine(Extracted.SpoolLogLine('o', null, null, null, ""));
+            Check("missing fields read back as missing", bare != null && bare.At == null && bare.Level == null && bare.Source == null && bare.Text == "");
+            Check("a line that is not a spool line is refused", Extracted.ReadSpoolLogLine("half a line") == null && Extracted.ReadSpoolLogLine("e\tx") == null);
+            DateTime spoolDate;
+            Check("the spool is named by the day", Extracted.LogSpoolName(new DateTime(2026, 9, 19)) == "hotwire_log_2026-09-19.txt"
+                && Extracted.LogSpoolDate("hotwire_log_2026-09-19.txt", out spoolDate) && spoolDate == new DateTime(2026, 9, 19)
+                && !Extracted.LogSpoolDate("oxide_2026-09-19.txt", out spoolDate) && !Extracted.LogSpoolDate("hotwire_log_2026-09-19.txt.bak", out spoolDate));
+
+            var echo = new Extracted.EchoSet();
+            echo.Add("Loaded plugin Kits", 100);
+            echo.Add("Loaded plugin Kits", 200);
+            Check("an Oxide line is recognised once for each time it was seen", echo.TryConsume("Loaded plugin Kits") && echo.TryConsume("Loaded plugin Kits") && !echo.TryConsume("Loaded plugin Kits"));
+            echo.Add("old", 100);
+            echo.Add("new", 500);
+            echo.Expire(300);
+            Check("old Oxide lines are forgotten", !echo.TryConsume("old") && echo.TryConsume("new") && echo.Count == 0);
+            for (var i = 0; i < 5000; i++) echo.Add("flood " + i, i);
+            Check("the echo set stays bounded in a flood", echo.Count <= 4096, echo.Count.ToString());
+
+            // A real server console, when a file is given: every line survives the spool, and how long masking takes.
+            var consoleLog = Environment.GetEnvironmentVariable("HOTWIRE_CONSOLE_LOG");
+            if (!string.IsNullOrEmpty(consoleLog) && File.Exists(consoleLog))
+            {
+                var all = File.ReadAllLines(consoleLog);
+                var bad = 0;
+                foreach (var line in all)
+                {
+                    var r = Extracted.ReadSpoolLogLine(Extracted.SpoolLogLine('e', "2026-09-05T13:00:39.000Z", "info", null, line));
+                    if (r == null || r.Text != line) bad++;
+                }
+                Check($"all {all.Length} real console lines survive the spool", bad == 0, bad + " changed");
+                var watch = System.Diagnostics.Stopwatch.StartNew();
+                foreach (var line in all) Extracted.MaskIps(Extracted.MaskSourceGates(line));
+                watch.Stop();
+                Console.WriteLine($"  masking {all.Length} real lines: {watch.Elapsed.TotalMilliseconds:F1} ms ({watch.Elapsed.TotalMilliseconds * 1e6 / all.Length:F0} ns a line)");
+            }
+
             var sk = Extracted.LogSessionKey(638900000000000000, "/srv/rust");
             Check("the session key is a version-8 UUID", Regex.IsMatch(sk, "^[0-9a-f]{8}-[0-9a-f]{4}-8[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"), sk);
             Check("the session key is stable for one process", sk == Extracted.LogSessionKey(638900000000000000, "/srv/rust"));

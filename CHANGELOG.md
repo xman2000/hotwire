@@ -25,6 +25,26 @@ sit above a launcher `1.1.7`. Read the label, not the number.
 at the top of the file — it is a comment, not something it echoes, so read it
 rather than watch for it.
 
+## 1.1.29 — plugin — 2026-09-19
+
+**The server console reaches the panel, alongside Oxide's log.**
+
+- What the game server prints that Oxide does not -- saves, joins and leaves, Rust's own warnings and errors, anything
+  another mod prints -- is sent to the panel's Logs, each line with its time to the millisecond and its level. Oxide's
+  own lines are still sent once, from Oxide's log, and never repeated from the console.
+- **Chat is never sent as a log line.** It has its own setting and goes only where that setting allows.
+- **Every IP address is removed** before a line leaves the server, at every player-data level, in the console and in
+  Oxide's log alike; the port after one is kept. When an RCON command sets a password, a token or a key, the command's
+  name is kept and its value is removed. Card numbers, SSNs and (below "identified") Steam IDs are removed as before.
+- **One pipe for both.** Lines from Oxide's log and from the console are kept in `oxide/logs/hotwire_log_<date>.txt`
+  until the panel has them, so an outage, a reload or a panel policy that holds the log loses nothing. Days already sent
+  are removed, and what waits is held to 64 MB a day, 256 MB in all and 30 days, oldest first.
+- Only while the server is connected to a panel: a server that is not connected takes nothing and writes nothing.
+- `Send the server console` in the config (on) turns it off; `Send the Oxide log` still controls Oxide's. `hotwire check`
+  shows both.
+- Taking a line is a single queue insert on the thread that wrote it; lines are written to disk every few seconds, at
+  most 5,000 at a time, so a flood cannot hold up a frame, and past 20,000 waiting they are counted rather than kept.
+
 ## 1.1.28 — plugin — 2026-09-18
 
 **Connect to the panel from the game.**

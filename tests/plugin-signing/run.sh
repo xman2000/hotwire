@@ -8,12 +8,14 @@ src="$here/../../src/Hotwire.cs"
 extract() { awk -v name="#region $1" 'index($0, name){on=1; next} on && /#endregion/{exit} on{print}' "$src"; }
 signing="$(extract "Panel signing")"
 loglines="$(extract "Log lines")"
+consolelog="$(extract "Console log")"
 manifest="$(extract "Manifest")"
 policy="$(extract "Report policy")"
 spool="$(extract "Spool rules")"
 [ -n "$manifest" ] || { echo "Could not find the Manifest region in $src" >&2; exit 1; }
 [ -n "$signing" ] || { echo "Could not find the Panel signing region in $src" >&2; exit 1; }
 [ -n "$loglines" ] || { echo "Could not find the Log lines region in $src" >&2; exit 1; }
+[ -n "$consolelog" ] || { echo "Could not find the Console log region in $src" >&2; exit 1; }
 [ -n "$policy" ] || { echo "Could not find the Report policy region in $src" >&2; exit 1; }
 [ -n "$spool" ] || { echo "Could not find the Spool rules region in $src" >&2; exit 1; }
 
@@ -21,7 +23,7 @@ spool="$(extract "Spool rules")"
   echo 'using System; using System.Collections.Generic; using System.Globalization; using System.Linq; using System.Security.Cryptography; using System.Text;'
   echo 'using Newtonsoft.Json; using Newtonsoft.Json.Linq;'
   echo 'namespace PluginSigning { internal static class Extracted {'
-  printf '%s\n%s\n%s\n%s\n%s\n' "$signing" "$loglines" "$manifest" "$policy" "$spool" | sed -E 's/^([[:space:]]*)private (static|sealed class)/\1internal \2/'
+  printf '%s\n%s\n%s\n%s\n%s\n%s\n' "$signing" "$loglines" "$consolelog" "$manifest" "$policy" "$spool" | sed -E 's/^([[:space:]]*)private (static|sealed class)/\1internal \2/'
   echo '} }'
 } > "$here/Extracted.cs"
 
