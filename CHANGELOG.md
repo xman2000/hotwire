@@ -25,6 +25,17 @@ sit above a launcher `1.1.7`. Read the label, not the number.
 at the top of the file — it is a comment, not something it echoes, so read it
 rather than watch for it.
 
+## 1.1.30 — plugin — 2026-09-19
+
+**What waits for the panel is kept for a week, not a month.**
+
+- Reports that cannot be sent again, and log lines, are kept on the server for **7 days** rather than 30. A server that
+  has not reached the panel in a week has a bigger problem than its spool, and a week is long enough for any outage.
+- `Keep unsent reports and log lines for this many days` in the config raises it, up to 90 days, which is as far back as
+  the panel keeps a line anyway. A 0 or a missing value means the week. The bounds on size are unchanged: 50 MB of held
+  reports, and 64 MB a day and 256 MB in all of log.
+- `hotwire check` says how long this server keeps them.
+
 ## 1.1.29 — plugin — 2026-09-19
 
 **The server console reaches the panel, alongside Oxide's log.**

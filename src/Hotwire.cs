@@ -17,7 +17,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Hotwire", "xman2000", "1.1.29")]
+    [Info("Hotwire", "xman2000", "1.1.30")]
     [Description("Scheduled restarts and updates. Announces, counts down, writes a flag, quits.")]
     internal class Hotwire : CovalencePlugin
     {
@@ -196,6 +196,15 @@ namespace Oxide.Plugins
             // are masked, card numbers and SSNs too, and Steam IDs below the
             // "identified" level. Kept in oxide/logs/hotwire_log_<date>.txt until
             // the panel has it.
+            // How long anything waiting for the panel is kept on this machine:
+            // reports that cannot be sent again, and log lines. A week is long
+            // enough for an outage; a server that has not reached the panel in
+            // seven days has a bigger problem than its spool. Raise it if you
+            // want a longer reach back, up to 90 days, which is as far back as
+            // the panel keeps a line anyway. The bounds on size hold either way.
+            [JsonProperty("Keep unsent reports and log lines for this many days")]
+            public int SpoolDays = 7;
+
             [JsonProperty("Send the server console")]
             public bool SendConsole = true;
 
@@ -2550,6 +2559,19 @@ namespace Oxide.Plugins
         private DateTime _catchUpDue = DateTime.MinValue;
         private bool _spoolWarned;
 
+        // How long anything waiting for the panel is kept here, from the config,
+        // within reason: at least a day, and never past the panel's own 90-day
+        // retention. A 0 or a negative in the file means the default week.
+        private const int SpoolDaysDefault = 7;
+        private const int SpoolDaysMax = 90;
+
+        private int SpoolDays()
+        {
+            var days = _config == null ? SpoolDaysDefault : _config.Panel.SpoolDays;
+
+            return days <= 0 ? SpoolDaysDefault : Math.Min(SpoolDaysMax, days);
+        }
+
         private static string SpoolDirectory() => Path.Combine(Interface.Oxide.DataDirectory, "Hotwire", "spool");
 
         private SpoolState SpoolCounts()
@@ -2616,7 +2638,7 @@ namespace Oxide.Plugins
         private void SpoolPruneNow()
         {
             List<SpoolEntry> expired, overflowed;
-            SpoolPrune(SpoolEntries(), DateTime.UtcNow, out expired, out overflowed);
+            SpoolPrune(SpoolEntries(), DateTime.UtcNow, SpoolDays(), out expired, out overflowed);
             if (expired.Count == 0 && overflowed.Count == 0) return;
 
             foreach (var entry in expired.Concat(overflowed)) SpoolDelete(entry.Path);
@@ -2625,7 +2647,7 @@ namespace Oxide.Plugins
             state.Overflowed += overflowed.Count;
             WriteData(SpoolStateFile, state);
             if (expired.Count > 0)
-                Puts($"Panel: {expired.Count} held report{(expired.Count == 1 ? " was" : "s were")} older than {SpoolMaxDays} days and {(expired.Count == 1 ? "was" : "were")} deleted unsent.");
+                Puts($"Panel: {expired.Count} held report{(expired.Count == 1 ? " was" : "s were")} older than {SpoolDays()} days and {(expired.Count == 1 ? "was" : "were")} deleted unsent.");
             if (overflowed.Count > 0)
                 Puts($"Panel: {overflowed.Count} of the oldest held report{(overflowed.Count == 1 ? " was" : "s were")} deleted unsent to keep the spool within {SpoolMaxBytes / (1024 * 1024)} MB.");
         }
@@ -2756,7 +2778,7 @@ namespace Oxide.Plugins
                 var dropped = state.Expired + state.Overflowed > 0
                     ? $"; {state.Expired} deleted unsent for age, {state.Overflowed} for space"
                     : "";
-                return $"{held}{dropped} (keeps up to {SpoolMaxDays} days, {SpoolMaxBytes / (1024 * 1024)} MB)";
+                return $"{held}{dropped} (keeps up to {SpoolDays()} days, {SpoolMaxBytes / (1024 * 1024)} MB)";
             }
             catch (Exception ex)
             {
@@ -4728,7 +4750,7 @@ namespace Oxide.Plugins
                     ? "no reports at all"
                     : "only " + string.Join(", ", _policy.Kinds.OrderBy(k => k, StringComparer.Ordinal).ToArray()) + " reports");
             if (_policy.Hold && _policy.Kinds != null)
-                parts.Add($"the rest held here for up to {SpoolMaxDays} days");
+                parts.Add($"the rest held here for up to {SpoolDays()} days");
 
             var name = string.IsNullOrEmpty(_policy.Name) ? "unnamed" : _policy.Name;
             return $"{name}: {string.Join(", ", parts.ToArray())} (from the panel {_policy.ReceivedUtc.ToLocalTime():yyyy-MM-dd HH:mm})";
@@ -5458,13 +5480,13 @@ namespace Oxide.Plugins
 
             // Back after more than thirty days: the older files are skipped, not
             // read. They stay on this machine; only the panel does without them.
-            if (LogFileTooOld(_logCursor.ImportFile, DateTime.Now))
+            if (LogFileTooOld(_logCursor.ImportFile, DateTime.Now, SpoolDays()))
             {
                 var skippedFrom = _logCursor.ImportFile;
-                _logCursor.ImportFile = NextOxideLog(dir, OxideLogName(DateTime.Now.Date.AddDays(-SpoolMaxDays - 1))) ?? today;
+                _logCursor.ImportFile = NextOxideLog(dir, OxideLogName(DateTime.Now.Date.AddDays(-SpoolDays() - 1))) ?? today;
                 _logCursor.ImportOffset = 0;
                 WriteData(LogDataFile, _logCursor);
-                Puts($"Panel: log files from {skippedFrom} until {_logCursor.ImportFile} are more than {SpoolMaxDays} days old and are not sent. They stay in oxide/logs.");
+                Puts($"Panel: log files from {skippedFrom} until {_logCursor.ImportFile} are more than {SpoolDays()} days old and are not sent. They stay in oxide/logs.");
             }
 
             for (var hops = 0; hops < 400; hops++)
@@ -5609,7 +5631,7 @@ namespace Oxide.Plugins
             if (_logCursor == null) return;
             try
             {
-                var oldest = DateTime.Now.Date.AddDays(-SpoolMaxDays);
+                var oldest = DateTime.Now.Date.AddDays(-SpoolDays());
                 var today = LogSpoolName(DateTime.Now);
                 var kept = new List<KeyValuePair<string, long>>();
                 foreach (var path in Directory.GetFiles(Interface.Oxide.LogDirectory, "hotwire_log_????-??-??.txt").OrderBy(p => p, StringComparer.Ordinal))
@@ -5650,7 +5672,7 @@ namespace Oxide.Plugins
                 {
                     // Held: the cursor stays where it is, so the lines go when the log is allowed again.
                     _logDue = DateTime.UtcNow.AddSeconds(interval);
-                    _logState = $"held: the panel's report policy does not include the log; lines wait here, up to {SpoolMaxDays} days";
+                    _logState = $"held: the panel's report policy does not include the log; lines wait here, up to {SpoolDays()} days";
                     return false;
                 }
 
@@ -5830,7 +5852,7 @@ namespace Oxide.Plugins
             for (var hops = 0; hops < 400; hops++)
             {
                 DateTime date;
-                var tooOld = LogSpoolDate(_logCursor.SpoolFile, out date) && date < DateTime.Now.Date.AddDays(-SpoolMaxDays);
+                var tooOld = LogSpoolDate(_logCursor.SpoolFile, out date) && date < DateTime.Now.Date.AddDays(-SpoolDays());
                 var current = Path.Combine(dir, _logCursor.SpoolFile);
                 var length = File.Exists(current) ? new FileInfo(current).Length : -1;
                 if (length >= 0 && _logCursor.SpoolOffset > length) _logCursor.SpoolOffset = 0;   // the file was replaced
@@ -6121,7 +6143,6 @@ namespace Oxide.Plugins
 
         // Kept for thirty days, then let go unsent: a server back after a long
         // time must not flood the panel, and the customer's disk is not ours.
-        private const int SpoolMaxDays = 30;
         private const long SpoolMaxBytes = 50L * 1024 * 1024;
         private const int SpoolMaxFiles = 5000;
 
@@ -6160,11 +6181,11 @@ namespace Oxide.Plugins
                 DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out time) ? time : (DateTime?)null;
         }
 
-        // Which kept reports go unsent: anything older than thirty days, then the
-        // oldest until what is left fits. Entries are oldest first.
-        private static void SpoolPrune(List<SpoolEntry> entries, DateTime nowUtc, out List<SpoolEntry> expired, out List<SpoolEntry> overflowed)
+        // Which kept reports go unsent: anything older than the kept days, then
+        // the oldest until what is left fits. Entries are oldest first.
+        private static void SpoolPrune(List<SpoolEntry> entries, DateTime nowUtc, int days, out List<SpoolEntry> expired, out List<SpoolEntry> overflowed)
         {
-            var limit = TimeSpan.FromDays(SpoolMaxDays);
+            var limit = TimeSpan.FromDays(days);
             expired = entries.Where(e => nowUtc - e.SentUtc > limit).ToList();
             var kept = entries.Where(e => nowUtc - e.SentUtc <= limit).ToList();
             overflowed = new List<SpoolEntry>();
@@ -6178,14 +6199,14 @@ namespace Oxide.Plugins
             }
         }
 
-        // A log file whose name says it is more than thirty days old is skipped,
+        // A log file whose name says it is older than the kept days is skipped,
         // not read. A name that is not a date is never skipped.
-        private static bool LogFileTooOld(string fileName, DateTime localToday)
+        private static bool LogFileTooOld(string fileName, DateTime localToday, int days)
         {
             DateTime date;
             if (fileName == null || fileName.Length < 16) return false;
             if (!DateTime.TryParseExact(fileName.Substring(6, 10), "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out date)) return false;
-            return date < localToday.Date.AddDays(-SpoolMaxDays);
+            return date < localToday.Date.AddDays(-days);
         }
 
         #endregion

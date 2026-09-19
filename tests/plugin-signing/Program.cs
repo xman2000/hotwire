@@ -338,7 +338,7 @@ namespace PluginSigning
                 new Extracted.SpoolEntry { Path = "c", SentUtc = spoolNow.AddDays(-1), Bytes = 10 },
             };
             List<Extracted.SpoolEntry> expired, overflowed;
-            Extracted.SpoolPrune(entries, spoolNow, out expired, out overflowed);
+            Extracted.SpoolPrune(entries, spoolNow, 30, out expired, out overflowed);
             Check("older than 30 days is let go unsent", expired.Count == 1 && expired[0].Path == "a" && overflowed.Count == 0);
             var bigSpool = new List<Extracted.SpoolEntry>
             {
@@ -346,17 +346,26 @@ namespace PluginSigning
                 new Extracted.SpoolEntry { Path = "mid", SentUtc = spoolNow.AddDays(-2), Bytes = 15L * 1024 * 1024 },
                 new Extracted.SpoolEntry { Path = "new", SentUtc = spoolNow.AddDays(-1), Bytes = 15L * 1024 * 1024 },
             };
-            Extracted.SpoolPrune(bigSpool, spoolNow, out expired, out overflowed);
+            Extracted.SpoolPrune(bigSpool, spoolNow, 30, out expired, out overflowed);
             Check("over 50 MB, the oldest go until it fits", expired.Count == 0 && overflowed.Count == 1 && overflowed[0].Path == "old");
             var many = Enumerable.Range(0, 5003).Select(i => new Extracted.SpoolEntry { Path = i.ToString("D5"), SentUtc = spoolNow.AddMinutes(-6000 + i), Bytes = 100 }).ToList();
-            Extracted.SpoolPrune(many, spoolNow, out expired, out overflowed);
+            Extracted.SpoolPrune(many, spoolNow, 30, out expired, out overflowed);
             Check("over 5,000 files, the oldest go", overflowed.Count == 3 && overflowed[0].Path == "00000" && overflowed[2].Path == "00002");
 
             var today = new DateTime(2026, 9, 18);
-            Check("a log file from 31 days ago is skipped", Extracted.LogFileTooOld("oxide_2026-08-18.txt", today));
-            Check("a log file from 30 days ago is read", !Extracted.LogFileTooOld("oxide_2026-08-19.txt", today));
-            Check("today's log file is read", !Extracted.LogFileTooOld("oxide_2026-09-18.txt", today));
-            Check("a file name that is not a date is never skipped", !Extracted.LogFileTooOld("oxide_latest.txt", today) && !Extracted.LogFileTooOld(null, today));
+            Check("a log file from 31 days ago is skipped when 30 days are kept", Extracted.LogFileTooOld("oxide_2026-08-18.txt", today, 30));
+            Check("a log file from 30 days ago is read when 30 days are kept", !Extracted.LogFileTooOld("oxide_2026-08-19.txt", today, 30));
+            Check("today's log file is read", !Extracted.LogFileTooOld("oxide_2026-09-18.txt", today, 30));
+            Check("a file name that is not a date is never skipped", !Extracted.LogFileTooOld("oxide_latest.txt", today, 30) && !Extracted.LogFileTooOld(null, today, 30));
+            // The default is a week (the owner: "if the server hasn't connected in seven days, they have other issues").
+            Check("a log file from 8 days ago is skipped when a week is kept", Extracted.LogFileTooOld("oxide_2026-09-10.txt", today, 7));
+            Check("a log file from 6 days ago is read when a week is kept", !Extracted.LogFileTooOld("oxide_2026-09-12.txt", today, 7));
+            var weekOld = new System.Collections.Generic.List<Extracted.SpoolEntry> {
+                new Extracted.SpoolEntry { Path = "old.json", SentUtc = spoolNow.AddDays(-8), Bytes = 10 },
+                new Extracted.SpoolEntry { Path = "new.json", SentUtc = spoolNow.AddDays(-6), Bytes = 10 },
+            };
+            Extracted.SpoolPrune(weekOld, spoolNow, 7, out expired, out overflowed);
+            Check("a report older than the kept days is let go", expired.Count == 1 && expired[0].Path == "old.json" && overflowed.Count == 0);
 
             Console.WriteLine(_failed == 0 ? "All checks passed." : _failed + " check(s) FAILED.");
             return _failed == 0 ? 0 : 1;
