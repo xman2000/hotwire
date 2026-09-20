@@ -39,8 +39,8 @@
 #     before it offers a launcher-editing feature. Capabilities, not the version
 #     number, are what a feature is gated on.
 HOTWIRE_LAUNCHER_VERSION="1.0.0-linux"
-HOTWIRE_LAUNCHER_CAPABILITIES="supervise,update,framework_verify,crash_backstop,log_rotate,convar_persist"
-HOTWIRE_LAUNCHER_HASH="a1d258eae29c040c42d67141c7459239c7b5c9a89f12a8405f6f8e8c50a26c8d"
+HOTWIRE_LAUNCHER_CAPABILITIES="supervise,update,framework_verify,crash_backstop,log_rotate,convar_persist,wipe"
+HOTWIRE_LAUNCHER_HASH="dea95f1b64c4a0d7166c520ff4822b6bd466dd0478d28bdc4c03b0ef56229379"
 
 set -uo pipefail
 
@@ -111,6 +111,9 @@ UPDATE_MODE="always"
 # plugin's config. UPDATE = update; VALIDATE = update and re-verify every file.
 UPDATE_FLAG="UPDATE.flag"
 VALIDATE_FLAG="VALIDATE.flag"
+# The wipe flag the plugin writes (must match the plugin's config). A wipe is a
+# restart with this flag: the launcher reads it between runs and changes the map.
+WIPE_FLAG="WIPE.flag"
 
 # hotwire mode only: force an update after this many days without one. 0 = off.
 MAX_DAYS_WITHOUT_UPDATE="14"
@@ -206,6 +209,8 @@ BUILD_CACHE="$LOGDIR/build_check.txt"
 OXIDE_STAMP="$LOGDIR/oxide_installed.txt"
 CONVAR_REQUEST="$ROOT/CONVAR.request"
 CONVAR_RESULT="$ROOT/CONVAR.result"
+WIPE_STATE="$ROOT/hotwire/wipe-cycle"
+WIPE_RESULT="$ROOT/WIPE.result"
 KEYS_FILE="$ROOT/hotwire/keys.json"
 CONNECT_FILE="$ROOT/hotwire/connect.json"
 SPOOL_DIR="$ROOT/hotwire/launcher-spool"
@@ -714,6 +719,96 @@ report_launcher_stopped() {  # <detail>
 }
 
 # ======================================================================
+# Wipe (capability: wipe). A wipe is a restart with a flag, exactly as an update
+# is. The plugin announces, counts down, optionally backs up (Rust's own
+# server.backup), writes WIPE.flag and quits; the launcher reads the flag between
+# runs and changes the map by writing a new seed (and size) into its settings --
+# Rust then finds no save by that name and generates a new world, and the old
+# save is simply left on disk. Blueprints are the admin's choice: kept, renamed
+# (recoverable), or deleted; player.tokens.db (Rust+ pairings) is never touched.
+#
+# Safety: seed/size are validated as plain integers before they are written into
+# a file the machine executes; a stale flag (past its expiry) or one already
+# carried out this cycle never fires (the double-wipe guard); and if the new seed
+# cannot be written the wipe is CANCELLED and the server boots unchanged -- a
+# wipe that half-happened is worse than one that did not. This is why seed and
+# size live with wipe and are fenced out of the convar editor: a routine convar
+# edit must never be able to wipe a map.
+# ======================================================================
+set_setting() {  # set_setting <NAME> <integer-or-safe-value>  -- rewrite a SETTINGS value, keeping any trailing comment
+    local self; self="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
+    sed -i -E "s|^($1=)\"[^\"]*\"|\\1\"$2\"|" "$self"
+}
+
+apply_wipe() {
+    local flag="$ROOT/$WIPE_FLAG"
+    [ -f "$flag" ] || return 0
+    local seed size bp cycle expires now
+    seed="$(grep -m1  '^seed '       "$flag" | awk '{print $2}')"
+    size="$(grep -m1  '^size '       "$flag" | awk '{print $2}')"
+    bp="$(grep -m1    '^blueprints ' "$flag" | awk '{print $2}')"
+    cycle="$(grep -m1 '^cycle '      "$flag" | awk '{print $2}')"
+    expires="$(grep -m1 '^expires '  "$flag" | awk '{print $2}')"
+    now="$(date +%s)"
+    [ -z "$bp" ] && bp="keep"
+
+    # Already carried out this cycle: clear and do nothing (the double-wipe guard).
+    if [ -n "$cycle" ] && [ "$(cat "$WIPE_STATE" 2>/dev/null)" = "$cycle" ]; then
+        rm -f "$flag"; log "Wipe for cycle $cycle already done; ignoring the flag."; return 0
+    fi
+    # A stale flag never fires.
+    if [ -n "$expires" ] && [ "$expires" -lt "$now" ] 2>/dev/null; then
+        rm -f "$flag"; warn "Wipe flag expired ($(date -u -d "@$expires" +%FT%TZ 2>/dev/null)); ignoring."; return 0
+    fi
+
+    # Validate as plain integers before anything is written or deleted.
+    local why=""
+    case "$seed" in ''|*[!0-9]*) why="seed is not a whole number";; esac
+    if [ -z "$why" ] && [ -n "$size" ]; then
+        case "$size" in *[!0-9]*) why="size is not a whole number";; esac
+        [ -z "$why" ] && { [ "$size" -lt 1000 ] || [ "$size" -gt 6000 ]; } && why="size $size is outside 1000-6000"
+    fi
+    case "$bp" in keep|rename|delete) ;; *) [ -z "$why" ] && why="blueprints must be keep, rename or delete";; esac
+    if [ -n "$why" ]; then
+        rule; bad "Wipe CANCELLED: $why. Booting unchanged."; rule
+        printf 'cancelled: %s\n' "$why" > "$WIPE_RESULT" 2>/dev/null || true
+        rm -f "$flag"
+        return 0
+    fi
+
+    rule; log "Wiping (cycle ${cycle:-none}): new seed $seed${size:+, size $size}, blueprints: $bp."
+    # 1) The map change first: write the new seed (and size) into settings. If this
+    #    cannot be done, cancel before touching anything else and boot unchanged.
+    if ! set_setting SERVER_SEED "$seed"; then
+        rule; bad "Wipe CANCELLED: could not write the new seed. Booting unchanged."; rule
+        printf 'cancelled: could not write seed\n' > "$WIPE_RESULT" 2>/dev/null || true
+        rm -f "$flag"; return 0
+    fi
+    SERVER_SEED="$seed"
+    if [ -n "$size" ]; then set_setting SERVER_WORLDSIZE "$size"; SERVER_WORLDSIZE="$size"; fi
+
+    # 2) Blueprints, in the identity folder. Match by glob (the version in the name
+    #    changes between builds). Never touch player.tokens.db.
+    local identity="${SERVER_IDENTITY:-my_server_identity}" bpmsg="kept"
+    local idir="$ROOT/server/$identity"
+    if [ "$bp" != "keep" ] && [ -d "$idir" ]; then
+        local stamp f cnt=0; stamp="$(date +%Y%m%d-%H%M%S)"
+        for f in "$idir"/player.blueprints.*.db; do
+            [ -e "$f" ] || continue
+            if [ "$bp" = "delete" ]; then rm -f "$f" && cnt=$((cnt + 1))
+            else mv -f "$f" "$f.wiped-$stamp" && cnt=$((cnt + 1)); fi
+        done
+        bpmsg="$bp ($cnt file(s))"
+    fi
+
+    # 3) Record the cycle and clear the flag last, so a crash mid-wipe re-runs safely.
+    [ -n "$cycle" ] && { mkdir -p "$(dirname "$WIPE_STATE")" 2>/dev/null; printf '%s' "$cycle" > "$WIPE_STATE" 2>/dev/null || true; }
+    rm -f "$flag"
+    printf 'applied: seed %s size %s blueprints %s (%s)\n' "$seed" "${size:-unchanged}" "$bp" "$bpmsg" > "$WIPE_RESULT" 2>/dev/null || true
+    ok "Wipe applied: seed $seed${size:+, size $size}, blueprints $bpmsg. The new world generates on this boot; the old save is left on disk."
+}
+
+# ======================================================================
 # Convar persist (capability: convar_persist). The plugin writes CONVAR.request
 # -- one "<convar> <value>" per line -- to ask that a start-arg convar be made
 # permanent. Between server runs (the safe moment) the launcher validates each,
@@ -806,7 +901,12 @@ per_launch_prep() {
     else
         log "Plain restart: no update this pass."
     fi
-    apply_convar_requests
+    # Check mode changes nothing on your behalf (as hotwire.bat's does): a wipe or a
+    # convar persist is a real mutation, so it is only carried out on a real start.
+    if [ -z "$CHECK_ONLY" ]; then
+        apply_wipe
+        apply_convar_requests
+    fi
     build_args
     check_options
 }
