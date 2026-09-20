@@ -12,11 +12,13 @@
 #   and stops trying only when a server crashes over and over (so a
 #   broken server does not thrash forever).
 #
-#   THIS LAUNCHER NEVER TALKS TO THE PANEL. Its only tie to the rest of
-#   Hotwire is the local flag file the plugin writes and this reads
-#   (UPDATE.flag / VALIDATE.flag). Nothing here signs a request, reads a
-#   key, or sends a report. (Rule: the launcher is a client; a file
-#   never travels.)
+#   THE PANEL NEVER REACHES IN. There is no inbound path: the plugin and the
+#   launcher speak only through the local flag file (UPDATE.flag / VALIDATE.flag),
+#   and the launcher reports OUTWARD to the panel as the contract's `script`
+#   component -- signed with the script key, best-effort, spooled on failure, and
+#   never able to block or fail the server (rule 1). It reports only what only it
+#   knows: how a run ended, the update outcome, and a crash-streak stop. It sends
+#   findings and facts; a file never travels.
 #
 #   Requires: bash 4+, curl, unzip, and flock (util-linux). jq is used
 #   for the Oxide SHA-256 verification when present; without it the
@@ -38,7 +40,7 @@
 #     number, are what a feature is gated on.
 HOTWIRE_LAUNCHER_VERSION="1.0.0-linux"
 HOTWIRE_LAUNCHER_CAPABILITIES="supervise,update,framework_verify,crash_backstop,log_rotate,convar_persist"
-HOTWIRE_LAUNCHER_HASH="0c5557fc76ad0d680538d8d7ed943e4a8c21dcda6f795f663b8b9e5c4be46d24"
+HOTWIRE_LAUNCHER_HASH="a1d258eae29c040c42d67141c7459239c7b5c9a89f12a8405f6f8e8c50a26c8d"
 
 set -uo pipefail
 
@@ -204,6 +206,13 @@ BUILD_CACHE="$LOGDIR/build_check.txt"
 OXIDE_STAMP="$LOGDIR/oxide_installed.txt"
 CONVAR_REQUEST="$ROOT/CONVAR.request"
 CONVAR_RESULT="$ROOT/CONVAR.result"
+KEYS_FILE="$ROOT/hotwire/keys.json"
+CONNECT_FILE="$ROOT/hotwire/connect.json"
+SPOOL_DIR="$ROOT/hotwire/launcher-spool"
+SPOOL_MAX=500
+UPDATE_ATTEMPTED=0
+UPDATE_FLAG_KEPT=0
+STARTED_AT=""
 # The SteamCMD lock coordinates servers that share one steamcmd. It must be
 # writable by the server user and shared across that user's servers; /usr/games
 # (beside steamcmd) is not writable, unlike Windows. Override for a box whose
@@ -509,6 +518,8 @@ finalize_update() {
     else
         rule; warn "The update did NOT complete; the flags are KEPT and the clock is NOT reset. It will retry next start."; rule
     fi
+    # For the session report's update block: a flag still on disk means "tried and failed".
+    if [ -e "$ROOT/$UPDATE_FLAG" ] || [ -e "$ROOT/$VALIDATE_FLAG" ]; then UPDATE_FLAG_KEPT=1; else UPDATE_FLAG_KEPT=0; fi
 }
 
 # ======================================================================
@@ -597,6 +608,112 @@ JSON
 }
 
 # ======================================================================
+# Reporting to the panel -- kind: session and kind: launcher. The launcher is
+# the `script` component of the contract: it signs with the script key connect
+# wrote (hotwire/keys.json) and reports only what only it knows -- how a run
+# ended, the update outcome, and a crash-streak stop ("the most important report
+# in the contract"). Everything here is best-effort: a report that cannot be
+# sent is spooled and drained next boot, and nothing here ever blocks or fails
+# the server (rule 1). The plugin still reports the boot itself (ADR-0080), so
+# this is not "Last boot"; it is the update-and-exit account only the script has.
+# ======================================================================
+_json_str() {  # a flat JSON string value: _json_str <file> <key>
+    [ -f "$1" ] || return 0
+    grep -oE "\"$2\"[[:space:]]*:[[:space:]]*\"[^\"]*\"" "$1" 2>/dev/null | head -1 | sed -E 's/.*:[[:space:]]*"([^"]*)"/\1/'
+}
+_sha256() { printf '%s' "$1" | openssl dgst -sha256 | sed 's/^.*= *//'; }
+_hmac()   { printf '%s' "$2" | openssl dgst -sha256 -hmac "$1" | sed 's/^.*= *//'; }
+_bool()   { [ "$1" = "1" ] && printf 'true' || printf 'false'; }
+
+REPORT_ENABLED=0; PANEL_URL=""; SCRIPT_KEY=""; SCRIPT_SECRET=""
+init_reporting() {
+    PANEL_URL="$(_json_str "$CONNECT_FILE" panel_url)"
+    SCRIPT_KEY="$(_json_str "$KEYS_FILE" key_id)"
+    SCRIPT_SECRET="$(_json_str "$KEYS_FILE" secret)"
+    if [ -n "$PANEL_URL" ] && [ -n "$SCRIPT_KEY" ] && [ -n "$SCRIPT_SECRET" ]; then
+        REPORT_ENABLED=1
+    else
+        log "Not connected to a panel (no keys); the launcher will not report."
+    fi
+}
+
+# Build a signed envelope for a payload and POST it. Echoes the HTTP status (000
+# on no answer). Re-signs with a fresh timestamp/nonce but keeps the given
+# report_id and sent_at, so a spooled report is the same report on resend.
+_hw_post() {  # <kind> <payload-json> <report_id> <sent_at>
+    local kind="$1" payload="$2" rid="$3" sent_at="$4" body ts nonce sig code
+    body="{\"contract\":1,\"report_id\":\"$rid\",\"sent_at\":\"$sent_at\",\"source\":\"script\",\"source_version\":\"$HOTWIRE_LAUNCHER_VERSION\",\"kind\":\"$kind\",\"payload\":$payload}"
+    ts="$(date +%s)"; nonce="$(openssl rand -hex 16)"
+    sig="$(_hmac "$SCRIPT_SECRET" "$(printf '%s %s\n%s\n%s\n%s' POST /api/v1/report "$ts" "$nonce" "$(_sha256 "$body")")")"
+    code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 15 -X POST "$PANEL_URL/api/v1/report" \
+        -H 'Content-Type: application/json' -H "X-Hotwire-Key: $SCRIPT_KEY" -H "X-Hotwire-Timestamp: $ts" \
+        -H "X-Hotwire-Nonce: $nonce" -H "X-Hotwire-Signature: $sig" --data-binary "$body" 2>/dev/null)" || code="000"
+    printf '%s' "${code:-000}"
+}
+
+_spool_write() {  # <kind> <payload> <rid> <sent_at>
+    mkdir -p "$SPOOL_DIR" 2>/dev/null || return 0
+    printf '%s\n%s\n%s\n%s\n' "$1" "$3" "$4" "$2" > "$SPOOL_DIR/$(date +%s)-$3" 2>/dev/null || true
+    local n; n="$(ls -1 "$SPOOL_DIR" 2>/dev/null | wc -l)"
+    if [ "$n" -gt "$SPOOL_MAX" ]; then
+        ls -1tr "$SPOOL_DIR" 2>/dev/null | head -n "$((n - SPOOL_MAX))" | while read -r o; do rm -f "$SPOOL_DIR/$o"; done
+    fi
+}
+
+hw_send() {  # <kind> <payload-json>  -- first send; spool on a retryable failure
+    [ "$REPORT_ENABLED" = "1" ] || return 0
+    local kind="$1" payload="$2" rid sent_at code
+    rid="$(cat /proc/sys/kernel/random/uuid 2>/dev/null || openssl rand -hex 16)"
+    sent_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    code="$(_hw_post "$kind" "$payload" "$rid" "$sent_at")"
+    case "$code" in
+        2*) : ;;
+        429|5*|000) _spool_write "$kind" "$payload" "$rid" "$sent_at"; log "Report ($kind) not sent (HTTP $code); spooled." ;;
+        *) log "Report ($kind) refused (HTTP $code); not retrying." ;;
+    esac
+}
+
+# Drain oldest-first; stop at the first that still cannot be sent. Politely bounded.
+spool_drain() {
+    [ "$REPORT_ENABLED" = "1" ] || return 0
+    [ -d "$SPOOL_DIR" ] || return 0
+    local sent=0 f p kind rid sent_at payload code
+    for f in $(ls -1tr "$SPOOL_DIR" 2>/dev/null); do
+        [ "$sent" -ge 50 ] && break
+        p="$SPOOL_DIR/$f"
+        kind="$(sed -n 1p "$p")"; rid="$(sed -n 2p "$p")"; sent_at="$(sed -n 3p "$p")"; payload="$(sed -n 4p "$p")"
+        [ -z "$kind" ] && { rm -f "$p"; continue; }
+        code="$(_hw_post "$kind" "$payload" "$rid" "$sent_at")"
+        case "$code" in 2*) rm -f "$p"; sent=$((sent + 1)) ;; *) break ;; esac
+    done
+    [ "$sent" -gt 0 ] && log "Spool: sent $sent held report(s)."
+    return 0
+}
+
+# One session report per run, sent after the server exits: what only the script
+# knows about this lifetime -- when it ended, the exit code, whether it crashed
+# (a run under CRASH_SECONDS), and the update outcome. The panel merges it with
+# the plugin's report for the same started_at.
+report_session() {  # <exit_code> <crashed true|false>
+    [ "$REPORT_ENABLED" = "1" ] || return 0
+    read_installed_build
+    local p="{\"started_at\":\"$STARTED_AT\",\"ended_at\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"exit_code\":$1,\"crashed\":$2"
+    [ -n "$INSTALLED_BUILD" ] && p="$p,\"rust_build_id\":\"$INSTALLED_BUILD\""
+    p="$p,\"update\":{\"attempted\":$(_bool "$UPDATE_ATTEMPTED"),\"steam_ok\":$(_bool "$STEAM_OK"),\"framework_ok\":$(_bool "$FRAMEWORK_OK"),\"flag_kept\":$(_bool "$UPDATE_FLAG_KEPT")}}"
+    hw_send session "$p"
+}
+
+# The launcher report: sent when the crash-streak backstop stops the server for
+# good. Absence of a heartbeat cannot tell "stopped, needs a human" from "the
+# network is out"; this can.
+report_launcher_stopped() {  # <detail>
+    [ "$REPORT_ENABLED" = "1" ] || return 0
+    local plog; plog="$(ls -1t "$LOGDIR" 2>/dev/null | grep server_crash_ | head -1)"
+    [ -n "$plog" ] && plog="logs/$plog"
+    hw_send launcher "{\"state\":\"stopped\",\"reason\":\"crash_streak\",\"detail\":\"$1\",\"crash_streak\":$CRASH_STREAK,\"preserved_log\":\"$plog\"}"
+}
+
+# ======================================================================
 # Convar persist (capability: convar_persist). The plugin writes CONVAR.request
 # -- one "<convar> <value>" per line -- to ask that a start-arg convar be made
 # permanent. Between server runs (the safe moment) the launcher validates each,
@@ -666,22 +783,53 @@ apply_convar_requests() {
 }
 
 # ======================================================================
+# Everything that must happen before each launch, and RE-happen on every
+# relaunch exactly as hotwire.bat does from :start: the build check, the update
+# decision, the hooks and the update itself, pending convar persists, the args
+# and the option check. This is why a plugin that writes UPDATE.flag and
+# restarts the server gets its update -- it is picked up here on the relaunch.
+# ======================================================================
+per_launch_prep() {
+    UPDATE_ATTEMPTED=0
+    build_check
+    update_decision
+    [ -n "$CHECK_ONLY" ] && DO_UPDATE=0
+    # HOOK_BEFORE runs on every real start (not in check mode), before any update.
+    [ -z "$CHECK_ONLY" ] && [ -n "$HOOK_BEFORE" ] && { log "Running HOOK_BEFORE..."; bash -c "$HOOK_BEFORE" || warn "HOOK_BEFORE exited non-zero."; }
+    if [ "$DO_UPDATE" = "1" ]; then
+        UPDATE_ATTEMPTED=1
+        steam_update
+        framework_update
+        finalize_update
+        # HOOK_AFTER runs after an update attempt (success or not), like the .bat.
+        [ -n "$HOOK_AFTER" ] && { log "Running HOOK_AFTER..."; bash -c "$HOOK_AFTER" || warn "HOOK_AFTER exited non-zero."; }
+    else
+        log "Plain restart: no update this pass."
+    fi
+    apply_convar_requests
+    build_args
+    check_options
+}
+
+# ======================================================================
 # Section 5 -- the run loop.
 # ======================================================================
 run_loop() {
     while :; do
-        apply_convar_requests
-        build_args
+        spool_drain
+        per_launch_prep
         rotate_log
         write_launcher_state
         log "Starting server..."
-        local start_ts end_ts run_secs
+        STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+        local start_ts end_ts run_secs rc crashed
         start_ts="$(date +%s)"
-        "$RUST_BIN" "${ARGS[@]}" -logfile "$LOGFILE"
+        "$RUST_BIN" "${ARGS[@]}" -logfile "$LOGFILE"; rc=$?
         end_ts="$(date +%s)"
         run_secs=$(( end_ts - start_ts )); [ "$run_secs" -lt 0 ] && run_secs=99999
 
-        if [ "$run_secs" -lt "$CRASH_SECONDS" ]; then CRASH_STREAK=$((CRASH_STREAK+1)); else CRASH_STREAK=0; fi
+        if [ "$run_secs" -lt "$CRASH_SECONDS" ]; then CRASH_STREAK=$((CRASH_STREAK+1)); crashed=true; else CRASH_STREAK=0; crashed=false; fi
+        report_session "$rc" "$crashed"
 
         if [ "$RESTART_ON_EXIT" = "0" ]; then log "Server exited; RESTART_ON_EXIT is off. Stopping."; exit 0; fi
 
@@ -691,6 +839,7 @@ run_loop() {
             log  "The log that explains it is the newest logs/server_crash_*.txt."
             log  "Common causes: a bad convar, a port already in use (another server?), or a broken update."
             rule
+            report_launcher_stopped "$CRASH_STREAK consecutive runs under ${CRASH_SECONDS}s"
             exit 1
         fi
 
@@ -721,28 +870,10 @@ printf '%s%s H O T W I R E %s  launcher %s%s (linux)  --  %s\n' \
 validate_settings
 load_secrets
 preflight
-
-build_check
-update_decision
-[ -n "$CHECK_ONLY" ] && DO_UPDATE=0
-
-# HOOK_BEFORE runs on every real start (not in check mode), before any update.
-[ -z "$CHECK_ONLY" ] && [ -n "$HOOK_BEFORE" ] && { log "Running HOOK_BEFORE..."; bash -c "$HOOK_BEFORE" || warn "HOOK_BEFORE exited non-zero."; }
-
-if [ "$DO_UPDATE" = "1" ]; then
-    steam_update
-    framework_update
-    finalize_update
-    # HOOK_AFTER runs after an update attempt (success or not), like the .bat.
-    [ -n "$HOOK_AFTER" ] && { log "Running HOOK_AFTER..."; bash -c "$HOOK_AFTER" || warn "HOOK_AFTER exited non-zero."; }
-else
-    log "Plain restart: no update this pass."
-fi
-
-build_args
-check_options
+init_reporting
 
 if [ -n "$CHECK_ONLY" ]; then
+    per_launch_prep
     ok "Check complete. Not starting the server (check mode)."
     exit 0
 fi
