@@ -2,8 +2,9 @@
 
 From nothing to a running, connected server. No prior Rust experience assumed.
 
-Roughly **45 minutes**, most of it waiting for downloads. You need **Ubuntu 22.04 or 24.04**, about
-**20 GB free**, and **8 GB of RAM** as a realistic floor for a modded server.
+Roughly **45 minutes**, most of it waiting for downloads. You need **a current Ubuntu LTS** (22.04,
+24.04 or 26.04 all work), about **20 GB free**, and **8 GB of RAM** as a realistic floor for a modded
+server.
 
 You can stop after step 7 and have a perfectly good server; steps 8-10 add the panel, which is
 optional.
@@ -12,9 +13,11 @@ optional.
 > starting. If the panel is slow, unreachable or gone, your server still boots and restarts. That is
 > a design rule, not a hope.
 
-> **One honest note.** Hotwire's launcher is Windows-only today, so on Linux you run the server with
-> your own start script or a systemd unit — both are below — and Hotwire provides the plugin and the
-> connect tooling. A Linux launcher is planned; it is not here yet.
+> **The launcher.** Hotwire now has a Linux launcher (`hotwire.sh`) that keeps the server running,
+> updates Rust and Oxide, and survives a crash loop — the bash sibling of the Windows one. This guide
+> uses a plain start script or a systemd unit so you can see every step; once it works, `hotwire.sh`
+> from the repo is the drop-in that does all of it for you (and it links `steamclient.so` for you —
+> see step 7).
 
 ---
 
@@ -91,10 +94,10 @@ login, not a placeholder.
 
 ```bash
 sudo -iu rust
-steamcmd +force_install_dir /home/rust/server +login anonymous +app_update 258550 validate +quit
+/usr/games/steamcmd +force_install_dir /home/rust/server +login anonymous +app_update 258550 validate +quit
 ```
 
-About 12 GB. When it finishes you should have `/home/rust/server/RustDedicated`.
+About 6 GB to download. When it finishes you should have `/home/rust/server/RustDedicated`.
 
 ## 7. Install Oxide, and a start script
 
@@ -109,6 +112,20 @@ unzip -o oxide.zip && rm oxide.zip
 
 That is Oxide's own release, the **Linux** build. `umod.org/games/rust/download` serves the **Windows**
 build, and the two unpack to the same file names, so the wrong one cannot be spotted by looking.
+
+**One required link, or the server will not start.** RustDedicated loads Steam's client library from a
+path it does not create itself. Without it the server generates its whole map and *then* aborts with a
+`NullReferenceException` that says nothing about Steam — a dead end that has cost people hours. Link it
+once, as the `rust` user:
+
+```bash
+mkdir -p ~/.steam/sdk64 ~/.steam/sdk32
+ln -sf ~/.local/share/Steam/steamcmd/linux64/steamclient.so ~/.steam/sdk64/steamclient.so
+ln -sf ~/.local/share/Steam/steamcmd/linux32/steamclient.so ~/.steam/sdk32/steamclient.so
+```
+
+(The `hotwire.sh` launcher makes this link for you at boot; a hand-written start script does not, so do
+it here.)
 
 Now a start script. Create `/home/rust/server/start.sh`:
 
@@ -200,8 +217,19 @@ crash streak, `always` would restart it immediately and defeat that protection.
 
 ## 8. Check the machine can talk to the panel
 
+First get the Hotwire tooling onto the box — the setup script (for `doctor`/`connect`) and the plugin
+itself (so the server actually reports). Until the packaged release lands, fetch them from the repo:
+
 ```bash
 cd /home/rust/server
+curl -fsSL https://raw.githubusercontent.com/xman2000/hotwire/connect-and-report/setup/hotwire-setup.sh -o hotwire-setup.sh && chmod +x hotwire-setup.sh
+mkdir -p oxide/plugins
+curl -fsSL https://raw.githubusercontent.com/xman2000/hotwire/connect-and-report/src/Hotwire.cs -o oxide/plugins/Hotwire.cs
+```
+
+Then check the machine:
+
+```bash
 ./hotwire-setup.sh doctor
 ```
 
