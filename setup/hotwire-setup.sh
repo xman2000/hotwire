@@ -28,7 +28,7 @@
 #
 set -uo pipefail
 
-VERSION="0.1.0"
+VERSION="0.1.1"
 DEFAULT_PANEL="https://hotpanel.on-forge.com"
 
 # ---------------------------------------------------------------- output ----
@@ -149,11 +149,39 @@ plugin_file(){ printf '%s/oxide/data/Hotwire/panel.json' "$1"; }
 
 read_state() { [ -f "$(state_file "$1")" ] && cat "$(state_file "$1")" || printf '{}'; }
 
+# The panel address must be https: over http the connection code and both of this server's signing secrets
+# would cross the network in the clear, and anything on the path could answer in the panel's place. The default
+# is already https, so this only ever trips an address someone typed. (The Windows installer has always checked
+# this; this one did not.)
+assert_https_panel() {
+    case "$1" in
+        https://*) printf '%s' "$1" ;;
+        http://*)  die "using the panel address $1" "it is http://, which is not encrypted and cannot be trusted" \
+                       "use your panel's https:// address (the default is $DEFAULT_PANEL)" ;;
+        *)         die "using the panel address $1" "it is not an https:// web address" \
+                       "pass --panel with your panel's https:// address (the default is $DEFAULT_PANEL)" ;;
+    esac
+}
+
+# Whether an address the panel named is the same https host that was just asked. Same rule as the plugin's own
+# connect (Hotwire.cs, SameHost).
+same_panel_host() {
+    local said="$1" asked="$2" said_host asked_host
+    case "$said" in https://*) ;; *) return 1 ;; esac
+    said_host="${said#https://}";   said_host="${said_host%%/*}";   said_host="${said_host%%:*}"
+    asked_host="${asked#https://}"; asked_host="${asked_host#http://}"
+    asked_host="${asked_host%%/*}"; asked_host="${asked_host%%:*}"
+    [ -n "$said_host" ] && [ "$(lower "$said_host")" = "$(lower "$asked_host")" ]
+}
+
+lower() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
+
 panel_url() {  # explicit flag > what we recorded at enrollment > the default
     local root="$1" recorded
-    [ -n "$PANEL" ] && { printf '%s' "${PANEL%/}"; return; }
+    [ -n "$PANEL" ] && { assert_https_panel "${PANEL%/}"; return; }
     recorded="$(json_get "$(read_state "$root")" panel_url)"
-    printf '%s' "${recorded:-$DEFAULT_PANEL}"
+    [ -n "$recorded" ] && { assert_https_panel "${recorded%/}"; return; }
+    printf '%s' "$DEFAULT_PANEL"
 }
 
 # Reads one line from the terminal, whatever stdin is doing. Silent when there is no terminal at
@@ -456,7 +484,17 @@ cmd_connect() {
     local server_id adopted plugin_key plugin_secret script_key script_secret panel_said
     server_id="$(json_get "$resp" data.server.id)"
     adopted="$(json_get "$resp" data.server.adopted)"
-    panel_said="$(json_get "$resp" data.panel_url)"; [ -n "$panel_said" ] && url="$panel_said"
+    # Taken only when it names the same https host that was just asked. The enrollment answer is the one response
+    # that cannot be authenticated -- there is no key yet -- so an answer free to name any address would let
+    # whoever answered this single request keep this server reporting to them forever.
+    panel_said="$(json_get "$resp" data.panel_url)"; panel_said="${panel_said%/}"
+    if [ -n "$panel_said" ]; then
+        if same_panel_host "$panel_said" "$url"; then
+            url="$panel_said"
+        else
+            warn "the panel answered with a different address ($panel_said); keeping $url"
+        fi
+    fi
 
     # Components come back in the order asked for, but never assume it: match.
     local i comp

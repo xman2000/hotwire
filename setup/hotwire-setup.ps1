@@ -42,7 +42,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$Version = '0.1.0'
+$Version = '0.1.1'
 
 # Captured here: inside a function, $PSBoundParameters describes that function, not this script.
 $SteamCmdGiven = $PSBoundParameters.ContainsKey('SteamCmd')
@@ -2243,6 +2243,16 @@ function Assert-HttpsPanel([string]$Url) {
     return $Url
 }
 
+# Whether an address the panel named is the same https host that was just asked. Same rule as the plugin's own
+# connect (Hotwire.cs, SameHost): https, and the same host, or it is not used.
+function Test-SamePanelHost([string]$Said, [string]$Asked) {
+    try {
+        $a = [uri]$Said
+        $b = [uri]$Asked
+        return ($a.Scheme -eq 'https') -and ($a.Host -ieq $b.Host)
+    } catch { return $false }
+}
+
 function Get-PanelUrl ($r) {
     if ($Panel) { return (Assert-HttpsPanel ($Panel.TrimEnd('/'))) }
     $state = Read-State $r
@@ -2490,7 +2500,19 @@ function Invoke-Connect {
     }
 
     $server = $response.data.server
-    if ($response.data.panel_url) { $url = ([string]$response.data.panel_url).TrimEnd('/') }
+    # The address the panel names is taken only when it is the SAME https host that was just asked. The enrollment
+    # answer is the one response in the whole system that cannot be authenticated -- there is no key yet, which is
+    # what enrolling is for -- so an answer that could name any address at all would let whoever answered this one
+    # request keep this server reporting to them forever. The plugin's own connect has always checked this; this
+    # did not. It still allows the panel to correct its own port or path, which is what the field is for.
+    if ($response.data.panel_url) {
+        $said = ([string]$response.data.panel_url).Trim().TrimEnd('/')
+        if (Test-SamePanelHost $said $url) {
+            $url = $said
+        } elseif ($said) {
+            Write-Warn "the panel answered with a different address ($said); keeping $url"
+        }
+    }
 
     $plugin = $response.data.keys | Where-Object { $_.component -eq 'plugin' } | Select-Object -First 1
     $scriptKey = $response.data.keys | Where-Object { $_.component -eq 'script' } | Select-Object -First 1
