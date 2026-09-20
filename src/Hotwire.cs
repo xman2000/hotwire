@@ -17,7 +17,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Hotwire", "xman2000", "1.1.32")]
+    [Info("Hotwire", "xman2000", "1.1.33")]
     [Description("Scheduled restarts and updates. Announces, counts down, writes a flag, quits.")]
     internal class Hotwire : CovalencePlugin
     {
@@ -474,6 +474,9 @@ namespace Oxide.Plugins
             [JsonProperty("Validate flag file name")]
             public string ValidateFlag = "VALIDATE.flag";
 
+            [JsonProperty("Wipe flag file name")]
+            public string WipeFlag = "WIPE.flag";
+
             // The autumn DST repeat: 02:30 happens twice, and the second one
             // arrives in a fresh process after the first restart, so the
             // guard has to be on disk rather than in memory.
@@ -610,6 +613,12 @@ namespace Oxide.Plugins
         private ScheduleEntry _countdownEntry;   // null for a manual countdown
         private bool _countdownIsUpdate;
         private bool _countdownIsValidate;
+        private bool _countdownIsWipe;
+        private string _wipeSeed = "";
+        private string _wipeSize = "";
+        private string _wipeBlueprints = "keep";
+        private string _wipeCycle = "";
+        private bool _wipeBackup;
         private string _countdownKey = "";
         private readonly HashSet<int> _announced = new HashSet<int>();
 
@@ -1368,6 +1377,7 @@ namespace Oxide.Plugins
             _countdownEntry = entry;
             _countdownIsUpdate = isUpdate;
             _countdownIsValidate = isValidate;
+            _countdownIsWipe = false;   // a wipe countdown sets this true after this call
             _countdownKey = key;
             _announced.Clear();
 
@@ -1447,6 +1457,7 @@ namespace Oxide.Plugins
             _countdownKey = "";
             _countdownIsUpdate = false;
             _countdownIsValidate = false;
+            _countdownIsWipe = false;
             _announced.Clear();
             RemoveBars();
 
@@ -1491,6 +1502,20 @@ namespace Oxide.Plugins
             // a plain restart, which is the safe direction to fail in.
             if (_countdownIsUpdate)
                 WriteFlags(_countdownIsValidate);
+
+            // A wipe is a restart with a flag too: optionally back up first (Rust's
+            // own server.backup, while the server is still up), then write WIPE.flag
+            // for the launcher. A failed flag write downgrades to a plain restart --
+            // the safe direction: no wipe rather than a half one.
+            if (_countdownIsWipe)
+            {
+                if (_wipeBackup)
+                {
+                    try { server.Command("server.backup"); Puts("Ran server.backup before the wipe."); }
+                    catch (Exception ex) { PrintWarning($"server.backup failed before the wipe: {ex.Message}. Continuing."); }
+                }
+                WriteWipeFlag();
+            }
 
             Broadcast("Now", u => new object[] { KindWord(u) });
 
@@ -1546,6 +1571,43 @@ namespace Oxide.Plugins
                 PrintError($"quit failed twice: {ex.Message}. The server is STILL UP and players " +
                            "have been kicked. Run \"quit\" from the console, or use hotwire now 10.");
                 _shuttingDown = false;
+            }
+        }
+
+        // Writes WIPE.flag for the launcher: the new seed (and size), the blueprint
+        // action, a per-wipe cycle id (the launcher's double-wipe guard) and an
+        // expiry, one "key value" per line. The launcher validates every value
+        // again and cancels toward booting unchanged if anything is wrong.
+        private void WriteWipeFlag()
+        {
+            var root = ServerRoot();
+            if (root == null)
+            {
+                PrintError("No server root, so no wipe flag was written. Restarting without wiping.");
+                return;
+            }
+            var name = _config.General.WipeFlag;
+            if (string.IsNullOrWhiteSpace(name))
+            {
+                PrintError("The wipe flag file name is empty. Restarting without wiping.");
+                return;
+            }
+            var expires = DateTimeOffset.UtcNow.AddHours(2).ToUnixTimeSeconds();
+            var body = new StringBuilder();
+            body.Append("seed ").Append(_wipeSeed).Append('\n');
+            if (!string.IsNullOrEmpty(_wipeSize)) body.Append("size ").Append(_wipeSize).Append('\n');
+            body.Append("blueprints ").Append(_wipeBlueprints).Append('\n');
+            body.Append("cycle ").Append(_wipeCycle).Append('\n');
+            body.Append("expires ").Append(expires).Append('\n');
+            var path = Path.Combine(root, name);
+            try
+            {
+                File.WriteAllText(path, body.ToString(), new UTF8Encoding(false));
+                Puts($"Wrote {path}: seed {_wipeSeed}{(string.IsNullOrEmpty(_wipeSize) ? "" : ", size " + _wipeSize)}, blueprints {_wipeBlueprints}. The launcher wipes on its next start (needs the Hotwire launcher with the wipe capability).");
+            }
+            catch (Exception ex)
+            {
+                PrintError($"Could not write {path}: {ex.Message}. Restarting without wiping.");
             }
         }
 
@@ -4590,6 +4652,48 @@ namespace Oxide.Plugins
                 case "schedule.disable":
                     RunScheduleCommand(verb, args, out status, out result);
                     return;
+                case "wipe":
+                {
+                    // A wipe is a restart the plugin announces and counts down, that then leaves the
+                    // launcher a WIPE.flag with a new seed. Every value is validated here and again in
+                    // the launcher, which cancels toward booting unchanged on anything wrong.
+                    if (_shuttingDown) { status = "refused"; result = "the server is already shutting down"; return; }
+                    if (_countdownActive) { status = "refused"; result = $"a countdown is already running ({FormatRemaining(RemainingSeconds())} left)"; return; }
+
+                    var seed = ((string)args["seed"] ?? "").Trim();
+                    if (!Regex.IsMatch(seed, "^[0-9]{1,10}$") || !long.TryParse(seed, out var seedN) || seedN < 1 || seedN > 2147483647)
+                    { status = "refused"; result = "seed must be a whole number from 1 to 2147483647"; return; }
+
+                    var size = ((string)args["size"] ?? "").Trim();
+                    if (size.Length > 0 && (!int.TryParse(size, out var sizeN) || sizeN < 1000 || sizeN > 6000))
+                    { status = "refused"; result = "size must be 1000-6000, or omitted to keep the current size"; return; }
+
+                    var bp = ((string)args["blueprints"] ?? "keep").Trim().ToLowerInvariant();
+                    if (bp != "keep" && bp != "rename" && bp != "delete")
+                    { status = "refused"; result = "blueprints must be keep, rename or delete"; return; }
+
+                    var cycle = ((string)args["cycle"] ?? "").Trim();
+                    if (!Regex.IsMatch(cycle, "^[A-Za-z0-9._:-]{1,64}$"))
+                    { status = "refused"; result = "a cycle id is required (1-64 of A-Z a-z 0-9 . _ : -)"; return; }
+
+                    _wipeSeed = seed;
+                    _wipeSize = size;
+                    _wipeBlueprints = bp;
+                    _wipeCycle = cycle;
+                    _wipeBackup = args["backup"] == null || BoolArg(args, "backup");   // default: back up first
+
+                    var askedW = 0;
+                    var delayW = args["delay"];
+                    if (delayW != null) int.TryParse(delayW.ToString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out askedW);
+                    var minimumW = Math.Max(10, _config.Panel.MinimumRestartSeconds);
+                    var secondsW = Math.Max(askedW, minimumW);
+                    BeginCountdown(DateTime.Now.AddSeconds(secondsW), false, false, null, "");
+                    _countdownIsWipe = true;   // BeginCountdown clears this; a wipe sets it
+                    _scheduleCheckDue = DateTime.MinValue;
+                    status = "done";
+                    result = $"wipe countdown started: {secondsW}s (seed {seed}{(size.Length > 0 ? ", size " + size : "")}, blueprints {bp}{(_wipeBackup ? ", backup first" : "")})";
+                    return;
+                }
                 case "convar.set":
                 case "convar.persist":
                 {
