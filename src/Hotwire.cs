@@ -17,7 +17,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Hotwire", "xman2000", "1.1.33")]
+    [Info("Hotwire", "xman2000", "1.1.34")]
     [Description("Scheduled restarts and updates. Announces, counts down, writes a flag, quits.")]
     internal class Hotwire : CovalencePlugin
     {
@@ -2939,7 +2939,28 @@ namespace Oxide.Plugins
             catch { }
             if (_inventoryHash != null) payload["inventory_hash"] = _inventoryHash;
             try { var l = LauncherIdentity(); if (l != null) payload["launcher"] = l; } catch { }
+            try { payload["reporting"] = ReportingConfigSnapshot(); } catch { }
             return payload;
+        }
+
+        // What this plugin is configured to send, and the sharing level it is applying (ADR-0142). The panel uses it to
+        // tell "switched off here" from "nothing arrived yet", so a blank section on the panel can say which it is.
+        // Config only -- the plugin's intent -- never proof a kind was sent; the panel still applies its own report policy.
+        private JObject ReportingConfigSnapshot()
+        {
+            return new JObject
+            {
+                ["sharing_level"] = EffectiveSharingLevel(),
+                ["map"] = _config.Panel.ReportMap,
+                ["schedule"] = _config.Panel.ReportSchedule,
+                ["plugin_time"] = _config.Panel.ReportPluginTime,
+                ["reports"] = _config.Panel.SendReports,
+                ["log"] = _config.Panel.SendLog,
+                ["players"] = _config.Panel.SendPlayers,
+                ["chat"] = _config.Panel.SendChat,
+                ["commands"] = _config.Panel.AcceptCommands,
+                ["bans"] = _config.Panel.EnforceBans,
+            };
         }
 
         // The launcher writes oxide/data/Hotwire/launcher.json with its version, hash and
