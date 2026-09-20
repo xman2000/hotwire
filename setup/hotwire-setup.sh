@@ -28,7 +28,7 @@
 #
 set -uo pipefail
 
-VERSION="0.1.1"
+VERSION="0.1.2"
 DEFAULT_PANEL="https://hotpanel.on-forge.com"
 
 # ---------------------------------------------------------------- output ----
@@ -153,9 +153,14 @@ read_state() { [ -f "$(state_file "$1")" ] && cat "$(state_file "$1")" || printf
 # would cross the network in the clear, and anything on the path could answer in the panel's place. The default
 # is already https, so this only ever trips an address someone typed. (The Windows installer has always checked
 # this; this one did not.)
+#
+# It validates and prints NOTHING, and it is deliberately not called from inside panel_url. `die` runs `exit`, and
+# `url="$(panel_url ...)"` is a command substitution -- a subshell -- so exiting there killed the subshell and left
+# the script running with an empty url. Caught by running it on a real machine: the refusal printed and `doctor`
+# carried on underneath it. So the check belongs in the caller, where exit means exit.
 assert_https_panel() {
     case "$1" in
-        https://*) printf '%s' "$1" ;;
+        https://*) return 0 ;;
         http://*)  die "using the panel address $1" "it is http://, which is not encrypted and cannot be trusted" \
                        "use your panel's https:// address (the default is $DEFAULT_PANEL)" ;;
         *)         die "using the panel address $1" "it is not an https:// web address" \
@@ -176,12 +181,11 @@ same_panel_host() {
 
 lower() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
 
-panel_url() {  # explicit flag > what we recorded at enrollment > the default
+panel_url() {  # explicit flag > what we recorded at enrollment > the default. Validated by the caller.
     local root="$1" recorded
-    [ -n "$PANEL" ] && { assert_https_panel "${PANEL%/}"; return; }
+    [ -n "$PANEL" ] && { printf '%s' "${PANEL%/}"; return; }
     recorded="$(json_get "$(read_state "$root")" panel_url)"
-    [ -n "$recorded" ] && { assert_https_panel "${recorded%/}"; return; }
-    printf '%s' "$DEFAULT_PANEL"
+    printf '%s' "${recorded:-$DEFAULT_PANEL}"
 }
 
 # Reads one line from the terminal, whatever stdin is doing. Silent when there is no terminal at
@@ -340,7 +344,7 @@ check_signing() {
 # failure is reported by a command that cannot have caused it.
 cmd_doctor() {
     local root url rc=0
-    find_root; root="$FOUND_ROOT"; url="$(panel_url "$root")"
+    find_root; root="$FOUND_ROOT"; url="$(panel_url "$root")"; assert_https_panel "$url"
 
     say "hotwire-setup $VERSION -- checking this machine"
     note "Nothing is written by this command."
@@ -374,7 +378,7 @@ cmd_doctor() {
 # anything it would replace, and prints a manifest of what it changed.
 cmd_connect() {
     local root url install_id body resp http
-    find_root; root="$FOUND_ROOT"; url="$(panel_url "$root")"
+    find_root; root="$FOUND_ROOT"; url="$(panel_url "$root")"; assert_https_panel "$url"
 
     # Asked for rather than demanded on the command line. A code typed as an argument ends up in
     # shell history and in the scrollback of whoever is watching; and making someone re-run a
