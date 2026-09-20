@@ -17,7 +17,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Hotwire", "xman2000", "1.1.30")]
+    [Info("Hotwire", "xman2000", "1.1.32")]
     [Description("Scheduled restarts and updates. Announces, counts down, writes a flag, quits.")]
     internal class Hotwire : CovalencePlugin
     {
@@ -2876,7 +2876,83 @@ namespace Oxide.Plugins
             }
             catch { }
             if (_inventoryHash != null) payload["inventory_hash"] = _inventoryHash;
+            try { var l = LauncherIdentity(); if (l != null) payload["launcher"] = l; } catch { }
             return payload;
+        }
+
+        // The launcher writes oxide/data/Hotwire/launcher.json with its version, hash and
+        // capabilities. We recompute the launcher's code hash from its own bytes (the same
+        // way tools/launcher-hash.sh does) so the panel can tell an unmodified Hotwire
+        // launcher from a modified or foreign one, and gate launcher-editing features on
+        // what it actually advertises -- capabilities, not a version number. This is the
+        // panel's confirmation that a "persist" or a wipe will really be carried out.
+        private JObject LauncherIdentity()
+        {
+            var file = Path.Combine(Interface.Oxide.DataDirectory, "Hotwire", "launcher.json");
+            if (!File.Exists(file)) return null;
+            JObject declared;
+            try { declared = JObject.Parse(File.ReadAllText(file)); }
+            catch { return null; }
+
+            var declaredHash = (string)declared["hash"] ?? "";
+            var path = (string)declared["path"] ?? "";
+            var caps = new JArray();
+            foreach (var c in ((string)declared["capabilities"] ?? "").Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries))
+            {
+                var t = c.Trim();
+                if (t.Length > 0) caps.Add(t);
+            }
+
+            // Verified only when the launcher file is present AND its recomputed hash matches
+            // what it declared. A launcher that self-declares stock but has drifted comes back
+            // verified=false, and the panel does not trust its capabilities.
+            var verified = false;
+            try
+            {
+                if (!string.IsNullOrEmpty(path) && !string.IsNullOrEmpty(declaredHash) && File.Exists(path))
+                    verified = string.Equals(ComputeLauncherHash(path), declaredHash, StringComparison.OrdinalIgnoreCase);
+            }
+            catch { }
+
+            return new JObject
+            {
+                ["version"] = (string)declared["version"] ?? "",
+                ["platform"] = (string)declared["platform"] ?? "",
+                ["hash"] = declaredHash,
+                ["capabilities"] = caps,
+                ["verified"] = verified,
+            };
+        }
+
+        // Must match tools/launcher-hash.sh byte for byte: drop the SETTINGS block (both
+        // markers inclusive) and the HOTWIRE_LAUNCHER_HASH line, right-trim each remaining
+        // line, join with a newline after each, and SHA-256 the result.
+        private static string ComputeLauncherHash(string path)
+        {
+            const string begin = "=== HOTWIRE SETTINGS BEGIN ===";
+            const string end = "=== HOTWIRE SETTINGS END ===";
+            var lines = File.ReadAllText(path).Replace("\r\n", "\n").Replace("\r", "\n").Split('\n');
+            var count = lines.Length;
+            // A file ending in \n yields a trailing empty element that awk never sees as a record.
+            if (count > 0 && lines[count - 1].Length == 0) count--;
+
+            var sb = new StringBuilder();
+            var skip = false;
+            for (var i = 0; i < count; i++)
+            {
+                var line = lines[i];
+                if (line.IndexOf(begin, StringComparison.Ordinal) >= 0) skip = true;
+                if (skip)
+                {
+                    if (line.IndexOf(end, StringComparison.Ordinal) >= 0) skip = false;
+                    continue;
+                }
+                if (line.StartsWith("HOTWIRE_LAUNCHER_HASH=", StringComparison.Ordinal)) continue;
+                sb.Append(line.TrimEnd(' ', '\t'));
+                sb.Append('\n');
+            }
+            using (var sha = SHA256.Create())
+                return Hex(sha.ComputeHash(Encoding.UTF8.GetBytes(sb.ToString())));
         }
 
         // Frames the engine actually ran since the last heartbeat, divided by the
@@ -4514,6 +4590,65 @@ namespace Oxide.Plugins
                 case "schedule.disable":
                     RunScheduleCommand(verb, args, out status, out result);
                     return;
+                case "convar.set":
+                case "convar.persist":
+                {
+                    // convar.set   -- apply a runtime convar live, in-process (like a
+                    //                 console command; no RCON, no inbound path). Lost on restart,
+                    //                 exactly as setting it in RCON would be.
+                    // convar.persist -- ask the launcher to make a start-arg convar permanent by
+                    //                 writing CONVAR.request; it applies on the next restart.
+                    // The same fences the launcher enforces are enforced here: a dotted convar
+                    // name only, never the map-defining convars (those are wipe) or rcon.password
+                    // (a secret), and no shell-active character in a persisted value.
+                    var name = ((string)args["name"] ?? "").Trim();
+                    var value = (string)args["value"] ?? "";
+                    if (!Regex.IsMatch(name, @"^[a-z][a-z0-9]*(\.[a-z0-9_]+)+$"))
+                    { status = "refused"; result = "not a dotted convar name"; return; }
+                    switch (name)
+                    {
+                        case "server.seed":
+                        case "server.worldsize":
+                        case "server.level":
+                        case "server.levelurl":
+                            status = "refused"; result = "map-defining convar; use wipe, not the convar editor"; return;
+                        case "rcon.password":
+                            status = "refused"; result = "rcon.password is a secret and is never set through the panel"; return;
+                    }
+                    if (value.Length == 0 || value.Length > 512)
+                    { status = "refused"; result = "missing value, or longer than 512 characters"; return; }
+                    foreach (var ch in value)
+                    {
+                        if (char.IsControl(ch)) { status = "refused"; result = "value has a control character"; return; }
+                    }
+
+                    if (verb == "convar.set")
+                    {
+                        try { server.Command(name, value); }
+                        catch (Exception ex) { status = "failed"; result = "could not set it live: " + ex.Message; return; }
+                        string actual = null;
+                        try { actual = ConsoleSystem.Run(ConsoleSystem.Option.Server.Quiet(), name)?.ToString(); }
+                        catch { /* readback is best-effort; not every convar echoes */ }
+                        status = "done";
+                        result = string.IsNullOrEmpty(actual)
+                            ? "set live (value not read back); lasts until the next restart"
+                            : "set live; server reports: " + actual.Trim();
+                        return;
+                    }
+
+                    // convar.persist: a value written into a file the machine executes, so refuse
+                    // any character that stays active inside the launcher's double quotes.
+                    if (value.IndexOfAny(new[] { '"', '$', '`', '\\' }) >= 0)
+                    { status = "refused"; result = "value has a shell-active character (\" $ ` \\)"; return; }
+                    var root = ServerRoot();
+                    if (root == null) { status = "failed"; result = "cannot find the server root to write the request"; return; }
+                    var reqPath = Path.Combine(root, "CONVAR.request");
+                    try { File.AppendAllText(reqPath, name + " " + value + Environment.NewLine, new UTF8Encoding(false)); }
+                    catch (Exception ex) { status = "failed"; result = "could not write the request: " + ex.Message; return; }
+                    status = "done";
+                    result = "saved; the launcher makes it permanent on the next restart (needs the Hotwire launcher with convar_persist)";
+                    return;
+                }
                 default:
                     status = "refused";
                     result = verb == "update"
