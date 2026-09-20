@@ -17,7 +17,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Hotwire", "xman2000", "1.1.34")]
+    [Info("Hotwire", "xman2000", "1.1.35")]
     [Description("Scheduled restarts and updates. Announces, counts down, writes a flag, quits.")]
     internal class Hotwire : CovalencePlugin
     {
@@ -4747,12 +4747,37 @@ namespace Oxide.Plugins
                         if (char.IsControl(ch)) { status = "refused"; result = "value has a control character"; return; }
                     }
 
+                    // THE FENCE: a convar, and never a console command.
+                    //
+                    // server.Command(name, value) is a general console executor, not a convar setter. Until this
+                    // check existed, a dotted name that was not one of the five refused above reached anything the
+                    // build exposes -- on a current build that is global.quit, server.stop, admin.kickall,
+                    // entity.deleteby ("Destroy all entities created by provided users") and inventory.resetbp
+                    // ("Resets all blueprints for the specified player"). Two of those are permanent, and the panel's
+                    // own threat model said none of them was reachable.
+                    //
+                    // The engine already knows the difference and will say so: ConsoleSystem.Command.Variable is true
+                    // for a convar and false for a command. Asking it is exact for THIS build, which a list of names
+                    // baked into this plugin could never be -- Rust adds commands every month and this file does not
+                    // ship every month. An unknown name is refused too: on this build it does not exist, so setting
+                    // it would silently do nothing and report success.
+                    ConsoleSystem.Command entry = null;
+                    try { entry = ConsoleSystem.Index.Server.Find(name); }
+                    catch { /* treated as not found */ }
+
+                    if (entry == null)
+                    { status = "refused"; result = "this server's build has no convar called '" + name + "'"; return; }
+                    if (!entry.Variable)
+                    { status = "refused"; result = "'" + name + "' is a console command, not a convar; the panel sets values, it does not run commands"; return; }
+
                     if (verb == "convar.set")
                     {
                         try { server.Command(name, value); }
                         catch (Exception ex) { status = "failed"; result = "could not set it live: " + ex.Message; return; }
                         string actual = null;
-                        try { actual = ConsoleSystem.Run(ConsoleSystem.Option.Server.Quiet(), name)?.ToString(); }
+                        // The engine's own current value for this convar, rather than re-running the name and
+                        // reading whatever it printed.
+                        try { actual = entry.String; }
                         catch { /* readback is best-effort; not every convar echoes */ }
                         status = "done";
                         result = string.IsNullOrEmpty(actual)
@@ -4772,6 +4797,101 @@ namespace Oxide.Plugins
                     catch (Exception ex) { status = "failed"; result = "could not write the request: " + ex.Message; return; }
                     status = "done";
                     result = "saved; the launcher makes it permanent on the next restart (needs the Hotwire launcher with convar_persist)";
+                    return;
+                }
+                case "preset.run":
+                {
+                    // A named action from the panel's list, and the list lives HERE.
+                    //
+                    // The panel sends a NAME and nothing else -- no console line, no argument. That is the point:
+                    // convar.set is fenced to convars now, so the things an admin actually wants from a panel (start
+                    // the cargo ship, make it rain, put the sun up) need a path of their own, and the safest shape for
+                    // that path is an allow-list on the machine. A forged panel can pick from this table and can do
+                    // nothing else with it. Adding to the table takes a plugin release, which is a thing a person does
+                    // on purpose.
+                    //
+                    // EVERY LINE BELOW WAS RUN ON A REAL SERVER before it was written here, over RCON on the Linux
+                    // testbox, and the entity list was checked afterwards. That was not ceremony:
+                    //
+                    //   - It is patrolhelicopter, not heli. The travelling vendor's console name is
+                    //     travellingvendor.startevent while its method is svspawntravellingvendorevent -- 27 commands
+                    //     in this build have a console name that differs from their method name.
+                    //   - There is no weather.sun and no weather.normal. Weather is five 0-1 overrides that STAY PUT
+                    //     until weather.reset hands control back to the game, so every weather preset says so.
+                    //   - patrolhelicopter.flee and patrolhelicopter.death read as the obvious way to send a
+                    //     helicopter away. Both did nothing at all from a server console -- the helicopter was still
+                    //     in the entity list afterwards -- because they resolve their target through the admin who
+                    //     typed them, and nobody types these. They are deliberately NOT in this table.
+                    //
+                    // So every event goes through eventschedule.triggerevent, which is Facepunch's own scheduler,
+                    // needs no calling player, and was proved to spawn the thing: no patrolhelicopter in the entity
+                    // list before, one after. eventschedule.killallevents is the matching stop, and it was proved to
+                    // remove them again.
+                    var preset = ((string)args["preset"] ?? "").Trim().ToLowerInvariant();
+                    string[] lines;
+                    string said;
+
+                    switch (preset)
+                    {
+                        case "time.dawn":      lines = new[] { "env.time 6" };  said = "the time is now 6am"; break;
+                        case "time.noon":      lines = new[] { "env.time 12" }; said = "the time is now noon"; break;
+                        case "time.dusk":      lines = new[] { "env.time 18" }; said = "the time is now 6pm"; break;
+                        case "time.midnight":  lines = new[] { "env.time 0" };  said = "the time is now midnight"; break;
+
+                        case "weather.clear":
+                            lines = new[] { "weather.rain 0", "weather.thunder 0", "weather.fog 0", "weather.cloud_coverage 0" };
+                            said = "clear skies, and they stay clear until you set the weather back to normal"; break;
+                        case "weather.rain":
+                            lines = new[] { "weather.rain 1", "weather.thunder 0", "weather.cloud_coverage 0.6" };
+                            said = "raining, and it keeps raining until you set the weather back to normal"; break;
+                        case "weather.storm":
+                            lines = new[] { "weather.rain 1", "weather.thunder 1", "weather.wind 1", "weather.cloud_coverage 1" };
+                            said = "storm, and it stays until you set the weather back to normal"; break;
+                        case "weather.dynamic":
+                            lines = new[] { "weather.reset" };
+                            said = "the game decides the weather again"; break;
+
+                        case "event.helicopter": lines = new[] { "eventschedule.triggerevent event_helicopter" };      said = "a patrol helicopter is on its way"; break;
+                        case "event.bradley":    lines = new[] { "eventschedule.triggerevent event_roadbradley" };     said = "a Bradley is out on the road"; break;
+                        case "event.cargoship":  lines = new[] { "eventschedule.triggerevent event_cargoship" };       said = "the cargo ship is coming in"; break;
+                        case "event.airdrop":    lines = new[] { "eventschedule.triggerevent event_airdrop" };         said = "a cargo plane is inbound with an airdrop"; break;
+                        case "event.cargoheli":  lines = new[] { "eventschedule.triggerevent event_cargoheli" };       said = "a Chinook is inbound"; break;
+                        case "event.vendor":     lines = new[] { "eventschedule.triggerevent event_travellingvendor" }; said = "the travelling vendor is on the road"; break;
+                        case "event.f15e":       lines = new[] { "eventschedule.triggerevent event_f15e" };            said = "an F15E is inbound"; break;
+                        case "event.stop":       lines = new[] { "eventschedule.killallevents" };                      said = "running events stopped"; break;
+
+                        default:
+                            status = "refused";
+                            result = "this plugin does not know the preset '" + preset + "'";
+                            return;
+                    }
+
+                    // ConsoleSystem.Run rather than server.Command, because it hands back what the server PRINTED.
+                    // The panel then shows the server's own words -- "Triggered event_helicopter", or "Unknown event"
+                    // with the list, if a future Rust build renames one of these -- instead of the plugin asserting
+                    // that something happened because it sent a string somewhere.
+                    var spoke = new List<string>();
+                    var ran = 0;
+                    foreach (var line in lines)
+                    {
+                        try
+                        {
+                            var back = ConsoleSystem.Run(ConsoleSystem.Option.Server.Quiet(), line);
+                            ran++;
+                            var text = back == null ? null : back.ToString();
+                            if (!string.IsNullOrEmpty(text)) spoke.Add(text.Trim().Replace("\n", "; "));
+                        }
+                        catch (Exception ex)
+                        {
+                            status = ran == 0 ? "failed" : "done";
+                            result = (ran == 0 ? "could not run " : "partly ran (" + ran + " of " + lines.Length + "), stopped at ")
+                                     + line + ": " + ex.Message;
+                            return;
+                        }
+                    }
+
+                    status = "done";
+                    result = spoke.Count == 0 ? said : said + " -- server says: " + string.Join("; ", spoke.ToArray());
                     return;
                 }
                 default:
