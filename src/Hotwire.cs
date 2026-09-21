@@ -17,7 +17,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Hotwire", "xman2000", "1.1.35")]
+    [Info("Hotwire", "xman2000", "1.1.36")]
     [Description("Scheduled restarts and updates. Announces, counts down, writes a flag, quits.")]
     internal class Hotwire : CovalencePlugin
     {
@@ -5272,6 +5272,41 @@ namespace Oxide.Plugins
                 ["target_id"] = targetId ?? "",
                 ["target_name"] = MaskSourceGates(targetName ?? ""),
                 ["type"] = type ?? "",
+                ["subject"] = MaskSourceGates(subject ?? ""),
+                ["message"] = MaskSourceGates(text)
+            });
+        }
+
+        // F7 FEEDBACK -- a different hook from the one above, and the reason ideas never reached the panel.
+        //
+        // Rust has TWO F7 paths and they are not the same code. Reporting a PLAYER calls
+        // BasePlayer.OnPlayerReported, which fires the hook above. Sending FEEDBACK -- Idea, Bug, and the rest --
+        // calls BasePlayer.OnFeedbackReport, which fires a hook with a DIFFERENT NAME:
+        //
+        //     Interface.CallHook("OnFeedbackReported", this, text, text2, val);
+        //                                              player  subject message  ReportType
+        //
+        // Note "OnFeedbackReported", past tense, while the method it lives in is "OnFeedbackReport". Read out of a
+        // shipped Assembly-CSharp.dll, not from a wiki. Getting that name wrong is silent: the hook simply never
+        // fires and nothing in any log says why.
+        //
+        // The type arrives as a boxed ReportType enum, which lives outside Assembly-CSharp, so it is taken as
+        // `object` and turned into the game's own word for it ("Idea", "Bug"). The panel stores the type as sent
+        // and never as an enum of ours, so a value we have never seen still arrives intact.
+        //
+        // There is no target: feedback is about the server, not about a person. The panel's target columns are
+        // nullable for exactly this, so it becomes a report with a reporter and no subject player.
+        private void OnFeedbackReported(BasePlayer reporter, string subject, string message, object type)
+        {
+            if (reporter == null || !ReportsAllowed()) return;
+            var text = message ?? "";
+            if (text.Length > 4000) text = text.Substring(0, 4000);
+            QueueEvent(true, "report", reporter.UserIDString, new JObject
+            {
+                ["reporter_name"] = MaskSourceGates(reporter.displayName ?? ""),
+                ["target_id"] = "",
+                ["target_name"] = "",
+                ["type"] = type == null ? "feedback" : type.ToString(),
                 ["subject"] = MaskSourceGates(subject ?? ""),
                 ["message"] = MaskSourceGates(text)
             });
