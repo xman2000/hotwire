@@ -17,7 +17,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Hotwire", "xman2000", "1.1.36")]
+    [Info("Hotwire", "xman2000", "1.1.37")]
     [Description("Scheduled restarts and updates. Announces, counts down, writes a flag, quits.")]
     internal class Hotwire : CovalencePlugin
     {
@@ -1396,6 +1396,9 @@ namespace Oxide.Plugins
 
             _countdownTimer?.Destroy();
             _countdownTimer = timer.Every(1f, CountdownTick);
+
+            // The panel hears of it at once, however it started: from the panel, the schedule, chat or the console.
+            _scheduleCheckDue = DateTime.MinValue;
         }
 
         private void CountdownTick()
@@ -1463,6 +1466,7 @@ namespace Oxide.Plugins
 
             Broadcast("Canceled");
             Puts($"Countdown canceled by {by}.");
+            _scheduleCheckDue = DateTime.MinValue;
         }
 
         private void Execute()
@@ -1518,6 +1522,14 @@ namespace Oxide.Plugins
             }
 
             Broadcast("Now", u => new object[] { KindWord(u) });
+
+            // Best effort: tell the panel the shutdown has begun. Nothing waits for it; the quit below is on its own timer.
+            try
+            {
+                RefreshSchedule();
+                if (_panel != null && !_panelBusy && DateTime.UtcNow >= _panelNextAttempt) PanelPump();
+            }
+            catch (Exception ex) { PrintWarning($"Panel: could not report the shutdown ({ex.Message})."); }
 
             var kicked = 0;
             foreach (var p in players.Connected.ToArray())
@@ -2236,8 +2248,14 @@ namespace Oxide.Plugins
                 }
             }
 
-            // The game is going down. Only acknowledgements still go out.
-            if (_shuttingDown) return;
+            // The game is going down. Only acknowledgements still go out, and the schedule once, so the panel can
+            // show the shutdown instead of a countdown that ran out.
+            if (_shuttingDown)
+            {
+                if (_panelReporting && _config.Panel.ReportSchedule && _scheduleJson != null && _scheduleJson != _scheduleSentJson && PolicyAllowsKind("schedule"))
+                    SendSchedule();
+                return;
+            }
 
             if (now >= _inventoryCheckDue)
             {
@@ -4315,9 +4333,11 @@ namespace Oxide.Plugins
                         ["update_at"] = _config.Framework.UpdateAt,
                         ["validate"] = _config.Framework.Validate
                     },
-                    ["active"] = !_countdownActive ? null : new JObject
+                    // Kept through the shutdown itself, so the panel can say "shutting down" rather than lose the
+                    // countdown the moment it ends. A wipe says so: it is a restart with a new map.
+                    ["active"] = !_countdownActive && !_shuttingDown ? null : new JObject
                     {
-                        ["kind"] = _countdownIsValidate ? "validate" : _countdownIsUpdate ? "update" : "restart",
+                        ["kind"] = _countdownIsWipe ? "wipe" : _countdownIsValidate ? "validate" : _countdownIsUpdate ? "update" : "restart",
                         ["at"] = _countdownTarget.ToUniversalTime().ToString("yyyy'-'MM'-'dd'T'HH':'mm':'ss'Z'", CultureInfo.InvariantCulture),
                         ["entry_id"] = _countdownEntry == null ? null : _countdownEntry.Id,
                         ["shutting_down"] = _shuttingDown

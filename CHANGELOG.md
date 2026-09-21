@@ -25,6 +25,16 @@ sit above a launcher `1.1.7`. Read the label, not the number.
 at the top of the file — it is a comment, not something it echoes, so read it
 rather than watch for it.
 
+## 1.1.37 — plugin — 2026-09-21
+
+**The panel sees a countdown the moment it starts, ends or is cancelled.**
+
+- A countdown started from the schedule, from chat or from the console is reported at once, as one started from
+  the panel already was. Before, the panel heard of it on the plugin's next 30-second look.
+- When the countdown ends and the server begins to shut down, the plugin reports that once (`shutting_down`),
+  best effort, on its way down. Nothing waits for it: the quit runs on its own timer as before.
+- A wipe's countdown is reported as a wipe, not as a restart.
+
 ## 1.1.30 — plugin — 2026-09-19
 
 **What waits for the panel is kept for a week, not a month.**
