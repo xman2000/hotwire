@@ -17,7 +17,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Hotwire", "xman2000", "1.1.37")]
+    [Info("Hotwire", "xman2000", "1.1.38")]
     [Description("Scheduled restarts and updates. Announces, counts down, writes a flag, quits.")]
     internal class Hotwire : CovalencePlugin
     {
@@ -2181,6 +2181,7 @@ namespace Oxide.Plugins
                 return;
             }
 
+            _quickHeartbeatsUntil = DateTime.UtcNow.AddSeconds(QuickHeartbeatWindowSeconds);
             _panelTimer = timer.Every(5f, PanelTick);
             timer.Once(5f, PanelTick);
         }
@@ -2916,9 +2917,22 @@ namespace Oxide.Plugins
 
         // ---------------------------------------------------------- heartbeat
 
+        // Quick heartbeats: every 15 seconds for two minutes after the plugin starts, and again after the panel answers
+        // following three heartbeats that did not get through. The panel calls a server that was down "up" after three
+        // heartbeats in a row, so a restart is confirmed in under a minute. Never slower than the normal interval, and
+        // the backoff while the panel is unreachable is untouched.
+        private const int QuickHeartbeatSeconds = 15;
+        private const int QuickHeartbeatWindowSeconds = 120;
+        private const int MissedHeartbeatsBeforeQuick = 3;
+        private DateTime _quickHeartbeatsUntil = DateTime.MinValue;
+        private int _missedHeartbeats;
+
+        private int NextHeartbeatSeconds() =>
+            DateTime.UtcNow < _quickHeartbeatsUntil ? Math.Min(QuickHeartbeatSeconds, HeartbeatInterval()) : HeartbeatInterval();
+
         private void SendHeartbeat()
         {
-            _heartbeatDue = DateTime.UtcNow.AddSeconds(HeartbeatInterval());
+            _heartbeatDue = DateTime.UtcNow.AddSeconds(NextHeartbeatSeconds());
             var payload = HeartbeatPayload();
             var spool = SpoolSummary();
             if (spool != null) payload["spool"] = spool;
@@ -2930,7 +2944,15 @@ namespace Oxide.Plugins
                     Puts("The panel accepted a heartbeat. This server is reporting.");
                 _panelReporting = true;
                 _panelState = $"reporting to {_panel.Url} (last heartbeat accepted {DateTime.Now:HH:mm:ss})";
-            });
+
+                // Back after a gap: the panel is confirming this server, so help it along.
+                if (_missedHeartbeats >= MissedHeartbeatsBeforeQuick)
+                {
+                    _quickHeartbeatsUntil = DateTime.UtcNow.AddSeconds(QuickHeartbeatWindowSeconds);
+                    _heartbeatDue = DateTime.UtcNow.AddSeconds(NextHeartbeatSeconds());
+                }
+                _missedHeartbeats = 0;
+            }, onFailed: code => _missedHeartbeats++);
         }
 
         private JObject HeartbeatPayload()

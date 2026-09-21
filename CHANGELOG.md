@@ -25,6 +25,15 @@ sit above a launcher `1.1.7`. Read the label, not the number.
 at the top of the file — it is a comment, not something it echoes, so read it
 rather than watch for it.
 
+## 1.1.38 — plugin — 2026-09-21
+
+**Quick heartbeats after a start, so the panel knows a server is back within a minute.**
+
+- For the first two minutes after it starts, Hotwire sends a heartbeat every 15 seconds instead of at its interval.
+- It does the same for two minutes after it reaches the panel again following three heartbeats that did not get
+  through. While the panel cannot be reached it still backs off as before.
+- Nothing to configure. Never slower than your heartbeat setting.
+
 ## 1.1.37 — plugin — 2026-09-21
 
 **The panel sees a countdown the moment it starts, ends or is cancelled.**
