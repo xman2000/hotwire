@@ -17,7 +17,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Hotwire", "xman2000", "1.1.38")]
+    [Info("Hotwire", "xman2000", "1.1.39")]
     [Description("Scheduled restarts and updates. Announces, counts down, writes a flag, quits.")]
     internal class Hotwire : CovalencePlugin
     {
@@ -233,6 +233,17 @@ namespace Oxide.Plugins
 
             [JsonProperty("Send player joins, leaves and chat every this many seconds")]
             public int EventSeconds = 30;
+
+            // Where each player is standing, for the live players layer of the
+            // panel's map: every player who is awake and alive, and whether they
+            // are hidden from other players (vanished). Sent only when the
+            // account's plan includes the live map, and never at the "counts
+            // only" level; names only at "identified".
+            [JsonProperty("Send player positions for the panel's live map")]
+            public bool SendPositions = true;
+
+            [JsonProperty("Send player positions every this many seconds")]
+            public int PositionSeconds = 30;
 
             // How much of the server's time each plugin used since the last
             // report, and the memory allocated while it ran: the totals Oxide
@@ -2310,6 +2321,7 @@ namespace Oxide.Plugins
             if (_config.Panel.AcceptCommands && PolicyAllowsCommands() && now >= _commandsDue) { PollCommands(); return; }
             if (_config.Panel.SendPlayers && now >= _playersCheckDue) { _playersCheckDue = now.AddSeconds(30); RefreshPlayers(); }
             if (_playersJson != null && _playersJson != _playersSentJson && now >= _playersSendNotBefore && PolicyAllowsKind("players")) { SendPlayers(); return; }
+            if (_config.Panel.SendPositions && now >= _positionsDue && SendPositions()) return;
             if (_events.Count > 0 && !PolicyAllowsKind("events"))
             {
                 if (PolicyHolds(_policy)) SpoolQueuedEvents(false);
@@ -3000,6 +3012,7 @@ namespace Oxide.Plugins
                 ["chat"] = _config.Panel.SendChat,
                 ["commands"] = _config.Panel.AcceptCommands,
                 ["bans"] = _config.Panel.EnforceBans,
+                ["positions"] = _config.Panel.SendPositions,
             };
         }
 
@@ -5137,6 +5150,12 @@ namespace Oxide.Plugins
 
         private int MarkerInterval() => PolicyInterval(_config.Panel.MarkerSeconds, 30, _policy == null ? 0 : _policy.MarkerSeconds, 3600);
 
+        private int PositionInterval() => Math.Max(30, _config.Panel.PositionSeconds);
+
+        // Unlike everything else a policy decides, this fails closed: with no
+        // verified answer, or one that does not say so, no positions are sent.
+        private bool PolicyAllowsPositions() => _policy != null && _policy.Positions && PolicyAllowsKind("player_positions");
+
         // The panel can ask to be asked less often, never more often.
         private int PolicyPollInterval() => PolicyInterval(PolicyPollSeconds, PolicyPollSeconds, _policy == null ? 0 : _policy.PolicySeconds, PolicyPollMaxSeconds);
 
@@ -5162,6 +5181,7 @@ namespace Oxide.Plugins
             parts.Add($"log every {LogInterval()}s");
             parts.Add($"player events every {EventInterval()}s");
             parts.Add($"map markers every {MarkerInterval()}s");
+            if (_policy.Positions) parts.Add($"player positions every {PositionInterval()}s");
             if (PolicyAllowsCommands()) parts.Add($"commands checked every {CommandInterval()}s");
             if (PolicyAllowsBans()) parts.Add($"ban list checked every {BanInterval()}s");
             parts.Add($"this policy checked every {PolicyPollInterval()}s");
@@ -5257,6 +5277,107 @@ namespace Oxide.Plugins
                 _playersSentJson = json;
                 _playersState = $"{list.Count} online, sent {DateTime.Now:HH:mm:ss}";
             }, () => { _playersSentJson = json; });
+        }
+
+        // Where each live player stands, for the panel's live map. The whole
+        // set every PositionInterval() while anyone is awake and alive, one
+        // empty set when the last one goes, and nothing while nobody is. Only
+        // when the panel's policy says so, and never at "counts only"; the
+        // Steam ID and name only at "identified".
+        //
+        // Whether a player is hidden from others is read by name, as the map
+        // is: "isInvisible" (the game's own admin invisibility) and
+        // "limitNetworking" (what vanish plugins set). If either has moved,
+        // positions switch themselves off rather than show a hidden admin as
+        // an ordinary player.
+        private DateTime _positionsDue = DateTime.MinValue;
+        private bool _positionsLastEmpty = true;
+        private bool _positionsOff;
+        private FieldInfo _invisibleField;
+        private PropertyInfo _limitNetworkingProperty;
+        private string _positionsState = "nothing sent yet";
+
+        // True when a report was sent, so the pass ends there.
+        private bool SendPositions()
+        {
+            _positionsDue = DateTime.UtcNow.AddSeconds(PositionInterval());
+
+            if (_positionsOff) return false;
+            if (!PolicyAllowsPositions())
+            {
+                _positionsState = _policy == null
+                    ? "not sent: no answer from the panel about the live map yet"
+                    : "not sent: the account's plan does not include the live map";
+                _positionsLastEmpty = true;
+                return false;
+            }
+            var level = EffectiveSharingLevel();
+            if (level < 1)
+            {
+                _positionsState = "not sent: the player data level is counts only";
+                _positionsLastEmpty = true;
+                return false;
+            }
+
+            JArray list;
+            try
+            {
+                if (_invisibleField == null || _limitNetworkingProperty == null) FindHiddenMembers();
+                list = new JArray();
+                foreach (var connected in players.Connected.ToList())
+                {
+                    var player = connected?.Object as BasePlayer;
+                    if (player == null || player.IsSleeping() || player.IsDead()) continue;
+                    var position = player.transform.position;
+                    var entry = new JObject
+                    {
+                        ["x"] = Math.Round(position.x, 1),
+                        ["y"] = Math.Round(position.y, 1),
+                        ["z"] = Math.Round(position.z, 1),
+                    };
+                    if ((bool)_invisibleField.GetValue(player) || (bool)_limitNetworkingProperty.GetValue(player, null)) entry["hidden"] = true;
+                    if (level >= 3)
+                    {
+                        entry["steam_id"] = player.UserIDString;
+                        entry["name"] = MaskSourceGates(player.displayName ?? "");
+                    }
+                    list.Add(entry);
+                }
+            }
+            catch (Exception e)
+            {
+                _positionsOff = true;
+                _positionsState = "OFF until the plugin reloads -- " + e.Message;
+                PrintWarning($"Player positions are off until the plugin reloads: {e.Message}. " +
+                             "A Rust update may have moved something they read. Everything else carries on.");
+                return false;
+            }
+
+            if (list.Count == 0 && _positionsLastEmpty)
+            {
+                _positionsState = "nobody awake and alive";
+                return false;
+            }
+
+            _positionsLastEmpty = list.Count == 0;
+            var count = list.Count;
+            var payload = new JObject { ["sharing_level"] = level, ["positions"] = list };
+            PanelRequest("POST", PanelReportPath, PanelEnvelope("player_positions", payload), response =>
+            {
+                _positionsState = $"{count} player(s), sent {DateTime.Now:HH:mm:ss}";
+            }, () => { });
+            return true;
+        }
+
+        private void FindHiddenMembers()
+        {
+            const BindingFlags instanceMember = BindingFlags.Public | BindingFlags.Instance;
+            _invisibleField = typeof(BasePlayer).GetField("isInvisible", instanceMember);
+            _limitNetworkingProperty = typeof(BasePlayer).GetProperty("limitNetworking", instanceMember);
+            if (_invisibleField == null || _invisibleField.FieldType != typeof(bool))
+                throw new InvalidOperationException("BasePlayer.isInvisible is not where it was");
+            if (_limitNetworkingProperty == null || _limitNetworkingProperty.PropertyType != typeof(bool))
+                throw new InvalidOperationException("BasePlayer.limitNetworking is not where it was");
         }
 
         // Joins, leaves and chat, queued as they happen and sent in batches. Only
@@ -6503,6 +6624,7 @@ namespace Oxide.Plugins
             public bool? Bans;
             public HashSet<string> Kinds;     // null: every kind
             public bool Hold;                 // keep what Kinds stops, to send later
+            public bool Positions;            // send player positions; false unless the panel says true
             public DateTime ReceivedUtc;
         }
 
@@ -6551,6 +6673,8 @@ namespace Oxide.Plugins
                     Commands = data["commands"] != null && data["commands"].Type == JTokenType.Boolean ? (bool)data["commands"] : (bool?)null,
                     Bans = data["bans"] != null && data["bans"].Type == JTokenType.Boolean ? (bool)data["bans"] : (bool?)null,
                     Hold = data["hold"] != null && data["hold"].Type == JTokenType.Boolean && (bool)data["hold"],
+                    // Where people stand is sent only when the panel says so in so many words.
+                    Positions = data["positions"] != null && data["positions"].Type == JTokenType.Boolean && (bool)data["positions"],
                     ReceivedUtc = DateTime.UtcNow
                 };
 
@@ -8575,6 +8699,7 @@ namespace Oxide.Plugins
                 lines.Add($"  log          : {LogDescription()}");
                 lines.Add($"  console      : {ConsoleDescription()}");
                 lines.Add($"  who's online : {_playersState}");
+                lines.Add($"  positions    : {_positionsState}");
                 lines.Add($"  joins & chat : {_eventsState}");
                 lines.Add($"  plugin time  : {_pluginTimeState}");
                 lines.Add($"  session      : {_sessionState}");

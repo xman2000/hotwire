@@ -303,6 +303,15 @@ namespace PluginSigning
             Check("a hold that is not a boolean does not hold", holdMistyped != null && !Extracted.PolicyHolds(holdMistyped));
             Check("no policy does not hold", !Extracted.PolicyHolds(null));
 
+            // Player positions are sent only when the panel says true in so many words.
+            var positions = Extracted.ReadPolicy("{\"ok\":true,\"data\":{\"policy\":\"pro\",\"positions\":true}}");
+            Check("positions true is read", positions != null && positions.Positions);
+            Check("no positions field sends no positions", !free.Positions && !pro.Positions && !paused.Positions);
+            var positionsMistyped = Extracted.ReadPolicy("{\"ok\":true,\"data\":{\"positions\":\"yes\"}}");
+            Check("positions that are not a boolean send no positions", positionsMistyped != null && !positionsMistyped.Positions);
+            var positionsFalse = Extracted.ReadPolicy("{\"ok\":true,\"data\":{\"positions\":false}}");
+            Check("positions false sends no positions", positionsFalse != null && !positionsFalse.Positions);
+
             // ---- intervals the panel sets: only ever longer than the config's, never past a cap.
             var slow = Extracted.ReadPolicy("{\"ok\":true,\"data\":{\"command_seconds\":60,\"ban_seconds\":600,\"log_seconds\":120,\"event_seconds\":90,\"marker_seconds\":300,\"policy_seconds\":900}}");
             Check("every interval is read", slow != null && slow.CommandSeconds == 60 && slow.BanSeconds == 600 && slow.LogSeconds == 120

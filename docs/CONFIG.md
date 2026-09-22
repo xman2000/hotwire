@@ -301,6 +301,8 @@ replaced by the `Status bar` section below.
   "Send the map image": true,
   "Render the map image if Rust+ has not": true,
   "Send the map layout": true,
+  "Send player positions for the panel's live map": true,
+  "Send player positions every this many seconds": 30,
   "Report the schedule": true,
   "Accept schedule changes from the panel": true
 }
@@ -361,6 +363,18 @@ this section says.
   recorded in `oxide/data/Hotwire/map_layout_sent.json`, so a restart sends
   nothing, and it is sent again after a week. A part the game no longer has is
   left out with a console warning, and everything else carries on.
+- **Send player positions for the panel's live map** — where each player is
+  standing, for the players layer of the panel's map: everyone connected who is
+  awake and alive (not sleeping, not dead), and whether they are hidden from
+  other players, as an admin who has vanished is. Sent every **Send player
+  positions every this many seconds** (minimum 30) while anyone is playing,
+  once more when the last player goes, and not at all while nobody is. Only when
+  the panel says the account's plan includes the live map: until it has said so,
+  nothing is sent. Never at the "counts only" player data level; the player's
+  Steam ID and name only at "identified", and below it a position and nothing
+  else. Whether a player is hidden is read from the game by name; if a Rust
+  update moves it, positions turn themselves off with a console warning until
+  the plugin reloads, rather than show a hidden admin as an ordinary player.
 
 - **Report the schedule** — sends every restart and update entry as it stands,
   with a plain description, when it next fires, anything wrong with it, the

@@ -25,6 +25,18 @@ sit above a launcher `1.1.7`. Read the label, not the number.
 at the top of the file — it is a comment, not something it echoes, so read it
 rather than watch for it.
 
+## 1.1.39 — plugin — 2026-09-21
+
+**Live players on the panel's map.**
+
+- Where each player is standing is sent every 30 seconds while anyone is playing, for the players layer of the panel's
+  map: everyone who is awake and alive, and whether they are hidden from other players, so a vanished admin is shown
+  apart from everyone else.
+- Only when the panel says the account's plan includes the live map. Until it has said so, nothing is sent.
+- Never at the "counts only" player data level. The Steam ID and name travel only at "identified".
+- `Send player positions for the panel's live map` turns it off; `Send player positions every this many seconds`
+  (minimum 30) makes it less often. `hotwire check` shows what was last sent.
+
 ## 1.1.38 — plugin — 2026-09-21
 
 **Quick heartbeats after a start, so the panel knows a server is back within a minute.**
