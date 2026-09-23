@@ -1617,7 +1617,8 @@ step_panel() {
     # never the finished install around it.
     local args=(connect --root "$IROOT" --yes)
     [ -n "$PANEL" ] && args+=(--panel "$PANEL")
-    if as_user bash "$IROOT/hotwire-setup.sh" "${args[@]}"; then save_step panel
+    # 8>&- : the install's machine-wide lock stays with the install, not with a connect left waiting for a code.
+    if as_user bash "$IROOT/hotwire-setup.sh" "${args[@]}" 8>&-; then save_step panel
     else warn "not connected this time. Try again any time: sudo -u $IUSER $IROOT/hotwire-setup.sh connect"; fi
 }
 
