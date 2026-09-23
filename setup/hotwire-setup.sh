@@ -28,7 +28,7 @@
 #
 set -uo pipefail
 
-VERSION="0.2.0"
+VERSION="0.2.1"
 DEFAULT_PANEL="https://hotpanel.on-forge.com"
 
 # ---------------------------------------------------------------- output ----
