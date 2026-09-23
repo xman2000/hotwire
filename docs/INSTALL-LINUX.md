@@ -3,11 +3,26 @@
 From nothing to a running, connected server. No prior Rust experience assumed.
 
 Roughly **45 minutes**, most of it waiting for downloads. You need **a current Ubuntu LTS** (22.04,
-24.04 or 26.04 all work), about **20 GB free**, and **8 GB of RAM** as a realistic floor for a modded
+24.04 or 26.04 all work; the installer was run on 26.04), about **20 GB free**, and **8 GB of RAM** as a realistic floor for a modded
 server.
 
 You can stop after step 7 and have a perfectly good server; steps 8-10 add the panel, which is
 optional.
+
+> **Or let the installer do it.** Every step below, from SteamCMD to connecting, is also one
+> script. It checks the machine first, shows you what it is going to do, asks before each step,
+> and is safe to stop and run again:
+>
+> ```bash
+> curl -fsSLO https://raw.githubusercontent.com/xman2000/hotwire/connect-and-report/setup/hotwire-setup.sh && sudo bash hotwire-setup.sh install
+> ```
+>
+> Read it first if you like -- it is plain bash, and it is saved where you ran that line. It installs
+> the server into `/home/rust/server` as a `rust` user, with Hotwire's launcher, a random map seed, a
+> generated RCON password and a `rust-server` service that starts with the machine (switched on, not
+> started). It never touches a Rust server it did not install. Every change it makes, and how to
+> undo it, goes in `hotwire/changes.log`. For a second server, add `--root /home/rust/server2`: it
+> gets its own ports and its own service. The rest of this page is the same install by hand.
 
 > **What this never does:** nothing here, and nothing Hotwire does later, can stop your server
 > starting. If the panel is slow, unreachable or gone, your server still boots and restarts. That is

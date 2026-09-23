@@ -1,9 +1,7 @@
 #!/usr/bin/env bash
 #
-#  hotwire-setup -- connect a Rust server to Hotwire Panel, or check why it will not.
-#
-#  The Windows sibling, hotwire-setup.ps1, also installs the server. The Linux install half
-#  is not written yet; 'install' here says so and points at the guide.
+#  hotwire-setup -- install a Rust server on Ubuntu, connect it to Hotwire Panel, or check
+#  why it will not connect. The Linux sibling of hotwire-setup.ps1.
 #
 #  https://github.com/xman2000/hotwire            MIT (c) 2026 xman2000
 #
@@ -18,9 +16,11 @@
 #  it looked for rather than guessing. Every error names three things: what was
 #  attempted, what was found instead, and what you can do about it.
 #
-#  Requires: bash 4+, curl, openssl, and one of jq or python3 (to read JSON).
+#  Requires: bash 4+, curl, openssl, and one of jq or python3 (to read JSON). install also
+#  needs Ubuntu, root (sudo) and python3, and installs the rest itself.
 #
 #  Usage:
+#     sudo hotwire-setup.sh install [--root DIR] [--user NAME] [--panel URL]
 #     hotwire-setup.sh doctor  [--root DIR] [--panel URL]
 #     hotwire-setup.sh connect [--root DIR] [--panel URL]     # asks for the code
 #     hotwire-setup.sh status  [--root DIR]
@@ -28,7 +28,7 @@
 #
 set -uo pipefail
 
-VERSION="0.1.2"
+VERSION="0.2.0"
 DEFAULT_PANEL="https://hotpanel.on-forge.com"
 
 # ---------------------------------------------------------------- output ----
@@ -99,7 +99,7 @@ json_escape() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
 
 # ------------------------------------------------------------- arguments ----
 CMD="${1:-help}"; shift || true
-ROOT=""; PANEL=""; CODE=""; NAME=""; ASSUME_YES=0
+ROOT=""; PANEL=""; CODE=""; NAME=""; ASSUME_YES=0; USER_OPT=""
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -107,6 +107,7 @@ while [ $# -gt 0 ]; do
         --panel) PANEL="${2:-}"; shift 2 ;;
         --code)  CODE="${2:-}";  shift 2 ;;
         --name)  NAME="${2:-}";  shift 2 ;;
+        --user)  USER_OPT="${2:-}"; shift 2 ;;
         --yes|-y) ASSUME_YES=1;  shift ;;
         -h|--help) CMD="help";   shift ;;
         *) die "reading the command line" "unrecognised option '$1'" \
@@ -639,23 +640,1139 @@ cmd_detach() {
 }
 
 # ------------------------------------------------------------- install ----
-# Said plainly rather than left out of the help: a Linux user reading the Windows docs will try it.
-cmd_install() {
-    say "Installing a Rust server is not in the Linux script yet."
+# A bare Ubuntu machine to a Rust server that starts, the Linux sibling of hotwire-setup.ps1's install.
+# The same shape and the same rules: a read-only pre-flight, a flight plan of only what is missing, the
+# steps (each says what it will do and asks), and a post-flight that runs the checks again. Stopping at
+# any moment is safe and running it again carries on: every file is written whole or not at all, and
+# the record in hotwire/install.json says which steps finished. A folder holding a Rust server this
+# script did not install is refused, never adopted.
+#
+# It runs as root, because it installs packages, adds a user and a service; the server itself never
+# runs as root. Everything it creates in the server folder belongs to that user.
+
+REPO_RAW="https://raw.githubusercontent.com/xman2000/hotwire/connect-and-report"
+LAUNCHER_URL="$REPO_RAW/launcher/hotwire.sh"
+PLUGIN_URL="$REPO_RAW/src/Hotwire.cs"
+SETUP_URL="$REPO_RAW/setup/hotwire-setup.sh"
+GUIDE_URL="https://github.com/xman2000/hotwire/blob/connect-and-report/docs/INSTALL-LINUX.md"
+OXIDE_URL="https://github.com/OxideMod/Oxide.Rust/releases/latest/download/Oxide.Rust-linux.zip"
+OXIDE_RELEASES="https://api.github.com/repos/OxideMod/Oxide.Rust/releases/latest"
+OXIDE_ASSET="Oxide.Rust-linux.zip"
+STEAMCMD_BIN="/usr/games/steamcmd"
+RUST_APPID="258550"
+
+# SHA-256 of launcher/hotwire.sh and src/Hotwire.cs AS SERVED from the branch above (the git blob, LF):
+#     git show HEAD:launcher/hotwire.sh | sha256sum
+# !! REGENERATED AT RELEASE TIME -- NO AUTOMATION EXISTS YET !! Whenever either file changes on that
+# branch, these change in the same commit (and so does $PinnedHashes in hotwire-setup.ps1 for Hotwire.cs),
+# or every install stops at a hash mismatch. Third-party downloads (SteamCMD from Ubuntu's archive, Oxide
+# from GitHub) are not pinned: Oxide is checked against the SHA-256 GitHub publishes for it instead.
+PIN_LAUNCHER="71c31c83ecc242b88f11df5e63d40263873217f6f57cdabe1c8dadc158948d50"
+PIN_PLUGIN="1ec6dd734ef8a0e4acc25716a97aec8923570c5218bc2087a521c0698be8afbb"
+
+# Rust's own floor (wiki.facepunch.com/rust/Creating-a-server), warned about and never enforced. A small
+# test server runs on less, and refusing would be guessing at what the reader wants.
+MIN_FREE_GB=15
+MIN_RAM_GB=12
+SWAP_GB=4
+
+IUSER="rust"            # the account the server runs as; --user changes it
+IROOT=""                # the server folder; --root, or /home/<user>/server
+REGISTRY="/etc/hotwire/installs"   # every folder this script has installed on this machine, one per line
+
+# ---------------------------------------------------------- look and feel --
+# Plain ASCII, like the Windows installer, so it reads the same over any terminal and in a log.
+banner() {
+    local y="" o="" r="" d="" c=""
+    if [ -n "$C_OFF" ]; then y=$'\033[93m'; o=$'\033[33m'; r=$'\033[91m'; d=$'\033[31m'; c=$'\033[96m'; fi
     say ""
-    say "  The guide walks the same steps by hand:"
-    say "  https://github.com/xman2000/hotwire/blob/connect-and-report/docs/INSTALL-LINUX.md"
+    say "              ${C_DIM}W E L C O M E    T O${C_OFF}"
     say ""
-    note "  Nothing was changed."
+    say "            ${y} ____   _   _  ____   _____ ${C_OFF}"
+    say "            ${y}|  _ \\ | | | |/ ___| |_   _|${C_OFF}"
+    say "            ${o}| |_) || | | |\\___ \\   | |  ${C_OFF}"
+    say "            ${r}|  _ < | |_| | ___) |  | |  ${C_OFF}"
+    say "            ${d}|_| \\_\\ \\___/ |____/   |_|  ${C_OFF}"
+    say ""
+    say "        ${C_DIM}-=[${C_OFF} supported by ${c}H O T W I R E${C_OFF} ${C_DIM}]=-${C_OFF}"
+    say "                 ${C_DIM}setup $VERSION${C_OFF}"
+    say ""
+}
+
+STEP_NO=0; STEP_TOTAL=0
+step() {
+    STEP_NO=$((STEP_NO + 1))
+    local label="STEP $STEP_NO"; [ "$STEP_TOTAL" -gt 0 ] && label="STEP $STEP_NO OF $STEP_TOTAL"
+    say ""
+    say "  ${C_BLD}========================================================================${C_OFF}"
+    say "  ${C_YEL}>>${C_OFF} $label   ${C_BLD}$(printf '%s' "$1" | tr '[:lower:]' '[:upper:]')${C_OFF}"
+    say "  ${C_BLD}========================================================================${C_OFF}"
+    say ""
+}
+
+frame() { say ""; say "  ${C_BLD}.--[ $(printf '%s' "$1" | tr '[:lower:]' '[:upper:]') ]----------------------------------------------${C_OFF}"; }
+group() { say ""; say "  ${C_BLD}$1${C_OFF}"; }
+why()   { local l; for l in "$@"; do say "  $l"; done; say ""; }
+
+# One pre-flight line: a status tag, what was checked, what was found.
+check_line() {  # check_line ok|no|warn|fail|info <label> <detail>
+    local tag col
+    case "$1" in
+        ok)   tag="[ ok ]"; col="$C_GRN" ;;
+        no)   tag="[ -- ]"; col="" ;;
+        warn) tag="[warn]"; col="$C_YEL" ;;
+        fail) tag="[FAIL]"; col="$C_RED" ;;
+        *)    tag="[ .. ]"; col="$C_DIM" ;;
+    esac
+    printf '    %s%s%s %-17s %s%s%s\n' "$col" "$tag" "$C_OFF" "$2" "$col" "$3" "$C_OFF"
+}
+
+box() {  # box <colour> <line>...
+    local col="$1"; shift
+    local w=0 l
+    for l in "$@"; do [ "${#l}" -gt "$w" ] && w="${#l}"; done
+    w=$((w + 4))
+    say ""
+    printf '  %s+%s+%s\n' "$col" "$(printf '%*s' "$w" '' | tr ' ' '=')" "$C_OFF"
+    for l in "$@"; do printf '  %s|  %-*s|%s\n' "$col" "$((w - 2))" "$l" "$C_OFF"; done
+    printf '  %s+%s+%s\n' "$col" "$(printf '%*s' "$w" '' | tr ' ' '=')" "$C_OFF"
+}
+
+# The last moment to change your mind, visible. Ctrl+C during it stops with nothing begun.
+countdown() {  # countdown <seconds> <what>
+    local n="$1" i bar
+    [ -t 1 ] || return 0
+    say ""
+    for ((i = n; i >= 1; i--)); do
+        bar="$(printf '%*s' $((n - i + 1)) '' | tr ' ' '#')$(printf '%*s' $((i - 1)) '' | tr ' ' '.')"
+        printf '\r  %s[%s]  %s in %s...   Ctrl+C stops it %s' "$C_YEL" "$bar" "$2" "$i" "$C_OFF"
+        sleep 1
+    done
+    printf '\r  %s[%s]  %s now.%30s%s\n' "$C_GRN" "$(printf '%*s' "$n" '' | tr ' ' '#')" "$2" '' "$C_OFF"
+}
+
+# SteamCMD can print nothing for minutes, and a quiet screen looks frozen. Shown immediately before it
+# runs, as the last thing on screen, because a warning scrolled away is a warning nobody sees.
+slow_warning() {
+    box "$C_YEL" "PLEASE WAIT -- $1 can look frozen." "" \
+        "SteamCMD may print nothing for a while before it starts, and its progress" \
+        "can sit still for minutes at a time. That is normal: it is still working." "" \
+        "If it does get interrupted, run install again. The download carries on" \
+        "from where it stopped."
+    say ""
+}
+
+# ------------------------------------------------------- record and undo --
+rec_file()    { printf '%s/hotwire/install.json' "$IROOT"; }
+changes_log() { printf '%s/hotwire/changes.log' "$IROOT"; }
+
+# The record is JSON, read and changed with python3 (always on Ubuntu, and checked by the pre-flight),
+# and written whole or not at all. Lists: done, declined, created. Values: folder, user, branch, ports.
+rec_py() {  # rec_py <python taking r (the record) and a (the arguments)>
+    python3 - "$(rec_file)" "$@" <<'PY'
+import json, os, sys
+path, code, args = sys.argv[1], sys.argv[2], sys.argv[3:]
+try:
+    with open(path) as f: r = json.load(f)
+except Exception:
+    r = {}
+out = {}
+exec(code, {"r": r, "a": args, "out": out})
+if out.get("write"):
+    tmp = path + ".hotwire-tmp"
+    with open(tmp, "w") as f: json.dump(r, f, indent=2); f.write("\n")
+    os.replace(tmp, path)
+if "print" in out and out["print"] is not None: print(out["print"])
+PY
+}
+
+rec_get()      { rec_py 'v = r.get(a[0]); out["print"] = v if isinstance(v, (str, int)) else None' "$1" 2>/dev/null; }
+rec_has()      { [ "$(rec_py 'out["print"] = "1" if a[1] in r.get(a[0], []) else "0"' "$1" "$2" 2>/dev/null)" = "1" ]; }
+done_step()    { rec_has done "$1"; }
+declined()     { rec_has declined "$1"; }
+created()      { rec_has created "$1"; }
+rec_add()      { rec_py 'l = r.setdefault(a[0], []); (a[1] in l) or l.append(a[1]); out["write"] = 1' "$1" "$2" && own "$(rec_file)"; }
+rec_remove()   { rec_py 'r[a[0]] = [x for x in r.get(a[0], []) if x != a[1]]; out["write"] = 1' "$1" "$2" && own "$(rec_file)"; }
+rec_set()      { rec_py 'r[a[0]] = a[1]; out["write"] = 1' "$1" "$2" && own "$(rec_file)"; }
+save_step()    { rec_add done "$1"; }
+
+# A no is remembered, so the next run does not ask again one Enter away from yes; the pre-flight
+# shows it as "as you chose" and offers to ask about those again.
+offer() {  # offer <key> <question>   -- [Y/n]; a no is recorded
+    if confirm_default_yes "$2"; then rec_remove declined "$1"; return 0; fi
+    rec_add declined "$1"; return 1
+}
+
+# Every change as it happens, with its exact undo. It outlives the terminal. Until the server's
+# folder exists (the packages and the account come first) the lines are held here, because creating
+# the folder as root before its user exists would leave that user's home belonging to root.
+PENDING_CHANGES=""
+change() {  # change <what> <undo>
+    local line; line="$(printf '%s  %s\n    undo: %s' "$(date '+%Y-%m-%d %H:%M:%S')" "$1" "$2")"
+    if [ ! -d "$IROOT/hotwire" ]; then PENDING_CHANGES+="$line"$'\n'; return 0; fi
+    printf '%s\n' "$line" >> "$(changes_log)"
+    own "$(changes_log)"
+}
+flush_changes() {
+    [ -n "$PENDING_CHANGES" ] || return 0
+    printf '%s' "$PENDING_CHANGES" >> "$(changes_log)"; own "$(changes_log)"; PENDING_CHANGES=""
+}
+
+# Everything in the server folder belongs to the server's user, never to root.
+own() { [ -e "$1" ] && chown "$IUSER:$IUSER" "$1" 2>/dev/null; return 0; }
+own_tree() { [ -e "$1" ] && chown -R "$IUSER:$IUSER" "$1" 2>/dev/null; return 0; }
+
+as_user() { sudo -u "$IUSER" -H -- "$@"; }
+
+# ------------------------------------------------------------- the machine --
+os_ok() {
+    [ -r /etc/os-release ] || return 1
+    # shellcheck disable=SC1091
+    ( . /etc/os-release; [ "${ID:-}" = "ubuntu" ] )
+}
+os_name() { ( . /etc/os-release 2>/dev/null; printf '%s' "${PRETTY_NAME:-unknown}" ); }
+ram_gb()  { awk '/^MemTotal:/{printf "%.1f", $2/1048576}' /proc/meminfo 2>/dev/null; }
+swap_gb() { awk '/^SwapTotal:/{printf "%.1f", $2/1048576}' /proc/meminfo 2>/dev/null; }
+free_gb() {  # the nearest existing folder at or above the path
+    local p="$1"; while [ ! -d "$p" ] && [ "$p" != "/" ]; do p="$(dirname "$p")"; done
+    df -Pk "$p" 2>/dev/null | awk 'NR==2{printf "%d", $4/1048576}'
+}
+ntp_synced() { [ "$(timedatectl show -p NTPSynchronized --value 2>/dev/null)" = "yes" ]; }
+
+# Measured against Valve's own server, the same reference the Windows installer uses, so opening the
+# installer contacts nobody at Hotwire. Seconds this machine is ahead (negative: behind); empty if unknown.
+clock_skew() {
+    local remote; remote="$(curl -fsSI --max-time 10 https://steamcdn-a.akamaihd.net/client/installer/steamcmd_linux.tar.gz 2>/dev/null \
+        | awk 'BEGIN{IGNORECASE=1}/^date:/{sub(/^[Dd]ate: */,""); sub(/\r$/,""); print; exit}')"
+    [ -n "$remote" ] || return 0
+    remote="$(date -u -d "$remote" +%s 2>/dev/null)" || return 0
+    printf '%s' $(( $(date -u +%s) - remote ))
+}
+
+pkg_installed() { dpkg-query -W -f='${Status}' "$1" 2>/dev/null | grep -q 'install ok installed'; }
+PACKAGES=(steamcmd lib32gcc-s1 curl jq unzip ca-certificates)
+missing_packages() {
+    local p out=()
+    for p in "${PACKAGES[@]}"; do
+        case "$p" in steamcmd) [ -x "$STEAMCMD_BIN" ] || out+=("$p") ;; *) pkg_installed "$p" || out+=("$p") ;; esac
+    done
+    printf '%s' "${out[*]}"
+}
+
+ufw_state() {  # active | inactive | absent
+    command -v ufw >/dev/null 2>&1 || { printf 'absent'; return; }
+    ufw status 2>/dev/null | grep -q '^Status: active' && printf 'active' || printf 'inactive'
+}
+# Whether ufw lets a port in from anywhere: "28015/udp ALLOW Anywhere", or a range that covers it.
+ufw_allows() {  # ufw_allows <port> <proto>
+    ufw status 2>/dev/null | awk -v p="$1" -v pr="$2" '
+        $0 ~ /ALLOW/ {
+            split($1, a, "/"); ports = a[1]; proto = a[2]
+            if (proto != "" && proto != pr) next
+            n = split(ports, list, ",")
+            for (i = 1; i <= n; i++) {
+                if (split(list[i], r, ":") == 2) { if (p >= r[1] && p <= r[2]) { found = 1 } }
+                else if (list[i] == p) { found = 1 }
+            }
+        }
+        END { exit found ? 0 : 1 }'
+}
+
+# The Rust server running from this folder, if any: its executable's real path is this folder's binary.
+server_running_here() {
+    local pid exe
+    for pid in $(pgrep -x RustDedicated 2>/dev/null); do
+        exe="$(readlink -f "/proc/$pid/exe" 2>/dev/null)"
+        [ "$exe" = "$(readlink -f "$IROOT/RustDedicated" 2>/dev/null)" ] && return 0
+    done
     return 1
+}
+
+# ------------------------------------------------------------------ rust --
+manifest() { printf '%s/steamapps/appmanifest_%s.acf' "$IROOT" "$RUST_APPID"; }
+manifest_value() {  # the first "key" "value" pair with that key
+    [ -f "$(manifest)" ] || return 0
+    awk -v k="\"$1\"" '$1 == k { gsub(/"/, "", $2); print $2; exit }' "$(manifest)"
+}
+rust_build()  { manifest_value buildid; }
+# The branch Steam keeps this install on: UserConfig's BetaKey; none means public.
+rust_branch() {
+    [ -f "$(manifest)" ] || return 0
+    local b; b="$(awk '/"UserConfig"/{u=1} u && $1 == "\"BetaKey\"" { gsub(/"/, "", $2); print $2; exit } u && /}/{u=0}' "$(manifest)")"
+    printf '%s' "${b:-public}"
+}
+rust_complete() { [ -x "$IROOT/RustDedicated" ] && [ "$(manifest_value StateFlags)" = "4" ]; }
+
+oxide_dll() { printf '%s/RustDedicated_Data/Managed/Oxide.Rust.dll' "$IROOT"; }
+
+# ------------------------------------------------------------------ ports --
+# Each server on a machine gets its own ports. The first set free of every other install's and of
+# anything listening, in steps of 100 from 28015: game, RCON game+1, query game+2.
+ports_in_use() {
+    local f
+    {
+        ss -Hlnu 2>/dev/null | awk '{n=split($4,a,":"); print a[n]}'
+        ss -Hlnt 2>/dev/null | awk '{n=split($4,a,":"); print a[n]}'
+        if [ -f "$REGISTRY" ]; then
+            while IFS= read -r f; do
+                [ -n "$f" ] && [ "${f%/}" != "${IROOT%/}" ] && [ -f "$f/hotwire/install.json" ] || continue
+                python3 -c 'import json,sys; p=json.load(open(sys.argv[1])).get("ports",{}); print("\n".join(str(p[k]) for k in ("game","query","rcon") if k in p))' \
+                    "$f/hotwire/install.json" 2>/dev/null
+            done < "$REGISTRY"
+        fi
+    } | sort -un
+}
+choose_ports() {
+    local used game
+    if [ -n "$(rec_get game_port)" ]; then
+        PORT_GAME="$(rec_get game_port)"; PORT_QUERY="$(rec_get query_port)"; PORT_RCON="$(rec_get rcon_port)"
+        return 0
+    fi
+    used=" $(ports_in_use | tr '\n' ' ') "
+    for ((game = 28015; game < 29015; game += 100)); do
+        case "$used" in *" $game "*|*" $((game + 1)) "*|*" $((game + 2)) "*) continue ;; esac
+        PORT_GAME="$game"; PORT_RCON=$((game + 1)); PORT_QUERY=$((game + 2)); break
+    done
+    [ -n "${PORT_GAME:-}" ] || die "choosing ports for this server" "every set from 28015 to 28915 is in use" \
+        "set SERVER_PORT, SERVER_QUERYPORT and RCON_PORT in hotwire.sh by hand"
+    if [ "$PORT_GAME" != "28015" ]; then
+        note "  Another server here already uses the usual ports, so this one gets its own:"
+    fi
+    say "  Ports: game ${PORT_GAME}/udp, query ${PORT_QUERY}/udp, RCON ${PORT_RCON}/tcp"
+    rec_set game_port "$PORT_GAME"; rec_set query_port "$PORT_QUERY"; rec_set rcon_port "$PORT_RCON"
+    rec_py 'r["ports"] = {"game": int(a[0]), "query": int(a[1]), "rcon": int(a[2])}; out["write"] = 1' \
+        "$PORT_GAME" "$PORT_QUERY" "$PORT_RCON" && own "$(rec_file)"
+}
+PORT_GAME=""; PORT_QUERY=""; PORT_RCON=""
+
+# ------------------------------------------------------------ downloads --
+# Downloads beside where the file goes, under a name nothing loads, and checks it before it is used.
+fetch() {  # fetch <url> <out> <what>
+    curl -fsSL --retry 2 --max-time 300 -o "$2" "$1" 2>/dev/null \
+        || { rm -f "$2"; die "downloading $3" "the download from $1 failed" "check this machine can reach github.com, then run install again"; }
+}
+check_pin() {  # check_pin <file> <expected sha256> <what>
+    local got; got="$(sha256sum "$1" | cut -d' ' -f1)"
+    if [ "$got" != "$2" ]; then
+        rm -f "$1"
+        die "checking the downloaded $3" "its SHA-256 is $got, not the $2 this setup expects" \
+            "nothing was written; download this setup script again (it is probably older than $3), then run install again"
+    fi
+    ok "$3 matches its published SHA-256"
+}
+
+# ------------------------------------------------------------ pre-flight --
+declare -A S
+gather() {
+    S=()
+    S[os]="$(os_name)"; os_ok && S[os_ok]=1 || S[os_ok]=0
+    S[ram]="$(ram_gb)"; S[swap]="$(swap_gb)"; S[free]="$(free_gb "$IROOT")"
+    S[skew]="$(clock_skew)"; ntp_synced && S[ntp]=1 || S[ntp]=0
+    S[packages]="$(missing_packages)"
+    id "$IUSER" >/dev/null 2>&1 && S[user]=1 || S[user]=0
+    [ -x "$IROOT/RustDedicated" ] && S[rust]=1 || S[rust]=0
+    S[rust_done]=0; rust_complete && done_step rust && S[rust_done]=1
+    S[build]="$(rust_build)"; S[branch]="$(rust_branch)"; S[chosen]="$(rec_get branch)"
+    server_running_here && S[running]=1 || S[running]=0
+    [ -f "$(oxide_dll)" ] && S[oxide]=1 || S[oxide]=0
+    S[oxide_done]=0; [ "${S[oxide]}" = 1 ] && done_step oxide && S[oxide_done]=1
+    declined oxide && S[oxide_no]=1 || S[oxide_no]=0
+    [ -f "$IROOT/hotwire.sh" ] && S[launcher]=1 || S[launcher]=0
+    declined launcher && S[launcher_no]=1 || S[launcher_no]=0
+    S[vanilla]=0; [ "${S[launcher]}" = 1 ] && grep -qx 'INSTALL_FRAMEWORK="0"' "$IROOT/hotwire.sh" && S[vanilla]=1
+    [ -f "$IROOT/oxide/plugins/Hotwire.cs" ] && S[plugin]=1 || S[plugin]=0
+    declined plugin && S[plugin_no]=1 || S[plugin_no]=0
+    S[plugin_version]=""; [ "${S[plugin]}" = 1 ] && S[plugin_version]="$(grep -oE '\[Info\("Hotwire", *"[^"]*", *"[^"]+"\)\]' "$IROOT/oxide/plugins/Hotwire.cs" | grep -oE '"[0-9][^"]*"\)' | tr -d '")')"
+    S[rcon]=""; [ "${S[launcher]}" = 1 ] && S[rcon]="$(secrets_problem)"
+    S[unit]="$(unit_name)"; [ -f "/etc/systemd/system/${S[unit]}" ] && S[service]=1 || S[service]=0
+    declined service && S[service_no]=1 || S[service_no]=0
+    [ -f "$(state_file "$IROOT")" ] && S[connected]=1 || S[connected]=0
+    declined panel && S[panel_no]=1 || S[panel_no]=0
+    S[ufw]="$(ufw_state)"
+    local g q r
+    g="$(rec_get game_port)"; q="$(rec_get query_port)"; r="$(rec_get rcon_port)"
+    S[ports_chosen]=0; [ -n "$g" ] && S[ports_chosen]=1
+    S[game]="${g:-28015}"; S[query]="${q:-28017}"; S[rcon_port]="${r:-28016}"
+    S[game_open]=0; S[query_open]=0; S[rcon_open]=0
+    if [ "${S[ufw]}" = active ]; then
+        ufw_allows "${S[game]}" udp && S[game_open]=1
+        ufw_allows "${S[query]}" udp && S[query_open]=1
+        ufw_allows "${S[rcon_port]}" tcp && S[rcon_open]=1
+    fi
+}
+
+show_state() {  # show_state <title>
+    frame "$1"
+    note "    folder: $IROOT   user: $IUSER"
+
+    group "This machine"
+    if [ "${S[os_ok]}" = 1 ]; then check_line ok "System" "${S[os]}"; else check_line fail "System" "${S[os]} -- this installer is for Ubuntu"; fi
+    awk -v r="${S[ram]:-0}" -v m="$MIN_RAM_GB" 'BEGIN{exit !(r >= m)}' \
+        && check_line ok "Memory" "${S[ram]} GB" || check_line warn "Memory" "${S[ram]} GB -- Rust recommends $MIN_RAM_GB GB"
+    if awk -v s="${S[swap]:-0}" 'BEGIN{exit !(s > 0)}'; then check_line ok "Swap" "${S[swap]} GB"
+    else check_line no "Swap" "none -- running out of memory then kills the server outright"; fi
+    if [ -z "${S[free]}" ]; then check_line warn "Disk" "free space could not be read -- Rust recommends $MIN_FREE_GB GB"
+    elif [ "${S[free]}" -ge "$MIN_FREE_GB" ]; then check_line ok "Disk" "${S[free]} GB free"
+    else check_line warn "Disk" "${S[free]} GB free -- Rust recommends $MIN_FREE_GB GB"; fi
+    if [ -z "${S[skew]}" ]; then check_line warn "Clock" "could not be compared with Steam's servers"
+    else
+        local abs="${S[skew]#-}" sync="kept in time automatically"
+        [ "${S[ntp]}" = 1 ] || sync="NOT kept in time automatically"
+        if   [ "$abs" -le 30 ];  then check_line ok "Clock" "right (${abs}s from Steam's servers), $sync"
+        elif [ "$abs" -le 300 ]; then check_line warn "Clock" "${abs}s out -- drifting, $sync"
+        else check_line fail "Clock" "${abs}s out -- Hotwire Panel would refuse every request"; fi
+    fi
+
+    group "Rust"
+    if [ -z "${S[packages]}" ]; then check_line ok "SteamCMD" "$STEAMCMD_BIN"
+    else check_line no "SteamCMD" "missing: ${S[packages]}"; fi
+    if [ "${S[user]}" = 1 ]; then check_line ok "User" "$IUSER"; else check_line no "User" "no '$IUSER' account yet"; fi
+    if [ "${S[rust_done]}" = 1 ]; then
+        local b=""; [ "${S[branch]}" != public ] && b=", branch '${S[branch]}'"
+        check_line ok "Rust server" "build ${S[build]}$b"
+    elif [ "${S[rust]}" = 1 ]; then check_line warn "Rust server" "download not finished -- install finishes it"
+    else check_line no "Rust server" "not installed"; fi
+    if [ "${S[running]}" = 1 ]; then
+        # Only a problem while Rust or Oxide still has to be put in place under it.
+        if [ "${S[rust_done]}" = 1 ] && { [ "${S[oxide_done]}" = 1 ] || [ "${S[oxide_no]}" = 1 ]; }; then
+            check_line ok "Running" "yes"
+        else
+            check_line fail "Running" "the server in this folder is running -- stop it before installing"
+        fi
+    fi
+    if [ "${S[oxide_done]}" = 1 ]; then check_line ok "Oxide" "installed"
+    elif [ "${S[oxide]}" = 1 ]; then check_line warn "Oxide" "partly installed -- install finishes it"
+    elif [ "${S[oxide_no]}" = 1 ]; then check_line info "Oxide" "not installed -- a vanilla server, as you chose"
+    else check_line no "Oxide" "not installed -- without it, a vanilla server"; fi
+
+    group "Hotwire"
+    if [ "${S[launcher]}" = 1 ]; then check_line ok "Start script" "hotwire.sh$([ "${S[vanilla]}" = 1 ] && printf ' (vanilla)')"
+    elif [ "${S[launcher_no]}" = 1 ]; then check_line info "Start script" "no hotwire.sh -- you chose your own start script"
+    else check_line no "Start script" "no hotwire.sh"; fi
+    if [ "${S[launcher]}" != 1 ]; then check_line info "RCON password" "set with the start script"
+    elif [ -n "${S[rcon]}" ]; then check_line fail "RCON password" "${S[rcon]} -- hotwire.sh will not start"
+    else check_line ok "RCON password" "set, and hotwire.sh will accept it"; fi
+    if [ "${S[service]}" = 1 ]; then check_line ok "Service" "${S[unit]} -- starts with the machine"
+    elif [ "${S[service_no]}" = 1 ]; then check_line info "Service" "none -- you start the server yourself, as you chose"
+    else check_line no "Service" "not set up -- the server would not come back after a reboot"; fi
+    if [ "${S[plugin]}" = 1 ]; then check_line ok "Plugin" "Hotwire ${S[plugin_version]:-(version unread)}"
+    elif [ "${S[plugin_no]}" = 1 ]; then check_line info "Plugin" "not installed -- you said no"
+    else check_line no "Plugin" "not installed"; fi
+    if [ "${S[connected]}" = 1 ]; then check_line ok "Hotwire Panel" "connected as '$(json_get "$(read_state "$IROOT")" identity)'"
+    elif [ "${S[panel_no]}" = 1 ]; then check_line info "Hotwire Panel" "not connected -- you said no"
+    else check_line no "Hotwire Panel" "not connected"; fi
+
+    group "Firewall"
+    if [ "${S[ports_chosen]}" = 1 ]; then check_line ok "Ports" "game ${S[game]}, query ${S[query]}, RCON ${S[rcon_port]}"
+    else check_line info "Ports" "not chosen yet -- install picks free ones; checked here at the usual ones"; fi
+    case "${S[ufw]}" in
+        active)
+            check_line ok "ufw" "on"
+            [ "${S[game_open]}" = 1 ]  && check_line ok "Game  UDP ${S[game]}" "open"  || check_line no "Game  UDP ${S[game]}" "closed"
+            [ "${S[query]}" ] && { [ "${S[query_open]}" = 1 ] && check_line ok "Query UDP ${S[query]}" "open" || check_line no "Query UDP ${S[query]}" "closed"; }
+            [ "${S[rcon_open]}" = 1 ] && check_line warn "RCON  TCP ${S[rcon_port]}" "OPEN to the internet -- RCON is remote control of this server" \
+                                      || check_line ok "RCON  TCP ${S[rcon_port]}" "closed, as it should be" ;;
+        inactive) check_line info "ufw" "installed but off -- every port is reachable unless your host filters them, RCON included" ;;
+        *)        check_line info "ufw" "not installed -- check your host's firewall instead" ;;
+    esac
+}
+
+# What the pre-flight found missing, in the order it has to be done. Each line: key|title|why
+plan() {
+    PLAN=()
+    local abs="${S[skew]#-}"
+    { [ "${S[ntp]}" = 0 ] || { [ -n "$abs" ] && [ "$abs" -gt 30 ]; }; } && PLAN+=("clock|Clock|keep it in time automatically")
+    [ -n "${S[packages]}" ] && PLAN+=("packages|SteamCMD|install it from Ubuntu's archive -- Rust downloads through it")
+    [ "${S[user]}" = 0 ] && PLAN+=("user|User|create '$IUSER' -- the server never runs as root")
+    awk -v s="${S[swap]:-0}" 'BEGIN{exit !(s == 0)}' && ! declined swap && PLAN+=("swap|Swap|add a ${SWAP_GB} GB swap file")
+    [ "${S[rust_done]}" = 0 ] && PLAN+=("rust|Rust server|$([ "${S[rust]}" = 1 ] && echo 'finish the download' || echo 'download it, about 6 GB')")
+    if [ "${S[oxide_no]}" = 0 ] && { [ "${S[oxide_done]}" = 0 ] || [ "${S[rust_done]}" = 0 ]; }; then
+        PLAN+=("oxide|Oxide|$([ "${S[oxide]}" = 1 ] && echo 'finish installing it' || echo 'install it, or say no for a vanilla server')")
+    fi
+    [ "${S[launcher]}" = 0 ] && [ "${S[launcher_no]}" = 0 ] && PLAN+=("launcher|Start script|install hotwire.sh, or say no to use your own")
+    { [ -n "${S[rcon]}" ] || { [ "${S[launcher]}" = 0 ] && [ "${S[launcher_no]}" = 0 ]; }; } \
+        && PLAN+=("rcon|RCON password|$([ -n "${S[rcon]}" ] && echo "fix it: ${S[rcon]}" || echo 'set it, for hotwire.sh')")
+    [ "${S[plugin]}" = 0 ] && [ "${S[plugin_no]}" = 0 ] && [ "${S[oxide_no]}" = 0 ] && PLAN+=("plugin|Hotwire plugin|install it -- needs Oxide")
+    [ "${S[service]}" = 0 ] && [ "${S[service_no]}" = 0 ] && [ "${S[launcher_no]}" = 0 ] && PLAN+=("service|Service|start the server with the machine")
+    [ "${S[ufw]}" = active ] && { [ "${S[game_open]}" = 0 ] || [ "${S[query_open]}" = 0 ] || [ "${S[ports_chosen]}" = 0 ]; } \
+        && PLAN+=("firewall|Firewall|open this server's game and query ports in ufw")
+    [ "${S[connected]}" = 0 ] && [ "${S[panel_no]}" = 0 ] && PLAN+=("panel|Hotwire Panel|connect this server")
+    return 0
+}
+PLAN=()
+
+show_plan() {
+    frame "Flight plan"
+    [ "${#PLAN[@]}" -eq 0 ] && return 0
+    say ""
+    local n=0 item key title reason
+    for item in "${PLAN[@]}"; do
+        n=$((n + 1)); IFS='|' read -r key title reason <<< "$item"
+        printf '    %s%2d.%s  %s%-16s%s %s\n' "$C_YEL" "$n" "$C_OFF" "$C_BLD" "$title" "$C_OFF" "$reason"
+    done
+    if printf '%s\n' "${PLAN[@]}" | grep -q '^rust|' && [ -n "${S[free]}" ] && [ "${S[free]}" -lt "$MIN_FREE_GB" ]; then
+        say ""; warn "only ${S[free]} GB free for a download of about 6 GB that grows with every update"
+    fi
+    say ""
+    note "  Every step still says what it will do and asks first."
+}
+
+in_plan() { printf '%s\n' "${PLAN[@]}" | grep -q "^$1|"; }
+
+declined_names() {
+    local n=()
+    [ "${S[oxide_no]}" = 1 ] && [ "${S[oxide_done]}" = 0 ] && n+=("Oxide")
+    [ "${S[launcher_no]}" = 1 ] && [ "${S[launcher]}" = 0 ] && n+=("the start script")
+    [ "${S[plugin_no]}" = 1 ] && [ "${S[plugin]}" = 0 ] && n+=("the Hotwire plugin")
+    [ "${S[service_no]}" = 1 ] && [ "${S[service]}" = 0 ] && n+=("the service")
+    declined swap && awk -v s="${S[swap]:-0}" 'BEGIN{exit !(s == 0)}' && n+=("swap")
+    [ "${S[panel_no]}" = 1 ] && [ "${S[connected]}" = 0 ] && n+=("Hotwire Panel")
+    local IFS=','; printf '%s' "${n[*]}" | sed 's/,/, /g'
+}
+
+# ------------------------------------------------------------- the steps --
+step_clock() {
+    step "Clock"
+    why "Hotwire Panel refuses a signed request more than five minutes from its own clock, and says only" \
+        "that the time was wrong. Ubuntu keeps the clock right by itself once time sync is on."
+    if ntp_synced; then ok "the clock is kept in time automatically"; return 0; fi
+    confirm "Turn on automatic time sync (timedatectl set-ntp true)?" || { note "Left as it is."; return 0; }
+    if timedatectl set-ntp true 2>/dev/null; then
+        ok "time sync is on; the clock settles within a minute or two"
+        change "turned on time sync (timedatectl set-ntp true)" "sudo timedatectl set-ntp false"
+    else
+        warn "timedatectl could not turn it on -- see 'timedatectl status'"
+    fi
+}
+
+step_packages() {
+    step "SteamCMD"
+    local missing; missing="$(missing_packages)"
+    if [ -z "$missing" ]; then ok "SteamCMD and the tools Rust needs are installed"; return 0; fi
+    why "SteamCMD is Valve's tool for downloading game servers. Rust's server is free and needs no" \
+        "Steam account. Ubuntu packages it in 'multiverse', and it needs 32-bit libraries (i386)." "" \
+        "This installs: $missing" \
+        "It changes: the multiverse archive is switched on, and the i386 architecture is added." "" \
+        "Valve's licence for SteamCMD comes up on screen during the install, and you accept or" \
+        "decline it there. Declining stops here: Rust downloads through SteamCMD." "" \
+        "More: https://developer.valvesoftware.com/wiki/SteamCMD"
+    confirm_default_yes "Install SteamCMD?" || die "installing SteamCMD" "you said no" \
+        "Rust downloads through SteamCMD; run install again when you want it"
+
+    if ! grep -rqsE '^[^#]*\bmultiverse\b' /etc/apt/sources.list /etc/apt/sources.list.d/; then
+        command -v add-apt-repository >/dev/null 2>&1 || apt-get install -y software-properties-common
+        add-apt-repository -y multiverse || die "switching on Ubuntu's multiverse archive" "add-apt-repository failed" \
+            "run 'sudo add-apt-repository multiverse' yourself, then run install again"
+        change "switched on Ubuntu's multiverse archive" "sudo add-apt-repository --remove multiverse"
+    fi
+    if ! dpkg --print-foreign-architectures | grep -qx i386; then
+        dpkg --add-architecture i386 || die "adding the i386 architecture" "dpkg refused" "run 'sudo dpkg --add-architecture i386', then install again"
+        change "added the i386 architecture" "sudo dpkg --remove-architecture i386 (only once no i386 package is left)"
+    fi
+    apt-get update || die "reading Ubuntu's package lists" "apt-get update failed" "check this machine's internet connection, then run install again"
+    # The licence is Valve's to show and the owner's to accept (its terms require that it is displayed and
+    # accepted by the person installing), so apt is given the terminal and nothing is pre-answered.
+    # shellcheck disable=SC2086
+    apt-get install -y $missing </dev/tty || die "installing $missing" "apt-get install failed (declining Valve's licence also ends here)" \
+        "run install again; to install by hand: sudo apt install $missing"
+    [ -x "$STEAMCMD_BIN" ] || die "installing SteamCMD" "$STEAMCMD_BIN is not there after the install" \
+        "run 'sudo apt install steamcmd' yourself and read what it says"
+    ok "installed: $missing"
+    change "installed packages: $missing" "sudo apt remove $missing"
+}
+
+step_user() {
+    step "User"
+    if id "$IUSER" >/dev/null 2>&1; then ok "the '$IUSER' account exists"; return 0; fi
+    why "The game server should never run as root: anything it can be made to do, it could then do" \
+        "to the whole machine. This makes an account for it, '$IUSER', with no password -- nobody logs" \
+        "in as it; you reach it with 'sudo -iu $IUSER'."
+    confirm_default_yes "Create the '$IUSER' account?" || die "creating the '$IUSER' account" "you said no" \
+        "run install again with --user NAME to use an account that already exists"
+    adduser --disabled-password --gecos "" "$IUSER" >/dev/null || die "creating the '$IUSER' account" "adduser failed" \
+        "run 'sudo adduser --disabled-password $IUSER' and read what it says"
+    ok "created the '$IUSER' account"
+    change "created the account $IUSER" "sudo deluser --remove-home $IUSER (this deletes the server folder too)"
+}
+
+step_swap() {
+    step "Swap"
+    if awk -v s="$(swap_gb)" 'BEGIN{exit !(s > 0)}'; then ok "swap is on ($(swap_gb) GB)"; return 0; fi
+    why "Rust uses a lot of memory, and with no swap a short spike gets the server killed outright." \
+        "That looks exactly like a crash nobody can explain. A ${SWAP_GB} GB swap file at /swapfile is a" \
+        "cushion, not extra memory: a server that lives in swap is slow."
+    if [ -e /swapfile ]; then warn "/swapfile already exists and is not in use -- left alone"; return 0; fi
+    local free; free="$(free_gb /)"
+    if [ -n "$free" ] && [ "$free" -lt $((SWAP_GB + MIN_FREE_GB)) ]; then
+        warn "only $free GB free on / -- a swap file would take ${SWAP_GB} GB of the room Rust needs"
+    fi
+    if ! confirm "Add a ${SWAP_GB} GB swap file?"; then rec_add declined swap; note "Left as it is."; return 0; fi
+    rec_remove declined swap
+    { fallocate -l "${SWAP_GB}G" /swapfile && chmod 600 /swapfile && mkswap /swapfile >/dev/null && swapon /swapfile; } \
+        || { swapoff /swapfile 2>/dev/null; rm -f /swapfile; die "adding a swap file" "one of fallocate, mkswap or swapon failed" \
+             "nothing was kept; add swap by hand, or run install again and say no to it"; }
+    grep -qE '^/swapfile[[:space:]]' /etc/fstab || printf '/swapfile none swap sw 0 0\n' >> /etc/fstab
+    ok "${SWAP_GB} GB of swap is on, and stays on after a reboot"
+    change "added a ${SWAP_GB} GB swap file at /swapfile, and its line in /etc/fstab" \
+        "sudo swapoff /swapfile && sudo rm /swapfile, then delete the /swapfile line from /etc/fstab"
+}
+
+choose_branch() {
+    local chosen; chosen="$(rec_get branch)"
+    [ -n "$chosen" ] && { BRANCH="$chosen"; return 0; }
+    say "  Which Steam branch? ${C_BLD}public${C_OFF} is the live game; 'staging' is Facepunch's test build."
+    printf '  Branch [public]: '
+    local a; a="$(read_tty | tr -d '[:space:]')"
+    BRANCH="${a:-public}"
+    [[ "$BRANCH" =~ ^[A-Za-z0-9_.-]{1,64}$ ]] || die "choosing a Steam branch" "'$BRANCH' is not a branch name" "run install again and press Enter for public"
+    rec_set branch "$BRANCH"
+}
+BRANCH="public"
+
+steamcmd_locked() {  # the same lock hotwire.sh takes, so two servers' SteamCMD runs take turns
+    local lock="/home/$IUSER/.hotwire/steamcmd.lock"
+    as_user mkdir -p "/home/$IUSER/.hotwire" || die "preparing SteamCMD's lock in /home/$IUSER/.hotwire" \
+        "$IUSER could not create it" "check that /home/$IUSER belongs to $IUSER: sudo chown $IUSER:$IUSER /home/$IUSER"
+    as_user flock -w 3600 "$lock" "$STEAMCMD_BIN" "$@"
+}
+
+link_steamclient() {
+    # RustDedicated loads Steam's client library from a path it does not create; without it the server
+    # builds its whole map and then fails with an error that names nothing. hotwire.sh links it at every
+    # start too; this covers a server started any other way.
+    local h="/home/$IUSER" arch
+    for arch in 64 32; do
+        local src="$h/.local/share/Steam/steamcmd/linux$arch/steamclient.so" dst="$h/.steam/sdk$arch/steamclient.so"
+        [ -e "$dst" ] && continue
+        [ -e "$src" ] || continue
+        as_user mkdir -p "$h/.steam/sdk$arch" && as_user ln -s "$src" "$dst" && ok "linked steamclient.so (sdk$arch)"
+    done
+}
+
+step_rust() {
+    step "Rust server"
+    if rust_complete && done_step rust; then ok "Rust is installed (build $(rust_build))"; link_steamclient; return 0; fi
+    why "Rust's dedicated server is Steam app $RUST_APPID. It is free, and 'anonymous' is a real Steam" \
+        "login, not a placeholder. About 6 GB now; it grows with every update." "" \
+        "It goes into $IROOT, owned by $IUSER." "" \
+        "More: https://wiki.facepunch.com/rust/Creating-a-server"
+    choose_branch
+    local free; free="$(free_gb "$IROOT")"
+    if [ -n "$free" ] && [ "$free" -lt "$MIN_FREE_GB" ]; then
+        warn "only $free GB free -- a full disk stops the download and can upset the whole machine"
+        confirm "Download anyway?" || die "downloading Rust" "there is too little free space" "free some space, then run install again"
+    else
+        confirm_default_yes "Download the Rust server ($BRANCH)?" || die "downloading Rust" "you said no" "run install again when you are ready"
+    fi
+    as_user mkdir -p "$IROOT" || die "creating $IROOT" "it could not be created as $IUSER" "check the folder above it belongs to $IUSER"
+
+    slow_warning "the download"
+    countdown 5 "Downloading Rust"
+    local tries=0
+    while :; do
+        tries=$((tries + 1))
+        # -beta names the branch every time: Steam otherwise keeps an install on whatever it last had.
+        steamcmd_locked +force_install_dir "$IROOT" +login anonymous +app_update "$RUST_APPID" -beta "$BRANCH" validate +quit
+        local rc=$?
+        # Ctrl+C. sudo runs the command in a terminal of its own (Ubuntu's sudo-rs does by default), so
+        # the interrupt reaches SteamCMD and comes back as its exit status, never as a signal to this
+        # script; without this, the retry below started the download again under the person stopping it.
+        if [ "$rc" = 130 ] || [ "$rc" = 143 ]; then
+            say ""; warn "Stopped. Nothing is half-written: run install again and the download carries on."; exit 130
+        fi
+        [ "$rc" = 0 ] && rust_complete && break
+        [ "$tries" -ge 3 ] && die "downloading Rust" "SteamCMD did not finish after $tries tries" \
+            "run install again: the download carries on from where it stopped"
+        warn "SteamCMD stopped before the download finished (SteamCMD often does on its first run); trying again"
+        sleep 5
+    done
+    ok "Rust build $(rust_build) is installed ($BRANCH)"
+    change "downloaded Rust (app $RUST_APPID, $BRANCH) into $IROOT" "delete $IROOT (everything in it)"
+    save_step rust
+    link_steamclient
+}
+
+oxide_entries_ok() {  # every entry under RustDedicated_Data/, none escaping it
+    local bad
+    bad="$(unzip -Z1 "$1" 2>/dev/null | grep -vE '^RustDedicated_Data/' ; unzip -Z1 "$1" 2>/dev/null | grep -E '(^|/)\.\.(/|$)|^/|\\')"
+    [ -z "$bad" ] && [ -n "$(unzip -Z1 "$1" 2>/dev/null)" ]
+}
+
+step_oxide() {
+    step "Oxide"
+    if done_step oxide && [ -f "$(oxide_dll)" ]; then ok "Oxide is installed"; return 0; fi
+    if ! done_step rust; then note "Skipped: Oxide goes on top of a finished Rust download, and this one is not finished."; return 0; fi
+    why "Oxide (uMod) lets a Rust server run plugins. Hotwire's plugin needs it." "" \
+        "This downloads Oxide's Linux build from GitHub, checks it against the SHA-256 GitHub publishes" \
+        "for it, and puts its files over the server's RustDedicated_Data. The game files it replaces are" \
+        "copied to hotwire/backups first. Every Rust update puts the originals back, so hotwire.sh" \
+        "installs Oxide again after each one." "" \
+        "More: https://umod.org/games/rust"
+    [ -f "$(oxide_dll)" ] && note "  An earlier attempt did not finish. This puts every Oxide file in place again."
+    if ! offer oxide "Install Oxide?"; then warn "Skipped: this is a vanilla server, and it cannot run plugins."; return 0; fi
+
+    local work="$IROOT/hotwire/oxide-unpack" zip="$IROOT/hotwire/oxide.zip.hotwire-tmp" rel sha from
+    as_user mkdir -p "$IROOT/hotwire"
+    rel="$(curl -fsSL --max-time 25 -H 'Accept: application/vnd.github+json' "$OXIDE_RELEASES" 2>/dev/null || true)"
+    from="$(printf '%s' "$rel" | jq -r --arg n "$OXIDE_ASSET" '.assets[]?|select(.name==$n)|.browser_download_url' 2>/dev/null | head -1)"
+    sha="$(printf '%s' "$rel" | jq -r --arg n "$OXIDE_ASSET" '.assets[]?|select(.name==$n)|.digest' 2>/dev/null | head -1)"; sha="${sha#sha256:}"
+    case "$from" in https://github.com/*) ;; *) from="$OXIDE_URL"; sha="" ;; esac
+    fetch "$from" "$zip" "Oxide for Rust (Linux)"
+    if [[ "$sha" =~ ^[0-9a-fA-F]{64}$ ]]; then
+        [ "$(sha256sum "$zip" | cut -d' ' -f1)" = "${sha,,}" ] || { rm -f "$zip"; die "checking the Oxide download" \
+            "its SHA-256 does not match the one GitHub publishes" "nothing was unpacked; run install again later"; }
+        ok "Oxide matches the SHA-256 GitHub publishes"
+    else
+        warn "GitHub did not say what Oxide's SHA-256 should be; it is used unverified (third-party)"
+    fi
+    oxide_entries_ok "$zip" || { rm -f "$zip"; die "checking the Oxide download" \
+        "it is not a zip of files under RustDedicated_Data/" "nothing was unpacked; run install again later"; }
+
+    # The game's own files, copied once, before Oxide first replaces them.
+    if ! ls -d "$IROOT"/hotwire/backups/*-before-oxide >/dev/null 2>&1; then
+        local backup="$IROOT/hotwire/backups/$(date '+%Y%m%d-%H%M%S')-before-oxide" saved=0 f
+        while IFS= read -r f; do
+            [ -f "$IROOT/$f" ] || continue
+            mkdir -p "$backup/$(dirname "$f")" && cp -p "$IROOT/$f" "$backup/$f" && saved=$((saved + 1))
+        done < <(unzip -Z1 "$zip" | grep -v '/$')
+        own_tree "$IROOT/hotwire/backups"
+        [ "$saved" -gt 0 ] && { ok "copied $saved game file(s) Oxide replaces to $backup"; change "copied $saved game file(s) that Oxide replaces to $backup" "nothing needed; this is the backup"; }
+    fi
+
+    # Unpacked beside the server, then each file renamed into place, so none is ever half-written.
+    rm -rf "$work"; mkdir -p "$work"
+    unzip -q "$zip" -d "$work" || { rm -rf "$work" "$zip"; die "unpacking Oxide" "unzip failed" "run install again"; }
+    local f
+    while IFS= read -r f; do
+        mkdir -p "$IROOT/$(dirname "$f")"
+        mv -f "$work/$f" "$IROOT/$f" || die "putting $f in place" "the move failed" "run install again: it puts every Oxide file in place again"
+    done < <(cd "$work" && find . -type f | sed 's|^\./||')
+    rm -rf "$work" "$zip"
+    own_tree "$IROOT/RustDedicated_Data"
+    [ -f "$(oxide_dll)" ] || die "installing Oxide" "no Oxide.Rust.dll after unpacking" "run install again"
+    ok "Oxide installed"
+    change "installed Oxide into $IROOT" "copy the files from $IROOT/hotwire/backups/*-before-oxide back into $IROOT"
+    save_step oxide
+    sync_launcher_framework
+}
+
+# hotwire.sh installs Oxide on every update unless told the server is vanilla. When install wrote the
+# launcher, its INSTALL_FRAMEWORK follows Oxide; anyone else's launcher gets the line to change instead.
+sync_launcher_framework() {
+    local l="$IROOT/hotwire.sh" want
+    [ -f "$l" ] || return 0
+    want=1; { done_step oxide && [ -f "$(oxide_dll)" ]; } || want=0
+    grep -qx "INSTALL_FRAMEWORK=\"$want\"" "$l" && return 0
+    if created "$l"; then
+        cp -p "$l" "$l.backup-$(date '+%Y%m%d-%H%M%S')"
+        sed "s/^INSTALL_FRAMEWORK=\"[01]\"\$/INSTALL_FRAMEWORK=\"$want\"/" "$l" > "$l.hotwire-tmp" && chmod 755 "$l.hotwire-tmp" && mv -f "$l.hotwire-tmp" "$l"
+        own "$l"; ok "hotwire.sh set to INSTALL_FRAMEWORK=\"$want\""
+        change "set INSTALL_FRAMEWORK=\"$want\" in $l" "put back the .backup- copy beside it"
+    else
+        warn "hotwire.sh is not one install wrote: set INSTALL_FRAMEWORK=\"$want\" in it yourself"
+    fi
+}
+
+# A saved map means the server has been played: a seed now would start a different map, which is a wipe.
+has_saves() { find "$IROOT/server" -type f \( -name '*.sav' -o -name '*.sav.*' -o -name '*.map' \) 2>/dev/null | grep -q .; }
+
+# Sets one KEY="value" line in the launcher's SETTINGS block. The line must appear exactly once, or
+# nothing is written: a launcher this script does not recognise is left for a person.
+set_setting() {  # set_setting <text> <KEY> <value>   -> prints the new text
+    local n; n="$(printf '%s\n' "$1" | grep -c "^$2=\"[^\"]*\"")"
+    [ "$n" = 1 ] || return 1
+    printf '%s\n' "$1" | KEY="$2" VAL="$3" awk '{ if (index($0, ENVIRON["KEY"] "=\"") == 1 && $0 ~ /^[A-Z_]+="[^"]*"/) { sub(/"[^"]*"/, "\"" ENVIRON["VAL"] "\"") } print }'
+}
+
+step_launcher() {
+    step "Start script"
+    local l="$IROOT/hotwire.sh"
+    if [ -f "$l" ]; then ok "hotwire.sh is already here -- kept"; sync_launcher_framework; save_step launcher; return 0; fi
+    local vanilla=0; { done_step oxide && [ -f "$(oxide_dll)" ]; } || vanilla=1
+    local seed=""; has_saves || seed="$(python3 -c 'import secrets; print(secrets.randbelow(2147483647) + 1)')"
+    why "hotwire.sh is Hotwire's start script: it starts the server, brings it back when it stops," \
+        "installs Rust and Oxide updates, and stops trying if the server crashes over and over. Every" \
+        "schedule ships switched off, so it cannot restart anything by surprise." "" \
+        "This downloads it from the public repository and sets it up for this server:" \
+        "  STEAM_BRANCH      = $(rec_get branch || true)" \
+        "  ports             = its own game, query and RCON ports (next)"
+    [ "$vanilla" = 1 ] && say "    INSTALL_FRAMEWORK = 0     no Oxide here, so it runs a vanilla server"
+    if [ -n "$seed" ]; then say "    SERVER_SEED       = $seed   a random map, picked once; restarts keep it"
+    else say "    SERVER_SEED       = left empty: this server already has a saved map, and a seed would start a new one"; fi
+    say ""
+    note "  Say no to start the server with a script of your own instead."
+    say ""
+    if ! offer launcher "Install hotwire.sh as the start script?"; then
+        note "Skipped: you start the server your own way. The RCON password step is skipped too, because"
+        note "your start script is what sets it."
+        return 0
+    fi
+    choose_ports
+
+    local tmp="$l.hotwire-tmp" text
+    fetch "$LAUNCHER_URL" "$tmp" "the Hotwire launcher"
+    check_pin "$tmp" "$PIN_LAUNCHER" "the Hotwire launcher"
+    text="$(cat "$tmp")"; rm -f "$tmp"
+    local key val
+    for key in STEAM_BRANCH SERVER_PORT SERVER_QUERYPORT RCON_PORT INSTALL_FRAMEWORK SERVER_SEED; do
+        case "$key" in
+            STEAM_BRANCH)      val="$(rec_get branch)"; val="${val:-public}" ;;
+            SERVER_PORT)       val="$PORT_GAME" ;;
+            SERVER_QUERYPORT)  val="$PORT_QUERY" ;;
+            RCON_PORT)         val="$PORT_RCON" ;;
+            INSTALL_FRAMEWORK) val=$((1 - vanilla)) ;;
+            SERVER_SEED)       val="$seed" ;;
+        esac
+        text="$(set_setting "$text" "$key" "$val")" || die "setting $key in the downloaded hotwire.sh" \
+            "the line $key=\"...\" is not there exactly once" "nothing was written; please report this"
+    done
+    ( umask 022; printf '%s\n' "$text" > "$tmp" ) && chmod 755 "$tmp" && mv -f "$tmp" "$l" \
+        || die "writing $l" "the write failed" "check free space, then run install again"
+    own "$l"
+    rec_add created "$l"
+    ok "hotwire.sh written$([ "$vanilla" = 1 ] && printf ' for a vanilla server'), ports ${PORT_GAME}/${PORT_QUERY}/${PORT_RCON}"
+    [ -n "$seed" ] && { ok "the map is seed $seed, picked at random for this server"; note "        To play a particular map, change SERVER_SEED in hotwire.sh BEFORE the first start."; }
+    change "created $l (branch, ports$([ -n "$seed" ] && printf ', SERVER_SEED=%s' "$seed")$([ "$vanilla" = 1 ] && printf ', INSTALL_FRAMEWORK=0'))" "delete $l"
+    save_step launcher
+}
+
+# The launcher's own refusals (hotwire.sh: empty, under 8, change_me, a double quote), and what a
+# single-quoted line in a sourced file cannot hold: a single quote, a line break, anything non-ASCII.
+password_problem() {
+    local p="$1"
+    [ -n "$p" ] || { printf 'it is empty'; return; }
+    local LC_ALL=C; [[ "$p" =~ [^\ -~] ]] && { printf 'it has a character that is not a plain letter, digit or keyboard symbol'; return; }
+    [ "$p" != "${p#[[:space:]]}" ] || [ "$p" != "${p%[[:space:]]}" ] && { printf 'it starts or ends with a space'; return; }
+    [ "${#p}" -ge 8 ] || { printf 'it is under 8 characters'; return; }
+    [ "$p" != "change_me" ] || { printf 'it is still the example value, change_me'; return; }
+    [[ "$p" != *'"'* ]] || { printf 'it contains a double quote'; return; }
+    [[ "$p" != *"'"* ]] || { printf 'it contains a single quote'; return; }
+    return 0
+}
+
+# Reads secrets.sh rather than running it: this script is root, and the file belongs to the server's user.
+secrets_problem() {
+    local f="$IROOT/secrets.sh" line val
+    [ -f "$f" ] || { printf 'there is no secrets.sh'; return; }
+    line="$(grep -E '^[[:space:]]*RCON_PASSWORD=' "$f" | tail -1)"
+    [ -n "$line" ] || { printf 'secrets.sh has no RCON_PASSWORD= line'; return; }
+    val="${line#*=}"
+    case "$val" in \'*\') val="${val#\'}"; val="${val%\'}" ;; \"*\") val="${val#\"}"; val="${val%\"}" ;;
+        *'$'*|*'`'*) printf 'secrets.sh works its password out when it runs, which this cannot check'; return ;; esac
+    password_problem "$val"
+}
+
+new_password() {  # 32 of 56 letters and digits without look-alikes: about 185 bits
+    python3 -c 'import secrets; a="ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789"; print("".join(secrets.choice(a) for _ in range(32)))'
+}
+
+read_secret() { local s; { IFS= read -rs s </dev/tty; } 2>/dev/null; printf '\n' >/dev/tty 2>/dev/null; printf '%s' "$s"; }
+
+step_rcon() {
+    step "RCON password"
+    local f="$IROOT/secrets.sh" replacing=0 problem
+    if [ ! -f "$IROOT/hotwire.sh" ]; then note "Skipped: there is no hotwire.sh, so your own start script sets the RCON password."; return 0; fi
+    if [ -f "$f" ]; then
+        problem="$(secrets_problem)"
+        if [ -z "$problem" ]; then ok "secrets.sh is already here, and hotwire.sh will accept its password -- left as it is"; save_step rcon; return 0; fi
+        bad "secrets.sh is here, but $problem -- hotwire.sh will not start the server"
+        confirm "Set a new RCON password in its place?" || { note "Left as it is. Fix $f before starting the server."; return 0; }
+        replacing=1
+    fi
+    why "RCON is remote control of your server: anyone with this password can run commands on it," \
+        "so treat it like this machine's root password. hotwire.sh reads it from secrets.sh, readable" \
+        "only by $IUSER, and it never goes on a command line you type." "" \
+        "Press Enter and a strong one is made for you: 32 random letters and digits, shown once." \
+        "Or type your own -- it is not shown as you type, and you type it twice."
+    local pw first second generated=0
+    while :; do
+        printf '  RCON password (Enter to generate one): '
+        first="$(read_secret)"
+        if [ -z "$first" ]; then pw="$(new_password)"; generated=1; break; fi
+        problem="$(password_problem "$first")"
+        [ -z "$problem" ] || { bad "that will not work: $problem. Try another, or press Enter to generate one."; continue; }
+        printf '  Type it again: '
+        second="$(read_secret)"
+        [ "$first" = "$second" ] || { bad "the two did not match. Try again."; continue; }
+        pw="$first"; break
+    done
+    local previous=""
+    if [ "$replacing" = 1 ]; then previous="$f.backup-$(date '+%Y%m%d-%H%M%S')"; cp -p "$f" "$previous"; fi
+    ( umask 077
+      printf '# The RCON password for this server. RCON is remote control of the machine: treat this\n# like a root password. Never share this file, and never commit it anywhere.\nRCON_PASSWORD='"'"'%s'"'"'\n' "$pw" > "$f.hotwire-tmp" ) \
+        && chmod 600 "$f.hotwire-tmp" && chown "$IUSER:$IUSER" "$f.hotwire-tmp" && mv -f "$f.hotwire-tmp" "$f" \
+        || { rm -f "$f.hotwire-tmp"; die "writing $f" "the write failed" "run install again"; }
+    rec_add created "$f"
+    ok "secrets.sh written, readable only by $IUSER"
+    if [ -n "$previous" ]; then change "replaced $f (the RCON password)" "copy $previous back over it"
+    else change "created $f (the RCON password)" "delete it; hotwire.sh will not start without one"; fi
+    if [ "$generated" = 1 ]; then
+        say ""; say "  Your RCON password:"; say ""; say "      ${C_YEL}$pw${C_OFF}"; say ""
+        note "  It is also in $f, which only $IUSER and root can read."
+        printf '  Save it somewhere safe, then press Enter '; read_tty >/dev/null; say ""
+    else
+        note "  Your password was not shown."
+    fi
+    save_step rcon
+}
+
+step_plugin() {
+    step "Hotwire plugin"
+    local dir="$IROOT/oxide/plugins" p="$IROOT/oxide/plugins/Hotwire.cs"
+    if [ -f "$p" ]; then ok "oxide/plugins/Hotwire.cs is already here -- kept"; save_step plugin; return 0; fi
+    if ! { done_step oxide && [ -f "$(oxide_dll)" ]; }; then note "Skipped: the plugin runs on Oxide, which is not installed."; return 0; fi
+    why "The Hotwire plugin adds scheduled, announced restarts: it counts down in game, saves, and hands" \
+        "over to hotwire.sh. It is also what reports to Hotwire Panel, once you connect. Every schedule" \
+        "ships switched off."
+    [ -f "$IROOT/hotwire.sh" ] || { warn "there is no hotwire.sh: a scheduled restart quits the server, and your own start"; note "        script has to start it again."; }
+    offer plugin "Install the Hotwire plugin?" || { note "Skipped. Run install again any time to add it."; return 0; }
+    as_user mkdir -p "$dir"
+    fetch "$PLUGIN_URL" "$p.hotwire-tmp" "the Hotwire plugin"
+    check_pin "$p.hotwire-tmp" "$PIN_PLUGIN" "the Hotwire plugin"
+    local v; v="$(grep -oE '\[Info\("Hotwire", *"[^"]*", *"[^"]+"\)\]' "$p.hotwire-tmp" | grep -oE '"[0-9][^"]*"\)' | tr -d '")')"
+    [ -n "$v" ] || { rm -f "$p.hotwire-tmp"; die "checking the downloaded Hotwire.cs" "it is not the Hotwire plugin" "nothing was written; please report this"; }
+    mv -f "$p.hotwire-tmp" "$p"; own "$p"
+    rec_add created "$p"
+    ok "Hotwire plugin $v written to oxide/plugins"
+    note "        Oxide compiles it the first time the server starts."
+    change "created $p (Hotwire $v)" "delete $p"
+    save_step plugin
+}
+
+# One unit per server folder, so two servers on one machine are two services.
+unit_name() { printf 'rust-%s.service' "$(basename "$IROOT" | tr -c 'A-Za-z0-9_.-' '-' | sed 's/-*$//')"; }
+
+step_service() {
+    step "Service"
+    local unit; unit="$(unit_name)"
+    local path="/etc/systemd/system/$unit"
+    if [ -f "$path" ]; then ok "$unit is already set up -- kept"; save_step service; return 0; fi
+    if [ ! -f "$IROOT/hotwire.sh" ]; then note "Skipped: there is no hotwire.sh for a service to start."; return 0; fi
+    why "A systemd service starts hotwire.sh when this machine boots, as $IUSER, and keeps its output in" \
+        "the journal. It is switched on for boot, and NOT started now." "" \
+        "  start:  sudo systemctl start ${unit%.service}" \
+        "  stop:   sudo systemctl stop ${unit%.service}" \
+        "  watch:  sudo journalctl -u ${unit%.service} -f" "" \
+        "Restart=on-failure, not always: hotwire.sh restarts the server itself, and stops on purpose" \
+        "after a crash streak -- 'always' would undo that protection."
+    offer service "Start this server with the machine?" || { note "Skipped. Start it with: sudo -u $IUSER $IROOT/hotwire.sh"; return 0; }
+    cat > "$path.hotwire-tmp" <<UNIT
+# Written by hotwire-setup for the Rust server in $IROOT.
+[Unit]
+Description=Rust dedicated server ($IROOT)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=$IUSER
+WorkingDirectory=$IROOT
+ExecStart=$IROOT/hotwire.sh
+Restart=on-failure
+RestartSec=10
+LimitNOFILE=65535
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+    mv -f "$path.hotwire-tmp" "$path"
+    systemctl daemon-reload && systemctl enable "$unit" >/dev/null 2>&1 \
+        || die "switching on $unit" "systemctl could not enable it" "see 'systemctl status $unit'"
+    ok "$unit is set up and switched on for boot (not started)"
+    change "created $path and enabled it" "sudo systemctl disable --now ${unit%.service} && sudo rm $path && sudo systemctl daemon-reload"
+    save_step service
+}
+
+step_firewall() {
+    step "Firewall"
+    if [ "$(ufw_state)" != active ]; then note "ufw is not on; nothing to open here. If your host has a firewall, open UDP ${PORT_GAME:-28015} and ${PORT_QUERY:-28017} there."; return 0; fi
+    [ -n "$PORT_GAME" ] || choose_ports
+    why "ufw is on, so players reach this server only through ports it lets in:" \
+        "  UDP $PORT_GAME   the game" \
+        "  UDP $PORT_QUERY   the server browser -- without it the server is invisible" \
+        "" "RCON (TCP $PORT_RCON) is deliberately not opened: it is remote control of the server. Reach it" \
+        "over SSH, or allow only your own address: sudo ufw allow from YOUR.IP to any port $PORT_RCON proto tcp"
+    local need=()
+    ufw_allows "$PORT_GAME" udp || need+=("$PORT_GAME")
+    ufw_allows "$PORT_QUERY" udp || need+=("$PORT_QUERY")
+    [ "${#need[@]}" -gt 0 ] || { ok "both ports are already open"; return 0; }
+    confirm "Open UDP ${need[*]} in ufw?" || { note "Left as it is. Players cannot reach the server until they are open."; return 0; }
+    local p
+    for p in "${need[@]}"; do
+        ufw allow "$p/udp" comment "Rust ($IROOT)" >/dev/null && ok "opened UDP $p" \
+            && change "opened UDP $p in ufw" "sudo ufw delete allow $p/udp"
+    done
+}
+
+step_panel() {
+    step "Hotwire Panel"
+    if [ -f "$(state_file "$IROOT")" ]; then ok "connected already -- 'status' shows the details"; return 0; fi
+    why "Hotwire Panel shows this server from anywhere: whether it is up, its players, its logs, and the" \
+        "restarts and updates it has done. The server never needs it -- if the panel is slow or gone," \
+        "the server still starts, restarts and updates." "" \
+        "You need a free account and a code from it; this waits while you get one."
+    offer panel "Connect this server to Hotwire Panel?" || { note "Skipped. Connect any time: sudo -u $IUSER $IROOT/hotwire-setup.sh connect"; return 0; }
+    # connect is its own run, as the server's user, so a mistyped or expired code ends only that run and
+    # never the finished install around it.
+    local args=(connect --root "$IROOT" --yes)
+    [ -n "$PANEL" ] && args+=(--panel "$PANEL")
+    if as_user bash "$IROOT/hotwire-setup.sh" "${args[@]}"; then save_step panel
+    else warn "not connected this time. Try again any time: sudo -u $IUSER $IROOT/hotwire-setup.sh connect"; fi
+}
+
+# The setup script stays in the server folder, for doctor, connect, status and detach later.
+place_setup() {
+    local dst="$IROOT/hotwire-setup.sh" src="${BASH_SOURCE[0]:-}"
+    [ -f "$dst" ] && return 0
+    if [ -n "$src" ] && [ -f "$src" ] && head -c 4096 "$src" | grep -q 'hotwire-setup'; then
+        cp "$src" "$dst.hotwire-tmp"
+    else
+        # Run through a pipe (curl | bash): there is no file to copy, so the same script is fetched.
+        fetch "$SETUP_URL" "$dst.hotwire-tmp" "hotwire-setup.sh"
+        head -c 4096 "$dst.hotwire-tmp" | grep -q 'hotwire-setup' || { rm -f "$dst.hotwire-tmp"; warn "the fetched hotwire-setup.sh is not this script; not kept"; return 0; }
+    fi
+    chmod 755 "$dst.hotwire-tmp" && mv -f "$dst.hotwire-tmp" "$dst" && own "$dst" && rec_add created "$dst"
+    ok "hotwire-setup.sh kept in $IROOT, for doctor, connect and detach later"
+    change "created $dst" "delete it"
+}
+
+show_finish() {
+    local ready=0
+    if [ "${S[rust_done]}" = 1 ] && { { [ "${S[launcher]}" = 1 ] && [ -z "${S[rcon]}" ]; } || [ "${S[launcher_no]}" = 1 ]; }; then ready=1; fi
+    if [ "$ready" = 1 ]; then box "$C_GRN" "A L L   S Y S T E M S   G O" "" "This Rust server is ready to start."
+    else box "$C_YEL" "N O T   R E A D Y   Y E T" "" "The pre-flight lines above say what is left."; fi
+    say ""
+    if [ "${S[launcher]}" = 1 ]; then
+        say "  ${C_BLD}Next:${C_OFF}"
+        say "    1. Name your server. Open hotwire.sh and fill in SERVER_HOSTNAME and SERVER_DESCRIPTION"
+        say "       (and SERVER_MAXPLAYERS if you want); each setting is explained beside it:"
+        say "         sudo -u $IUSER nano $IROOT/hotwire.sh"
+        if [ "${S[service]}" = 1 ]; then
+            say "    2. Start it:   sudo systemctl start ${S[unit]%.service}"
+            say "       Watch it:   sudo journalctl -u ${S[unit]%.service} -f"
+        else
+            say "    2. Start it:   sudo -u $IUSER $IROOT/hotwire.sh"
+        fi
+        say ""
+        note "  The first start takes several minutes while the map generates."
+    elif [ "${S[rust]}" = 1 ]; then
+        say "  Start the server with your own start script. hotwire.sh is here any time: run install again."
+    fi
+    note "  Run install again any time; the pre-flight decides what is left to do."
+    [ -f "$(changes_log)" ] && note "  Every change install has made, and how to undo it: $(changes_log)"
+}
+
+# ------------------------------------------------------------- the folder --
+choose_folder() {
+    if [ -n "$ROOT" ]; then IROOT="$ROOT"
+    elif [ -f "$(pwd)/hotwire/install.json" ] || [ -x "$(pwd)/RustDedicated" ]; then IROOT="$(pwd)"
+    else IROOT="/home/$IUSER/server"; fi
+    case "$IROOT" in /*) ;; *) IROOT="$(pwd)/$IROOT" ;; esac
+    IROOT="${IROOT%/}"
+    # Somewhere a server belongs: not the system's own folders, and never a path the launcher's
+    # settings or a unit file could misread.
+    case "$IROOT" in
+        /|/bin*|/boot*|/dev*|/etc*|/lib*|/proc*|/root|/run*|/sbin*|/sys*|/tmp*|/usr*|/var/lib*|/home)
+            die "installing into $IROOT" "that is one of the system's own folders" "choose a folder of its own, for example /home/$IUSER/server" ;;
+    esac
+    [[ "$IROOT" =~ ^[A-Za-z0-9_./-]+$ ]] || die "installing into $IROOT" "the path has a space or a symbol in it" \
+        "choose a folder whose name is only letters, digits, dot, dash and underscore"
+    # A guest does not touch the resident's server: a Rust server this script did not install is refused.
+    if [ -e "$IROOT/RustDedicated" ] && [ ! -f "$IROOT/hotwire/install.json" ]; then
+        die "installing into $IROOT" "a Rust server is already there, installed some other way" \
+            "this installer never changes a server it did not install. To connect that one: $0 connect --root $IROOT"
+    fi
+    if [ -d "$IROOT" ] && [ ! -f "$IROOT/hotwire/install.json" ] && [ -n "$(ls -A "$IROOT" 2>/dev/null)" ]; then
+        warn "$IROOT is not empty, and nothing here was installed by this script"
+        confirm "Install into it anyway? Nothing already in it is changed or removed." \
+            || die "installing into $IROOT" "you chose not to use a folder with other things in it" "run install again with --root and an empty folder"
+    fi
+}
+
+registry_add() {
+    mkdir -p "$(dirname "$REGISTRY")"
+    grep -qx "$IROOT" "$REGISTRY" 2>/dev/null || printf '%s\n' "$IROOT" >> "$REGISTRY"
+}
+
+cmd_install() {
+    [ "$(id -u)" = 0 ] || die "installing a Rust server" "this is not running as root" \
+        "run it with sudo: it installs packages, adds a user and a service. The server itself never runs as root."
+    ASSUME_YES=0   # install asks at every step; --yes is for connect and detach
+    [ -n "$USER_OPT" ] && IUSER="$USER_OPT"
+    [[ "$IUSER" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]] && [ "$IUSER" != root ] || die "choosing the account the server runs as" \
+        "'$IUSER' is not a usable account name" "pass --user with a lower-case name, not root"
+    command -v python3 >/dev/null 2>&1 || die "starting install" "python3 is not installed" "sudo apt install python3, then run install again"
+    command -v flock >/dev/null 2>&1 || die "starting install" "flock (util-linux) is not installed" "sudo apt install util-linux, then run install again"
+    os_ok || die "installing on $(os_name)" "this installer is written for Ubuntu" "follow the guide by hand: $GUIDE_URL"
+
+    # One install at a time on a machine: two would run two SteamCMDs over the same files.
+    exec 8>/run/lock/hotwire-setup.lock
+    flock -n 8 || die "starting install" "another hotwire-setup install is running on this machine" "wait for it to finish, then run install again"
+
+    # Ctrl+C stops the install, and says so. Without this, stopping SteamCMD mid-download read as
+    # SteamCMD failing, and the retry started the download again under the person trying to stop it.
+    trap 'printf "\n"; warn "Stopped. Nothing is half-written: run install again to carry on from here."; exit 130' INT TERM
+
+    banner
+    choose_folder
+    # The record lives in the folder; until the user exists, a first run keeps nothing there.
+    if id "$IUSER" >/dev/null 2>&1; then as_user mkdir -p "$IROOT/hotwire" 2>/dev/null || true; fi
+    find "$IROOT" -maxdepth 4 -name '*.hotwire-tmp' -delete 2>/dev/null
+
+    gather
+    show_state "Pre-flight"
+    plan
+    local names; names="$(declined_names)"
+    if [ -n "$names" ]; then
+        say ""; note "  Left out, as you chose: $names"
+        if confirm "Ask about those again?"; then
+            rec_py 'r["declined"] = []; out["write"] = 1' >/dev/null 2>&1; gather; plan
+        fi
+    fi
+    show_plan
+    if [ "${#PLAN[@]}" -eq 0 ]; then
+        say ""; ok "Nothing to do: this server is installed."; say ""; show_finish; return 0
+    fi
+    [ "${S[running]}" = 1 ] && { in_plan rust || in_plan oxide; } && die "installing into $IROOT" "the server in this folder is running" "stop it first: sudo systemctl stop $(unit_name)"
+    say ""
+    confirm_default_yes "Go ahead?" || { say "  Nothing was changed."; return 0; }
+    countdown 5 "Starting"
+
+    STEP_TOTAL="${#PLAN[@]}"
+    in_plan clock    && step_clock
+    in_plan packages && step_packages
+    in_plan user     && step_user
+    # From here the folder exists and belongs to the server's user, so the record can be kept.
+    as_user mkdir -p "$IROOT/hotwire" || die "creating $IROOT as $IUSER" "$IUSER could not create it" \
+        "check that $(dirname "$IROOT") belongs to $IUSER: sudo chown $IUSER:$IUSER $(dirname "$IROOT")"
+    [ -f "$(rec_file)" ] || { rec_set folder "$IROOT"; rec_set user "$IUSER"; }
+    flush_changes
+    registry_add
+    in_plan swap     && step_swap
+    in_plan rust     && step_rust
+    in_plan oxide    && step_oxide
+    in_plan launcher && step_launcher
+    in_plan rcon     && step_rcon
+    in_plan plugin   && step_plugin
+    place_setup
+    in_plan service  && step_service
+    in_plan firewall && step_firewall
+    in_plan panel    && step_panel
+
+    gather
+    show_state "Post-flight"
+    show_finish
 }
 
 # ---------------------------------------------------------------- help ----
 cmd_help() {
     cat <<'HELP'
-hotwire-setup -- connect a Rust server to Hotwire Panel
+hotwire-setup -- install a Rust server, and connect it to Hotwire Panel
 
-  install   Not on Linux yet -- prints where the guide is.
+  install   A Rust server on Ubuntu, from nothing: SteamCMD, Rust, Oxide, the start
+            script, the RCON password, the plugin, a service, and the panel last.
+            Run with sudo. Checks first, asks before every step, safe to run again.
   doctor    Check this machine: tools, signing, your server, the panel, the clock.
             Read-only, changes nothing, safe any time.
   connect   Connect to the panel. Asks for the code; no need to type it here.
@@ -663,9 +1780,11 @@ hotwire-setup -- connect a Rust server to Hotwire Panel
   detach    Disconnect. Leaves the server running exactly as it is.
 
 Options
-  --root DIR    The Rust server directory (default: found from the current one)
+  --root DIR    The Rust server directory (default: found from the current one;
+                for install, /home/<user>/server)
+  --user NAME   install: the account the server runs as (default: rust)
   --panel URL   The panel to talk to (default: recorded at connect)
-  --yes, -y     Do not ask for confirmation (for unattended runs)
+  --yes, -y     connect and detach: do not ask for confirmation (install always asks)
 
 Connecting is optional and reversible. Your server does not need a panel to run.
 HELP
