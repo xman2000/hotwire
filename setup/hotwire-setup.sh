@@ -192,8 +192,11 @@ panel_url() {  # explicit flag > what we recorded at enrollment > the default. V
 # Reads one line from the terminal, whatever stdin is doing. Silent when there is no terminal at
 # all (a cron, a pipe, a CI runner): the caller then sees an empty answer and says something useful,
 # rather than bash printing "/dev/tty: No such device or address" at someone.
-read_tty() {
-    { read -r __tty_line </dev/tty && printf '%s' "$__tty_line"; } 2>/dev/null || true
+read_tty() {  # sets TTY_LINE
+    # Read here, in this shell, never inside $( ): run as 'curl ... | sudo bash', a read from a command
+    # substitution is stopped by the terminal (seen with Ubuntu's sudo-rs) and install hangs at its first question.
+    TTY_LINE=""
+    { IFS= read -r TTY_LINE </dev/tty; } 2>/dev/null || TTY_LINE=""
 }
 
 # For installing or connecting what someone downloaded this for: Enter means yes. No terminal at all
@@ -209,7 +212,7 @@ confirm_default_yes() {
 confirm() {  # never proceed on silence; an unattended run must pass --yes
     [ "$ASSUME_YES" = "1" ] && { note "  (--yes) $1"; return 0; }
     printf '  %s [y/N] ' "$1"
-    local a; a="$(read_tty)"
+    local a; read_tty; a="$TTY_LINE"
     case "$a" in [yY]*) return 0 ;; *) return 1 ;; esac
 }
 
@@ -395,7 +398,7 @@ cmd_connect() {
         note "  It is good for one hour and one machine. Nothing is written until you confirm."
         say ""
         printf "  Paste the code here: "
-        CODE="$(read_tty | tr -d '[:space:]')"
+        read_tty; CODE="$(printf '%s' "$TTY_LINE" | tr -d '[:space:]')"
         say ""
     fi
 
@@ -1222,7 +1225,7 @@ choose_branch() {
     [ -n "$chosen" ] && { BRANCH="$chosen"; return 0; }
     say "  Which Steam branch? ${C_BLD}public${C_OFF} is the live game; 'staging' is Facepunch's test build."
     printf '  Branch [public]: '
-    local a; a="$(read_tty | tr -d '[:space:]')"
+    local a; read_tty; a="$(printf '%s' "$TTY_LINE" | tr -d '[:space:]')"
     BRANCH="${a:-public}"
     [[ "$BRANCH" =~ ^[A-Za-z0-9_.-]{1,64}$ ]] || die "choosing a Steam branch" "'$BRANCH' is not a branch name" "run install again and press Enter for public"
     rec_set branch "$BRANCH"
@@ -1466,7 +1469,11 @@ new_password() {  # 32 of 56 letters and digits without look-alikes: about 185 b
     python3 -c 'import secrets; a="ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789"; print("".join(secrets.choice(a) for _ in range(32)))'
 }
 
-read_secret() { local s; { IFS= read -rs s </dev/tty; } 2>/dev/null; printf '\n' >/dev/tty 2>/dev/null; printf '%s' "$s"; }
+read_secret() {  # sets TTY_LINE, not echoed; in this shell for the same reason as read_tty
+    TTY_LINE=""
+    { IFS= read -rs TTY_LINE </dev/tty; } 2>/dev/null || TTY_LINE=""
+    printf '\n' >/dev/tty 2>/dev/null
+}
 
 step_rcon() {
     step "RCON password"
@@ -1487,12 +1494,12 @@ step_rcon() {
     local pw first second generated=0
     while :; do
         printf '  RCON password (Enter to generate one): '
-        first="$(read_secret)"
+        read_secret; first="$TTY_LINE"
         if [ -z "$first" ]; then pw="$(new_password)"; generated=1; break; fi
         problem="$(password_problem "$first")"
         [ -z "$problem" ] || { bad "that will not work: $problem. Try another, or press Enter to generate one."; continue; }
         printf '  Type it again: '
-        second="$(read_secret)"
+        read_secret; second="$TTY_LINE"
         [ "$first" = "$second" ] || { bad "the two did not match. Try again."; continue; }
         pw="$first"; break
     done
@@ -1509,7 +1516,7 @@ step_rcon() {
     if [ "$generated" = 1 ]; then
         say ""; say "  Your RCON password:"; say ""; say "      ${C_YEL}$pw${C_OFF}"; say ""
         note "  It is also in $f, which only $IUSER and root can read."
-        printf '  Save it somewhere safe, then press Enter '; read_tty >/dev/null; say ""
+        printf '  Save it somewhere safe, then press Enter '; read_tty; say ""
     else
         note "  Your password was not shown."
     fi
