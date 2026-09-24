@@ -25,6 +25,14 @@ sit above a launcher `1.1.7`. Read the label, not the number.
 at the top of the file — it is a comment, not something it echoes, so read it
 rather than watch for it.
 
+## 1.1.40 — plugin — 2026-09-23
+
+**Less work for the garbage collector.**
+
+- The heartbeat no longer re-reads and re-hashes the Hotwire launcher script every 30 seconds to confirm it is
+  unmodified. The hash is kept and worked out again only when the launcher file changes. Each heartbeat used to create
+  about 460 KB of garbage for the game's collector, over a gigabyte a day; now it creates next to none.
+
 ## 1.1.39 — plugin — 2026-09-21
 
 **Live players on the panel's map.**

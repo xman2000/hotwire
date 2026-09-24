@@ -17,7 +17,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Hotwire", "xman2000", "1.1.39")]
+    [Info("Hotwire", "xman2000", "1.1.40")]
     [Description("Scheduled restarts and updates. Announces, counts down, writes a flag, quits.")]
     internal class Hotwire : CovalencePlugin
     {
@@ -3046,7 +3046,7 @@ namespace Oxide.Plugins
             try
             {
                 if (!string.IsNullOrEmpty(path) && !string.IsNullOrEmpty(declaredHash) && File.Exists(path))
-                    verified = string.Equals(ComputeLauncherHash(path), declaredHash, StringComparison.OrdinalIgnoreCase);
+                    verified = string.Equals(CachedLauncherHash(path), declaredHash, StringComparison.OrdinalIgnoreCase);
             }
             catch { }
 
@@ -3058,6 +3058,28 @@ namespace Oxide.Plugins
                 ["capabilities"] = caps,
                 ["verified"] = verified,
             };
+        }
+
+        // The launcher's hash, worked out again only when the file changes (its path, size or last write time).
+        // Hashing it on every heartbeat created about 460 KB of garbage each time for the game's collector to clear.
+        private string _launcherHashPath;
+        private long _launcherHashLength = -1;
+        private DateTime _launcherHashWritten;
+        private string _launcherHash;
+
+        private string CachedLauncherHash(string path)
+        {
+            var info = new FileInfo(path);
+            var length = info.Length;
+            var written = info.LastWriteTimeUtc;
+            if (_launcherHash == null || path != _launcherHashPath || length != _launcherHashLength || written != _launcherHashWritten)
+            {
+                _launcherHash = ComputeLauncherHash(path);
+                _launcherHashPath = path;
+                _launcherHashLength = length;
+                _launcherHashWritten = written;
+            }
+            return _launcherHash;
         }
 
         // Must match tools/launcher-hash.sh byte for byte: drop the SETTINGS block (both
