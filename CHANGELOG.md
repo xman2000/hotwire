@@ -25,6 +25,42 @@ sit above a launcher `1.1.7`. Read the label, not the number.
 at the top of the file — it is a comment, not something it echoes, so read it
 rather than watch for it.
 
+## 1.1.41 — plugin — 2026-09-25
+
+**Backups, done with the launcher.**
+
+- A new `Backups` section in `Hotwire.json`, off by default. When it is on, the account's plan includes backups and
+  the server was started by a Hotwire launcher that can take them (Linux launcher 1.1.0 and later), the server is
+  backed up on a schedule: every 6 hours by default.
+- A backup starts with Rust's own save. Then, a few milliseconds a frame, the plugin copies what only the game can copy
+  safely: each game database (blueprints, players, clans, teams, sign images) through the game's own connection, so the
+  copy is consistent even while players play, and the server's cfg folder and Oxide's config, data and language files.
+  The launcher does the rest outside the game: the save, the plugins and the map, compression, a check that the archive
+  reads back, and rotation. The plugin starts no program itself.
+- Backups are written to `backup/<save folder name>/` in the server's folder, and never leave the machine. The map is
+  kept once per map rather than in every backup. Hotwire's own data, which holds this server's panel keys, is never
+  included. Rust's own `server.backup` folders (`backup/0` to `backup/3`) are left alone.
+- Kept by default: everything from the last 24 hours, one a day for 7 days, one a week for 4 weeks, one a month for 3
+  months, and the last backup before each of the last 3 wipes. A backup is refused rather than let the disk fall below
+  5 GB free, and a size cap can be set.
+- A wipe asks a launcher that can take backups to back up the stopped server first, instead of running Rust's
+  `server.backup` (which copies the whole save folder, uncompressed, on the game's main thread). An older launcher still
+  gets `server.backup`.
+- `hotwire backup` says where backups stand; `hotwire backup now` takes one.
+- Every run is reported to the panel as numbers and short codes; the full account of each is in
+  `backup/<save folder name>/backup.log`.
+
+## 1.1.0-linux — launcher (Linux) — 2026-09-25
+
+**Backups.**
+
+- The launcher now carries out the backups the plugin asks for, beside the running server at the lowest CPU and disk
+  priority: `tar` and `zstd`, a check that the archive reads back, a SHA-256, and rotation. A backup that fails says why
+  in its result and in `backup.log`, and never stops the server starting.
+- Before an update, and before a wipe, it backs up the stopped server on its own.
+- A new setting, `BACKUPS` (default `1`): `0` means this launcher never backs up, whatever is asked.
+- Needs `zstd` (installed with Ubuntu; `hotwire-setup.sh` installs it if missing).
+
 ## 1.1.14 — launcher (Windows) — 2026-09-25
 
 **Wipes and permanent settings from the panel, on Windows.**

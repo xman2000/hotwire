@@ -17,7 +17,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Hotwire", "xman2000", "1.1.40")]
+    [Info("Hotwire", "xman2000", "1.1.41")]
     [Description("Scheduled restarts and updates. Announces, counts down, writes a flag, quits.")]
     internal class Hotwire : CovalencePlugin
     {
@@ -98,6 +98,9 @@ namespace Oxide.Plugins
 
             [JsonProperty("Panel")]
             public PanelSettings Panel = new PanelSettings();
+
+            [JsonProperty("Backups")]
+            public BackupSettings Backups = new BackupSettings();
         }
 
         // Reporting to a Hotwire panel. Nothing is sent anywhere unless this
@@ -630,6 +633,7 @@ namespace Oxide.Plugins
         private string _wipeBlueprints = "keep";
         private string _wipeCycle = "";
         private bool _wipeBackup;
+        private bool _wipeBackupByLauncher;
         private string _countdownKey = "";
         private readonly HashSet<int> _announced = new HashSet<int>();
 
@@ -714,6 +718,7 @@ namespace Oxide.Plugins
 
             PrepareSession(initial);
             StartPanelReporting();
+            StartBackups();
         }
 
         private void Unload()
@@ -727,6 +732,7 @@ namespace Oxide.Plugins
             _frameworkTimer?.Destroy();
             _panelTimer?.Destroy();
             _sessionTimer?.Destroy();
+            _backupTimer?.Destroy();
 
             // Player events still queued would go with the plugin: keep them to send after the reload.
             try
@@ -1524,9 +1530,13 @@ namespace Oxide.Plugins
             // the safe direction: no wipe rather than a half one.
             if (_countdownIsWipe)
             {
-                if (_wipeBackup)
+                // A launcher that takes backups backs up the stopped server before it wipes (asked for in the flag).
+                // Only an older launcher falls back to Rust's server.backup, which copies the whole save folder on
+                // the main thread, uncompressed.
+                _wipeBackupByLauncher = _wipeBackup && LauncherCan("backup");
+                if (_wipeBackup && !_wipeBackupByLauncher)
                 {
-                    try { server.Command("server.backup"); Puts("Ran server.backup before the wipe."); }
+                    try { server.Command("server.backup"); Puts("Ran server.backup before the wipe (this launcher cannot take backups itself)."); }
                     catch (Exception ex) { PrintWarning($"server.backup failed before the wipe: {ex.Message}. Continuing."); }
                 }
                 WriteWipeFlag();
@@ -1622,6 +1632,7 @@ namespace Oxide.Plugins
             body.Append("blueprints ").Append(_wipeBlueprints).Append('\n');
             body.Append("cycle ").Append(_wipeCycle).Append('\n');
             body.Append("expires ").Append(expires).Append('\n');
+            if (_wipeBackupByLauncher) body.Append("backup 1").Append('\n');
             var path = Path.Combine(root, name);
             try
             {
@@ -2316,6 +2327,15 @@ namespace Oxide.Plugins
             {
                 if (now >= _scheduleCheckDue) { _scheduleCheckDue = now.AddSeconds(30); RefreshSchedule(); }
                 if (_scheduleJson != null && _scheduleJson != _scheduleSentJson && PolicyAllowsKind("schedule")) { SendSchedule(); return; }
+            }
+
+            // Backups: the settings when they change, then each run's result, oldest first.
+            if (now >= _backupConfigCheckDue) { _backupConfigCheckDue = now.AddSeconds(30); RefreshBackupConfig(); }
+            if (_backupConfigJson != null && _backupConfigJson != _backupConfigSentJson && PolicyAllowsKind("backup_config")) { SendBackupConfig(); return; }
+            if (now >= _backupResultsDue && PolicyAllowsKind("backup"))
+            {
+                _backupResultsDue = now.AddSeconds(15);
+                if (SendNextBackupResult()) return;
             }
 
             if (_config.Panel.AcceptCommands && PolicyAllowsCommands() && now >= _commandsDue) { PollCommands(); return; }
@@ -3013,6 +3033,7 @@ namespace Oxide.Plugins
                 ["commands"] = _config.Panel.AcceptCommands,
                 ["bans"] = _config.Panel.EnforceBans,
                 ["positions"] = _config.Panel.SendPositions,
+                ["backups"] = _config.Backups.Enabled,
             };
         }
 
@@ -4778,7 +4799,7 @@ namespace Oxide.Plugins
                     _wipeSize = size;
                     _wipeBlueprints = bp;
                     _wipeCycle = cycle;
-                    _wipeBackup = args["backup"] == null || BoolArg(args, "backup");   // default: back up first
+                    _wipeBackup = args["backup"] == null ? _config.Backups.BeforeWipe : BoolArg(args, "backup");   // default: the config's "Back up before a wipe"
 
                     var askedW = 0;
                     var delayW = args["delay"];
@@ -4971,6 +4992,10 @@ namespace Oxide.Plugins
                     result = spoke.Count == 0 ? said : said + " -- server says: " + string.Join("; ", spoke.ToArray());
                     return;
                 }
+                case "backup.run":
+                case "backup.configure":
+                    RunBackupCommand(verb, args, out status, out result);
+                    return;
                 default:
                     status = "refused";
                     result = verb == "update"
@@ -6625,6 +6650,907 @@ namespace Oxide.Plugins
             }
         }
 
+        #region Backups
+
+        // Backups are a job shared with the Hotwire launcher, split by what each
+        // side can do safely. Only the game can copy its own files consistently:
+        // Rust writes the save and the plugins' data files on the main thread and
+        // keeps its databases open with no locks another program can see. So this
+        // plugin runs Rust's save, then, on the main thread and one small step per
+        // frame, snapshots each game database through the game's own connection
+        // (SQLite's VACUUM INTO) and copies the config and data files into a
+        // staging folder. Then it writes BACKUP.flag and carries on. The launcher
+        // does everything heavy with the system's tools at the lowest priority --
+        // the save itself, compression, verification, rotation -- and leaves a
+        // result file that this plugin reads and reports. This plugin starts no
+        // process: it writes files, as it always has.
+        //
+        // Nothing here can stop the server: a backup that cannot run says why, in
+        // the console, in backup/<identity>/backup.log and to the panel.
+
+        private const string BackupDataFile = "Hotwire/backup_state";
+        private const string BackupFlagName = "BACKUP.flag";
+        private const int BackupFrameBudgetMs = 4;               // main-thread time per frame, at least one step
+        private const int BackupLauncherAnswerMinutes = 10;      // the flag should be taken within seconds
+        private const int BackupLauncherFinishMinutes = 60;      // and finished well within the hour
+        private const int BackupPlanMemoryDays = 30;             // how long the last "the plan includes backups" holds offline
+
+        private class BackupSettings
+        {
+            // Off until turned on here or from the panel. Backups also need the
+            // Hotwire launcher (it does the compressing), and the panel's plan to
+            // include them. They are written to backup/<save folder name>/ in the
+            // server's folder, never anywhere else.
+            [JsonProperty("Back up this server")]
+            public bool Enabled = false;
+
+            // The panel may change these settings, always with the settings it
+            // last saw, so a change made here is never silently overwritten.
+            // Off leaves them editable only in this file.
+            [JsonProperty("Accept backup settings from the panel")]
+            public bool AcceptPanelChanges = true;
+
+            [JsonProperty("Back up every this many hours")]
+            public int IntervalHours = 6;
+
+            // The save and the game's databases (blueprints, players, clans,
+            // teams, sign images).
+            [JsonProperty("Back up the world")]
+            public bool World = true;
+
+            // The map file never changes within a wipe, so it is kept once per map
+            // rather than in every backup. Without it, restoring means the game
+            // generates the map again, which takes minutes.
+            [JsonProperty("Keep the map file, once per map")]
+            public bool Map = true;
+
+            // The server's cfg folder (owners, moderators, bans, serverauto.cfg)
+            // and the launcher's settings.
+            [JsonProperty("Back up the server config")]
+            public bool Config = true;
+
+            // Plugins, their config, their data and their language files.
+            // Hotwire's own data (it holds this server's panel keys) is never included.
+            [JsonProperty("Back up Oxide")]
+            public bool Oxide = true;
+
+            [JsonProperty("Keep every backup from the last this many hours")]
+            public int KeepRecentHours = 24;
+
+            [JsonProperty("Keep one a day for this many days")]
+            public int KeepDaily = 7;
+
+            [JsonProperty("Keep one a week for this many weeks")]
+            public int KeepWeekly = 4;
+
+            [JsonProperty("Keep one a month for this many months")]
+            public int KeepMonthly = 3;
+
+            // The last backup before a wipe is kept apart from the rotation.
+            [JsonProperty("Keep the last backup before each of this many wipes")]
+            public int KeepWipes = 3;
+
+            [JsonProperty("Largest total size of the backups in MB (0 = no limit)")]
+            public int MaxTotalMb = 0;
+
+            // A backup is refused, and reported, rather than fill the disk.
+            [JsonProperty("Never back up with less than this many MB free")]
+            public int MinFreeMb = 5120;
+
+            // Taken by the launcher with the server stopped, before it updates.
+            [JsonProperty("Back up before an update")]
+            public bool BeforeUpdate = true;
+
+            // What a wipe from the panel does when it does not say.
+            [JsonProperty("Back up before a wipe")]
+            public bool BeforeWipe = true;
+
+            // A name the panel gives a set of settings it applies to several
+            // servers. Only shown; it changes nothing here.
+            [JsonProperty("Profile")]
+            public string Profile = "";
+        }
+
+        private class BackupState
+        {
+            public DateTime? LastStartUtc;
+            public DateTime? LastSuccessUtc;
+            public string LastRun;
+            public string LastStatus;
+            public string LastCode;
+            public bool PlanAllows;
+            public DateTime? PlanCheckedUtc;
+            public BackupRunTimings Pending;
+            public Dictionary<string, BackupRunTimings> Unreported = new Dictionary<string, BackupRunTimings>();
+        }
+
+        // What only the plugin measured about a run, kept until its result is reported.
+        private class BackupRunTimings
+        {
+            public string Run;
+            public string Trigger;
+            public DateTime StartedUtc;
+            public DateTime? FlaggedUtc;
+            public long SaveMs;
+            public long SnapshotMs;
+            public long MaxFrameMs;
+            public int Steps;
+            public string Profile;
+        }
+
+        private BackupState _backup = new BackupState();
+        private Timer _backupTimer;
+        private Queue<KeyValuePair<string, Action>> _backupSteps;
+        private BackupRunTimings _backupRunning;
+        private string _backupStaging;
+        private string _backupConfWritten;
+        private string _backupConfigJson, _backupConfigSentJson;
+        private DateTime _backupConfigCheckDue = DateTime.MinValue;
+        private DateTime _backupResultsDue = DateTime.MinValue;
+        private string _backupProblem;
+        private DateTime _backupFirstDueUtc;
+
+        private void StartBackups()
+        {
+            _backup = ReadData<BackupState>(BackupDataFile) ?? new BackupState();
+            if (_backup.Unreported == null) _backup.Unreported = new Dictionary<string, BackupRunTimings>();
+            ValidateBackupSettings(_config.Backups);
+            // A run cut short by a reload: its staging folder is the launcher's to clear, or ours if no flag names it.
+            if (_backup.Pending != null && _backup.Pending.FlaggedUtc == null)
+            {
+                RemoveBackupStaging(_backup.Pending.Run);
+                _backup.Pending = null;
+                WriteData(BackupDataFile, _backup);
+            }
+            // The first backup waits until the server has been up five minutes.
+            _backupFirstDueUtc = DateTime.UtcNow.AddSeconds(Math.Max(0, 300 - Time.realtimeSinceStartup));
+            _backupTimer = timer.Every(10f, BackupTick);
+            timer.Once(3f, BackupTick);
+        }
+
+        private static void ValidateBackupSettings(BackupSettings b)
+        {
+            b.IntervalHours = Math.Max(1, Math.Min(168, b.IntervalHours));
+            b.KeepRecentHours = Math.Max(0, Math.Min(168, b.KeepRecentHours));
+            b.KeepDaily = Math.Max(0, Math.Min(366, b.KeepDaily));
+            b.KeepWeekly = Math.Max(0, Math.Min(260, b.KeepWeekly));
+            b.KeepMonthly = Math.Max(0, Math.Min(120, b.KeepMonthly));
+            b.KeepWipes = Math.Max(0, Math.Min(100, b.KeepWipes));
+            b.MaxTotalMb = Math.Max(0, b.MaxTotalMb);
+            b.MinFreeMb = Math.Max(512, b.MinFreeMb);
+            if (b.Profile == null) b.Profile = "";
+            if (b.Profile.Length > 64) b.Profile = b.Profile.Substring(0, 64);
+        }
+
+        // Whether the account's plan includes backups: the panel's policy, or --
+        // when the panel cannot be reached -- the last answer it gave, for up to
+        // 30 days. A panel outage never stops a paying server's backups (rule 1);
+        // a lapsed plan cannot keep them going for ever offline.
+        private bool BackupPlanAllows()
+        {
+            if (_policy != null)
+            {
+                if (_backup.PlanAllows != _policy.Backups || _backup.PlanCheckedUtc == null || (DateTime.UtcNow - _backup.PlanCheckedUtc.Value).TotalHours >= 24)
+                {
+                    _backup.PlanAllows = _policy.Backups;
+                    _backup.PlanCheckedUtc = DateTime.UtcNow;
+                    WriteData(BackupDataFile, _backup);
+                }
+                return _policy.Backups;
+            }
+            return _backup.PlanAllows && _backup.PlanCheckedUtc != null && (DateTime.UtcNow - _backup.PlanCheckedUtc.Value).TotalDays < BackupPlanMemoryDays;
+        }
+
+        private bool LauncherCan(string capability)
+        {
+            try
+            {
+                var l = LauncherIdentity();
+                if (l == null || !(bool)l["verified"]) return false;
+                return ((JArray)l["capabilities"]).Any(c => (string)c == capability);
+            }
+            catch { return false; }
+        }
+
+        // Why a backup cannot run now, as a short code the panel turns into words; null when it can.
+        private string BackupBlocker(bool scheduled)
+        {
+            if (scheduled && !_config.Backups.Enabled) return "off";
+            if (!BackupPlanAllows()) return "plan";
+            if (LauncherIdentity() == null) return "launcher_missing";
+            if (!LauncherCan("backup")) return "launcher_cannot";
+            if (BackupIdentity() == null) return "identity";
+            if (!_config.Backups.World && !_config.Backups.Config && !_config.Backups.Oxide) return "no_sets";
+            return null;
+        }
+
+        private static string BackupIdentity()
+        {
+            try
+            {
+                var id = ConVar.Server.identity;
+                if (string.IsNullOrEmpty(id) || !Regex.IsMatch(id, "^[A-Za-z0-9_][A-Za-z0-9_.-]{0,63}$")) return null;
+                if (id == "0" || id == "1" || id == "2" || id == "3") return null;   // Rust's own server.backup folders
+                return id;
+            }
+            catch { return null; }
+        }
+
+        private string BackupDir()
+        {
+            var root = ServerRoot();
+            var id = BackupIdentity();
+            return root == null || id == null ? null : Path.Combine(Path.Combine(root, "backup"), id);
+        }
+
+        private void BackupTick()
+        {
+            try
+            {
+                WriteBackupConf();
+                CollectBackupResults();
+                WatchPendingBackup();
+                if (_backupSteps != null || _backup.Pending != null) return;
+
+                var blocker = BackupBlocker(true);
+                _backupProblem = blocker;
+                if (blocker != null) return;
+                if (_countdownActive || _shuttingDown) return;
+                var due = BackupNextDue();
+                if (DateTime.UtcNow < due) return;
+                string why;
+                StartBackup("scheduled", out why);
+            }
+            catch (Exception ex)
+            {
+                PrintWarning($"Backups: this check did not complete ({ex.Message}).");
+            }
+        }
+
+        private DateTime BackupNextDue()
+        {
+            var due = _backup.LastStartUtc == null ? _backupFirstDueUtc : _backup.LastStartUtc.Value.AddHours(_config.Backups.IntervalHours);
+            return due < _backupFirstDueUtc ? _backupFirstDueUtc : due;
+        }
+
+        // backup.conf tells the launcher what Hotwire's settings are, for the backups it takes on its own
+        // (before an update or a wipe) and for rotation. One "key value" per line, like the flags.
+        private void WriteBackupConf()
+        {
+            var root = ServerRoot();
+            if (root == null) return;
+            var b = _config.Backups;
+            var sb = new StringBuilder();
+            Action<string, object> line = (k, v) => sb.Append(k).Append(' ').Append(Convert.ToString(v, CultureInfo.InvariantCulture)).Append('\n');
+            line("enabled", b.Enabled ? 1 : 0);
+            line("identity", BackupIdentity() ?? "");
+            line("world", b.World ? 1 : 0);
+            line("map", b.Map ? 1 : 0);
+            line("config", b.Config ? 1 : 0);
+            line("oxide", b.Oxide ? 1 : 0);
+            line("keep_recent_hours", b.KeepRecentHours);
+            line("keep_daily", b.KeepDaily);
+            line("keep_weekly", b.KeepWeekly);
+            line("keep_monthly", b.KeepMonthly);
+            line("keep_wipes", b.KeepWipes);
+            line("max_total_mb", b.MaxTotalMb);
+            line("min_free_mb", b.MinFreeMb);
+            line("before_update", b.BeforeUpdate && BackupPlanAllows() ? 1 : 0);
+            line("plugins_dir", Interface.Oxide.PluginDirectory);
+            line("config_dir", Interface.Oxide.ConfigDirectory);
+            line("data_dir", Interface.Oxide.DataDirectory);
+            line("lang_dir", Interface.Oxide.LangDirectory);
+            var text = sb.ToString();
+            if (text == _backupConfWritten) return;
+            try
+            {
+                var dir = Path.Combine(root, "hotwire");
+                Directory.CreateDirectory(dir);
+                var path = Path.Combine(dir, "backup.conf");
+                File.WriteAllText(path + ".tmp", text, new UTF8Encoding(false));
+                if (File.Exists(path)) File.Delete(path);
+                File.Move(path + ".tmp", path);
+                _backupConfWritten = text;
+            }
+            catch (Exception ex)
+            {
+                PrintWarning($"Backups: could not write hotwire/backup.conf ({ex.Message}).");
+            }
+        }
+
+        // Starts a live backup: Rust's own save, then the snapshot steps over the next frames.
+        private bool StartBackup(string trigger, out string why)
+        {
+            why = null;
+            var dir = BackupDir();
+            var root = ServerRoot();
+            var id = BackupIdentity();
+            if (dir == null || root == null || id == null) { why = "identity"; return false; }
+
+            var game = AppDomain.CurrentDomain.GetAssemblies().FirstOrDefault(a => a.GetName().Name == "Assembly-CSharp");
+            if (game == null) { why = "no_game"; return false; }
+            var saveRestore = GameType(game, "SaveRestore");
+            var isSaving = Member(saveRestore.GetField("IsSaving", BindingFlags.Public | BindingFlags.Static), "SaveRestore.IsSaving");
+            if ((bool)isSaving.GetValue(null)) { why = "save_busy"; return false; }
+
+            var run = DateTime.UtcNow.ToString("yyyyMMdd'T'HHmmss'Z'", CultureInfo.InvariantCulture) + "-" + trigger;
+            var timings = new BackupRunTimings { Run = run, Trigger = trigger, StartedUtc = DateTime.UtcNow, Profile = _config.Backups.Profile };
+
+            // Rust's save, all at once, as "server.save" does. When it returns the world is on disk and every
+            // plugin's OnServerSave write has finished, which makes this the quietest moment for the copies.
+            var save = saveRestore.GetMethod("Save", BindingFlags.Public | BindingFlags.Static, null, new[] { typeof(bool) }, null);
+            Member(save, "SaveRestore.Save(bool)");
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            var saved = (bool)save.Invoke(null, new object[] { true });
+            timings.SaveMs = sw.ElapsedMilliseconds;
+            if (!saved) { why = "save_busy"; return false; }
+
+            var saveDir = Path.Combine(Path.Combine(root, "server"), id);
+            var staging = Path.Combine(dir, ".staging-" + run);
+            try
+            {
+                if (Directory.Exists(staging)) Directory.Delete(staging, true);
+                Directory.CreateDirectory(staging);
+            }
+            catch (Exception ex)
+            {
+                why = "no_staging";
+                PrintWarning($"Backups: could not create {staging} ({ex.Message}).");
+                return false;
+            }
+
+            var steps = new Queue<KeyValuePair<string, Action>>();
+            if (_config.Backups.World) AddDatabaseSteps(game, saveDir, Path.Combine(Path.Combine(staging, "world"), "db"), steps);
+            if (_config.Backups.Config) AddCopySteps(Path.Combine(saveDir, "cfg"), Path.Combine(staging, "cfg"), null, steps);
+            if (_config.Backups.Oxide)
+            {
+                AddCopySteps(Interface.Oxide.ConfigDirectory, Path.Combine(Path.Combine(staging, "oxide"), "config"), null, steps);
+                AddCopySteps(Interface.Oxide.DataDirectory, Path.Combine(Path.Combine(staging, "oxide"), "data"), "Hotwire", steps);
+                AddCopySteps(Interface.Oxide.LangDirectory, Path.Combine(Path.Combine(staging, "oxide"), "lang"), null, steps);
+            }
+
+            _backup.LastStartUtc = DateTime.UtcNow;
+            _backup.Pending = timings;
+            WriteData(BackupDataFile, _backup);
+            _backupRunning = timings;
+            _backupStaging = staging;
+            _backupSteps = steps;
+            Puts($"Backup {run}: saved in {timings.SaveMs} ms; copying {steps.Count} files over the next frames.");
+            NextTick(BackupStepFrame);
+            return true;
+        }
+
+        // The game's databases, each snapshotted through the game's own connection. SQLite guarantees the copy is
+        // consistent; a copy from outside the game can catch a half-written page, because Rust holds no locks
+        // another program can see.
+        private void AddDatabaseSteps(Assembly game, string saveDir, string target, Queue<KeyValuePair<string, Action>> steps)
+        {
+            const BindingFlags any = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance;
+            Func<object, Type, string, object> get = (o, t, n) =>
+            {
+                if (t == null) return null;
+                var f = t.GetField(n, any);
+                if (f != null) return f.GetValue(o);
+                var p = t.GetProperty(n, any);
+                return p == null ? null : p.GetValue(o, null);
+            };
+            var handles = new List<KeyValuePair<string, object>>();
+            var up = game.GetType("UserPersistance", false);
+            handles.Add(new KeyValuePair<string, object>("player.blueprints.", get(null, up, "blueprints")));
+            handles.Add(new KeyValuePair<string, object>("player.deaths.", get(null, up, "deaths")));
+            handles.Add(new KeyValuePair<string, object>("player.identities.", get(null, up, "identities")));
+            handles.Add(new KeyValuePair<string, object>("player.tokens.", get(null, up, "tokens")));
+            handles.Add(new KeyValuePair<string, object>("player.states.", get(null, up, "playerState")));
+            var rm = game.GetType("RelationshipManager", false);
+            var rmi = get(null, rm, "ServerInstance");
+            handles.Add(new KeyValuePair<string, object>("relationship.", rmi == null ? null : get(rmi, rm, "Database")));
+            var fs = game.GetType("FileStorage", false);
+            var fss = get(null, fs, "server");
+            handles.Add(new KeyValuePair<string, object>("sv.files.", fss == null ? null : get(fss, fs, "db")));
+            var cm = game.GetType("ClanManager", false);
+            var cmi = get(null, cm, "ServerInstance");
+            var backend = cmi == null ? null : get(cmi, cm, "Backend");
+            handles.Add(new KeyValuePair<string, object>("clans.", backend == null ? null : get(backend, backend.GetType(), "Database")));
+
+            foreach (var h in handles)
+            {
+                if (h.Value == null) continue;
+                // The open file is the newest one with that name; an older version's file can be left beside it.
+                string file = null;
+                try
+                {
+                    file = new DirectoryInfo(saveDir).GetFiles(h.Key + "*.db")
+                        .OrderByDescending(f => f.LastWriteTimeUtc).Select(f => f.Name).FirstOrDefault();
+                }
+                catch { }
+                if (file == null) continue;
+                var db = h.Value;
+                var dest = Path.Combine(target, file);
+                steps.Enqueue(new KeyValuePair<string, Action>(file, () =>
+                {
+                    Directory.CreateDirectory(target);
+                    if (File.Exists(dest)) File.Delete(dest);
+                    var exec = db.GetType().GetMethod("Execute", new[] { typeof(string) });
+                    if (exec == null) throw new InvalidOperationException("the game's database has no Execute(string)");
+                    exec.Invoke(db, new object[] { "VACUUM INTO '" + dest.Replace("'", "''") + "'" });
+                }));
+            }
+        }
+
+        private static void AddCopySteps(string source, string target, string skipFolder, Queue<KeyValuePair<string, Action>> steps)
+        {
+            if (string.IsNullOrEmpty(source) || !Directory.Exists(source)) return;
+            var full = Path.GetFullPath(source).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+            string[] files;
+            try { files = Directory.GetFiles(source, "*", SearchOption.AllDirectories); }
+            catch { return; }
+            foreach (var f in files)
+            {
+                var rel = Path.GetFullPath(f).Substring(full.Length);
+                if (skipFolder != null && (rel == skipFolder || rel.StartsWith(skipFolder + Path.DirectorySeparatorChar))) continue;
+                var src = f;
+                var dest = Path.Combine(target, rel);
+                steps.Enqueue(new KeyValuePair<string, Action>(rel, () =>
+                {
+                    if (!File.Exists(src)) return;   // gone since the list was made
+                    Directory.CreateDirectory(Path.GetDirectoryName(dest));
+                    File.Copy(src, dest, true);
+                }));
+            }
+        }
+
+        // One frame's share of the steps: at least one, then more while the frame's budget lasts. Paused while the
+        // game is saving, so no copy ever sits inside a save; abandoned if the server starts shutting down.
+        private void BackupStepFrame()
+        {
+            if (_backupSteps == null) return;
+            var t = _backupRunning;
+            try
+            {
+                if (_shuttingDown) { AbandonBackup("shutdown"); return; }
+                var game = AppDomain.CurrentDomain.GetAssemblies().FirstOrDefault(a => a.GetName().Name == "Assembly-CSharp");
+                var saving = game == null ? null : game.GetType("SaveRestore", false)?.GetField("IsSaving", BindingFlags.Public | BindingFlags.Static);
+                if (saving != null && (bool)saving.GetValue(null)) { timer.Once(0.5f, BackupStepFrame); return; }
+
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                do
+                {
+                    var step = _backupSteps.Dequeue();
+                    try { step.Value(); }
+                    catch (Exception ex)
+                    {
+                        var inner = ex is TargetInvocationException && ex.InnerException != null ? ex.InnerException : ex;
+                        PrintWarning($"Backup {t.Run}: {step.Key} could not be copied ({inner.Message}).");
+                        if (step.Key.EndsWith(".db")) { AbandonBackup("db_snapshot_failed"); return; }
+                    }
+                    t.Steps++;
+                } while (_backupSteps.Count > 0 && sw.ElapsedMilliseconds < BackupFrameBudgetMs);
+                var ms = sw.ElapsedMilliseconds;
+                t.SnapshotMs += ms;
+                if (ms > t.MaxFrameMs) t.MaxFrameMs = ms;
+
+                if (_backupSteps.Count > 0) { NextTick(BackupStepFrame); return; }
+                FinishBackupSteps();
+            }
+            catch (Exception ex)
+            {
+                PrintWarning($"Backup {(t == null ? "" : t.Run)} stopped: {ex.Message}");
+                AbandonBackup("plugin_error");
+            }
+        }
+
+        // Hands the run to the launcher: the save's name, size and time (it copies the save and checks it did not
+        // change meanwhile) and what to include.
+        private void FinishBackupSteps()
+        {
+            var t = _backupRunning;
+            var root = ServerRoot();
+            var id = BackupIdentity();
+            string saveName = "", size = "", mtime = "";
+            try
+            {
+                var game = AppDomain.CurrentDomain.GetAssemblies().FirstOrDefault(a => a.GetName().Name == "Assembly-CSharp");
+                var world = GameType(game, "World");
+                saveName = Path.GetFileName((string)Member(world.GetProperty("SaveFileName", BindingFlags.Public | BindingFlags.Static), "World.SaveFileName").GetValue(null, null) ?? "");
+                var path = Path.Combine(Path.Combine(Path.Combine(root, "server"), id), saveName);
+                if (_config.Backups.World && File.Exists(path))
+                {
+                    var fi = new FileInfo(path);
+                    size = fi.Length.ToString(CultureInfo.InvariantCulture);
+                    mtime = new DateTimeOffset(fi.LastWriteTimeUtc).ToUnixTimeSeconds().ToString(CultureInfo.InvariantCulture);
+                }
+            }
+            catch (Exception ex)
+            {
+                PrintWarning($"Backup {t.Run}: the save's name could not be read ({ex.Message}); the launcher takes the newest.");
+            }
+
+            var sets = new List<string>();
+            if (_config.Backups.World) sets.Add("world");
+            if (_config.Backups.Map) sets.Add("map");
+            if (_config.Backups.Config) sets.Add("config");
+            if (_config.Backups.Oxide) sets.Add("oxide");
+            var body = new StringBuilder();
+            body.Append("run ").Append(t.Run).Append('\n');
+            body.Append("trigger ").Append(t.Trigger).Append('\n');
+            body.Append("save ").Append(saveName).Append('\n');
+            body.Append("save_size ").Append(size).Append('\n');
+            body.Append("save_mtime ").Append(mtime).Append('\n');
+            body.Append("sets ").Append(string.Join(",", sets.ToArray())).Append('\n');
+            var flag = Path.Combine(root, BackupFlagName);
+            try
+            {
+                File.WriteAllText(flag + ".tmp", body.ToString(), new UTF8Encoding(false));
+                if (File.Exists(flag)) File.Delete(flag);
+                File.Move(flag + ".tmp", flag);
+            }
+            catch (Exception ex)
+            {
+                PrintWarning($"Backup {t.Run}: could not write {flag} ({ex.Message}).");
+                AbandonBackup("no_flag");
+                return;
+            }
+            t.FlaggedUtc = DateTime.UtcNow;
+            _backup.Pending = t;
+            WriteData(BackupDataFile, _backup);
+            _backupSteps = null;
+            _backupRunning = null;
+            _backupStaging = null;
+            Puts($"Backup {t.Run}: {t.Steps} files ready in {t.SnapshotMs} ms of server time (longest frame {t.MaxFrameMs} ms); the launcher is compressing it.");
+        }
+
+        // A run that cannot finish: its staging goes, and a result says why, reported like any other.
+        private void AbandonBackup(string code)
+        {
+            var t = _backupRunning ?? _backup.Pending;
+            _backupSteps = null;
+            _backupRunning = null;
+            _backupStaging = null;
+            if (t == null) return;
+            RemoveBackupStaging(t.Run);
+            WriteOwnBackupResult(t, "failed", code);
+            _backup.Pending = null;
+            WriteData(BackupDataFile, _backup);
+            PrintWarning($"Backup {t.Run} did not complete ({code}).");
+        }
+
+        private void RemoveBackupStaging(string run)
+        {
+            try
+            {
+                var dir = BackupDir();
+                if (dir == null || string.IsNullOrEmpty(run)) return;
+                var staging = Path.Combine(dir, ".staging-" + run);
+                if (Directory.Exists(staging)) Directory.Delete(staging, true);
+            }
+            catch { }
+        }
+
+        private void WriteOwnBackupResult(BackupRunTimings t, string status, string code)
+        {
+            try
+            {
+                var dir = BackupDir();
+                if (dir == null) return;
+                var results = Path.Combine(dir, ".results");
+                Directory.CreateDirectory(results);
+                var now = DateTime.UtcNow.ToString("yyyy'-'MM'-'dd'T'HH':'mm':'ss'Z'", CultureInfo.InvariantCulture);
+                var text = $"run {t.Run}\ntrigger {t.Trigger}\nstatus {status}\ncode {code}\nstarted {t.StartedUtc.ToString("yyyy'-'MM'-'dd'T'HH':'mm':'ss'Z'", CultureInfo.InvariantCulture)}\nfinished {now}\n";
+                File.WriteAllText(Path.Combine(results, t.Run + ".result"), text, new UTF8Encoding(false));
+            }
+            catch { }
+        }
+
+        // The launcher takes a flag within seconds. A flag still waiting after ten minutes means no launcher is
+        // watching (an old one, or none), so the run is called off rather than left hanging.
+        private void WatchPendingBackup()
+        {
+            var p = _backup.Pending;
+            if (p == null || p.FlaggedUtc == null) return;
+            var dir = BackupDir();
+            var root = ServerRoot();
+            if (dir == null || root == null) return;
+            if (File.Exists(Path.Combine(Path.Combine(dir, ".results"), p.Run + ".result"))) return;   // collected next
+            var flag = Path.Combine(root, BackupFlagName);
+            var age = DateTime.UtcNow - p.FlaggedUtc.Value;
+            if (File.Exists(flag) && age.TotalMinutes >= BackupLauncherAnswerMinutes)
+            {
+                try { File.Delete(flag); } catch { }
+                _backupRunning = p;
+                AbandonBackup("launcher_no_answer");
+            }
+            else if (!File.Exists(flag) && age.TotalMinutes >= BackupLauncherFinishMinutes)
+            {
+                _backupRunning = p;
+                AbandonBackup("launcher_no_result");
+            }
+        }
+
+        // Results the launcher (or this plugin) wrote: the local record is updated at once, and each is kept on
+        // disk until the panel has it.
+        private void CollectBackupResults()
+        {
+            var dir = BackupDir();
+            if (dir == null) return;
+            var results = Path.Combine(dir, ".results");
+            if (!Directory.Exists(results)) return;
+            var changed = false;
+            foreach (var file in Directory.GetFiles(results, "*.result").OrderBy(f => f, StringComparer.Ordinal))
+            {
+                var r = ReadKeyValues(file);
+                string run;
+                if (!r.TryGetValue("run", out run) || run == _backup.LastRun) continue;
+                if (_backup.LastRun != null && string.CompareOrdinal(run, _backup.LastRun) < 0) continue;   // already recorded
+                string status, code;
+                r.TryGetValue("status", out status);
+                r.TryGetValue("code", out code);
+                _backup.LastRun = run;
+                _backup.LastStatus = status;
+                _backup.LastCode = code == "-" ? null : code;
+                if (status == "ok") _backup.LastSuccessUtc = DateTime.UtcNow;
+                if (_backup.Pending != null && _backup.Pending.Run == run)
+                {
+                    _backup.Unreported[run] = _backup.Pending;
+                    _backup.Pending = null;
+                }
+                changed = true;
+                if (status == "ok") Puts($"Backup {run}: done ({SizeWords(r, "bytes_out")}).");
+                else PrintWarning($"Backup {run}: {status} ({code}). The launcher's account is in backup/{BackupIdentity()}/backup.log.");
+            }
+            if (changed) WriteData(BackupDataFile, _backup);
+        }
+
+        private static string SizeWords(Dictionary<string, string> r, string key)
+        {
+            string v; long n;
+            if (!r.TryGetValue(key, out v) || !long.TryParse(v, NumberStyles.Integer, CultureInfo.InvariantCulture, out n)) return "size unknown";
+            return n >= 1048576 ? (n / 1048576.0).ToString("0.0", CultureInfo.InvariantCulture) + " MB" : (n / 1024) + " KB";
+        }
+
+        private static Dictionary<string, string> ReadKeyValues(string file)
+        {
+            var d = new Dictionary<string, string>(StringComparer.Ordinal);
+            try
+            {
+                foreach (var raw in File.ReadAllLines(file))
+                {
+                    var line = raw.Trim();
+                    var i = line.IndexOf(' ');
+                    if (i <= 0) continue;
+                    d[line.Substring(0, i)] = line.Substring(i + 1).Trim();
+                }
+            }
+            catch { }
+            return d;
+        }
+
+        // ------------------------------------------------------------- panel
+
+        // One result per call, oldest first; deleted only once the panel has it.
+        private bool SendNextBackupResult()
+        {
+            var dir = BackupDir();
+            if (dir == null) return false;
+            var results = Path.Combine(dir, ".results");
+            if (!Directory.Exists(results)) return false;
+            var file = Directory.GetFiles(results, "*.result").OrderBy(f => f, StringComparer.Ordinal).FirstOrDefault();
+            if (file == null) return false;
+            var r = ReadKeyValues(file);
+            string run;
+            if (!r.TryGetValue("run", out run)) { try { File.Delete(file); } catch { } return false; }
+
+            Func<string, JToken> str = k => { string v; return r.TryGetValue(k, out v) && v != "-" && v.Length > 0 ? (JToken)v : JValue.CreateNull(); };
+            Func<string, JToken> num = k => { string v; long n; return r.TryGetValue(k, out v) && long.TryParse(v, NumberStyles.Integer, CultureInfo.InvariantCulture, out n) ? (JToken)n : JValue.CreateNull(); };
+            var payload = new JObject
+            {
+                ["run"] = run,
+                ["trigger"] = str("trigger"),
+                ["status"] = str("status"),
+                ["code"] = str("code"),
+                ["started_at"] = str("started"),
+                ["finished_at"] = str("finished"),
+                ["archive"] = str("archive"),
+                ["sha256"] = str("sha256"),
+                ["bytes_in"] = num("bytes_in"),
+                ["bytes_out"] = num("bytes_out"),
+                ["files"] = num("files"),
+                ["archive_ms"] = num("archive_ms"),
+                ["total_ms"] = num("total_ms"),
+                ["map"] = str("map"),
+                ["new_map"] = str("new_map"),
+                ["removed"] = num("removed"),
+                ["stored"] = new JObject { ["archives"] = num("archives"), ["bytes"] = num("stored_bytes"), ["free_bytes"] = num("free_bytes") }
+            };
+            string sets;
+            if (r.TryGetValue("sets", out sets)) payload["sets"] = new JArray(sets.Split(new[] { ' ', ',' }, StringSplitOptions.RemoveEmptyEntries));
+            BackupRunTimings t;
+            if (_backup.Unreported.TryGetValue(run, out t))
+            {
+                payload["save_ms"] = t.SaveMs;
+                payload["snapshot_ms"] = t.SnapshotMs;
+                payload["max_frame_ms"] = t.MaxFrameMs;
+                payload["profile"] = string.IsNullOrEmpty(t.Profile) ? null : t.Profile;
+            }
+            Action done = () =>
+            {
+                try { File.Delete(file); } catch { }
+                if (_backup.Unreported.Remove(run)) WriteData(BackupDataFile, _backup);
+            };
+            PanelRequest("POST", PanelReportPath, PanelEnvelope("backup", payload), response => done(), done);
+            return true;
+        }
+
+        private void RefreshBackupConfig()
+        {
+            var b = _config.Backups;
+            var dir = BackupDir();
+            long archives = 0, bytes = 0;
+            try
+            {
+                if (dir != null && Directory.Exists(dir))
+                {
+                    foreach (var f in new DirectoryInfo(dir).GetFiles("*.tar.zst")) { archives++; bytes += f.Length; }
+                    var maps = Path.Combine(dir, "maps");
+                    if (Directory.Exists(maps)) foreach (var f in new DirectoryInfo(maps).GetFiles("*.zst")) bytes += f.Length;
+                }
+            }
+            catch { }
+            var blocker = BackupBlocker(true);
+            DateTime? next = null;
+            if (blocker == null) next = BackupNextDue();
+            Func<DateTime?, JToken> at = d => d == null ? JValue.CreateNull() : (JToken)d.Value.ToString("yyyy'-'MM'-'dd'T'HH':'mm':'ss'Z'", CultureInfo.InvariantCulture);
+            var payload = new JObject
+            {
+                ["config_hash"] = BackupConfigHash(),
+                ["settings"] = BackupSettingsJson(b),
+                ["accept_panel_changes"] = b.AcceptPanelChanges,
+                ["ready"] = blocker == null,
+                ["problem"] = blocker,
+                ["launcher_capable"] = LauncherCan("backup"),
+                ["next_at"] = at(next),
+                ["last_run"] = _backup.LastRun,
+                ["last_status"] = _backup.LastStatus,
+                ["last_code"] = _backup.LastCode,
+                ["last_success_at"] = at(_backup.LastSuccessUtc),
+                ["running"] = _backupSteps != null || _backup.Pending != null,
+                ["stored"] = new JObject { ["archives"] = archives, ["bytes"] = bytes },
+                ["path"] = dir == null ? null : "backup/" + BackupIdentity()
+            };
+            // next_at moves every time a run starts; the rest only when something changes.
+            _backupConfigJson = JsonConvert.SerializeObject(payload, Formatting.None);
+        }
+
+        private void SendBackupConfig()
+        {
+            var json = _backupConfigJson;
+            PanelRequest("POST", PanelReportPath, PanelEnvelope("backup_config", JObject.Parse(json)), response => { _backupConfigSentJson = json; }, () => { _backupConfigSentJson = json; });
+        }
+
+        private static JObject BackupSettingsJson(BackupSettings b)
+        {
+            return new JObject
+            {
+                ["enabled"] = b.Enabled,
+                ["interval_hours"] = b.IntervalHours,
+                ["world"] = b.World,
+                ["map"] = b.Map,
+                ["config"] = b.Config,
+                ["oxide"] = b.Oxide,
+                ["keep_recent_hours"] = b.KeepRecentHours,
+                ["keep_daily"] = b.KeepDaily,
+                ["keep_weekly"] = b.KeepWeekly,
+                ["keep_monthly"] = b.KeepMonthly,
+                ["keep_wipes"] = b.KeepWipes,
+                ["max_total_mb"] = b.MaxTotalMb,
+                ["min_free_mb"] = b.MinFreeMb,
+                ["before_update"] = b.BeforeUpdate,
+                ["before_wipe"] = b.BeforeWipe,
+                ["profile"] = b.Profile
+            };
+        }
+
+        private string BackupConfigHash()
+        {
+            var json = JsonConvert.SerializeObject(BackupSettingsJson(_config.Backups), Formatting.None);
+            using (var sha = SHA256.Create()) return "sha256:" + Hex(sha.ComputeHash(Encoding.UTF8.GetBytes(json)));
+        }
+
+        // backup.run: a backup now. backup.configure: new settings, carrying the hash of the settings the panel showed.
+        private void RunBackupCommand(string verb, JObject args, out string status, out string result)
+        {
+            if (verb == "backup.run")
+            {
+                var blocker = BackupBlocker(false);
+                if (blocker != null) { status = "refused"; result = BackupBlockerWords(blocker); return; }
+                if (_backupSteps != null || _backup.Pending != null) { status = "refused"; result = "a backup is already running"; return; }
+                if (_countdownActive || _shuttingDown) { status = "refused"; result = "a restart is counting down"; return; }
+                string why;
+                if (!StartBackup("manual", out why)) { status = "refused"; result = BackupBlockerWords(why); return; }
+                status = "done";
+                result = "backup started: " + _backupRunning.Run;
+                return;
+            }
+
+            // backup.configure
+            if (!_config.Backups.AcceptPanelChanges)
+            {
+                status = "refused";
+                result = "backup settings from the panel are off in this server's Hotwire config";
+                return;
+            }
+            var hash = (string)args["config_hash"];
+            if (string.IsNullOrEmpty(hash) || hash != BackupConfigHash())
+            {
+                status = "refused";
+                result = "the backup settings changed on the server since the panel last saw them; the panel now has the current ones, so check them and try again";
+                _backupConfigSentJson = null;
+                return;
+            }
+            var s = args["settings"] as JObject;
+            if (s == null) { status = "refused"; result = "no settings were sent"; return; }
+
+            var b = JsonConvert.DeserializeObject<BackupSettings>(JsonConvert.SerializeObject(_config.Backups));
+            string problem = null;
+            Action<string, Action<bool>> flag = (k, set) => { var v = s[k]; if (v == null) return; if (v.Type != JTokenType.Boolean) { problem = k + " must be true or false"; return; } set((bool)v); };
+            Action<string, int, int, Action<int>> whole = (k, min, max, set) =>
+            {
+                var v = s[k];
+                if (v == null) return;
+                if (v.Type != JTokenType.Integer || (long)v < min || (long)v > max) { problem = $"{k} must be a whole number from {min} to {max}"; return; }
+                set((int)(long)v);
+            };
+            flag("enabled", v => b.Enabled = v);
+            whole("interval_hours", 1, 168, v => b.IntervalHours = v);
+            flag("world", v => b.World = v);
+            flag("map", v => b.Map = v);
+            flag("config", v => b.Config = v);
+            flag("oxide", v => b.Oxide = v);
+            whole("keep_recent_hours", 0, 168, v => b.KeepRecentHours = v);
+            whole("keep_daily", 0, 366, v => b.KeepDaily = v);
+            whole("keep_weekly", 0, 260, v => b.KeepWeekly = v);
+            whole("keep_monthly", 0, 120, v => b.KeepMonthly = v);
+            whole("keep_wipes", 0, 100, v => b.KeepWipes = v);
+            whole("max_total_mb", 0, 100000000, v => b.MaxTotalMb = v);
+            whole("min_free_mb", 512, 100000000, v => b.MinFreeMb = v);
+            flag("before_update", v => b.BeforeUpdate = v);
+            flag("before_wipe", v => b.BeforeWipe = v);
+            var profile = s["profile"];
+            if (profile != null)
+            {
+                if (profile.Type != JTokenType.String || ((string)profile).Length > 64) problem = "profile must be a name of at most 64 characters";
+                else b.Profile = (string)profile;
+            }
+            if (problem == null && !b.World && !b.Config && !b.Oxide) problem = "at least one of world, config and oxide must be on";
+            if (problem != null) { status = "refused"; result = problem; return; }
+
+            _config.Backups = b;
+            SaveConfig();
+            WriteBackupConf();
+            RefreshBackupConfig();
+            status = "done";
+            result = b.Enabled
+                ? $"backups on: every {b.IntervalHours} h, keeping {b.KeepDaily} daily, {b.KeepWeekly} weekly, {b.KeepMonthly} monthly"
+                : "backups off";
+        }
+
+        private static string BackupBlockerWords(string code)
+        {
+            switch (code)
+            {
+                case "off": return "backups are off in this server's Hotwire config";
+                case "plan": return "the account's plan does not include backups";
+                case "launcher_missing": return "backups need the Hotwire launcher, and this server was not started by it";
+                case "launcher_cannot": return "this server's launcher is modified or too old to take backups";
+                case "identity": return "the save folder's name cannot be used for a backup folder";
+                case "no_sets": return "nothing is chosen to back up";
+                case "save_busy": return "the game is saving; try again in a moment";
+                case "no_staging": return "the backup folder could not be written";
+                default: return code ?? "unknown";
+            }
+        }
+
+        #endregion
+
         #region Report policy
 
         // No game or Oxide types: checked outside the game, like the regions below.
@@ -6647,6 +7573,7 @@ namespace Oxide.Plugins
             public HashSet<string> Kinds;     // null: every kind
             public bool Hold;                 // keep what Kinds stops, to send later
             public bool Positions;            // send player positions; false unless the panel says true
+            public bool Backups;              // the plan includes backups; false unless the panel says true
             public DateTime ReceivedUtc;
         }
 
@@ -6697,6 +7624,8 @@ namespace Oxide.Plugins
                     Hold = data["hold"] != null && data["hold"].Type == JTokenType.Boolean && (bool)data["hold"],
                     // Where people stand is sent only when the panel says so in so many words.
                     Positions = data["positions"] != null && data["positions"].Type == JTokenType.Boolean && (bool)data["positions"],
+                    // Backups likewise: only true means the plan includes them.
+                    Backups = data["backups"] != null && data["backups"].Type == JTokenType.Boolean && (bool)data["backups"],
                     ReceivedUtc = DateTime.UtcNow
                 };
 
@@ -8527,8 +9456,30 @@ namespace Oxide.Plugins
                 case "remove": case "delete": CmdRemove(player, args); return;
                 case "enable": CmdToggle(player, args, true); return;
                 case "disable": CmdToggle(player, args, false); return;
+                case "backup": CmdBackup(player, args); return;
                 default: Reply(player, "Usage"); return;
             }
+        }
+
+        // hotwire backup: where backups stand. hotwire backup now: one now, if the plan and the launcher allow it.
+        private void CmdBackup(IPlayer player, string[] args)
+        {
+            if (!Allowed(player, PermStatus)) return;
+            if (args.Length > 1 && args[1].Equals("now", StringComparison.OrdinalIgnoreCase))
+            {
+                if (!Allowed(player, PermEdit)) return;
+                string status, result;
+                RunBackupCommand("backup.run", new JObject(), out status, out result);
+                Reply(player, "BackupLine", result);
+                return;
+            }
+            var b = _config.Backups;
+            var blocker = BackupBlocker(true);
+            var last = _backup.LastRun == null ? "none yet" : $"{_backup.LastRun} {_backup.LastStatus}{(_backup.LastCode == null ? "" : " (" + _backup.LastCode + ")")}";
+            var state = blocker != null ? BackupBlockerWords(blocker)
+                : _backupSteps != null || _backup.Pending != null ? "running now"
+                : $"every {b.IntervalHours} h, next {BackupNextDue().ToLocalTime():yyyy-MM-dd HH:mm}";
+            Reply(player, "BackupLine", $"{state}. Last: {last}. Kept in backup/{BackupIdentity()}.");
         }
 
         private void CmdStatus(IPlayer player)
@@ -9313,6 +10264,7 @@ namespace Oxide.Plugins
                 ["StatusCounting"] = "Counting down: {0} in {1}.",
                 ["StatusNext"] = "Next: {0}.",
                 ["StatusNone"] = "Nothing is scheduled. No entry is enabled.",
+                ["BackupLine"] = "Backups: {0}",
                 ["ListEmpty"] = "The schedule is empty.",
 
                 ["NoPermission"] = "You need the permission {0}.",
@@ -9493,7 +10445,7 @@ namespace Oxide.Plugins
                 ["Usage"] = "hotwire status | menu | check | connect <code> | list | now [update|validate] [seconds] | cancel | " +
                             "add <restart|update|validate> <HH:mm> [pattern] | set <restart|update> <index> " +
                             "<time|pattern|validate> <value> | remove <restart|update> <index> | " +
-                            "enable|disable <restart|update> <index>",
+                            "enable|disable <restart|update> <index> | backup [now]",
                 ["UsageSet"] = "hotwire set <restart|update> <index> <time|pattern|validate> <value>",
                 ["UsageNow"] = "hotwire now [update|validate] [seconds]",
                 ["UsageAdd"] = "hotwire add <restart|update|validate> <HH:mm> [pattern]. Patterns: daily | " +

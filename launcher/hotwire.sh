@@ -20,7 +20,7 @@
 #   knows: how a run ended, the update outcome, and a crash-streak stop. It sends
 #   findings and facts; a file never travels.
 #
-#   Requires: bash 4+, curl, unzip, and flock (util-linux). jq is used
+#   Requires: bash 4+, curl, unzip, and flock (util-linux); zstd for backups. jq is used
 #   for the Oxide SHA-256 verification when present; without it the
 #   download is taken unverified, with a warning, exactly as the guide
 #   describes.
@@ -38,9 +38,9 @@
 #     hash from these bytes to confirm this is an unmodified Hotwire launcher
 #     before it offers a launcher-editing feature. Capabilities, not the version
 #     number, are what a feature is gated on.
-HOTWIRE_LAUNCHER_VERSION="1.0.0-linux"
-HOTWIRE_LAUNCHER_CAPABILITIES="supervise,update,framework_verify,crash_backstop,log_rotate,convar_persist,wipe"
-HOTWIRE_LAUNCHER_HASH="dea95f1b64c4a0d7166c520ff4822b6bd466dd0478d28bdc4c03b0ef56229379"
+HOTWIRE_LAUNCHER_VERSION="1.1.0-linux"
+HOTWIRE_LAUNCHER_CAPABILITIES="supervise,update,framework_verify,crash_backstop,log_rotate,convar_persist,wipe,backup"
+HOTWIRE_LAUNCHER_HASH="7f6e145b1126dccbde230de8f5d9e7311bea1acd63a725b81cc13331809197c5"
 
 set -uo pipefail
 
@@ -173,6 +173,13 @@ CHECK_OPTIONS="1"
 HOOK_BEFORE=""
 HOOK_AFTER=""
 
+# -- Backups ------------------------------------------------------------
+# 1 = carry out the backups Hotwire asks for. It asks only when backups are on
+# in its own config and the panel's plan includes them; what to back up, how
+# often and how many to keep are Hotwire's settings. 0 = never back up here,
+# whatever is asked. Backups go to backup/<save folder name>/ in this folder.
+BACKUPS="1"
+
 # -- Server settings the browser and the map use -----------------------
 # Filled in as plain values (safe for spaces and symbols). Empty = the game's default.
 SERVER_IDENTITY=""          # save-folder name; empty = my_server_identity
@@ -211,6 +218,8 @@ CONVAR_REQUEST="$ROOT/CONVAR.request"
 CONVAR_RESULT="$ROOT/CONVAR.result"
 WIPE_STATE="$ROOT/hotwire/wipe-cycle"
 WIPE_RESULT="$ROOT/WIPE.result"
+BACKUP_FLAG="$ROOT/BACKUP.flag"
+BACKUP_CONF="$ROOT/hotwire/backup.conf"
 KEYS_FILE="$ROOT/hotwire/keys.json"
 CONNECT_FILE="$ROOT/hotwire/connect.json"
 SPOOL_DIR="$ROOT/hotwire/launcher-spool"
@@ -257,6 +266,10 @@ validate_settings() {
     [ "$LOG_KEEP" = "0" ]          && bad_cfg+=$'\n  LOG_KEEP cannot be 0 (it would delete every log).'
     [ "$MAX_STEAM_TRIES" = "0" ]   && bad_cfg+=$'\n  MAX_STEAM_TRIES cannot be 0.'
     [ "$RCON_PASSWORD_MIN" = "0" ] && bad_cfg+=$'\n  RCON_PASSWORD_MIN cannot be 0 (an empty password crashes Rust).'
+
+    # Backups never stop a start: a wrong value turns them off, with a warning.
+    : "${BACKUPS:=1}"
+    case "$BACKUPS" in 0|1) ;; *) warn "BACKUPS must be 0 or 1 (is '$BACKUPS'); backups are off until it is."; BACKUPS=0 ;; esac
 
     if [ -n "$bad_cfg" ]; then
         die "The launcher's settings need fixing before it can run:${bad_cfg}"
@@ -878,6 +891,350 @@ apply_convar_requests() {
 }
 
 # ======================================================================
+# Backups (capability: backup). Hotwire decides when a backup runs and
+# prepares what only the game can copy safely: right after Rust's own save it
+# writes each game database's snapshot (through the game's own connection) and
+# copies the config and plugin data files, one file per frame, into
+# backup/<identity>/.staging-<run>/. Then it writes BACKUP.flag and plays on.
+# The launcher does the heavy part here, with the system's tools and at the
+# lowest priority: it adds the save (checking it did not change while copied),
+# the plugins and the map, compresses, verifies, rotates, and leaves a result
+# for Hotwire to report. Between runs, before an update or a wipe, it backs up
+# the stopped server on its own. Nothing here can stop the server starting: a
+# backup that fails says why in its result and in backup/<identity>/backup.log.
+#
+# Archives: backup/<identity>/<UTC stamp>-<trigger>.tar.zst, each with a
+# .meta beside it. The map, which never changes within a wipe, is kept once
+# per map in backup/<identity>/maps/. Rust's own server.backup uses backup/0-3
+# only, so the two never meet.
+# ======================================================================
+BACKUP_WATCH_PID=""
+BACKUP_STOP=0
+
+_bconf() {  # _bconf <key> <default>: a value from backup.conf, which Hotwire writes
+    local v=""
+    [ -f "$BACKUP_CONF" ] && v="$(grep -m1 "^$1 " "$BACKUP_CONF" 2>/dev/null | cut -d' ' -f2-)"
+    printf '%s' "${v:-$2}"
+}
+_bint() {  # _bint <key> <default>: the same, but only a plain non-negative integer
+    local v; v="$(_bconf "$1" "$2")"
+    [[ "$v" =~ ^[0-9]{1,9}$ ]] && printf '%s' "$v" || printf '%s' "$2"
+}
+_ms() {  # milliseconds; %N, not %3N, which uutils' date prints at full width
+    local n; n="$(date +%s%N 2>/dev/null)"
+    [[ "$n" =~ ^[0-9]{13,}$ ]] && echo $(( n / 1000000 )) || echo $(( $(date +%s) * 1000 ))
+}
+
+backup_identity() {
+    local id; id="$(_bconf identity "${SERVER_IDENTITY:-my_server_identity}")"
+    # A folder name, never a path; and never 0-3, which are Rust's own server.backup folders.
+    [[ "$id" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,63}$ ]] || return 1
+    case "$id" in 0|1|2|3) return 1 ;; esac
+    printf '%s' "$id"
+}
+
+# A framework folder Hotwire named in backup.conf, used only if it is inside this server.
+_bdir() {  # _bdir <key> <default>
+    local d; d="$(_bconf "$1" "$2")"
+    case "$d" in "$ROOT"/*) [ -d "$d" ] && printf '%s' "$d" ;; esac
+}
+
+_blog() {  # _blog <dest> <line>: the full record, on this machine
+    local f="$1/backup.log"
+    printf '%s %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$2" >> "$f" 2>/dev/null || true
+    if [ "$(stat -c %s "$f" 2>/dev/null || echo 0)" -gt 5242880 ]; then mv -f "$f" "$f.1" 2>/dev/null || true; fi
+}
+
+_bresult() {  # _bresult <dest> <run> <key value lines...>: written whole, then moved into place
+    local dest="$1" run="$2"; shift 2
+    mkdir -p "$dest/.results" 2>/dev/null || return 0
+    printf '%s\n' "$@" > "$dest/.results/.$run.tmp" 2>/dev/null && mv -f "$dest/.results/.$run.tmp" "$dest/.results/$run.result"
+}
+
+# Keeps: everything from the last recent_hours; then the newest backup of each
+# day for daily days, of each week for weekly weeks, of each month for monthly
+# months; the newest keep_wipes of the before-wipe backups; and always the
+# newest backup. Then the size cap, oldest first. A map no backup names goes too.
+backup_rotate() {  # backup_rotate <dest>
+    local dest="$1" now recent daily weekly monthly wipes cap
+    now="$(date +%s)"
+    recent=$(( $(_bint keep_recent_hours 24) * 3600 ))
+    daily="$(_bint keep_daily 7)"; weekly="$(_bint keep_weekly 4)"; monthly="$(_bint keep_monthly 3)"
+    wipes="$(_bint keep_wipes 3)"; cap=$(( $(_bint max_total_mb 0) * 1048576 ))
+    local nowmonth=$(( 10#$(date -u +%Y) * 12 + 10#$(date -u +%m) ))
+    local -A seen=()
+    local keep=() drop=() f base stamp ts age wipecount=0 first=1 d w m
+    while IFS= read -r f; do
+        [ -n "$f" ] || continue
+        base="$(basename "$f")"; stamp="${base%%-*}"
+        [[ "$stamp" =~ ^[0-9]{8}T[0-9]{6}Z$ ]] || continue
+        ts="$(date -u -d "${stamp:0:4}-${stamp:4:2}-${stamp:6:2} ${stamp:9:2}:${stamp:11:2}:${stamp:13:2}" +%s 2>/dev/null)" || continue
+        age=$(( now - ts ))
+        d="${stamp:0:8}"; w="$(date -u -d "@$ts" +%G%V)"; m="${stamp:0:6}"
+        if [[ "$base" == *-before_wipe.tar.zst ]]; then
+            wipecount=$((wipecount+1))
+            if [ "$wipecount" -le "$wipes" ] || [ "$first" = "1" ]; then keep+=("$f"); else drop+=("$f"); fi
+            first=0; continue
+        fi
+        local k=0
+        if [ "$first" = "1" ] || [ "$age" -lt "$recent" ]; then k=1
+        elif [ "$age" -lt $(( daily * 86400 )) ] && [ -z "${seen[d$d]:-}" ]; then k=1
+        elif [ "$age" -lt $(( weekly * 7 * 86400 )) ] && [ -z "${seen[w$w]:-}" ]; then k=1
+        elif [ $(( nowmonth - (10#${stamp:0:4} * 12 + 10#${stamp:4:2}) )) -lt "$monthly" ] && [ -z "${seen[m$m]:-}" ]; then k=1
+        fi
+        first=0
+        if [ "$k" = "1" ]; then keep+=("$f"); seen[d$d]=1; seen[w$w]=1; seen[m$m]=1; else drop+=("$f"); fi
+    done < <(ls -1 "$dest"/*.tar.zst 2>/dev/null | sort -r)
+
+    for f in "${drop[@]}"; do rm -f "$f" "${f%.tar.zst}.meta"; _blog "$dest" "rotate: removed $(basename "$f")"; done
+    BACKUP_REMOVED=${#drop[@]}
+
+    # The size cap: oldest first, the newest backup never.
+    if [ "$cap" -gt 0 ]; then
+        local total; total="$(du -cb "$dest"/*.tar.zst "$dest"/maps/* 2>/dev/null | tail -1 | cut -f1)"
+        local i
+        for (( i=${#keep[@]}-1; i>0 && ${total:-0}>cap; i-- )); do
+            f="${keep[$i]}"
+            total=$(( total - $(stat -c %s "$f" 2>/dev/null || echo 0) ))
+            rm -f "$f" "${f%.tar.zst}.meta"; BACKUP_REMOVED=$((BACKUP_REMOVED+1))
+            _blog "$dest" "rotate: removed $(basename "$f") (over the ${cap} byte cap)"
+        done
+    fi
+
+    # Maps no remaining backup names.
+    local mf name used
+    for mf in "$dest"/maps/*.zst; do
+        [ -f "$mf" ] || continue
+        name="$(basename "$mf" .zst)"
+        used="$(grep -l "^map $name\$" "$dest"/*.meta 2>/dev/null | head -1)"
+        [ -z "$used" ] && { rm -f "$mf"; _blog "$dest" "rotate: removed map $name (no backup uses it)"; }
+    done
+}
+
+# One backup, start to finish. With a staging folder it completes a live backup
+# Hotwire prepared; without one, the server is stopped and this copies everything.
+backup_archive() {  # <trigger> <run> <staging|""> <sav name|""> <sav size|""> <sav mtime|""> <sets|"">
+    local trigger="$1" run="$2" staging="$3" savname="$4" savsize="$5" savmtime="$6" sets="$7"
+    local id save_dir dest started
+    started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    [ -n "$sets" ] || sets="$(printf '%s' "world,$([ "$(_bconf map 1)" = 1 ] && echo map,)$([ "$(_bconf config 1)" = 1 ] && echo config,)$([ "$(_bconf oxide 1)" = 1 ] && echo oxide)")"
+    sets=",${sets%,},"
+    local setwords="${sets//,/ }"; setwords="${setwords# }"; setwords="${setwords% }"
+    if ! id="$(backup_identity)"; then
+        warn "Backup $run: the save folder's name is not usable, so nothing was backed up."
+        return 1
+    fi
+    save_dir="$ROOT/server/$id"; dest="$ROOT/backup/$id"
+    mkdir -p "$dest/maps" "$dest/.results" 2>/dev/null || { warn "Backup $run: cannot create $dest."; return 1; }
+    local fail=""
+    _bfail() { fail="$1"; _blog "$dest" "$run failed: $1 ${2:-}"; }
+
+    # One backup at a time for this save folder; a second waits for no one.
+    exec 7>"$dest/.lock"
+    if ! flock -n 7; then
+        _blog "$dest" "$run refused: another backup is running"
+        _bresult "$dest" "$run" "run $run" "trigger $trigger" "status refused" "code busy" "started $started" "finished $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+        [ -n "$staging" ] && rm -rf "$staging"
+        exec 7>&-; return 1
+    fi
+    # What a backup cut short left behind.
+    rm -rf "$dest"/.work-* "$dest"/*.part 2>/dev/null
+    _blog "$dest" "$run start: trigger $trigger, sets $setwords"
+
+    local work="$dest/.work-$run" t0 t1 archive_ms=0 bytes_in=0 bytes_out=0 files=0 sha="" newmap=""
+    t0="$(_ms)"
+    command -v zstd >/dev/null 2>&1 || _bfail no_zstd "zstd is not installed"
+
+    # The floor: never let a backup be what fills the disk.
+    local floor avail need
+    floor=$(( $(_bint min_free_mb 5120) * 1048576 ))
+    if [ -z "$fail" ]; then
+        avail=$(( $(df -Pk "$dest" | awk 'NR==2{print $4}') * 1024 ))
+        need="$(du -cb "$save_dir"/*.sav "$save_dir"/*.db "$save_dir"/*.db-wal 2>/dev/null | tail -1 | cut -f1)"
+        [ $(( avail - ${need:-0} )) -lt "$floor" ] && _bfail disk_low "free $avail, floor $floor"
+    fi
+
+    if [ -z "$fail" ]; then
+        if [ -n "$staging" ]; then
+            [ -d "$staging" ] || _bfail no_staging "$staging"
+            [ -z "$fail" ] && { mv "$staging" "$work" || _bfail no_staging "could not take $staging"; }
+        else
+            mkdir -p "$work"
+            # Stopped: nothing is writing, so the files as they lie are consistent.
+            if [[ "$sets" == *,world,* ]]; then
+                mkdir -p "$work/world/db"
+                local db
+                for db in "$save_dir"/*.db "$save_dir"/*.db-wal; do [ -f "$db" ] && cp -p "$db" "$work/world/db/"; done
+            fi
+            if [[ "$sets" == *,config,* ]] && [ -d "$save_dir/cfg" ]; then
+                mkdir -p "$work/cfg" && cp -p "$save_dir"/cfg/* "$work/cfg/" 2>/dev/null
+            fi
+            if [[ "$sets" == *,oxide,* ]]; then
+                local sub src
+                for sub in config data lang; do
+                    src="$(_bdir "${sub}_dir" "$ROOT/oxide/$sub")"
+                    [ -n "$src" ] || continue
+                    mkdir -p "$work/oxide/$sub"
+                    # Hotwire's own data holds this server's panel keys: never in a backup.
+                    ( cd "$src" && tar -cf - --exclude=./Hotwire . 2>/dev/null ) | ( cd "$work/oxide/$sub" && tar -xf - 2>/dev/null )
+                done
+            fi
+        fi
+    fi
+
+    # The save. Copied here because it can be large; checked unchanged across the copy.
+    if [ -z "$fail" ] && [[ "$sets" == *,world,* ]]; then
+        if [ -z "$savname" ]; then savname="$(ls -1t "$save_dir"/*.sav 2>/dev/null | head -1)"; savname="$(basename "${savname:-}")"; fi
+        if ! [[ "$savname" =~ ^[A-Za-z0-9_.-]+\.sav$ ]] || [ ! -f "$save_dir/$savname" ]; then
+            _bfail no_save "${savname:-none found}"
+        else
+            local try s1 s2
+            mkdir -p "$work/world"
+            for try in 1 2; do
+                s1="$(stat -c '%s %Y' "$save_dir/$savname")"
+                if [ -n "$savsize" ] && [ "$s1" != "$savsize $savmtime" ]; then s2="moved"; else
+                    cp -p "$save_dir/$savname" "$work/world/$savname"
+                    s2="$(stat -c '%s %Y' "$save_dir/$savname")"
+                fi
+                [ "$s1" = "$s2" ] && break
+                # A save landed during the copy (or before it). Copy the new one once more.
+                savsize=""; s2="changed"; sleep 2
+            done
+            [ "$s1" = "$s2" ] || _bfail sav_changed "$savname"
+        fi
+    fi
+
+    if [ -z "$fail" ] && [[ "$sets" == *,oxide,* ]]; then
+        local pdir; pdir="$(_bdir plugins_dir "$ROOT/oxide/plugins")"
+        if [ -n "$pdir" ]; then mkdir -p "$work/oxide/plugins" && cp -p "$pdir"/*.cs "$work/oxide/plugins/" 2>/dev/null; fi
+    fi
+    if [ -z "$fail" ] && [[ "$sets" == *,config,* ]]; then
+        local self; self="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
+        # The markers are matched through [N]/[D] so this line is never taken for one.
+        sed -n '/=== HOTWIRE SETTINGS BEGI[N] ===/,/=== HOTWIRE SETTINGS EN[D] ===/p' "$self" > "$work/launcher-settings.txt" 2>/dev/null
+    fi
+
+    # The map: once per map, compressed on its own, named in every backup that needs it.
+    local mapname=""
+    if [ -z "$fail" ] && [[ "$sets" == *,map,* ]]; then
+        local mapfile; mapfile="$(ls -1t "$save_dir"/*.map 2>/dev/null | head -1)"
+        if [ -n "$mapfile" ]; then
+            mapname="$(basename "$mapfile")"
+            if [ ! -f "$dest/maps/$mapname.zst" ]; then
+                if nice -n 19 ionice -c3 zstd -3 -T2 -q -f "$mapfile" -o "$dest/maps/$mapname.zst.part" 2>/dev/null \
+                   && mv -f "$dest/maps/$mapname.zst.part" "$dest/maps/$mapname.zst"; then newmap="$mapname"
+                else rm -f "$dest/maps/$mapname.zst.part"; _blog "$dest" "$run: the map could not be kept (the backup goes on)"; mapname=""; fi
+            fi
+        fi
+    fi
+
+    local name="${run}.tar.zst"
+    if [ -z "$fail" ]; then
+        {
+            printf 'run %s\ntrigger %s\nidentity %s\nsave %s\nmap %s\nsets %s\ncreated %s\nlauncher %s\n' \
+                "$run" "$trigger" "$id" "$savname" "$mapname" "$setwords" "$started" "$HOTWIRE_LAUNCHER_VERSION"
+            ( cd "$work" && find . -type f ! -name MANIFEST -print0 | sort -z | xargs -0 -r sha256sum )
+        } > "$work/MANIFEST"
+        bytes_in="$(du -sb "$work" | cut -f1)"; files="$(find "$work" -type f | wc -l)"
+        t1="$(_ms)"
+        if ( cd "$work" && tar -cf - . ) | nice -n 19 ionice -c3 zstd -3 -T2 -q -o "$dest/$name.part" 2>/dev/null \
+           && nice -n 19 zstd -t -q "$dest/$name.part" 2>/dev/null; then
+            mv -f "$dest/$name.part" "$dest/$name"
+            archive_ms=$(( $(_ms) - t1 ))
+            bytes_out="$(stat -c %s "$dest/$name")"
+            sha="sha256:$(sha256sum "$dest/$name" | cut -d' ' -f1)"
+            printf 'run %s\ntrigger %s\nmap %s\nsha256 %s\nbytes %s\n' "$run" "$trigger" "$mapname" "$sha" "$bytes_out" > "$dest/${run}.meta"
+        else
+            rm -f "$dest/$name.part"; _bfail archive_failed "tar or zstd"
+        fi
+    fi
+    rm -rf "$work"; [ -n "$staging" ] && rm -rf "$staging"
+
+    BACKUP_REMOVED=0
+    [ -z "$fail" ] && backup_rotate "$dest"
+    local count total free
+    count="$(ls -1 "$dest"/*.tar.zst 2>/dev/null | wc -l)"
+    total="$(du -cb "$dest"/*.tar.zst "$dest"/maps/*.zst 2>/dev/null | tail -1 | cut -f1)"
+    free=$(( $(df -Pk "$dest" | awk 'NR==2{print $4}') * 1024 ))
+    local status=ok; [ -n "$fail" ] && status=failed; [ "$fail" = "disk_low" ] && status=refused
+    _bresult "$dest" "$run" "run $run" "trigger $trigger" "status $status" "code ${fail:--}" "sets $setwords" \
+        "archive $([ -z "$fail" ] && echo "$name" || echo -)" "sha256 ${sha:--}" "bytes_in $bytes_in" "bytes_out $bytes_out" \
+        "files $files" "archive_ms $archive_ms" "total_ms $(( $(_ms) - t0 ))" "map ${mapname:--}" "new_map ${newmap:--}" \
+        "removed ${BACKUP_REMOVED:-0}" "archives $count" "stored_bytes ${total:-0}" "free_bytes $free" \
+        "started $started" "finished $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    if [ -z "$fail" ]; then
+        _blog "$dest" "$run ok: $name, $bytes_in bytes in, $bytes_out out, $files files, ${archive_ms} ms, $sha, removed ${BACKUP_REMOVED:-0}"
+        log "Backup $run: $name ($bytes_out bytes)."
+    else
+        warn "Backup $run did not complete ($fail); see $dest/backup.log."
+    fi
+    exec 7>&-
+    [ -z "$fail" ]
+}
+
+# A live backup Hotwire prepared: take the flag, then finish it.
+backup_from_flag() {
+    local claim="$BACKUP_FLAG.work" run trigger sav size mtime sets id
+    mv -f "$BACKUP_FLAG" "$claim" 2>/dev/null || return 0
+    _kv() { grep -m1 "^$1 " "$claim" 2>/dev/null | cut -d' ' -f2-; }
+    run="$(_kv run)"; trigger="$(_kv trigger)"; sav="$(_kv save)"; size="$(_kv save_size)"; mtime="$(_kv save_mtime)"; sets="$(_kv sets)"
+    rm -f "$claim"
+    [[ "$run" =~ ^[0-9]{8}T[0-9]{6}Z-[a-z_]{1,24}$ ]] || { warn "Backup flag ignored: no usable run id."; return 0; }
+    case "$trigger" in scheduled|manual) ;; *) warn "Backup flag ignored: unknown trigger."; return 0 ;; esac
+    [[ "$size" =~ ^[0-9]+$ && "$mtime" =~ ^[0-9]+$ ]] || { size=""; mtime=""; }
+    [[ "$sets" =~ ^[a-z,]{0,40}$ ]] || sets=""
+    id="$(backup_identity)" || return 0
+    backup_archive "$trigger" "$run" "$ROOT/backup/$id/.staging-$run" "$sav" "$size" "$mtime" "$sets" || true
+}
+
+# Beside the running server, at the lowest priority: pick up flags until the
+# server exits, finishing any backup already under way.
+backup_watch() {
+    trap 'BACKUP_STOP=1' TERM
+    renice -n 19 -p $BASHPID >/dev/null 2>&1; ionice -c3 -p $BASHPID >/dev/null 2>&1
+    local parent=$$
+    while [ "$BACKUP_STOP" = "0" ] && kill -0 "$parent" 2>/dev/null; do
+        [ -f "$BACKUP_FLAG" ] && backup_from_flag
+        sleep 5 & wait $! 2>/dev/null
+    done
+}
+backup_watch_start() {
+    BACKUP_WATCH_PID=""
+    [ "$BACKUPS" = "1" ] || return 0
+    rm -f "$BACKUP_FLAG.work"
+    backup_watch & BACKUP_WATCH_PID=$!
+}
+backup_watch_stop() {  # a backup in progress gets up to five minutes to finish
+    [ -n "$BACKUP_WATCH_PID" ] || return 0
+    kill -TERM "$BACKUP_WATCH_PID" 2>/dev/null
+    local i
+    for (( i=0; i<300; i++ )); do kill -0 "$BACKUP_WATCH_PID" 2>/dev/null || break; sleep 1; done
+    kill -KILL "$BACKUP_WATCH_PID" 2>/dev/null; wait "$BACKUP_WATCH_PID" 2>/dev/null
+    BACKUP_WATCH_PID=""
+}
+
+# Between runs: before an update or a wipe, back up the stopped server. A wipe
+# asks for its backup in WIPE.flag ("backup 1"); an update backs up when
+# Hotwire's backup settings say so.
+backup_before_launch() {
+    [ "$BACKUPS" = "1" ] || return 0
+    local trigger="" flag="$ROOT/$WIPE_FLAG"
+    if [ -f "$flag" ] && grep -q '^backup 1' "$flag" 2>/dev/null; then
+        local cycle expires
+        cycle="$(grep -m1 '^cycle ' "$flag" | awk '{print $2}')"; expires="$(grep -m1 '^expires ' "$flag" | awk '{print $2}')"
+        if { [ -z "$cycle" ] || [ "$(cat "$WIPE_STATE" 2>/dev/null)" != "$cycle" ]; } && { [ -z "$expires" ] || [ "$expires" -ge "$(date +%s)" ] 2>/dev/null; }; then
+            trigger="before_wipe"
+        fi
+    fi
+    if [ -z "$trigger" ] && [ "${DO_UPDATE:-0}" = "1" ] && [ "$(_bconf enabled 0)" = "1" ] && [ "$(_bconf before_update 1)" = "1" ]; then
+        trigger="before_update"
+    fi
+    [ -n "$trigger" ] || return 0
+    log "Backing up the stopped server before the $( [ "$trigger" = before_wipe ] && echo wipe || echo update)..."
+    backup_archive "$trigger" "$(date -u +%Y%m%dT%H%M%SZ)-$trigger" "" "" "" "" "" || true
+}
+
+# ======================================================================
 # Everything that must happen before each launch, and RE-happen on every
 # relaunch exactly as hotwire.bat does from :start: the build check, the update
 # decision, the hooks and the update itself, pending convar persists, the args
@@ -889,6 +1246,8 @@ per_launch_prep() {
     build_check
     update_decision
     [ -n "$CHECK_ONLY" ] && DO_UPDATE=0
+    # A backup of the stopped server, before an update or a wipe changes it.
+    [ -z "$CHECK_ONLY" ] && backup_before_launch
     # HOOK_BEFORE runs on every real start (not in check mode), before any update.
     [ -z "$CHECK_ONLY" ] && [ -n "$HOOK_BEFORE" ] && { log "Running HOOK_BEFORE..."; bash -c "$HOOK_BEFORE" || warn "HOOK_BEFORE exited non-zero."; }
     if [ "$DO_UPDATE" = "1" ]; then
@@ -924,8 +1283,10 @@ run_loop() {
         STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
         local start_ts end_ts run_secs rc crashed
         start_ts="$(date +%s)"
+        backup_watch_start
         "$RUST_BIN" "${ARGS[@]}" -logfile "$LOGFILE"; rc=$?
         end_ts="$(date +%s)"
+        backup_watch_stop
         run_secs=$(( end_ts - start_ts )); [ "$run_secs" -lt 0 ] && run_secs=99999
 
         if [ "$run_secs" -lt "$CRASH_SECONDS" ]; then CRASH_STREAK=$((CRASH_STREAK+1)); crashed=true; else CRASH_STREAK=0; crashed=false; fi

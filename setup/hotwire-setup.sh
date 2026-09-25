@@ -670,8 +670,8 @@ RUST_APPID="258550"
 # branch, these change in the same commit (and so does $PinnedHashes in hotwire-setup.ps1 for Hotwire.cs),
 # or every install stops at a hash mismatch. Third-party downloads (SteamCMD from Ubuntu's archive, Oxide
 # from GitHub) are not pinned: Oxide is checked against the SHA-256 GitHub publishes for it instead.
-PIN_LAUNCHER="71c31c83ecc242b88f11df5e63d40263873217f6f57cdabe1c8dadc158948d50"
-PIN_PLUGIN="93f32436bb1244e2a9edafb87455562fdacf27d58658eb5ee8d0b96a5d2d6489"
+PIN_LAUNCHER="aa001f6e222e7c676293a9d86f5edd8291c61d19fad5b76920f2163cb1f0e5cb"
+PIN_PLUGIN="a162cd06c0307cb26050959fa4d536c457006f36131fc24f19ad18646d349999"
 
 # Rust's own floor (wiki.facepunch.com/rust/Creating-a-server), warned about and never enforced. A small
 # test server runs on less, and refusing would be guessing at what the reader wants.
@@ -853,7 +853,7 @@ clock_skew() {
 }
 
 pkg_installed() { dpkg-query -W -f='${Status}' "$1" 2>/dev/null | grep -q 'install ok installed'; }
-PACKAGES=(steamcmd lib32gcc-s1 curl jq unzip ca-certificates)
+PACKAGES=(steamcmd lib32gcc-s1 curl jq unzip zstd ca-certificates)
 missing_packages() {
     local p out=()
     for p in "${PACKAGES[@]}"; do

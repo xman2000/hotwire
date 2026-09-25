@@ -427,6 +427,49 @@ When something goes wrong it is logged once, in console, with what to do:
 
 Failed tries wait longer each time, up to ten minutes apart.
 
+## Backups
+
+```json
+"Backups": {
+  "Back up this server": false,
+  "Accept backup settings from the panel": true,
+  "Back up every this many hours": 6,
+  "Back up the world": true,
+  "Keep the map file, once per map": true,
+  "Back up the server config": true,
+  "Back up Oxide": true,
+  "Keep every backup from the last this many hours": 24,
+  "Keep one a day for this many days": 7,
+  "Keep one a week for this many weeks": 4,
+  "Keep one a month for this many months": 3,
+  "Keep the last backup before each of this many wipes": 3,
+  "Largest total size of the backups in MB (0 = no limit)": 0,
+  "Never back up with less than this many MB free": 5120,
+  "Back up before an update": true,
+  "Back up before a wipe": true,
+  "Profile": ""
+}
+```
+
+Off until turned on. A backup needs three things: this switch, a panel plan that includes backups, and a server started
+by a Hotwire launcher that can take them (the Linux launcher from 1.1.0). `hotwire backup` says which is missing.
+
+- **Where:** `backup/<save folder name>/` in the server's folder, as `<UTC time>-<why>.tar.zst` with a `.meta` file
+  beside it and a full account in `backup.log`. The map is in `maps/`, once per map. Nothing is sent anywhere.
+- **The world** is the save and the game's databases. The plugin copies the databases through the game's own
+  connection right after Rust's save, a few milliseconds a frame, so the copy is consistent while players play.
+- **The server config** is the save folder's `cfg` (owners, moderators, bans, `serverauto.cfg`) and the launcher's
+  settings block. **Oxide** is `oxide/plugins`, `config`, `data` and `lang`, never `oxide/data/Hotwire`, which holds
+  this server's panel keys.
+- **Keeping:** everything from the last *N* hours, then the newest of each day, week and month for as long as set, plus
+  the last backup before each wipe, kept apart. Then the size cap, oldest first; the newest backup is never removed.
+- **Free space:** a backup is refused, and says so, rather than take the disk below the floor.
+- **Before an update / a wipe:** the launcher backs up the stopped server first. A wipe from the panel may say
+  otherwise for that wipe.
+- **Accept backup settings from the panel:** the panel changes these settings only with the settings it last saw, so
+  an edit made here is never silently overwritten. `false` leaves them editable only here.
+- **Profile** is a name the panel sets with the settings. It is only shown.
+
 ## Status bar
 
 ```json

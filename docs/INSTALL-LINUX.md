@@ -97,7 +97,7 @@ Rust's server is 32-bit-linked, so the i386 architecture has to be enabled.
 sudo add-apt-repository -y multiverse
 sudo dpkg --add-architecture i386
 sudo apt update
-sudo apt install -y steamcmd lib32gcc-s1 curl jq unzip
+sudo apt install -y steamcmd lib32gcc-s1 curl jq unzip zstd
 ```
 
 The installer shows a licence prompt — accept it.
