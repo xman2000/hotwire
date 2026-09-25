@@ -25,6 +25,18 @@ sit above a launcher `1.1.7`. Read the label, not the number.
 at the top of the file — it is a comment, not something it echoes, so read it
 rather than watch for it.
 
+## 1.1.42 — plugin — 2026-09-25
+
+**Backups: two fixes found by checking real backups on a test server.**
+
+- `player.tokens.db` (the Rust+ app's tokens) is now in live backups. It is the one game database without a version
+  number in its name, and it was skipped. A database the game has open but whose file cannot be found is now named in
+  the console instead of being left out quietly.
+- A backup whose result reached the panel before the plugin's own check recorded it looked unfinished, and would have
+  been reported as failed an hour later. Results are recorded before they are sent, and a backup whose archive is on
+  disk is recorded as done.
+- The report policy line in the console says when the plan includes backups.
+
 ## 1.1.41 — plugin — 2026-09-25
 
 **Backups, done with the launcher.**

@@ -17,7 +17,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Hotwire", "xman2000", "1.1.41")]
+    [Info("Hotwire", "xman2000", "1.1.42")]
     [Description("Scheduled restarts and updates. Announces, counts down, writes a flag, quits.")]
     internal class Hotwire : CovalencePlugin
     {
@@ -5229,6 +5229,7 @@ namespace Oxide.Plugins
             parts.Add($"player events every {EventInterval()}s");
             parts.Add($"map markers every {MarkerInterval()}s");
             if (_policy.Positions) parts.Add($"player positions every {PositionInterval()}s");
+            if (_policy.Backups) parts.Add("backups");
             if (PolicyAllowsCommands()) parts.Add($"commands checked every {CommandInterval()}s");
             if (PolicyAllowsBans()) parts.Add($"ban list checked every {BanInterval()}s");
             parts.Add($"this policy checked every {PolicyPollInterval()}s");
@@ -7039,7 +7040,8 @@ namespace Oxide.Plugins
             handles.Add(new KeyValuePair<string, object>("player.blueprints.", get(null, up, "blueprints")));
             handles.Add(new KeyValuePair<string, object>("player.deaths.", get(null, up, "deaths")));
             handles.Add(new KeyValuePair<string, object>("player.identities.", get(null, up, "identities")));
-            handles.Add(new KeyValuePair<string, object>("player.tokens.", get(null, up, "tokens")));
+            // player.tokens.db alone has no version in its name, so its pattern has no dot before the wildcard.
+            handles.Add(new KeyValuePair<string, object>("player.tokens", get(null, up, "tokens")));
             handles.Add(new KeyValuePair<string, object>("player.states.", get(null, up, "playerState")));
             var rm = game.GetType("RelationshipManager", false);
             var rmi = get(null, rm, "ServerInstance");
@@ -7063,7 +7065,11 @@ namespace Oxide.Plugins
                         .OrderByDescending(f => f.LastWriteTimeUtc).Select(f => f.Name).FirstOrDefault();
                 }
                 catch { }
-                if (file == null) continue;
+                if (file == null)
+                {
+                    PrintWarning($"Backups: the game has a {h.Key.TrimEnd('.')} database open, but no {h.Key}*.db file was found in {saveDir}; it is not in this backup.");
+                    continue;
+                }
                 var db = h.Value;
                 var dest = Path.Combine(target, file);
                 steps.Enqueue(new KeyValuePair<string, Action>(file, () =>
@@ -7252,6 +7258,20 @@ namespace Oxide.Plugins
             if (dir == null || root == null) return;
             if (File.Exists(Path.Combine(Path.Combine(dir, ".results"), p.Run + ".result"))) return;   // collected next
             var flag = Path.Combine(root, BackupFlagName);
+            // The launcher finished it, but its result was not recorded here (a reload at the wrong moment): the
+            // archive's .meta is the proof, so the run is recorded as done rather than called off later as failed.
+            var meta = Path.Combine(dir, p.Run + ".meta");
+            if (!File.Exists(flag) && File.Exists(meta))
+            {
+                _backup.LastRun = p.Run;
+                _backup.LastStatus = "ok";
+                _backup.LastCode = null;
+                _backup.LastSuccessUtc = File.GetLastWriteTimeUtc(meta);
+                _backup.Pending = null;
+                WriteData(BackupDataFile, _backup);
+                Puts($"Backup {p.Run}: done (recorded from its archive).");
+                return;
+            }
             var age = DateTime.UtcNow - p.FlaggedUtc.Value;
             if (File.Exists(flag) && age.TotalMinutes >= BackupLauncherAnswerMinutes)
             {
@@ -7326,9 +7346,12 @@ namespace Oxide.Plugins
 
         // ------------------------------------------------------------- panel
 
-        // One result per call, oldest first; deleted only once the panel has it.
+        // One result per call, oldest first; deleted only once the panel has it. Recorded here first: the panel
+        // pump can reach a new result before the backup check does, and a result sent before it is recorded would
+        // leave the run looking unfinished and its timings unreported.
         private bool SendNextBackupResult()
         {
+            CollectBackupResults();
             var dir = BackupDir();
             if (dir == null) return false;
             var results = Path.Combine(dir, ".results");

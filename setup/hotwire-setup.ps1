@@ -97,7 +97,7 @@ $PluginUrl = 'https://raw.githubusercontent.com/xman2000/hotwire/connect-and-rep
 # "unverified (third-party)" rather than blocked -- the omission is never silent.
 $PinnedHashes = @{
     'hotwire.bat' = '9bb191baec5bd78e9a1c8a628015d1f42800ce1ca8b6c95b6347a93ab387470c'
-    'Hotwire.cs'  = 'a162cd06c0307cb26050959fa4d536c457006f36131fc24f19ad18646d349999'
+    'Hotwire.cs'  = '886ba405512e30ce633891a3fb8e73bce3e68be8694e804fadd1ed4e03de0472'
 }
 
 $Docs = [ordered]@{

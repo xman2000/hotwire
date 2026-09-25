@@ -671,7 +671,7 @@ RUST_APPID="258550"
 # or every install stops at a hash mismatch. Third-party downloads (SteamCMD from Ubuntu's archive, Oxide
 # from GitHub) are not pinned: Oxide is checked against the SHA-256 GitHub publishes for it instead.
 PIN_LAUNCHER="aa001f6e222e7c676293a9d86f5edd8291c61d19fad5b76920f2163cb1f0e5cb"
-PIN_PLUGIN="a162cd06c0307cb26050959fa4d536c457006f36131fc24f19ad18646d349999"
+PIN_PLUGIN="886ba405512e30ce633891a3fb8e73bce3e68be8694e804fadd1ed4e03de0472"
 
 # Rust's own floor (wiki.facepunch.com/rust/Creating-a-server), warned about and never enforced. A small
 # test server runs on less, and refusing would be guessing at what the reader wants.
