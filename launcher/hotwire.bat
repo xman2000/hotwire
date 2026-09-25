@@ -8,8 +8,17 @@ REM  editing section 4.
 set "CHECK_ONLY="
 if /i "%~1"=="check" set "CHECK_ONLY=1"
 
+REM  Who this launcher is, for the plugin and the panel: written to
+REM  oxide\data\Hotwire\launcher.json before every start, with this file's
+REM  code hash (the HOTWIRE_LAUNCHER_HASH line at the very end). The plugin
+REM  works the hash out again from this file's bytes, so the panel offers a
+REM  wipe or a permanent setting only through a launcher that is unmodified
+REM  and says it can carry them out. Not settings; do not edit.
+set "HOTWIRE_LAUNCHER_VERSION=1.1.14"
+set "HOTWIRE_LAUNCHER_CAPABILITIES=supervise,update,framework_verify,crash_backstop,log_rotate,convar_persist,wipe"
+
 REM ==[ H O T W I R E ]===================================================
-REM  Version 1.1.13  2026-09-18
+REM  Version 1.1.14  2026-09-25
 REM  Built by xman2000 and Claude.  MIT License.
 REM
 REM  The launcher. Starts a Rust dedicated server, relaunches it when it
@@ -79,9 +88,11 @@ REM
 REM  PLUGIN
 REM     Optional. See src\Hotwire.cs at the address above. It schedules
 REM     restarts, announces them to players, counts down, and writes the
-REM     flag when a scheduled restart is an update. The flag file is the
-REM     only interface between plugin and launcher, and neither half
-REM     requires the other.
+REM     flag when a scheduled restart is an update. Files in the server's
+REM     folder are the only interface between plugin and launcher: the
+REM     update flags, WIPE.flag and CONVAR.request from the plugin, and
+REM     oxide\data\Hotwire\launcher.json from here. Neither half requires
+REM     the other.
 REM
 REM     The plugin needs Oxide/uMod. Its countdown bar is drawn through
 REM     AdvancedStatus, a paid plugin most servers will not have --
@@ -126,6 +137,10 @@ REM     own default until you choose otherwise. Facepunch picked those.
 REM ======================================================================
 
 
+REM === HOTWIRE SETTINGS BEGIN ===========================================
+REM     Sections 1 and 4 are yours to edit. Both are left out of the
+REM     launcher's code hash, so changing a setting never marks the launcher
+REM     "modified" or turns off a panel feature. The rest is the launcher.
 REM ======================================================================
 REM  1. PATHS AND BEHAVIOR
 REM ======================================================================
@@ -177,6 +192,11 @@ REM     the names in its own config ("Update flag file name" and "Validate
 REM     flag file name"), so change both places or neither.
 set "UPDATE_FLAG=UPDATE.flag"
 set "VALIDATE_FLAG=VALIDATE.flag"
+
+REM   The wipe flag the plugin writes ("Wipe flag file name" in its config).
+REM     A wipe is a restart with this flag: between runs the launcher checks
+REM     it and writes the new seed and size into section 4.
+set "WIPE_FLAG=WIPE.flag"
 
 REM   hotwire mode only. If this many days pass with no update, one runs
 REM     anyway and says so in the console. Rust clients update themselves,
@@ -288,6 +308,7 @@ set "HOOK_AFTER="
 
 set "LOGFILE=%ROOT%\logs\server_log.txt"
 set "UPDATE_STAMP=%ROOT%\logs\last_update.txt"
+REM === HOTWIRE SETTINGS END =============================================
 
 REM  Consecutive crashes. Set here rather than at :start so it survives
 REM  the loop, which is the whole point of counting it.
@@ -1016,6 +1037,27 @@ if defined HOOK_AFTER call %HOOK_AFTER%
 REM ======================================================================
 :buildargs
 REM ======================================================================
+REM  3b. WIPES AND PERMANENT SETTINGS
+REM
+REM     Machinery. The plugin leaves WIPE.flag or CONVAR.request here when
+REM     the panel asks for a wipe or a permanent convar. Between runs is the
+REM     safe moment: the PowerShell at the end of this file checks every
+REM     value and writes it into section 4. cmd reads a running batch file
+REM     by byte offset, so only section 4, which lies ahead of this line, is
+REM     ever edited; nothing before it moves. Check mode changes nothing.
+REM ======================================================================
+set "HOTWIRE_EDITS="
+if exist "%ROOT%\%WIPE_FLAG%" set "HOTWIRE_EDITS=1"
+if exist "%ROOT%\CONVAR.request" set "HOTWIRE_EDITS=1"
+if defined CHECK_ONLY set "HOTWIRE_EDITS="
+set "HOTWIRE_SELF=%~f0"
+set "HOTWIRE_ROOT=%ROOT%"
+set "HOTWIRE_WIPEFLAG=%WIPE_FLAG%"
+if defined HOTWIRE_EDITS powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "$t=[IO.File]::ReadAllText($env:HOTWIRE_SELF,[Text.Encoding]::GetEncoding(28591)); $i=$t.LastIndexOf('#'+'HOTWIRE-EDITS'); if($i -ge 0){ Invoke-Expression $t.Substring($i) }"
+set "HOTWIRE_EDITS="
+
+REM === HOTWIRE SETTINGS BEGIN ===========================================
+REM ======================================================================
 REM  4. SERVER OPTIONS
 REM
 REM     One option per line. REM a line to switch it off; an option you do
@@ -1505,6 +1547,7 @@ REM   server.tickrate -- Server ticks per second.
 REM   [int, default 10]
 REM set "ARGS=!ARGS! +server.tickrate VALUE"
 
+REM === HOTWIRE SETTINGS END =============================================
 REM ======================================================================
 REM  4b. CHECKING THE OPTION LIST
 REM
@@ -1653,6 +1696,14 @@ if not "%ROTATE_LOGS%"=="0" if exist "%LOGFILE%" (
 )
 set "HOTWIRE_LOGROOT="
 
+REM  Tell the plugin who started the server: this launcher's version, code
+REM  hash, capabilities and path, in oxide\data\Hotwire\launcher.json. Written
+REM  before every start, so it follows this file. Best effort: a failure here
+REM  costs the panel's view of the launcher and nothing else.
+set "HOTWIRE_STATE=%ROOT%\oxide\data\Hotwire\launcher.json"
+powershell -NoProfile -NonInteractive -Command "$t=[IO.File]::ReadAllText($env:HOTWIRE_SELF,[Text.Encoding]::GetEncoding(28591)); $h=''; $m=[regex]::Match($t,'(?m)^HOTWIRE_LAUNCHER_HASH=.?([0-9a-f]{64})'); if($m.Success){ $h=$m.Groups[1].Value }; [void](New-Item -ItemType Directory -Force -Path (Split-Path -Parent $env:HOTWIRE_STATE)); $o=[ordered]@{ version=$env:HOTWIRE_LAUNCHER_VERSION; hash=$h; capabilities=$env:HOTWIRE_LAUNCHER_CAPABILITIES; platform='windows'; path=$env:HOTWIRE_SELF }; [IO.File]::WriteAllText($env:HOTWIRE_STATE, ($o | ConvertTo-Json))" >nul 2>&1
+set "HOTWIRE_STATE="
+
 echo [%date% %time%] Starting server...
 
 REM  Timed so a crash loop can be told from a working restart. If either
@@ -1725,3 +1776,228 @@ echo [%date% %time%] Set MAX_CRASH_STREAK=0 to loop forever instead.
 echo [%date% %time%] ====================================================
 pause
 exit /b 1
+
+REM ======================================================================
+REM  THE LAUNCHER'S CODE HASH, AND ITS POWERSHELL
+REM
+REM     Never run by cmd: the line above exits. The hash is stamped at
+REM     release by tools/launcher-hash.sh; section 3b hands everything from
+REM     the #HOTWIRE-EDITS line down to PowerShell, so it is written as
+REM     ordinary PowerShell rather than through cmd's quoting rules.
+REM ======================================================================
+HOTWIRE_LAUNCHER_HASH="3188f040adaec479636b63add692481f5103fb2ecd64cd14d6a280e54fdb5e55"
+
+#HOTWIRE-EDITS
+# Wipes and permanent convars, for hotwire.bat (capabilities: wipe, convar_persist).
+#
+# The plugin asks; this decides. The plugin leaves WIPE.flag (a new seed, size and what to do with
+# blueprints) or CONVAR.request (one "<convar> <value>" per line) in the server's folder, and the
+# launcher's pre-launch step runs this between server runs. Every value is checked again here before
+# anything is written or deleted: those files are requests, not commands.
+#
+# It edits only this file's section 4, which lies AFTER the line that runs it. cmd reads a running
+# batch file by byte offset, so an edit may only touch bytes cmd has not reached yet; everything before
+# the pre-launch step stays exactly as it was. What is written is a typed setting, never a command:
+# a value that cmd would treat as syntax is refused, so a forged request cannot put a command into a
+# file this machine runs. Windows PowerShell 5.1, ASCII only.
+$ErrorActionPreference = 'Stop'
+$self = $env:HOTWIRE_SELF
+$root = $env:HOTWIRE_ROOT
+$wipeName = $env:HOTWIRE_WIPEFLAG
+if (-not $wipeName) { $wipeName = 'WIPE.flag' }
+
+function Say([string]$message) { Write-Output ('[' + (Get-Date -Format 'yyyy-MM-dd HH:mm:ss') + '] ' + $message) }
+
+# Read and written byte for byte (Latin-1 maps each byte to one character and back), so every line this does
+# not change stays exactly as it was, whatever its encoding. What this writes is plain ASCII.
+$bytes = [Text.Encoding]::GetEncoding(28591)
+$text = [IO.File]::ReadAllText($self, $bytes)
+$eol = "`n"
+if ($text.Contains("`r`n")) { $eol = "`r`n" }
+$lines = New-Object 'System.Collections.Generic.List[string]'
+foreach ($l in ($text -split "`r?`n")) { $lines.Add($l) }
+
+# Section 4: from the settings marker after :buildargs to its end marker. Nothing outside is touched.
+# The markers are built in pieces: written whole, these lines would read as settings markers themselves, and
+# the code hash would skip this code instead of covering it.
+$beginMarker = '=== HOTWIRE SETTINGS ' + 'BEGIN ==='
+$endMarker = '=== HOTWIRE SETTINGS ' + 'END ==='
+$start = -1; $finish = -1; $seenArgs = $false
+for ($i = 0; $i -lt $lines.Count; $i++) {
+    if ($lines[$i] -eq ':buildargs') { $seenArgs = $true; continue }
+    if ($seenArgs -and $start -lt 0 -and $lines[$i].Contains($beginMarker)) { $start = $i; continue }
+    if ($start -ge 0 -and $lines[$i].Contains($endMarker)) { $finish = $i; break }
+}
+if ($start -lt 0 -or $finish -lt 0) {
+    Say 'Section 4 has lost its settings markers, so no wipe or convar change can be written. Starting unchanged.'
+    exit 0
+}
+
+function InBlock([string]$pattern) {
+    $found = @()
+    for ($i = $start + 1; $i -lt $finish; $i++) { if ($lines[$i] -match $pattern) { $found += $i } }
+    return ,$found
+}
+
+# The plain-value settings of section 4.2/4.3, where | & < > are safe.
+$variables = @{ 'server.hostname' = 'SERVER_HOSTNAME'; 'server.description' = 'SERVER_DESCRIPTION'; 'server.tags' = 'SERVER_TAGS'; 'server.maxplayers' = 'SERVER_MAXPLAYERS'; 'server.seed' = 'SERVER_SEED' }
+
+# Returns '' when done, or why not.
+function SetVariable([string]$name, [string]$value) {
+    if ($value -match '["^]' -or $value -match '[^\x20-\x7E]') { return 'the value has a character a batch file cannot hold here' }
+    $written = $value.Replace('%', '%%').Replace('!', '^!')
+    $found = InBlock ('^set "' + $name + '=[^"]*"$')
+    if ($found.Count -ne 1) { return ('section 4 has no single ' + $name + ' line') }
+    $lines[$found[0]] = 'set "' + $name + '=' + $written + '"'
+    return ''
+}
+
+function SetOption([string]$convar, [string]$value) {
+    if ($value -match '["%!^&|<>]' -or $value -match '[^\x20-\x7E]') { return 'the value has a character cmd reads as syntax (" % ! ^ & | < >) or is not plain ASCII' }
+    $word = $value
+    if ($value -match '\s') { $word = '"' + $value + '"' }
+    $escaped = [regex]::Escape($convar)
+    $active = InBlock ('^set "ARGS=!ARGS! \+' + $escaped + ' ')
+    if ($active.Count -gt 1) { return ('it is set on more than one line in section 4') }
+    if ($active.Count -eq 1) {
+        $m = [regex]::Match($lines[$active[0]], '^set "ARGS=!ARGS! \+(\S+) ')
+        $lines[$active[0]] = 'set "ARGS=!ARGS! +' + $m.Groups[1].Value + ' ' + $word + '"'
+        return ''
+    }
+    $listed = InBlock ('^REM set "ARGS=!ARGS! \+' + $escaped + ' VALUE"$')
+    if ($listed.Count -eq 1) {
+        $m = [regex]::Match($lines[$listed[0]], '\+(\S+) VALUE"$')
+        $lines[$listed[0]] = 'set "ARGS=!ARGS! +' + $m.Groups[1].Value + ' ' + $word + '"'
+        return ''
+    }
+    # Not in the list: a managed line of its own, just above the end of section 4, replacing an earlier one.
+    $marker = 'REM hotwire-managed: ' + $convar
+    for ($i = $finish - 1; $i -gt $start; $i--) {
+        if ($lines[$i] -eq $marker) { $lines.RemoveAt($i + 1); $lines.RemoveAt($i); $script:finish -= 2 }
+    }
+    $lines.Insert($finish, $marker)
+    $lines.Insert($finish + 1, 'set "ARGS=!ARGS! +' + $convar + ' ' + $word + '"')
+    $script:finish += 2
+    return ''
+}
+
+function ActiveValue([string]$convar) {
+    $found = InBlock ('^set "ARGS=!ARGS! \+' + [regex]::Escape($convar) + ' ')
+    if ($found.Count -ne 1) { return '' }
+    $m = [regex]::Match($lines[$found[0]], '^set "ARGS=!ARGS! \+\S+ "?([^"]*)"?"$')
+    return $m.Groups[1].Value
+}
+
+$changed = $false
+$wipe = $null
+$convarLog = @()
+
+# ---- Wipe ------------------------------------------------------------------------------------------
+$flag = Join-Path $root $wipeName
+$result = Join-Path $root 'WIPE.result'
+$cycleFile = Join-Path $root 'hotwire\wipe-cycle'
+if (Test-Path -LiteralPath $flag) {
+    $w = @{}
+    foreach ($l in [IO.File]::ReadAllLines($flag)) {
+        $parts = $l.Trim().Split(' ', 2)
+        if ($parts.Count -eq 2 -and -not $w.ContainsKey($parts[0])) { $w[$parts[0]] = $parts[1].Trim() }
+    }
+    $seed = [string]$w['seed']; $size = [string]$w['size']; $bp = [string]$w['blueprints']; $cycle = [string]$w['cycle']; $expires = [string]$w['expires']
+    if (-not $bp) { $bp = 'keep' }
+    $done = ''
+    if ($cycle -and (Test-Path -LiteralPath $cycleFile)) { $done = ([IO.File]::ReadAllText($cycleFile)).Trim() }
+    $now = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+    $why = ''
+    if ($cycle -and $done -eq $cycle) {
+        Remove-Item -LiteralPath $flag -Force
+        Say ('Wipe for cycle ' + $cycle + ' already done; ignoring the flag.')
+    } elseif ($expires -match '^\d+$' -and [long]$expires -lt $now) {
+        Remove-Item -LiteralPath $flag -Force
+        Say 'The wipe flag has expired; ignoring it. Starting unchanged.'
+    } else {
+        if ($seed -notmatch '^\d{1,10}$' -or [long]$seed -gt 2147483647) { $why = 'seed is not a whole number from 0 to 2147483647' }
+        elseif ($size -and ($size -notmatch '^\d{1,5}$' -or [int]$size -lt 1000 -or [int]$size -gt 6000)) { $why = 'size is not a whole number from 1000 to 6000' }
+        elseif ('keep', 'rename', 'delete' -notcontains $bp) { $why = 'blueprints must be keep, rename or delete' }
+        if (-not $why) { $why = SetVariable 'SERVER_SEED' $seed }
+        if (-not $why -and $size) { $why = SetOption 'server.worldsize' $size }
+        if ($why) {
+            Say ('Wipe CANCELLED: ' + $why + '. Starting unchanged.')
+            [IO.File]::WriteAllText($result, 'cancelled: ' + $why + "`n")
+            Remove-Item -LiteralPath $flag -Force
+            # Nothing is kept from a cancelled wipe: re-read the file so a half-made change is not written.
+            $lines.Clear(); foreach ($l in ($text -split "`r?`n")) { $lines.Add($l) }
+        } else {
+            $changed = $true
+            $identity = ActiveValue 'server.identity'
+            if (-not $identity) { $identity = 'my_server_identity' }
+            $wipe = @{ seed = $seed; size = $size; bp = $bp; cycle = $cycle; flag = $flag; identity = $identity }
+        }
+    }
+}
+
+# ---- Permanent convars -----------------------------------------------------------------------------
+$request = Join-Path $root 'CONVAR.request'
+if (Test-Path -LiteralPath $request) {
+    foreach ($l in [IO.File]::ReadAllLines($request)) {
+        if (-not $l.Trim()) { continue }
+        $parts = $l.Split(' ', 2)
+        $name = $parts[0]; $value = ''
+        if ($parts.Count -eq 2) { $value = $parts[1] }
+        $why = ''
+        if ($name -cnotmatch '^[a-z][a-z0-9]*(\.[a-z0-9_]+)+$') { $why = 'not a dotted convar name' }
+        elseif ('server.seed', 'server.worldsize', 'server.level', 'server.levelurl' -contains $name) { $why = 'map-defining, belongs to wipe not the convar editor' }
+        elseif ($name -eq 'rcon.password') { $why = 'a secret, never set through the panel' }
+        elseif (-not $value -or $value -match '[\x00-\x1F\x7F]') { $why = 'missing or non-printable value' }
+        elseif ($variables.ContainsKey($name)) { $why = SetVariable $variables[$name] $value }
+        else { $why = SetOption $name $value }
+        if ($why) { $convarLog += ('reject ' + $name + ' : ' + $why) }
+        else { $convarLog += ('applied ' + $name + ' ' + $value); $changed = $true }
+    }
+}
+
+# ---- Write, then act on it -------------------------------------------------------------------------
+if ($changed) {
+    try {
+        [IO.File]::WriteAllText($self, ($lines -join $eol), $bytes)
+    } catch {
+        Say ('Could not write the launcher file (' + $_.Exception.Message + '). No wipe or convar change was made; starting unchanged.')
+        if ($wipe) { [IO.File]::WriteAllText($result, "cancelled: could not write the launcher file`n"); Remove-Item -LiteralPath $flag -Force }
+        if (Test-Path -LiteralPath $request) { [IO.File]::WriteAllText((Join-Path $root 'CONVAR.result'), "reject all : could not write the launcher file`n"); Remove-Item -LiteralPath $request -Force }
+        exit 0
+    }
+}
+
+if ($wipe) {
+    # Blueprints, in the save folder. Matched by pattern: the version in the name changes between builds.
+    # player.tokens.db and everything else is left alone.
+    $count = 0
+    $folder = Join-Path $root ('server\' + $wipe.identity)
+    if ($wipe.bp -ne 'keep' -and (Test-Path -LiteralPath $folder)) {
+        $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
+        foreach ($f in @(Get-ChildItem -LiteralPath $folder -Filter 'player.blueprints.*.db' -File)) {
+            if ($wipe.bp -eq 'delete') { Remove-Item -LiteralPath $f.FullName -Force }
+            else { Rename-Item -LiteralPath $f.FullName -NewName ($f.Name + '.wiped-' + $stamp) }
+            $count++
+        }
+    }
+    # The cycle is recorded and the flag cleared last, so a crash part-way re-runs the wipe safely.
+    if ($wipe.cycle) {
+        [void](New-Item -ItemType Directory -Force -Path (Split-Path -Parent $cycleFile))
+        [IO.File]::WriteAllText($cycleFile, $wipe.cycle)
+    }
+    Remove-Item -LiteralPath $wipe.flag -Force
+    $sizeText = 'unchanged'
+    if ($wipe.size) { $sizeText = $wipe.size }
+    $bpText = 'kept'
+    if ($wipe.bp -ne 'keep') { $bpText = $wipe.bp + ' (' + $count + ' file(s))' }
+    [IO.File]::WriteAllText($result, 'applied: seed ' + $wipe.seed + ' size ' + $sizeText + ' blueprints ' + $bpText + "`n")
+    Say ('Wipe applied: seed ' + $wipe.seed + ', size ' + $sizeText + ', blueprints ' + $bpText + '. The new world generates on this start; the old save is left on disk.')
+}
+
+if (Test-Path -LiteralPath $request) {
+    [IO.File]::WriteAllText((Join-Path $root 'CONVAR.result'), (($convarLog -join "`n") + "`n"))
+    Remove-Item -LiteralPath $request -Force
+    $applied = @($convarLog | Where-Object { $_.StartsWith('applied ') }).Count
+    Say ('Convar persist: applied ' + $applied + ', rejected ' + ($convarLog.Count - $applied) + ' (details in CONVAR.result).')
+}
+exit 0

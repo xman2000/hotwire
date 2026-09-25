@@ -11,7 +11,8 @@
 # launcher-editing feature.
 #
 # The algorithm must match the plugin's byte for byte:
-#   - split on LF; drop the SETTINGS block (inclusive of both marker lines);
+#   - split on LF, treating CRLF as LF (hotwire.bat is checked out with CRLF);
+#   - drop each SETTINGS block (inclusive of both marker lines; hotwire.bat has two);
 #   - drop the line beginning HOTWIRE_LAUNCHER_HASH= ;
 #   - strip trailing whitespace from each remaining line;
 #   - join with LF and SHA-256 the result.
@@ -33,6 +34,7 @@ compute() {
     local file="$1"
     [ -f "$file" ] || { echo "no such file: $file" >&2; exit 2; }
     awk -v b="$BEGIN_MARKER" -v e="$END_MARKER" '
+        { sub(/\r$/, "") }
         index($0, b) { skip=1 }
         skip==1 { if (index($0, e)) { skip=0 }; next }
         /^HOTWIRE_LAUNCHER_HASH=/ { next }
@@ -45,7 +47,8 @@ stamp() {
     h="$(compute "$file")"
     # Replace the declaration line's value in place.
     if grep -q '^HOTWIRE_LAUNCHER_HASH=' "$file"; then
-        sed -i -E "s|^HOTWIRE_LAUNCHER_HASH=.*|HOTWIRE_LAUNCHER_HASH=\"$h\"|" "$file"
+        # [^\r]* rather than .*, so a CRLF file keeps its CR on this line.
+        sed -i -E "s|^HOTWIRE_LAUNCHER_HASH=[^\r]*|HOTWIRE_LAUNCHER_HASH=\"$h\"|" "$file"
         echo "stamped $file with $h"
     else
         echo "no HOTWIRE_LAUNCHER_HASH= line in $file" >&2; exit 2

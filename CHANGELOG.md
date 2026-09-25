@@ -25,6 +25,28 @@ sit above a launcher `1.1.7`. Read the label, not the number.
 at the top of the file — it is a comment, not something it echoes, so read it
 rather than watch for it.
 
+## 1.1.14 — launcher (Windows) — 2026-09-25
+
+**Wipes and permanent settings from the panel, on Windows.**
+
+- `hotwire.bat` now tells the plugin who it is before every start, in `oxide\data\Hotwire\launcher.json`: its version,
+  its code hash, what it can do and where it is. The plugin works the hash out again from the file, so the panel can
+  tell an unmodified Hotwire launcher from a changed one. Until now only the Linux launcher did this, and a Windows
+  server showed "No Hotwire launcher reported".
+- **Wipes:** when the plugin leaves `WIPE.flag`, the launcher checks the new seed, size and what to do with blueprints,
+  writes the seed and size into section 4, and renames or deletes the blueprint files. The same cycle is never applied
+  twice, an expired flag is ignored, and anything invalid cancels the wipe and starts the server unchanged. Receipt in
+  `WIPE.result`.
+- **Permanent convars:** when the plugin leaves `CONVAR.request`, each convar is written into section 4. A listed
+  option is switched on in place, one already set is changed in place, and anything else gets a line of its own at the
+  end of section 4, so no convar is ever set twice. The map-defining convars and `rcon.password` are refused, as is any
+  value cmd would read as syntax. Receipt in `CONVAR.result`.
+- Sections 1 and 4 are marked as settings and left out of the code hash, so editing a setting never marks the
+  launcher modified.
+- Only section 4, which cmd has not reached when the changes are made, is ever edited: cmd reads a running batch file
+  by its byte position. Check mode changes nothing.
+- `tools/launcher-hash.sh` treats CRLF as LF, as the plugin does, and keeps a CRLF file's line endings when stamping.
+
 ## 1.1.40 — plugin — 2026-09-23
 
 **Less work for the garbage collector.**
