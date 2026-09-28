@@ -1178,8 +1178,15 @@ if not defined INSTALLED_BUILD (
     echo [%date% %time%] A NEWER BUILD IS AVAILABLE.
     echo [%date% %time%] Clients update themselves, so once the protocol
     echo [%date% %time%] moves this server stops accepting connections.
-    echo [%date% %time%] Check the framework has released for it, then
-    echo [%date% %time%] create %UPDATE_FLAG% in %ROOT%.
+    REM  What happens next depends on the update mode, so say that, not what
+    REM  an admin in another mode would do (the owner's test, 2026-09-28).
+    set "HW_NEWER=updates"
+    if /i "!UPDATE_EFFECTIVE!"=="off" set "HW_NEWER=off"
+    if /i "!UPDATE_EFFECTIVE!"=="hotwire" if not "%UPDATE_ON_NEW_BUILD%"=="1" set "HW_NEWER=flag"
+    if "!HW_NEWER!"=="updates" echo [%date% %time%] A normal start updates it before launching.
+    if "!HW_NEWER!"=="off" echo [%date% %time%] UPDATE_MODE is off, so this launcher does not update it.
+    if "!HW_NEWER!"=="flag" echo [%date% %time%] Create %UPDATE_FLAG% in %ROOT% to update on the next start.
+    set "HW_NEWER="
     echo [%date% %time%] ================================================
 )
 
@@ -1284,14 +1291,17 @@ if !DAYS_SINCE_UPDATE! GEQ %MAX_DAYS_WITHOUT_UPDATE% (
 
 :updatedecided
 
-REM  check mode inspects; it never installs.
+REM  check mode inspects; it never installs. It says what a normal start would
+REM  do instead of "Plain restart", which read as the opposite of the line above.
+if defined CHECK_ONLY if "%DO_UPDATE%"=="1" echo [%date% %time%] check mode -- a normal start would update here. Nothing is installed.
+if defined CHECK_ONLY if "%DO_UPDATE%"=="0" echo [%date% %time%] check mode -- a normal start would launch without updating.
 if defined CHECK_ONLY set "DO_UPDATE=0"
 
 REM  check mode runs nothing on your behalf, hooks included.
 if not defined CHECK_ONLY if defined HOOK_BEFORE call %HOOK_BEFORE%
 
 if "%DO_UPDATE%"=="0" (
-    echo [%date% %time%] Plain restart -- skipping steamcmd and framework.
+    if not defined CHECK_ONLY echo [%date% %time%] Plain restart -- skipping steamcmd and framework.
     goto buildargs
 )
 
@@ -1863,7 +1873,7 @@ REM     release by tools/launcher-hash.sh; section 6b hands everything from
 REM     the #HOTWIRE-EDITS line down to PowerShell, so it is written as
 REM     ordinary PowerShell rather than through cmd's quoting rules.
 REM ======================================================================
-HOTWIRE_LAUNCHER_HASH="314c7ddb4d5ecfb1fe6711ab2cfdb2c70247be800cebc8351c87e9df47d47961"
+HOTWIRE_LAUNCHER_HASH="4ca21852c431bc8a5cc37670d17f561513f4a19280ded3bb659d13ee8aa91fb6"
 
 #HOTWIRE-EDITS
 # Wipes and permanent convars, for hotwire.bat (capabilities: wipe, convar_persist).

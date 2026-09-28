@@ -112,7 +112,7 @@ UPDATE_MODE="auto"
 #     number, are what a feature is gated on.
 HOTWIRE_LAUNCHER_VERSION="1.1.1-linux"
 HOTWIRE_LAUNCHER_CAPABILITIES="supervise,update,framework_verify,crash_backstop,log_rotate,convar_persist,wipe,backup"
-HOTWIRE_LAUNCHER_HASH="9befbcfd622af32cb08082b8a9aff6059704708f0cb7109dcd220107a21f2203"
+HOTWIRE_LAUNCHER_HASH="058df18b11f867d53f2add92ff9f6f7439c21ac8e11accfbee832600cd9d6093"
 
 # ======================================================================
 #  HOW THIS LAUNCHER WORKS
@@ -1383,7 +1383,12 @@ per_launch_prep() {
     decide_update_mode
     build_check
     update_decision
-    [ -n "$CHECK_ONLY" ] && DO_UPDATE=0
+    # Check mode says what a normal start would do, rather than "Plain restart" (the owner's test, 2026-09-28).
+    if [ -n "$CHECK_ONLY" ]; then
+        if [ "$DO_UPDATE" = "1" ]; then log "Check mode: a normal start would update here. Nothing is installed."
+        else log "Check mode: a normal start would launch without updating."; fi
+        DO_UPDATE=0
+    fi
     # A backup of the stopped server, before an update or a wipe changes it.
     [ -z "$CHECK_ONLY" ] && backup_before_launch
     # HOOK_BEFORE runs on every real start (not in check mode), before any update.
@@ -1395,7 +1400,7 @@ per_launch_prep() {
         finalize_update
         # HOOK_AFTER runs after an update attempt (success or not), like the .bat.
         [ -n "$HOOK_AFTER" ] && { log "Running HOOK_AFTER..."; bash -c "$HOOK_AFTER" || warn "HOOK_AFTER exited non-zero."; }
-    else
+    elif [ -z "$CHECK_ONLY" ]; then
         log "Plain restart: no update this pass."
     fi
     # Check mode changes nothing on your behalf (as hotwire.bat's does): a wipe or a
