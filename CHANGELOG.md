@@ -27,6 +27,11 @@ rather than watch for it.
 
 ## 1.1.43 — plugin — 2026-09-28
 
+**The panel's address is https://afkpanel.com.** `hotwire connect <code>` with no address, and both setup scripts
+(`hotwire-setup.sh` 0.2.3, `hotwire-setup.ps1` 0.1.3), now connect to it. A server already connected keeps the address
+it connected with; to move one, make a code in AFKPanel and connect again with the address, for example
+`hotwire connect <code> https://afkpanel.com`.
+
 **The launcher knows when updates are scheduled here.** While at least one update entry, or the framework check, is
 switched on, the plugin keeps `UPDATE.schedule` in the server root and rewrites it every 15 minutes; with none it
 deletes the file. A launcher on `UPDATE_MODE=auto` (Windows 1.1.15, Linux 1.1.1) follows the schedule while the file
@@ -38,7 +43,7 @@ value is `true` on Pro and `false` on the free plan, and chat lines are not sent
 leaves and in-game reports are unaffected. Until the first policy arrives, chat waits in the queue and goes if the
 answer is no.
 
-## 1.1.15 — launcher (Windows) — 2026-09-27
+## 1.1.15 — launcher (Windows) — 2026-09-28
 
 **The settings most servers change are at the top of the file.**
 
@@ -59,15 +64,18 @@ answer is no.
   that makes the change, the launcher then jumps to a label, which cmd finds by searching the file's text, and reads
   sections 1 and 3 again before every start.
 - The port notes say to forward the game and query ports and never RCON. The old section 4.2 said all three.
+- `hotwire.bat check` says what a normal start would do ("would update here", or "would launch without updating")
+  instead of "Plain restart". When Steam has a newer build, the notice says what happens next under the update mode
+  in use, instead of always telling you to create `UPDATE.flag`.
 - An existing `hotwire.bat` keeps working as it is.
 
-## 1.1.1-linux — launcher (Linux) — 2026-09-27
+## 1.1.1-linux — launcher (Linux) — 2026-09-28
 
 **The same layout as the Windows launcher.** Section 1, at the top, holds the server's name, description, tags,
 player count, save folder, seed, world size, ports and `UPDATE_MODE`, each with its default beside it; section 2 the launcher
 settings; section 3 the map level, `rcon.web` and any extra convars. The setting names are unchanged, so an existing
 `hotwire.sh` and `hotwire-setup.sh` keep working. `UPDATE_MODE=auto` and the update checks work as on Windows, and
-`launcher.json` carries `update_mode`.
+`launcher.json` carries `update_mode`. `hotwire.sh check` says what a normal start would do, as on Windows.
 
 ## 1.1.42 — plugin — 2026-09-25
 

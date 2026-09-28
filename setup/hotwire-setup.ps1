@@ -61,7 +61,7 @@ $DefaultBranch = 'public'
 
 # How long to wait for another server's SteamCMD run before giving up. See Invoke-SteamCmdLocked.
 $SteamCmdWaitMinutes = 60
-$DefaultPanel = 'https://hotpanel.on-forge.com'
+$DefaultPanel = 'https://afkpanel.com'
 
 # Every URL below was checked on 2026-09-13. umod.org/games/rust/download answers 301 to
 # github.com/OxideMod/Oxide.Rust/releases/latest/download/Oxide.Rust.zip -- the Windows bundle.
@@ -97,7 +97,7 @@ $PluginUrl = 'https://raw.githubusercontent.com/xman2000/hotwire/connect-and-rep
 # "unverified (third-party)" rather than blocked -- the omission is never silent.
 $PinnedHashes = @{
     'hotwire.bat' = 'a8055ad272b75208666af8a4a1fccbf5cfad6c45007be8e016897ceff1e302cd'
-    'Hotwire.cs'  = 'f049bab2556dcb5802356af58ace13f37c07dbbaeb73a924817bfc94c3bbc6d8'
+    'Hotwire.cs'  = '7d2176b47c664eae4a58bc792fb2147390d2aeb7f06c4b6c906cf11f6ba36675'
 }
 
 $Docs = [ordered]@{

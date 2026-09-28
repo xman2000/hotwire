@@ -1,6 +1,6 @@
 # hotwire-setup
 
-Installs a Rust server with Oxide, and connects it to [Hotwire Panel](https://hotpanel.on-forge.com)
+Installs a Rust server with Oxide, and connects it to [AFKPanel](https://afkpanel.com)
 as well. **Every step asks first.** Installing something that is not there yet defaults to yes; replacing
 or removing anything defaults to no.
 

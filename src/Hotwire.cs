@@ -10090,7 +10090,7 @@ namespace Oxide.Plugins
         // server in the panel rather than making a second. The code is good
         // for one hour and one server, and is spent once it is used.
 
-        private const string DefaultPanelUrl = "https://hotpanel.on-forge.com";
+        private const string DefaultPanelUrl = "https://afkpanel.com";
         private const string EnrollPath = "/api/v1/enroll";
         private bool _connecting;
 
