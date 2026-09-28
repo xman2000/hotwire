@@ -170,7 +170,7 @@ seed.
 Stopped halfway? Run it again. From the server's folder it carries on there; from anywhere else it lists
 the servers it knows. SteamCMD resumes a partial download, and Oxide puts every file in place again.
 
-The numbers it uses: the port layout from `launcher/hotwire.bat` section 4.2 (game, RCON one above, query
+The numbers it uses: the port layout from `launcher/hotwire.bat` section 1 (game, RCON one above, query
 two above); the Rust+ port, the larger of game and RCON plus 67, from
 [Rust+ Server](https://wiki.facepunch.com/rust/rust-companion-server); 15 GB disk and 12 GB RAM,
 warned about rather than enforced, from [Creating a server](https://wiki.facepunch.com/rust/Creating-a-server).

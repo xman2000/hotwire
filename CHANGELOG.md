@@ -25,6 +25,28 @@ sit above a launcher `1.1.7`. Read the label, not the number.
 at the top of the file — it is a comment, not something it echoes, so read it
 rather than watch for it.
 
+## 1.1.15 — launcher (Windows) — 2026-09-27
+
+**The settings most servers change are at the top of the file.**
+
+- Section 1 comes straight after the title: the server's name, description, tags, player count, save folder, seed,
+  world size and its three ports, each with the game's default beside it. Launcher settings follow in section 2 and
+  every other option in section 3; the launcher's own code comes last.
+- The save folder and world size are filled-in settings now, `SERVER_IDENTITY` and `SERVER_WORLDSIZE`, and the ports
+  are `SERVER_PORT`, `SERVER_QUERYPORT` and `RCON_PORT`: the same names the Linux launcher uses.
+- Wipes and permanent settings from the panel write these into section 1. Because section 1 lies before the line
+  that makes the change, the launcher then jumps to a label, which cmd finds by searching the file's text, and reads
+  sections 1 and 3 again before every start.
+- The port notes say to forward the game and query ports and never RCON. The old section 4.2 said all three.
+- An existing `hotwire.bat` keeps working as it is.
+
+## 1.1.1-linux — launcher (Linux) — 2026-09-27
+
+**The same layout as the Windows launcher.** Section 1, at the top, holds the server's name, description, tags,
+player count, save folder, seed, world size and ports, each with the game's default beside it; section 2 the launcher
+settings; section 3 the map level, `rcon.web` and any extra convars. The setting names are unchanged, so an existing
+`hotwire.sh` and `hotwire-setup.sh` keep working.
+
 ## 1.1.42 — plugin — 2026-09-25
 
 **Backups: two fixes found by checking real backups on a test server.**

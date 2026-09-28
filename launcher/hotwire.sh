@@ -1,11 +1,95 @@
 #!/usr/bin/env bash
 #
 # ==[ H O T W I R E ]===================================================
+#  Hotwire launcher for Linux, version 1.1.1-linux (2026-09-27)
+#  Built by xman2000 and Claude.  MIT License.
+#  https://github.com/xman2000/hotwire
 #
-#   Hotwire launcher for Linux -- the bash sibling of hotwire.bat.
+#  Fill in section 1, then run "./hotwire.sh check". How the launcher
+#  works, and every other setting, comes after section 1.
+# ======================================================================
+
+# === HOTWIRE SETTINGS BEGIN ===========================================
+#  1. YOUR SERVER
 #
-#   Built by xman2000 and Claude. MIT License.
-#   https://github.com/xman2000/hotwire
+#     The settings most servers change. An empty value uses the game's
+#     own default, shown in brackets. Write each value between the double
+#     quotes, and never use " $ ` or \ in one. Every other convar is in
+#     section 3. The RCON password is in secrets.sh, not here.
+# ======================================================================
+
+#  +server.hostname [default: "My Untitled Rust Server"]
+#  The name in the server browser.
+SERVER_HOSTNAME=""
+
+#  +server.description [default: "No server description has been provided."]
+#  Shown with your server in the server browser. \n starts a new line.
+SERVER_DESCRIPTION=""
+
+#  +server.tags [default: none]
+#  Browser filter tags, comma separated, no spaces. The browser filters
+#  on these: monthly biweekly weekly, vanilla softcore hardcore primitive
+#  pve, roleplay creative minigame training battlefield builds, and a
+#  region such as NA or EU. Tags it does not filter on have no effect.
+SERVER_TAGS=""
+
+#  +server.maxplayers [default: 500]
+#  Player slots. A whole number.
+SERVER_MAXPLAYERS=""
+
+#  +server.identity [default: "my_server_identity"]
+#  The folder under server/ that holds the map, blueprints and bans.
+#  Short, lower case, no spaces. Changing it later starts a new, empty
+#  server and leaves the old one on disk.
+SERVER_IDENTITY=""
+
+#  +server.seed [default: 1337]
+#  The map. A whole number from 0 to 2147483647. The same seed and size
+#  always make the same map, so left empty the server plays the same map
+#  as every server left at the default. hotwire-setup writes a random
+#  seed here for a new server. Changing it on a server that has been
+#  played starts a new map, which wipes everything built on the old one.
+SERVER_SEED=""
+
+#  +server.worldsize [default: 4500]
+#  Map width in metres, 1000 to 6000. Bigger maps boot slower and use
+#  more memory. Changing it starts a new map.
+SERVER_WORLDSIZE=""
+
+#  Ports. Forward the game and query ports at your router, and nothing
+#  else. Every server on this machine needs its own three.
+
+#  +server.port [default: 28015]
+#  Game traffic, UDP.
+SERVER_PORT="28015"
+
+#  +server.queryport [default: 0, one above the higher of the other two]
+#  The server browser, UDP. If this is wrong the server runs but nobody
+#  can see it. Do not use 27015, or anything from 27000 to 27030: that
+#  is Steam's own range, and on a machine that also runs Steam the client
+#  can take the port and hide your server from the browser.
+SERVER_QUERYPORT="28017"
+
+#  +rcon.port [default: 0]
+#  Remote console, TCP. Never forward this port. RCON is not encrypted:
+#  the password crosses the network in plain text.
+RCON_PORT="28016"
+# === HOTWIRE SETTINGS END =============================================
+
+# --- Launcher identity. Not settings; do not edit.
+#     HOTWIRE_LAUNCHER_HASH is stamped by tools/launcher-hash.sh at release and
+#     is excluded from its own computation, as is the whole SETTINGS block, so an
+#     admin editing settings never changes the hash. The plugin recomputes the
+#     hash from these bytes to confirm this is an unmodified Hotwire launcher
+#     before it offers a launcher-editing feature. Capabilities, not the version
+#     number, are what a feature is gated on.
+HOTWIRE_LAUNCHER_VERSION="1.1.1-linux"
+HOTWIRE_LAUNCHER_CAPABILITIES="supervise,update,framework_verify,crash_backstop,log_rotate,convar_persist,wipe,backup"
+HOTWIRE_LAUNCHER_HASH="5cc848aa2e81a7c10d8e58041a3109e9c7675cff76874aec0f838ed00fea7bc0"
+
+# ======================================================================
+#  HOW THIS LAUNCHER WORKS
+# ======================================================================
 #
 #   It keeps a Rust dedicated server running: it updates the game and
 #   Oxide when told to, starts the server, restarts it when it exits,
@@ -31,59 +115,13 @@
 #
 # ======================================================================
 
-# --- Launcher identity (see the SETTINGS block below for what an admin edits).
-#     HOTWIRE_LAUNCHER_HASH is stamped by tools/launcher-hash.sh at release and
-#     is excluded from its own computation, as is the whole SETTINGS block, so an
-#     admin editing settings never changes the hash. The plugin recomputes the
-#     hash from these bytes to confirm this is an unmodified Hotwire launcher
-#     before it offers a launcher-editing feature. Capabilities, not the version
-#     number, are what a feature is gated on.
-HOTWIRE_LAUNCHER_VERSION="1.1.0-linux"
-HOTWIRE_LAUNCHER_CAPABILITIES="supervise,update,framework_verify,crash_backstop,log_rotate,convar_persist,wipe,backup"
-HOTWIRE_LAUNCHER_HASH="7f6e145b1126dccbde230de8f5d9e7311bea1acd63a725b81cc13331809197c5"
-
-set -uo pipefail
-
-# ---------------------------------------------------------------- output ----
-# Colour only when a human is looking; a log file, a pipe or systemd gets plain.
-if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
-    C_DIM=$'\033[2m'; C_RED=$'\033[31m'; C_GRN=$'\033[32m'
-    C_YEL=$'\033[33m'; C_CYN=$'\033[36m'; C_BLD=$'\033[1m'; C_OFF=$'\033[0m'
-else
-    C_DIM=""; C_RED=""; C_GRN=""; C_YEL=""; C_CYN=""; C_BLD=""; C_OFF=""
-fi
-
-# Every runtime line carries a timestamp, as the .bat's "[%date% %time%]" does.
-log()  { printf '%s[%s]%s %s\n' "$C_DIM" "$(date '+%Y-%m-%d %H:%M:%S')" "$C_OFF" "$*"; }
-ok()   { printf '%s[%s]%s %s[ ok ]%s %s\n'  "$C_DIM" "$(date '+%H:%M:%S')" "$C_OFF" "$C_GRN" "$C_OFF" "$*"; }
-warn() { printf '%s[%s]%s %s[warn]%s %s\n'  "$C_DIM" "$(date '+%H:%M:%S')" "$C_OFF" "$C_YEL" "$C_OFF" "$*"; }
-bad()  { printf '%s[%s]%s %s[fail]%s %s\n'  "$C_DIM" "$(date '+%H:%M:%S')" "$C_OFF" "$C_RED" "$C_OFF" "$*"; }
-rule() { printf '%s========================================================%s\n' "$C_BLD" "$C_OFF"; }
-
-# A fatal stop. Under a service there is no keypress to wait for, so we do not
-# pause; we print, and exit non-zero so the supervisor sees the failure.
-die() {
-    echo >&2
-    rule >&2
-    bad "$*" >&2
-    rule >&2
-    exit 1
-}
-
-# ------------------------------------------------------------- arguments ----
-CHECK_ONLY=""
-case "${1:-}" in
-    check|--check) CHECK_ONLY=1 ;;
-    "" ) ;;
-    * ) die "Unknown argument '$1'. Use no argument to start, or 'check' to check without starting." ;;
-esac
-
 # ======================================================================
 # === HOTWIRE SETTINGS BEGIN ===========================================
-#   Everything between BEGIN and END is yours to edit. It is excluded
-#   from the launcher's code hash, so changing anything here never marks
-#   the launcher "modified" or turns off a panel feature. To turn a
-#   convar on, remove the leading '#'; to turn it off, put it back.
+#   Sections 1, 2 and 3 are yours to edit. All three are left out of
+#   the launcher's code hash, so changing a setting never marks the
+#   launcher "modified" or turns off a panel feature.
+#
+#  2. LAUNCHER SETTINGS
 # ======================================================================
 
 # -- Where things are ---------------------------------------------------
@@ -179,22 +217,23 @@ HOOK_AFTER=""
 # often and how many to keep are Hotwire's settings. 0 = never back up here,
 # whatever is asked. Backups go to backup/<save folder name>/ in this folder.
 BACKUPS="1"
+# === HOTWIRE SETTINGS END =============================================
 
-# -- Server settings the browser and the map use -----------------------
-# Filled in as plain values (safe for spaces and symbols). Empty = the game's default.
-SERVER_IDENTITY=""          # save-folder name; empty = my_server_identity
-SERVER_SEED=""              # map seed; empty = 1337. hotwire-setup writes one for a new server.
-SERVER_WORLDSIZE=""         # metres across, 1000-6000; empty = 4500
+# === HOTWIRE SETTINGS BEGIN ===========================================
+#  3. SERVER OPTIONS
+#
+#     The name, map and ports are in section 1. These are the rest.
+# ======================================================================
+
+# -- The map ------------------------------------------------------------
+# Leave the level as it is for a generated map. A custom map URL replaces
+# the level, the seed and the world size.
 SERVER_LEVEL="Procedural Map"
-SERVER_LEVELURL=""          # a custom map URL; replaces level/seed/worldsize
-SERVER_PORT="28015"
-SERVER_QUERYPORT="28017"
-RCON_PORT="28016"
+SERVER_LEVELURL=""
+
+# -- RCON -----------------------------------------------------------------
+# 1 = WebSocket RCON, which is what current tools expect.
 RCON_WEB="1"
-SERVER_MAXPLAYERS=""        # empty = the game's default (500)
-SERVER_HOSTNAME=""          # your server's name in the browser
-SERVER_DESCRIPTION=""
-SERVER_TAGS=""
 
 # -- Extra convars ------------------------------------------------------
 # Add one per line, uncommented, exactly as you would on the command line.
@@ -206,6 +245,43 @@ EXTRA_CONVARS=()
 # ======================================================================
 # === HOTWIRE SETTINGS END =============================================
 # ======================================================================
+
+set -uo pipefail
+
+# ---------------------------------------------------------------- output ----
+# Colour only when a human is looking; a log file, a pipe or systemd gets plain.
+if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
+    C_DIM=$'\033[2m'; C_RED=$'\033[31m'; C_GRN=$'\033[32m'
+    C_YEL=$'\033[33m'; C_CYN=$'\033[36m'; C_BLD=$'\033[1m'; C_OFF=$'\033[0m'
+else
+    C_DIM=""; C_RED=""; C_GRN=""; C_YEL=""; C_CYN=""; C_BLD=""; C_OFF=""
+fi
+
+# Every runtime line carries a timestamp, as the .bat's "[%date% %time%]" does.
+log()  { printf '%s[%s]%s %s\n' "$C_DIM" "$(date '+%Y-%m-%d %H:%M:%S')" "$C_OFF" "$*"; }
+ok()   { printf '%s[%s]%s %s[ ok ]%s %s\n'  "$C_DIM" "$(date '+%H:%M:%S')" "$C_OFF" "$C_GRN" "$C_OFF" "$*"; }
+warn() { printf '%s[%s]%s %s[warn]%s %s\n'  "$C_DIM" "$(date '+%H:%M:%S')" "$C_OFF" "$C_YEL" "$C_OFF" "$*"; }
+bad()  { printf '%s[%s]%s %s[fail]%s %s\n'  "$C_DIM" "$(date '+%H:%M:%S')" "$C_OFF" "$C_RED" "$C_OFF" "$*"; }
+rule() { printf '%s========================================================%s\n' "$C_BLD" "$C_OFF"; }
+
+# A fatal stop. Under a service there is no keypress to wait for, so we do not
+# pause; we print, and exit non-zero so the supervisor sees the failure.
+die() {
+    echo >&2
+    rule >&2
+    bad "$*" >&2
+    rule >&2
+    exit 1
+}
+
+# ------------------------------------------------------------- arguments ----
+CHECK_ONLY=""
+case "${1:-}" in
+    check|--check) CHECK_ONLY=1 ;;
+    "" ) ;;
+    * ) die "Unknown argument '$1'. Use no argument to start, or 'check' to check without starting." ;;
+esac
+
 
 
 # ----------------------------------------------------- derived paths ----
@@ -240,7 +316,7 @@ LAUNCHER_STATE="$ROOT/oxide/data/Hotwire/launcher.json"
 CRASH_STREAK=0
 
 # ======================================================================
-# Section 1b -- settings validation. A wrong number here is caught now,
+# Section 4 -- settings validation. A wrong number here is caught now,
 # not with a broken server at three in the morning.
 # ======================================================================
 validate_settings() {
@@ -277,7 +353,7 @@ validate_settings() {
 }
 
 # ======================================================================
-# Section 2 -- secrets and the RCON password.
+# Section 5 -- secrets and the RCON password.
 # ======================================================================
 load_secrets() {
     if [ ! -f "$SECRETS" ]; then

@@ -42,7 +42,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$Version = '0.1.2'
+$Version = '0.1.3'
 
 # Captured here: inside a function, $PSBoundParameters describes that function, not this script.
 $SteamCmdGiven = $PSBoundParameters.ContainsKey('SteamCmd')
@@ -96,7 +96,7 @@ $PluginUrl = 'https://raw.githubusercontent.com/xman2000/hotwire/connect-and-rep
 # ABSENT: their versions vary, so they are not pinned. They are reported as
 # "unverified (third-party)" rather than blocked -- the omission is never silent.
 $PinnedHashes = @{
-    'hotwire.bat' = '9bb191baec5bd78e9a1c8a628015d1f42800ce1ca8b6c95b6347a93ab387470c'
+    'hotwire.bat' = 'a6b76aa2976b200ea27eccc329dd76a5499d5c50df90e99dce79a85c90ffee85'
     'Hotwire.cs'  = '886ba405512e30ce633891a3fb8e73bce3e68be8694e804fadd1ed4e03de0472'
 }
 
@@ -110,7 +110,7 @@ $Docs = [ordered]@{
     'Hotwire (source)'          = 'https://github.com/xman2000/hotwire'
 }
 
-# The same layout hotwire.bat ships with (section 4.1). If you change the ports there, change the
+# The same layout hotwire.bat ships with (section 1). If you change the ports there, change the
 # firewall rules to match -- a rule for the wrong port looks exactly like a rule that works.
 $GamePort = 28015    # UDP, server.port
 $QueryPort = 28017   # UDP, server.queryport -- the server browser. Without it the server is invisible.
@@ -529,9 +529,15 @@ function Get-LauncherPorts([string]$d) {
     $launcher = Join-Path $d 'hotwire.bat'
     if (-not (Test-Path -LiteralPath $launcher)) { return $null }
     $text = [System.IO.File]::ReadAllText($launcher)
-    $game = [regex]::Match($text, '(?m)^set "ARGS=!ARGS! \+server\.port (\d+)"\r?$')
-    $query = [regex]::Match($text, '(?m)^set "ARGS=!ARGS! \+server\.queryport (\d+)"\r?$')
-    $rcon = [regex]::Match($text, '(?m)^set "ARGS=!ARGS! \+rcon\.port (\d+)"\r?$')
+    # Launcher 1.1.15 and later set the ports in section 1; earlier ones on their ARGS lines.
+    $game = [regex]::Match($text, '(?m)^set "SERVER_PORT=(\d+)"\r?$')
+    $query = [regex]::Match($text, '(?m)^set "SERVER_QUERYPORT=(\d+)"\r?$')
+    $rcon = [regex]::Match($text, '(?m)^set "RCON_PORT=(\d+)"\r?$')
+    if (-not ($game.Success -and $query.Success -and $rcon.Success)) {
+        $game = [regex]::Match($text, '(?m)^set "ARGS=!ARGS! \+server\.port (\d+)"\r?$')
+        $query = [regex]::Match($text, '(?m)^set "ARGS=!ARGS! \+server\.queryport (\d+)"\r?$')
+        $rcon = [regex]::Match($text, '(?m)^set "ARGS=!ARGS! \+rcon\.port (\d+)"\r?$')
+    }
     if (-not ($game.Success -and $query.Success -and $rcon.Success)) { return $null }
     return New-PortSet ([int]$game.Groups[1].Value) ([int]$query.Groups[1].Value) ([int]$rcon.Groups[1].Value)
 }
@@ -1209,8 +1215,8 @@ function Show-Finish([string]$d, $s) {
     Write-Host ""
     if ($s.HasLauncher) {
         Write-Host "  Next:" -ForegroundColor Cyan
-        Write-Host "    1. Open hotwire.bat in Notepad. In section 4.3 fill in SERVER_HOSTNAME and SERVER_DESCRIPTION,"
-        Write-Host "       and in 4.2 SERVER_MAXPLAYERS if you want. Each option is explained beside it."
+        Write-Host "    1. Open hotwire.bat in Notepad. At the top, in section 1, fill in SERVER_HOSTNAME and"
+        Write-Host "       SERVER_DESCRIPTION, and SERVER_MAXPLAYERS if you want. Each is explained beside it."
         Write-Host "    2. Start the server: double-click hotwire.bat."
         Write-Host ""
         Write-Note "The first start takes several minutes while the map generates."
@@ -1616,9 +1622,9 @@ function Set-LauncherPaths([string]$Text, [string]$RootDir, [string]$SteamCmdExe
     $steamLine = 'set "STEAMCMD=C:\steamcmd\steamcmd.exe"'
     $frameworkLine = 'set "INSTALL_FRAMEWORK=1"'
     $branchLine = 'set "STEAM_BRANCH=public"'
-    $gameLine = 'set "ARGS=!ARGS! +server.port 28015"'
-    $queryLine = 'set "ARGS=!ARGS! +server.queryport 28017"'
-    $rconLine = 'set "ARGS=!ARGS! +rcon.port 28016"'
+    $gameLine = 'set "SERVER_PORT=28015"'
+    $queryLine = 'set "SERVER_QUERYPORT=28017"'
+    $rconLine = 'set "RCON_PORT=28016"'
     $seedLine = 'set "SERVER_SEED="'
     $setBranch = $Branch -and $Branch -ne 'public'
     $setPorts = $Ports -and -not ($Ports.Game -eq 28015 -and $Ports.Query -eq 28017 -and $Ports.Rcon -eq 28016)
@@ -1634,9 +1640,9 @@ function Set-LauncherPaths([string]$Text, [string]$RootDir, [string]$SteamCmdExe
     if ($Seed -and @($lines | Where-Object { $_ -eq $seedLine }).Count -ne 1) { return $null }
     $lines = $lines | ForEach-Object {
         if ($_ -eq $rootLine) { "set `"ROOT=$RootDir`"" }
-        elseif ($setPorts -and $_ -eq $gameLine) { "set `"ARGS=!ARGS! +server.port $($Ports.Game)`"" }
-        elseif ($setPorts -and $_ -eq $queryLine) { "set `"ARGS=!ARGS! +server.queryport $($Ports.Query)`"" }
-        elseif ($setPorts -and $_ -eq $rconLine) { "set `"ARGS=!ARGS! +rcon.port $($Ports.Rcon)`"" }
+        elseif ($setPorts -and $_ -eq $gameLine) { "set `"SERVER_PORT=$($Ports.Game)`"" }
+        elseif ($setPorts -and $_ -eq $queryLine) { "set `"SERVER_QUERYPORT=$($Ports.Query)`"" }
+        elseif ($setPorts -and $_ -eq $rconLine) { "set `"RCON_PORT=$($Ports.Rcon)`"" }
         elseif ($_ -eq $steamLine) { "set `"STEAMCMD=$SteamCmdExe`"" }
         elseif ($Vanilla -and $_ -eq $frameworkLine) { 'set "INSTALL_FRAMEWORK=0"' }
         elseif ($setBranch -and $_ -eq $branchLine) { "set `"STEAM_BRANCH=$Branch`"" }

@@ -128,15 +128,18 @@ tells a restart apart from an update, and stops a crash loop from filling the di
 2. Put `hotwire.bat` in `C:\rustserver\`, next to `RustDedicated.exe`. It treats its own folder as the server folder,
    so there is no path to set.
 3. Put `Hotwire.cs` in `C:\rustserver\oxide\plugins\`. If the `plugins` folder does not exist yet, create it.
-4. Open `hotwire.bat` in Notepad and set:
+4. Open `hotwire.bat` in Notepad. The settings most servers change are at the top, in section 1:
 
-   | Setting | Section | What it sets |
-   | --- | --- | --- |
-   | `SERVER_HOSTNAME` | 4.3 | The server's name in the browser |
-   | `SERVER_DESCRIPTION` | 4.3 | The server's description |
-   | `SERVER_MAXPLAYERS` | 4.2 | Player limit, if not the game's |
-   | `SERVER_TAGS` | 4.3 | Browser tags (optional) |
-   | `SERVER_SEED` | 4.1 | The map |
+   | Setting | What it sets |
+   | --- | --- |
+   | `SERVER_HOSTNAME` | The server's name in the browser |
+   | `SERVER_DESCRIPTION` | The server's description |
+   | `SERVER_TAGS` | Browser tags (optional) |
+   | `SERVER_MAXPLAYERS` | Player limit, if not the game's |
+   | `SERVER_IDENTITY` | The save folder's name |
+   | `SERVER_SEED` | The map |
+   | `SERVER_WORLDSIZE` | The map's size |
+   | `SERVER_PORT`, `SERVER_QUERYPORT`, `RCON_PORT` | The three ports from step 1 |
 
    If you used the setup script, it picked a random `SERVER_SEED`. To play a particular map, change it now: after the
    server has been played, a new seed is a new map. Each option is explained next to it in the file, and an empty
@@ -203,7 +206,7 @@ The plugin loads its key and starts reporting. The server appears in AFKPanel wi
 | `doctor` says the clock is too far out | The clock has drifted | Run `w32tm /resync`, then run `doctor` again |
 | `connect` says the code is invalid or expired | A code works for 60 minutes, once | Make a new code |
 | The server never appears in the server browser | Port 28017/UDP is closed, or your host blocks it | Open the port, or ask your host |
-| The server stops after "consecutive crashes", on a machine with another server | Both servers use the same ports | Give one of them different ports in section 4.2 |
+| The server stops after "consecutive crashes", on a machine with another server | Both servers use the same ports | Give one of them different ports in section 1 |
 | The server is in AFKPanel but shows no player counts | The plugin is not loaded | Look in `oxide\logs\` for a compile error |
 
 ## Disconnect the server
@@ -222,8 +225,8 @@ The setup script does this for you. By hand, the second server needs:
    first server's folder: `hotwire.bat` follows its own folder, so the copy runs the copy. If you plan to connect the
    copy, do not copy `hotwire\connect.json` and the keys, or run `connect` in the copy and choose to connect it as a
    new server.
-2. Its own ports. In the second `hotwire.bat`, section 4.2, set `server.port`, `server.queryport` and `rcon.port`,
+2. Its own ports. In the second `hotwire.bat`, section 1, set `SERVER_PORT`, `SERVER_QUERYPORT` and `RCON_PORT`,
    for example to 28115, 28117 and 28116. Open UDP 28115 and 28117 as in step 1.
-3. Its own branch, if it differs: `STEAM_BRANCH` in section 1.
+3. Its own branch, if it differs: `STEAM_BRANCH` in section 2.
 
 Both servers can share `C:\steamcmd`. The launchers take turns using it.

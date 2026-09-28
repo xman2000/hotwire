@@ -1,10 +1,87 @@
 @echo off
 setlocal EnableDelayedExpansion
 
-REM  "hotwire.bat check" validates the settings and the option list,
-REM  says what is wrong, and exits without updating or starting the
-REM  server. It does ask Steam for the current build. Run it after
-REM  editing section 4.
+REM ==[ H O T W I R E ]===================================================
+REM  Hotwire launcher for Windows, version 1.1.15 (2026-09-27)
+REM  Built by xman2000 and Claude.  MIT License.
+REM  https://github.com/xman2000/hotwire
+REM
+REM  Fill in section 1, then run "hotwire.bat check". How the launcher
+REM  works, and every other setting, comes after section 1.
+REM ======================================================================
+
+:hotwire_server_settings
+REM === HOTWIRE SETTINGS BEGIN ===========================================
+REM  1. YOUR SERVER
+REM
+REM     The settings most servers change. An empty value uses the game's
+REM     own default, shown in brackets. In any value, write a percent sign
+REM     as %%, and never use ! or a double quote. Every other convar is in
+REM     section 3. The RCON password is in secrets.bat, not here.
+REM ======================================================================
+
+REM  +server.hostname [default: "My Untitled Rust Server"]
+REM  The name in the server browser. | & < and > are safe here.
+set "SERVER_HOSTNAME="
+
+REM  +server.description [default: "No server description has been provided."]
+REM  Shown with your server in the server browser. \n starts a new line.
+set "SERVER_DESCRIPTION="
+
+REM  +server.tags [default: none]
+REM  Browser filter tags, comma separated, no spaces. The browser filters
+REM  on these: monthly biweekly weekly, vanilla softcore hardcore primitive
+REM  pve, roleplay creative minigame training battlefield builds, and a
+REM  region such as NA or EU. Tags it does not filter on have no effect.
+set "SERVER_TAGS="
+
+REM  +server.maxplayers [default: 500]
+REM  Player slots. A whole number.
+set "SERVER_MAXPLAYERS="
+
+REM  +server.identity [default: "my_server_identity"]
+REM  The folder under server\ that holds the map, blueprints and bans.
+REM  Short, lower case, no spaces. Changing it later starts a new, empty
+REM  server and leaves the old one on disk.
+set "SERVER_IDENTITY="
+
+REM  +server.seed [default: 1337]
+REM  The map. A whole number from 0 to 2147483647. The same seed and size
+REM  always make the same map, so left empty the server plays the same map
+REM  as every server left at the default. hotwire-setup writes a random
+REM  seed here for a new server. Changing it on a server that has been
+REM  played starts a new map, which wipes everything built on the old one.
+set "SERVER_SEED="
+
+REM  +server.worldsize [default: 4500]
+REM  Map width in metres, 1000 to 6000. Bigger maps boot slower and use
+REM  more memory. Changing it starts a new map.
+set "SERVER_WORLDSIZE="
+
+REM  Ports. Forward the game and query ports at your router, and nothing
+REM  else. Every server on this machine needs its own three.
+
+REM  +server.port [default: 28015]
+REM  Game traffic, UDP.
+set "SERVER_PORT=28015"
+
+REM  +server.queryport [default: 0, one above the higher of the other two]
+REM  The server browser, UDP. If this is wrong the server runs but nobody
+REM  can see it. Do not use 27015, or anything from 27000 to 27030: that
+REM  is Steam's own range, and on a machine that also runs Steam the client
+REM  can take the port and hide your server from the browser.
+set "SERVER_QUERYPORT=28017"
+
+REM  +rcon.port [default: 0]
+REM  Remote console, TCP. Never forward this port. RCON is not encrypted:
+REM  the password crosses the network in plain text.
+set "RCON_PORT=28016"
+REM === HOTWIRE SETTINGS END =============================================
+if "%~1"=="hotwire-reread-settings" exit /b 0
+
+REM  "hotwire.bat check" checks the settings and the option list, says
+REM  what is wrong, and exits without updating or starting the server. It
+REM  does ask Steam for the current build. Run it after editing a setting.
 set "CHECK_ONLY="
 if /i "%~1"=="check" set "CHECK_ONLY=1"
 
@@ -14,18 +91,11 @@ REM  code hash (the HOTWIRE_LAUNCHER_HASH line at the very end). The plugin
 REM  works the hash out again from this file's bytes, so the panel offers a
 REM  wipe or a permanent setting only through a launcher that is unmodified
 REM  and says it can carry them out. Not settings; do not edit.
-set "HOTWIRE_LAUNCHER_VERSION=1.1.14"
+set "HOTWIRE_LAUNCHER_VERSION=1.1.15"
 set "HOTWIRE_LAUNCHER_CAPABILITIES=supervise,update,framework_verify,crash_backstop,log_rotate,convar_persist,wipe"
 
-REM ==[ H O T W I R E ]===================================================
-REM  Version 1.1.14  2026-09-25
-REM  Built by xman2000 and Claude.  MIT License.
-REM
-REM  The launcher. Starts a Rust dedicated server, relaunches it when it
-REM  exits, and updates it on every start, on demand, or never -- see
-REM  UPDATE_MODE.
-REM
-REM  https://github.com/xman2000/hotwire
+REM ======================================================================
+REM  HOW THIS LAUNCHER WORKS
 REM ======================================================================
 REM
 REM  REQUIREMENTS
@@ -37,14 +107,15 @@ REM     Nothing else. The plugin described below is optional and this file
 REM     works perfectly well without it.
 REM
 REM  SETUP
-REM     1.  Section 1: check STEAMCMD. ROOT is this file's own folder, so
-REM         keep hotwire.bat beside RustDedicated.exe.
+REM     1.  Section 1: name the server, and check its ports.
 REM     2.  Copy secrets.example.bat to secrets.bat and set RCON_PASSWORD.
-REM     3.  Section 4: enable the options you need. Anything left disabled
-REM         uses the game's default.
-REM     4.  Run "hotwire.bat check" to have it read back what you set
+REM     3.  Section 2: check STEAMCMD. ROOT is this file's own folder, so
+REM         keep hotwire.bat beside RustDedicated.exe.
+REM     4.  Section 3: enable any other options you need. Anything left
+REM         disabled uses the game's default.
+REM     5.  Run "hotwire.bat check" to have it read back what you set
 REM         and say what is wrong. It does not update or start the server.
-REM     5.  Run this file. Leave the window open.
+REM     6.  Run this file. Leave the window open.
 REM
 REM  RUN LOOP
 REM     The script does not exit after starting the server. It waits for
@@ -53,7 +124,7 @@ REM     RESTART_DELAY seconds. Close the window to stop the server
 REM     permanently.
 REM
 REM  UPDATE MODES
-REM     Set UPDATE_MODE in section 1.
+REM     Set UPDATE_MODE in section 2.
 REM
 REM     always     steamcmd and the mod framework run on every start. This
 REM                is the default and matches most Rust launchers.
@@ -80,7 +151,7 @@ REM     server that does not eventually refuses every connection.
 REM
 REM  SEVERAL SERVERS ON ONE MACHINE
 REM     Give each its own folder, its own copy of this file and its own
-REM     ports (section 4.2). They may share one SteamCMD: only one of them
+REM     ports (section 1). They may share one SteamCMD: only one of them
 REM     runs it at a time, and the others wait. Copying a whole server
 REM     folder is safe -- ROOT follows this file -- but give the copy
 REM     different ports before starting it.
@@ -122,12 +193,12 @@ REM     A value typed straight into a set "ARGS=..." line is different: cmd
 REM     does read it, and the quotes around the value leave it outside the
 REM     line's own quotes. A | & < or > there splits the line into separate
 REM     commands, and the server never starts. So the name, description,
-REM     tags and player count have their own settings in 4.2 and 4.3, where
+REM     tags and player count have their own settings in section 1, where
 REM     those characters are safe. A web address with & in it needs ^& in
 REM     front of each &. Nowhere can a value contain ! or a double quote.
 REM
 REM  DEFAULTS
-REM     The defaults shown in section 4 were read out of a Rust build, not
+REM     The defaults in sections 1 and 3 were read out of a Rust build, not
 REM     copied from documentation. Report any that disagree with the game.
 REM
 REM     Out of the box this launcher sets only what a server cannot run
@@ -138,11 +209,12 @@ REM ======================================================================
 
 
 REM === HOTWIRE SETTINGS BEGIN ===========================================
-REM     Sections 1 and 4 are yours to edit. Both are left out of the
-REM     launcher's code hash, so changing a setting never marks the launcher
-REM     "modified" or turns off a panel feature. The rest is the launcher.
+REM     Sections 1, 2 and 3 are yours to edit. All three are left out of
+REM     the launcher's code hash, so changing a setting never marks the
+REM     launcher "modified" or turns off a panel feature. The rest is the
+REM     launcher.
 REM ======================================================================
-REM  1. PATHS AND BEHAVIOR
+REM  2. LAUNCHER SETTINGS
 REM ======================================================================
 
 REM   Where the server is installed. steamcmd writes here. %~dp0 is the
@@ -195,7 +267,7 @@ set "VALIDATE_FLAG=VALIDATE.flag"
 
 REM   The wipe flag the plugin writes ("Wipe flag file name" in its config).
 REM     A wipe is a restart with this flag: between runs the launcher checks
-REM     it and writes the new seed and size into section 4.
+REM     it and writes the new seed and size into section 3.
 set "WIPE_FLAG=WIPE.flag"
 
 REM   hotwire mode only. If this many days pass with no update, one runs
@@ -245,7 +317,7 @@ REM   Shortest RCON password the launcher will start with. Rust crashes on
 REM     boot with an empty one, and gives no reason, so this cannot be 0.
 set "RCON_PASSWORD_MIN=8"
 
-REM   Check the option list in section 4 before starting: a convar with no
+REM   Check the option list in section 3 before starting: a convar with no
 REM     value, set twice, a clashing port. Rust ignores all of those in
 REM     silence. 0 skips the check.
 set "CHECK_OPTIONS=1"
@@ -310,15 +382,455 @@ set "LOGFILE=%ROOT%\logs\server_log.txt"
 set "UPDATE_STAMP=%ROOT%\logs\last_update.txt"
 REM === HOTWIRE SETTINGS END =============================================
 
+REM  Section 3 is run at every start, from section 6b, so that a change
+REM  made there reaches the next start. The launcher steps over it here.
+goto :hotwire_options_end
+:hotwire_server_options
+REM === HOTWIRE SETTINGS BEGIN ===========================================
+REM ======================================================================
+REM  3. SERVER OPTIONS
+REM
+REM     One option per line. REM a line to switch it off; an option you do
+REM     not set uses the game's default, printed beside every one of them.
+REM
+REM     This is a curated list, not every convar Rust has. Most of them are
+REM     diagnostics and internal tuning that nobody sets when starting a
+REM     server, and listing those here would only bury these.
+REM ======================================================================
+
+set "ARGS="
+
+REM ----------------------------------------------------------------------
+REM  3.0  PROCESS
+REM ----------------------------------------------------------------------
+
+REM   Run headless, with no window and no renderer. Required on a server.
+set "ARGS=!ARGS! -batchmode -nographics"
+
+REM ----------------------------------------------------------------------
+REM  3.1  IDENTITY AND THE MAP
+REM
+REM     Get these right before the first boot. server.identity names the
+REM     folder under server\ that holds the map, blueprints, bans and
+REM     every player's progress: change it later and you have a brand new
+REM     server with the old one orphaned on disk. Changing level, seed or
+REM     worldsize regenerates the map, which wipes everything built on it.
+REM ----------------------------------------------------------------------
+
+REM   server.identity, server.seed and server.worldsize are set in
+REM     section 1.
+if defined SERVER_IDENTITY set "ARGS=!ARGS! +server.identity "!SERVER_IDENTITY!""
+
+REM   server.level -- Leave as-is for a generated map. For a custom map
+REM     use server.levelurl instead.
+REM   [string, default "Procedural Map"]
+set "ARGS=!ARGS! +server.level "Procedural Map""
+
+REM   server.randomize_seed picks a new seed on every start, and so a new
+REM     map on every restart: that belongs in a wipe script, never here.
+if defined SERVER_SEED set "ARGS=!ARGS! +server.seed !SERVER_SEED!"
+
+if defined SERVER_WORLDSIZE set "ARGS=!ARGS! +server.worldsize !SERVER_WORLDSIZE!"
+
+REM   server.levelurl -- Custom map URL. Replaces level, seed and
+REM     worldsize -- do not set both.
+REM   [string, default ""]
+REM set "ARGS=!ARGS! +server.levelurl VALUE"
+
+REM ----------------------------------------------------------------------
+REM  3.2  NETWORK
+REM
+REM     The three ports and the player count are set in section 1. Reserve
+REM     this machine's address in DHCP when you forward the ports: if the
+REM     lease moves, every forward breaks at once.
+REM ----------------------------------------------------------------------
+
+if defined SERVER_PORT set "ARGS=!ARGS! +server.port !SERVER_PORT!"
+if defined SERVER_QUERYPORT set "ARGS=!ARGS! +server.queryport !SERVER_QUERYPORT!"
+if defined RCON_PORT set "ARGS=!ARGS! +rcon.port !RCON_PORT!"
+if defined SERVER_MAXPLAYERS set "ARGS=!ARGS! +server.maxplayers !SERVER_MAXPLAYERS!"
+
+REM   server.ip -- Bind address. Leave alone unless the machine is multi-
+REM     homed.
+REM   [string, default ""]
+REM set "ARGS=!ARGS! +server.ip VALUE"
+
+REM   server.playertimeout -- Seconds of silence before a client is
+REM     dropped.
+REM   [int, default 60]
+REM set "ARGS=!ARGS! +server.playertimeout VALUE"
+
+REM   server.rejoin_delay -- Seconds a kicked player waits before
+REM     rejoining.
+REM   [int, default 300]
+REM set "ARGS=!ARGS! +server.rejoin_delay VALUE"
+
+REM ----------------------------------------------------------------------
+REM  3.3  BROWSER LISTING
+REM
+REM     What people see before they join. The name, description and tags
+REM     are set in section 1.
+REM ----------------------------------------------------------------------
+
+if defined SERVER_HOSTNAME set "ARGS=!ARGS! +server.hostname "!SERVER_HOSTNAME!""
+if defined SERVER_DESCRIPTION set "ARGS=!ARGS! +server.description "!SERVER_DESCRIPTION!""
+if defined SERVER_TAGS set "ARGS=!ARGS! +server.tags "!SERVER_TAGS!""
+
+REM   server.headerimage -- 512x256 banner. Direct image URL, not a page
+REM     containing one.
+REM   [string, default ""]
+REM set "ARGS=!ARGS! +server.headerimage VALUE"
+
+REM   server.logoimage -- Server logo. Direct image URL.
+REM   [string, default ""]
+REM set "ARGS=!ARGS! +server.logoimage VALUE"
+
+REM   server.url -- Website link on the join screen.
+REM   [string, default ""]
+REM set "ARGS=!ARGS! +server.url VALUE"
+
+REM ----------------------------------------------------------------------
+REM  3.4  ADMIN AND RCON
+REM
+REM     RCON is remote code execution on this machine. The password
+REM     belongs in secrets.bat and nowhere else.
+REM ----------------------------------------------------------------------
+
+REM   rcon.password -- Read from secrets.bat. Never write a literal here.
+REM
+REM   Four quotes, not three. set "VAR=..." takes first quote to last, so
+REM   dropping one leaves ARGS holding an unterminated quote that
+REM   swallows every option appended after it. And !VAR! rather than
+REM   %VAR%: under delayed expansion a percent-expanded value is rescanned
+REM   for !, an exclamation-expanded one is not.
+REM   [?, default UNKNOWN]
+set "ARGS=!ARGS! +rcon.password "!RCON_PASSWORD!""
+
+REM   rcon.web -- 1 for WebSocket RCON, which is what current tools
+REM     expect.
+REM   [bool, default true]
+set "ARGS=!ARGS! +rcon.web 1"
+
+REM   rcon.ip -- Bind address for RCON. Leave alone unless multi-homed.
+REM   [string, default ""]
+REM set "ARGS=!ARGS! +rcon.ip VALUE"
+
+REM   server.printReportsToConsole -- Player reports appear in the
+REM     console.
+REM   [bool, default false]
+REM set "ARGS=!ARGS! +server.printReportsToConsole VALUE"
+
+REM ----------------------------------------------------------------------
+REM  3.5  SAVES AND LOGS
+REM
+REM     The save interval is how much progress a crash costs everybody,
+REM     which is why a scheduled restart should quit cleanly rather than
+REM     kill the process.
+REM ----------------------------------------------------------------------
+
+REM   server.saveinterval -- Seconds between world saves. Lower costs a
+REM     brief hitch more often.
+REM   [int, default 600]
+REM set "ARGS=!ARGS! +server.saveinterval VALUE"
+
+REM   server.saveBackupCount -- Rolling save backups kept on disk.
+REM   [int, default 2]
+REM set "ARGS=!ARGS! +server.saveBackupCount VALUE"
+
+REM   chat.serverlog -- Print chat to the console and log.
+REM   [bool, default true]
+REM set "ARGS=!ARGS! +chat.serverlog VALUE"
+
+REM ----------------------------------------------------------------------
+REM  3.6  PVE, PVP AND DAMAGE
+REM
+REM     server.pve is a blunt server-wide switch and turns off far more
+REM     than most people expect. Almost every PVE server uses a plugin
+REM     instead, which can make zones, times or teams behave differently.
+REM ----------------------------------------------------------------------
+
+REM   server.pve -- Server-wide PVE.
+REM   [bool, default false]
+REM set "ARGS=!ARGS! +server.pve VALUE"
+
+REM   server.pvp_ttk_global -- Time-to-kill multiplier. Above 1 means
+REM     players take longer to die.
+REM   [float, default 1.0]
+REM set "ARGS=!ARGS! +server.pvp_ttk_global VALUE"
+
+REM   server.bulletdamage -- Bullet damage multiplier.
+REM   [float, default 1.0]
+REM set "ARGS=!ARGS! +server.bulletdamage VALUE"
+
+REM   server.arrowdamage -- Arrow damage multiplier.
+REM   [float, default 1.0]
+REM set "ARGS=!ARGS! +server.arrowdamage VALUE"
+
+REM   server.radiation -- Radiation zones on or off.
+REM   [bool, default true]
+REM set "ARGS=!ARGS! +server.radiation VALUE"
+
+REM   server.stability -- Building stability. Off lets people build things
+REM     that could not stand up.
+REM   [bool, default true]
+REM set "ARGS=!ARGS! +server.stability VALUE"
+
+REM ----------------------------------------------------------------------
+REM  3.7  DEATH AND RESPAWN
+REM ----------------------------------------------------------------------
+
+REM   server.woundingenabled -- Players go down wounded instead of dying
+REM     outright.
+REM   [bool, default true]
+REM set "ARGS=!ARGS! +server.woundingenabled VALUE"
+
+REM   server.crawlingenabled -- Wounded players can crawl.
+REM   [bool, default true]
+REM set "ARGS=!ARGS! +server.crawlingenabled VALUE"
+
+REM   server.woundedrecoverchance -- Chance of getting back up without
+REM     help.
+REM   [float, default 0.2]
+REM set "ARGS=!ARGS! +server.woundedrecoverchance VALUE"
+
+REM   server.dropitems -- Drop your inventory on death.
+REM   [bool, default true]
+REM set "ARGS=!ARGS! +server.dropitems VALUE"
+
+REM   server.corpses -- Leave a lootable corpse.
+REM   [bool, default true]
+REM set "ARGS=!ARGS! +server.corpses VALUE"
+
+REM   server.respawnAtDeathPosition -- Respawn where you died.
+REM   [bool, default false]
+REM set "ARGS=!ARGS! +server.respawnAtDeathPosition VALUE"
+
+REM   server.respawnWithLoadout -- Respawn holding a kit.
+REM   [bool, default false]
+REM set "ARGS=!ARGS! +server.respawnWithLoadout VALUE"
+
+REM ----------------------------------------------------------------------
+REM  3.8  DESPAWN TIMES
+REM
+REM     Seconds. Raising these leaves more on the ground, which players
+REM     like and the entity count does not.
+REM ----------------------------------------------------------------------
+
+REM   server.itemdespawn -- Dropped items.
+REM   [float, default 300.0]
+REM set "ARGS=!ARGS! +server.itemdespawn VALUE"
+
+REM   server.itemdespawn_quick -- Low-value items, which go sooner.
+REM   [float, default 30.0]
+REM set "ARGS=!ARGS! +server.itemdespawn_quick VALUE"
+
+REM   server.corpsedespawn -- Player corpses.
+REM   [float, default 300.0]
+REM set "ARGS=!ARGS! +server.corpsedespawn VALUE"
+
+REM   server.npccorpsedespawn -- NPC corpses.
+REM   [float, default 600.0]
+REM set "ARGS=!ARGS! +server.npccorpsedespawn VALUE"
+
+REM   server.debrisdespawn -- Building debris after a raid.
+REM   [float, default 30.0]
+REM set "ARGS=!ARGS! +server.debrisdespawn VALUE"
+
+REM ----------------------------------------------------------------------
+REM  3.9  DECAY AND UPKEEP
+REM ----------------------------------------------------------------------
+
+REM   decay.scale -- Decay rate multiplier. 0 turns decay off entirely,
+REM     which many modded servers do.
+REM   [float, default 1.0]
+REM set "ARGS=!ARGS! +decay.scale VALUE"
+
+REM   decay.upkeep -- Whether tool cupboards consume upkeep at all.
+REM   [bool, default true]
+REM set "ARGS=!ARGS! +decay.upkeep VALUE"
+
+REM   decay.upkeep_grief_protection -- Minutes of grace after a cupboard
+REM     runs dry.
+REM   [float, default 1440.0]
+REM set "ARGS=!ARGS! +decay.upkeep_grief_protection VALUE"
+
+REM ----------------------------------------------------------------------
+REM  3.10  CHAT
+REM ----------------------------------------------------------------------
+
+REM   chat.enabled -- Chat on or off.
+REM   [bool, default true]
+REM set "ARGS=!ARGS! +chat.enabled VALUE"
+
+REM   chat.globalchat -- Everyone hears everyone, anywhere on the map. Off
+REM     leaves only local chat.
+REM   [bool, default true]
+REM set "ARGS=!ARGS! +chat.globalchat VALUE"
+
+REM   chat.localchat -- Proximity chat.
+REM   [bool, default false]
+REM set "ARGS=!ARGS! +chat.localchat VALUE"
+
+REM   chat.localChatRange -- Metres that proximity chat carries.
+REM   [float, default 100.0]
+REM set "ARGS=!ARGS! +chat.localChatRange VALUE"
+
+REM ----------------------------------------------------------------------
+REM  3.11  EVENTS
+REM
+REM     server.events is the master switch; the rest tune individual
+REM     events.
+REM ----------------------------------------------------------------------
+
+REM   server.events -- Timed world events on or off.
+REM   [bool, default true]
+REM set "ARGS=!ARGS! +server.events VALUE"
+
+REM   patrolhelicopter.lifetimeMinutes -- How long the patrol helicopter
+REM     stays before leaving.
+REM   [float, default 30.0]
+REM set "ARGS=!ARGS! +patrolhelicopter.lifetimeMinutes VALUE"
+
+REM   patrolhelicopter.guns -- How many guns it fires with.
+REM   [int, default 1]
+REM set "ARGS=!ARGS! +patrolhelicopter.guns VALUE"
+
+REM   patrolhelicopter.bulletDamageScale -- Its damage multiplier.
+REM   [float, default 1.0]
+REM set "ARGS=!ARGS! +patrolhelicopter.bulletDamageScale VALUE"
+
+REM   cargoship.event_enabled -- Cargo ship on or off.
+REM   [bool, default true]
+REM set "ARGS=!ARGS! +cargoship.event_enabled VALUE"
+
+REM   cargoship.event_duration_minutes -- How long it stays.
+REM   [float, default 50.0]
+REM set "ARGS=!ARGS! +cargoship.event_duration_minutes VALUE"
+
+REM   halloween.enabled -- Halloween event.
+REM   [bool, default false]
+REM set "ARGS=!ARGS! +halloween.enabled VALUE"
+
+REM   xmas.enabled -- Christmas event.
+REM   [bool, default false]
+REM set "ARGS=!ARGS! +xmas.enabled VALUE"
+
+REM ----------------------------------------------------------------------
+REM  3.12  SPAWNS AND POPULATIONS
+REM
+REM     Populations are per square kilometre, so a bigger map means more
+REM     animals at the same number. The spawn rates and densities scale
+REM     the whole system at once and go a long way; change them in small
+REM     steps.
+REM ----------------------------------------------------------------------
+
+REM   spawn.max_rate -- Upper bound on spawn rate.
+REM   [float, default 1.0]
+REM set "ARGS=!ARGS! +spawn.max_rate VALUE"
+
+REM   spawn.min_rate -- Lower bound on spawn rate.
+REM   [float, default 0.5]
+REM set "ARGS=!ARGS! +spawn.min_rate VALUE"
+
+REM   spawn.max_density -- Upper bound on spawn density.
+REM   [float, default 1.0]
+REM set "ARGS=!ARGS! +spawn.max_density VALUE"
+
+REM   spawn.min_density -- Lower bound on spawn density.
+REM   [float, default 0.5]
+REM set "ARGS=!ARGS! +spawn.min_density VALUE"
+
+REM   spawn.player_scale -- How strongly nearby players suppress spawns.
+REM   [float, default 2.0]
+REM set "ARGS=!ARGS! +spawn.player_scale VALUE"
+
+REM   bear.Population -- Bears.
+REM   [float, default 2.0]
+REM set "ARGS=!ARGS! +bear.Population VALUE"
+
+REM   polarbear.Population -- Polar bears.
+REM   [float, default 1.0]
+REM set "ARGS=!ARGS! +polarbear.Population VALUE"
+
+REM   boar.Population -- Boar.
+REM   [float, default 5.0]
+REM set "ARGS=!ARGS! +boar.Population VALUE"
+
+REM   stag.Population -- Stags.
+REM   [float, default 3.0]
+REM set "ARGS=!ARGS! +stag.Population VALUE"
+
+REM   chicken.Population -- Chickens.
+REM   [float, default 3.0]
+REM set "ARGS=!ARGS! +chicken.Population VALUE"
+
+REM   wolf2.Population -- Wolves. The class really is Wolf2; Rust replaced
+REM     the original.
+REM   [float, default 2.0]
+REM set "ARGS=!ARGS! +wolf2.Population VALUE"
+
+REM   ridablehorse.Population -- Horses. Note the spelling: ridable, one
+REM     e.
+REM   [float, default 2.0]
+REM set "ARGS=!ARGS! +ridablehorse.Population VALUE"
+
+REM ----------------------------------------------------------------------
+REM  3.13  IDLE KICK
+REM ----------------------------------------------------------------------
+
+REM   server.idlekick -- Minutes of idling before a kick.
+REM   [int, default 30]
+REM set "ARGS=!ARGS! +server.idlekick VALUE"
+
+REM   server.idlekickmode -- 0 never, 1 only when the server is full, 2
+REM     always.
+REM   [int, default 1]
+REM set "ARGS=!ARGS! +server.idlekickmode VALUE"
+
+REM ----------------------------------------------------------------------
+REM  3.14  RUST+ COMPANION APP
+REM
+REM     Rust+ needs its own port forward, which is almost always why it
+REM     does not work.
+REM ----------------------------------------------------------------------
+
+REM   app.port -- Rust+ port, TCP. 0 derives server.port + 68, so 28083
+REM     here.
+REM   [int, default UNKNOWN]
+REM set "ARGS=!ARGS! +app.port VALUE"
+
+REM   app.listenip -- Bind address for Rust+.
+REM   [string, default ""]
+REM set "ARGS=!ARGS! +app.listenip VALUE"
+
+REM ----------------------------------------------------------------------
+REM  3.15  PERFORMANCE
+REM
+REM     Leave this alone unless you are chasing a problem you have
+REM     actually measured. Raising the tick rate is the most common thing
+REM     people try and the least likely to help: it multiplies CPU cost
+REM     and does nothing for a server that was not CPU-bound to begin
+REM     with.
+REM ----------------------------------------------------------------------
+
+REM   server.tickrate -- Server ticks per second.
+REM   [int, default 10]
+REM set "ARGS=!ARGS! +server.tickrate VALUE"
+
+REM === HOTWIRE SETTINGS END =============================================
+exit /b 0
+:hotwire_options_end
+
+
 REM  Consecutive crashes. Set here rather than at :start so it survives
 REM  the loop, which is the whole point of counting it.
 set /a CRASH_STREAK=0
 
 
 REM ======================================================================
-REM  1b. CHECKING THE SETTINGS ABOVE
+REM  4. CHECKING THE LAUNCHER SETTINGS
 REM
-REM     Section 1 is numbers and paths, and a wrong one there fails a long
+REM     Section 2 is numbers and paths, and a wrong one there fails a long
 REM     way from where it was typed. LOG_KEEP=0 makes the log cull delete
 REM     every rotated log rather than none. A trailing backslash on ROOT
 REM     turns +force_install_dir "C:\rustserver\" into a quoted string
@@ -335,7 +847,7 @@ if "!ROOT:~-1!"=="\" set "ROOT=!ROOT:~0,-1!"
 if "!STEAMCMD:~-1!"=="\" set "STEAMCMD=!STEAMCMD:~0,-1!"
 
 if not defined ROOT (
-    echo [%date% %time%] ROOT is empty. Set it in section 1.
+    echo [%date% %time%] ROOT is empty. Set it in section 2.
     set "CFGBAD=1"
 )
 
@@ -349,7 +861,7 @@ if defined ROOT if /i not "!ROOT!"=="!HW_HERE!" if exist "!ROOT!\hotwire.bat" (
     echo [%date% %time%] ROOT is set to !ROOT!, which has a hotwire.bat of its own.
     echo [%date% %time%] This hotwire.bat is in !HW_HERE!. Started from here it
     echo [%date% %time%] would update and run the server over there instead.
-    echo [%date% %time%] If this folder is a copy, set ROOT to %%~dp0 in section 1.
+    echo [%date% %time%] If this folder is a copy, set ROOT to %%~dp0 in section 2.
     set "CFGBAD=1"
 )
 
@@ -411,7 +923,7 @@ if "%RCON_PASSWORD_MIN%"=="0" (
 
 if defined CFGBAD (
     echo [%date% %time%] ================================================
-    echo [%date% %time%] Section 1 has a setting that cannot work.
+    echo [%date% %time%] Section 2 has a setting that cannot work.
     echo [%date% %time%] Not starting. Fix the lines named above.
     echo [%date% %time%] ================================================
     pause & exit /b 1
@@ -419,7 +931,7 @@ if defined CFGBAD (
 
 
 REM ======================================================================
-REM  2. SECRETS
+REM  5. SECRETS
 REM
 REM     Copy secrets.example.bat to secrets.bat and set RCON_PASSWORD
 REM     there. secrets.bat is gitignored. This launcher will not start
@@ -526,9 +1038,9 @@ if not exist "%ROOT%\logs" (
 :start
 
 REM ======================================================================
-REM  3a. WHAT BUILD IS OUT THERE
+REM  6a. WHAT BUILD IS OUT THERE
 REM
-REM     Machinery. Nothing here is a setting -- those are in section 1.
+REM     Machinery. Nothing here is a setting -- those are in section 2.
 REM
 REM     Steam knows the current Rust build, and steamapps\appmanifest tells
 REM     us which one is installed. Comparing the two answers the question
@@ -622,7 +1134,7 @@ if not defined INSTALLED_BUILD (
     echo [%date% %time%] Rust build: installed !INSTALLED_BUILD!, !BRANCH_NAME! !PUBLIC_BUILD! -- this
     echo [%date% %time%] server is on a newer build than Steam's !BRANCH_NAME! branch, so it
     echo [%date% %time%] is on another branch, such as staging. The next update
-    echo [%date% %time%] moves it to !BRANCH_NAME!, as STEAM_BRANCH in section 1 says.
+    echo [%date% %time%] moves it to !BRANCH_NAME!, as STEAM_BRANCH in section 2 says.
 ) else (
     echo [%date% %time%] ================================================
     echo [%date% %time%] Rust build: installed !INSTALLED_BUILD!
@@ -639,10 +1151,10 @@ if not defined INSTALLED_BUILD (
 
 
 REM ======================================================================
-REM  3. UPDATE OR RESTART
+REM  6. UPDATE OR RESTART
 REM
 REM     The two flag files, named by UPDATE_FLAG and VALIDATE_FLAG in
-REM     section 1, and what each one costs:
+REM     section 2, and what each one costs:
 REM
 REM     UPDATE.flag     app_update, then the mod framework, then launch.
 REM     VALIDATE.flag   The same, plus validate, which re-checksums the
@@ -797,7 +1309,7 @@ goto steamupdate
 echo [%date% %time%] Giving up on steamcmd. Launching what we have.
 
 :framework
-REM  Oxide/uMod. INSTALL_FRAMEWORK=0 in section 1 skips it for a vanilla server.
+REM  Oxide/uMod. INSTALL_FRAMEWORK=0 in section 2 skips it for a vanilla server.
 REM  -f makes curl fail on an HTTP error instead of saving the error page,
 REM  which would otherwise be force-extracted over a working install.
 set "FRAMEWORK_OK=0"
@@ -811,7 +1323,7 @@ REM  Re-read the installed build. If steamcmd changed it, the game's own
 REM  managed assemblies were just rewritten and the framework has to go
 REM  back over the top of them whatever its version says. Only when the
 REM  game did NOT move is skipping the extract safe.
-REM  Read with the same [char]-built regex as section 3a rather than with
+REM  Read with the same [char]-built regex as section 6a rather than with
 REM  findstr and escaped quotes. cmd has no backslash escape, and quoting a
 REM  quote inside a for/f is how this file has gone wrong before.
 set "BUILD_AFTER="
@@ -1037,14 +1549,22 @@ if defined HOOK_AFTER call %HOOK_AFTER%
 REM ======================================================================
 :buildargs
 REM ======================================================================
-REM  3b. WIPES AND PERMANENT SETTINGS
+REM  6b. WIPES AND PERMANENT SETTINGS, AND READING SECTIONS 1 AND 3
 REM
 REM     Machinery. The plugin leaves WIPE.flag or CONVAR.request here when
 REM     the panel asks for a wipe or a permanent convar. Between runs is the
 REM     safe moment: the PowerShell at the end of this file checks every
-REM     value and writes it into section 4. cmd reads a running batch file
-REM     by byte offset, so only section 4, which lies ahead of this line, is
-REM     ever edited; nothing before it moves. Check mode changes nothing.
+REM     value and writes it into section 1 or 3. Check mode changes nothing.
+REM
+REM     cmd reads a running batch file by byte position, and an edit to
+REM     section 1 moves every byte after it. So once PowerShell has written
+REM     the file, the next thing cmd does is jump to a label: cmd finds a
+REM     label by searching the text, so it picks up at the right line of
+REM     the edited file. The same block is read in memory before it runs,
+REM     which is why the jump sits inside it.
+REM
+REM     Sections 1 and 3 are then read again, at every start, so the
+REM     server always starts with what the file says now.
 REM ======================================================================
 set "HOTWIRE_EDITS="
 if exist "%ROOT%\%WIPE_FLAG%" set "HOTWIRE_EDITS=1"
@@ -1053,503 +1573,17 @@ if defined CHECK_ONLY set "HOTWIRE_EDITS="
 set "HOTWIRE_SELF=%~f0"
 set "HOTWIRE_ROOT=%ROOT%"
 set "HOTWIRE_WIPEFLAG=%WIPE_FLAG%"
-if defined HOTWIRE_EDITS powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "$t=[IO.File]::ReadAllText($env:HOTWIRE_SELF,[Text.Encoding]::GetEncoding(28591)); $i=$t.LastIndexOf('#'+'HOTWIRE-EDITS'); if($i -ge 0){ Invoke-Expression $t.Substring($i) }"
+if defined HOTWIRE_EDITS (
+    powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "$t=[IO.File]::ReadAllText($env:HOTWIRE_SELF,[Text.Encoding]::GetEncoding(28591)); $i=$t.LastIndexOf('#'+'HOTWIRE-EDITS'); if($i -ge 0){ Invoke-Expression $t.Substring($i) }"
+    goto :hotwire_settings_written
+)
+:hotwire_settings_written
 set "HOTWIRE_EDITS="
+call :hotwire_server_settings hotwire-reread-settings
+call :hotwire_server_options
 
-REM === HOTWIRE SETTINGS BEGIN ===========================================
 REM ======================================================================
-REM  4. SERVER OPTIONS
-REM
-REM     One option per line. REM a line to switch it off; an option you do
-REM     not set uses the game's default, printed beside every one of them.
-REM
-REM     This is a curated list, not every convar Rust has. Most of them are
-REM     diagnostics and internal tuning that nobody sets when starting a
-REM     server, and listing those here would only bury these.
-REM ======================================================================
-
-set "ARGS="
-
-REM ----------------------------------------------------------------------
-REM  4.0  PROCESS
-REM ----------------------------------------------------------------------
-
-REM   Run headless, with no window and no renderer. Required on a server.
-set "ARGS=!ARGS! -batchmode -nographics"
-
-REM ----------------------------------------------------------------------
-REM  4.1  IDENTITY AND THE MAP
-REM
-REM     Get these right before the first boot. server.identity names the
-REM     folder under server\ that holds the map, blueprints, bans and
-REM     every player's progress: change it later and you have a brand new
-REM     server with the old one orphaned on disk. Changing level, seed or
-REM     worldsize regenerates the map, which wipes everything built on it.
-REM ----------------------------------------------------------------------
-
-REM   server.identity -- Save folder name. Short, lower case, no spaces.
-REM   [string, default "my_server_identity"]
-REM set "ARGS=!ARGS! +server.identity VALUE"
-
-REM   server.level -- Leave as-is for a generated map. For a custom map
-REM     use server.levelurl instead.
-REM   [string, default "Procedural Map"]
-set "ARGS=!ARGS! +server.level "Procedural Map""
-
-REM   server.seed -- The map. The same seed and worldsize always give the
-REM     same map, so left empty every server gets the game's own map, 1337.
-REM     hotwire-setup writes a random seed here when it builds a new
-REM     server. Changing it on a server that has been played starts a new
-REM     map, which wipes everything built on the old one. A whole number,
-REM     0 to 2147483647. (server.randomize_seed picks a new seed on every
-REM     start, and so a new map on every restart: that belongs in a wipe
-REM     script, never here.)
-REM   [int, default 1337]
-set "SERVER_SEED="
-if defined SERVER_SEED set "ARGS=!ARGS! +server.seed !SERVER_SEED!"
-
-REM   server.worldsize -- Metres across, 1000-6000. Memory and boot time
-REM     climb faster than the number does.
-REM   [int, default 4500]
-REM set "ARGS=!ARGS! +server.worldsize VALUE"
-
-REM   server.levelurl -- Custom map URL. Replaces level, seed and
-REM     worldsize -- do not set both.
-REM   [string, default ""]
-REM set "ARGS=!ARGS! +server.levelurl VALUE"
-
-REM ----------------------------------------------------------------------
-REM  4.2  NETWORK
-REM
-REM     All three ports need forwarding at the router, and it is worth
-REM     reserving this machine's address in DHCP while you are in there:
-REM     if the lease moves, every forward breaks at once.
-REM ----------------------------------------------------------------------
-
-REM   server.port -- Game traffic, UDP.
-REM   [int, default 28015]
-set "ARGS=!ARGS! +server.port 28015"
-
-REM   server.queryport -- Server browser, UDP. Getting this wrong is the
-REM     classic Rust fault: the server runs perfectly and is simply
-REM     invisible.
-REM
-REM     Do not use 27015, and avoid 27000-27030 generally. That is Steam's
-REM     own client port range, so on a machine that also runs Steam the
-REM     client can take the port and the server stops answering browser
-REM     queries until something releases it. Guides recommending 27015
-REM     copy Source engine convention; Rust is not Source.
-REM
-REM     Left at 0 the game derives 1 + the higher of server.port and
-REM     rcon.port, which is 28017 for the layout above.
-REM   [int, default 0]
-set "ARGS=!ARGS! +server.queryport 28017"
-
-REM   rcon.port -- Remote console, TCP.
-REM   [int, default 0]
-set "ARGS=!ARGS! +rcon.port 28016"
-
-REM   server.maxplayers -- Slots. A whole number. Left empty, the game's own.
-REM   [int, default 500]
-set "SERVER_MAXPLAYERS="
-if defined SERVER_MAXPLAYERS set "ARGS=!ARGS! +server.maxplayers !SERVER_MAXPLAYERS!"
-
-REM   server.ip -- Bind address. Leave alone unless the machine is multi-
-REM     homed.
-REM   [string, default ""]
-REM set "ARGS=!ARGS! +server.ip VALUE"
-
-REM   server.playertimeout -- Seconds of silence before a client is
-REM     dropped.
-REM   [int, default 60]
-REM set "ARGS=!ARGS! +server.playertimeout VALUE"
-
-REM   server.rejoin_delay -- Seconds a kicked player waits before
-REM     rejoining.
-REM   [int, default 300]
-REM set "ARGS=!ARGS! +server.rejoin_delay VALUE"
-
-REM ----------------------------------------------------------------------
-REM  4.3  BROWSER LISTING
-REM
-REM     What people see before they join.
-REM ----------------------------------------------------------------------
-
-REM   server.hostname -- Your advert, as the server browser lists it. Write
-REM     it between the = and the closing quote. | & < and > are safe here;
-REM     ! and " are not, and a percent sign is written %%. Left empty, the
-REM     game's own.
-REM   [string, default "My Untitled Rust Server"]
-set "SERVER_HOSTNAME="
-if defined SERVER_HOSTNAME set "ARGS=!ARGS! +server.hostname "!SERVER_HOSTNAME!""
-
-REM   server.description -- Join-screen text. Backslash-n makes a line
-REM     break. The same characters rules as the name. Left empty, the
-REM     game's own.
-REM   [string, default "No server description has been provided."]
-set "SERVER_DESCRIPTION="
-if defined SERVER_DESCRIPTION set "ARGS=!ARGS! +server.description "!SERVER_DESCRIPTION!""
-
-REM   server.tags -- Browser filter tags, comma separated, no spaces. The
-REM     tags the client recognizes are:
-REM
-REM     wipe schedule   monthly biweekly weekly
-REM     ruleset         vanilla softcore hardcore primitive pve
-REM     style           roleplay creative minigame training
-REM                     battlefield builds
-REM
-REM     Add a region tag such as NA or EU. Only tags the browser filters
-REM     on have any effect; inventing your own only makes the string
-REM     longer.
-REM   Left empty, no tags.
-REM   [property, default UNKNOWN]
-set "SERVER_TAGS="
-if defined SERVER_TAGS set "ARGS=!ARGS! +server.tags "!SERVER_TAGS!""
-
-REM   server.headerimage -- 512x256 banner. Direct image URL, not a page
-REM     containing one.
-REM   [string, default ""]
-REM set "ARGS=!ARGS! +server.headerimage VALUE"
-
-REM   server.logoimage -- Server logo. Direct image URL.
-REM   [string, default ""]
-REM set "ARGS=!ARGS! +server.logoimage VALUE"
-
-REM   server.url -- Website link on the join screen.
-REM   [string, default ""]
-REM set "ARGS=!ARGS! +server.url VALUE"
-
-REM ----------------------------------------------------------------------
-REM  4.4  ADMIN AND RCON
-REM
-REM     RCON is remote code execution on this machine. The password
-REM     belongs in secrets.bat and nowhere else.
-REM ----------------------------------------------------------------------
-
-REM   rcon.password -- Read from secrets.bat. Never write a literal here.
-REM
-REM   Four quotes, not three. set "VAR=..." takes first quote to last, so
-REM   dropping one leaves ARGS holding an unterminated quote that
-REM   swallows every option appended after it. And !VAR! rather than
-REM   %VAR%: under delayed expansion a percent-expanded value is rescanned
-REM   for !, an exclamation-expanded one is not.
-REM   [?, default UNKNOWN]
-set "ARGS=!ARGS! +rcon.password "!RCON_PASSWORD!""
-
-REM   rcon.web -- 1 for WebSocket RCON, which is what current tools
-REM     expect.
-REM   [bool, default true]
-set "ARGS=!ARGS! +rcon.web 1"
-
-REM   rcon.ip -- Bind address for RCON. Leave alone unless multi-homed.
-REM   [string, default ""]
-REM set "ARGS=!ARGS! +rcon.ip VALUE"
-
-REM   server.printReportsToConsole -- Player reports appear in the
-REM     console.
-REM   [bool, default false]
-REM set "ARGS=!ARGS! +server.printReportsToConsole VALUE"
-
-REM ----------------------------------------------------------------------
-REM  4.5  SAVES AND LOGS
-REM
-REM     The save interval is how much progress a crash costs everybody,
-REM     which is why a scheduled restart should quit cleanly rather than
-REM     kill the process.
-REM ----------------------------------------------------------------------
-
-REM   server.saveinterval -- Seconds between world saves. Lower costs a
-REM     brief hitch more often.
-REM   [int, default 600]
-REM set "ARGS=!ARGS! +server.saveinterval VALUE"
-
-REM   server.saveBackupCount -- Rolling save backups kept on disk.
-REM   [int, default 2]
-REM set "ARGS=!ARGS! +server.saveBackupCount VALUE"
-
-REM   chat.serverlog -- Print chat to the console and log.
-REM   [bool, default true]
-REM set "ARGS=!ARGS! +chat.serverlog VALUE"
-
-REM ----------------------------------------------------------------------
-REM  4.6  PVE, PVP AND DAMAGE
-REM
-REM     server.pve is a blunt server-wide switch and turns off far more
-REM     than most people expect. Almost every PVE server uses a plugin
-REM     instead, which can make zones, times or teams behave differently.
-REM ----------------------------------------------------------------------
-
-REM   server.pve -- Server-wide PVE.
-REM   [bool, default false]
-REM set "ARGS=!ARGS! +server.pve VALUE"
-
-REM   server.pvp_ttk_global -- Time-to-kill multiplier. Above 1 means
-REM     players take longer to die.
-REM   [float, default 1.0]
-REM set "ARGS=!ARGS! +server.pvp_ttk_global VALUE"
-
-REM   server.bulletdamage -- Bullet damage multiplier.
-REM   [float, default 1.0]
-REM set "ARGS=!ARGS! +server.bulletdamage VALUE"
-
-REM   server.arrowdamage -- Arrow damage multiplier.
-REM   [float, default 1.0]
-REM set "ARGS=!ARGS! +server.arrowdamage VALUE"
-
-REM   server.radiation -- Radiation zones on or off.
-REM   [bool, default true]
-REM set "ARGS=!ARGS! +server.radiation VALUE"
-
-REM   server.stability -- Building stability. Off lets people build things
-REM     that could not stand up.
-REM   [bool, default true]
-REM set "ARGS=!ARGS! +server.stability VALUE"
-
-REM ----------------------------------------------------------------------
-REM  4.7  DEATH AND RESPAWN
-REM ----------------------------------------------------------------------
-
-REM   server.woundingenabled -- Players go down wounded instead of dying
-REM     outright.
-REM   [bool, default true]
-REM set "ARGS=!ARGS! +server.woundingenabled VALUE"
-
-REM   server.crawlingenabled -- Wounded players can crawl.
-REM   [bool, default true]
-REM set "ARGS=!ARGS! +server.crawlingenabled VALUE"
-
-REM   server.woundedrecoverchance -- Chance of getting back up without
-REM     help.
-REM   [float, default 0.2]
-REM set "ARGS=!ARGS! +server.woundedrecoverchance VALUE"
-
-REM   server.dropitems -- Drop your inventory on death.
-REM   [bool, default true]
-REM set "ARGS=!ARGS! +server.dropitems VALUE"
-
-REM   server.corpses -- Leave a lootable corpse.
-REM   [bool, default true]
-REM set "ARGS=!ARGS! +server.corpses VALUE"
-
-REM   server.respawnAtDeathPosition -- Respawn where you died.
-REM   [bool, default false]
-REM set "ARGS=!ARGS! +server.respawnAtDeathPosition VALUE"
-
-REM   server.respawnWithLoadout -- Respawn holding a kit.
-REM   [bool, default false]
-REM set "ARGS=!ARGS! +server.respawnWithLoadout VALUE"
-
-REM ----------------------------------------------------------------------
-REM  4.8  DESPAWN TIMES
-REM
-REM     Seconds. Raising these leaves more on the ground, which players
-REM     like and the entity count does not.
-REM ----------------------------------------------------------------------
-
-REM   server.itemdespawn -- Dropped items.
-REM   [float, default 300.0]
-REM set "ARGS=!ARGS! +server.itemdespawn VALUE"
-
-REM   server.itemdespawn_quick -- Low-value items, which go sooner.
-REM   [float, default 30.0]
-REM set "ARGS=!ARGS! +server.itemdespawn_quick VALUE"
-
-REM   server.corpsedespawn -- Player corpses.
-REM   [float, default 300.0]
-REM set "ARGS=!ARGS! +server.corpsedespawn VALUE"
-
-REM   server.npccorpsedespawn -- NPC corpses.
-REM   [float, default 600.0]
-REM set "ARGS=!ARGS! +server.npccorpsedespawn VALUE"
-
-REM   server.debrisdespawn -- Building debris after a raid.
-REM   [float, default 30.0]
-REM set "ARGS=!ARGS! +server.debrisdespawn VALUE"
-
-REM ----------------------------------------------------------------------
-REM  4.9  DECAY AND UPKEEP
-REM ----------------------------------------------------------------------
-
-REM   decay.scale -- Decay rate multiplier. 0 turns decay off entirely,
-REM     which many modded servers do.
-REM   [float, default 1.0]
-REM set "ARGS=!ARGS! +decay.scale VALUE"
-
-REM   decay.upkeep -- Whether tool cupboards consume upkeep at all.
-REM   [bool, default true]
-REM set "ARGS=!ARGS! +decay.upkeep VALUE"
-
-REM   decay.upkeep_grief_protection -- Minutes of grace after a cupboard
-REM     runs dry.
-REM   [float, default 1440.0]
-REM set "ARGS=!ARGS! +decay.upkeep_grief_protection VALUE"
-
-REM ----------------------------------------------------------------------
-REM  4.10  CHAT
-REM ----------------------------------------------------------------------
-
-REM   chat.enabled -- Chat on or off.
-REM   [bool, default true]
-REM set "ARGS=!ARGS! +chat.enabled VALUE"
-
-REM   chat.globalchat -- Everyone hears everyone, anywhere on the map. Off
-REM     leaves only local chat.
-REM   [bool, default true]
-REM set "ARGS=!ARGS! +chat.globalchat VALUE"
-
-REM   chat.localchat -- Proximity chat.
-REM   [bool, default false]
-REM set "ARGS=!ARGS! +chat.localchat VALUE"
-
-REM   chat.localChatRange -- Metres that proximity chat carries.
-REM   [float, default 100.0]
-REM set "ARGS=!ARGS! +chat.localChatRange VALUE"
-
-REM ----------------------------------------------------------------------
-REM  4.11  EVENTS
-REM
-REM     server.events is the master switch; the rest tune individual
-REM     events.
-REM ----------------------------------------------------------------------
-
-REM   server.events -- Timed world events on or off.
-REM   [bool, default true]
-REM set "ARGS=!ARGS! +server.events VALUE"
-
-REM   patrolhelicopter.lifetimeMinutes -- How long the patrol helicopter
-REM     stays before leaving.
-REM   [float, default 30.0]
-REM set "ARGS=!ARGS! +patrolhelicopter.lifetimeMinutes VALUE"
-
-REM   patrolhelicopter.guns -- How many guns it fires with.
-REM   [int, default 1]
-REM set "ARGS=!ARGS! +patrolhelicopter.guns VALUE"
-
-REM   patrolhelicopter.bulletDamageScale -- Its damage multiplier.
-REM   [float, default 1.0]
-REM set "ARGS=!ARGS! +patrolhelicopter.bulletDamageScale VALUE"
-
-REM   cargoship.event_enabled -- Cargo ship on or off.
-REM   [bool, default true]
-REM set "ARGS=!ARGS! +cargoship.event_enabled VALUE"
-
-REM   cargoship.event_duration_minutes -- How long it stays.
-REM   [float, default 50.0]
-REM set "ARGS=!ARGS! +cargoship.event_duration_minutes VALUE"
-
-REM   halloween.enabled -- Halloween event.
-REM   [bool, default false]
-REM set "ARGS=!ARGS! +halloween.enabled VALUE"
-
-REM   xmas.enabled -- Christmas event.
-REM   [bool, default false]
-REM set "ARGS=!ARGS! +xmas.enabled VALUE"
-
-REM ----------------------------------------------------------------------
-REM  4.12  SPAWNS AND POPULATIONS
-REM
-REM     Populations are per square kilometre, so a bigger map means more
-REM     animals at the same number. The spawn rates and densities scale
-REM     the whole system at once and go a long way; change them in small
-REM     steps.
-REM ----------------------------------------------------------------------
-
-REM   spawn.max_rate -- Upper bound on spawn rate.
-REM   [float, default 1.0]
-REM set "ARGS=!ARGS! +spawn.max_rate VALUE"
-
-REM   spawn.min_rate -- Lower bound on spawn rate.
-REM   [float, default 0.5]
-REM set "ARGS=!ARGS! +spawn.min_rate VALUE"
-
-REM   spawn.max_density -- Upper bound on spawn density.
-REM   [float, default 1.0]
-REM set "ARGS=!ARGS! +spawn.max_density VALUE"
-
-REM   spawn.min_density -- Lower bound on spawn density.
-REM   [float, default 0.5]
-REM set "ARGS=!ARGS! +spawn.min_density VALUE"
-
-REM   spawn.player_scale -- How strongly nearby players suppress spawns.
-REM   [float, default 2.0]
-REM set "ARGS=!ARGS! +spawn.player_scale VALUE"
-
-REM   bear.Population -- Bears.
-REM   [float, default 2.0]
-REM set "ARGS=!ARGS! +bear.Population VALUE"
-
-REM   polarbear.Population -- Polar bears.
-REM   [float, default 1.0]
-REM set "ARGS=!ARGS! +polarbear.Population VALUE"
-
-REM   boar.Population -- Boar.
-REM   [float, default 5.0]
-REM set "ARGS=!ARGS! +boar.Population VALUE"
-
-REM   stag.Population -- Stags.
-REM   [float, default 3.0]
-REM set "ARGS=!ARGS! +stag.Population VALUE"
-
-REM   chicken.Population -- Chickens.
-REM   [float, default 3.0]
-REM set "ARGS=!ARGS! +chicken.Population VALUE"
-
-REM   wolf2.Population -- Wolves. The class really is Wolf2; Rust replaced
-REM     the original.
-REM   [float, default 2.0]
-REM set "ARGS=!ARGS! +wolf2.Population VALUE"
-
-REM   ridablehorse.Population -- Horses. Note the spelling: ridable, one
-REM     e.
-REM   [float, default 2.0]
-REM set "ARGS=!ARGS! +ridablehorse.Population VALUE"
-
-REM ----------------------------------------------------------------------
-REM  4.13  IDLE KICK
-REM ----------------------------------------------------------------------
-
-REM   server.idlekick -- Minutes of idling before a kick.
-REM   [int, default 30]
-REM set "ARGS=!ARGS! +server.idlekick VALUE"
-
-REM   server.idlekickmode -- 0 never, 1 only when the server is full, 2
-REM     always.
-REM   [int, default 1]
-REM set "ARGS=!ARGS! +server.idlekickmode VALUE"
-
-REM ----------------------------------------------------------------------
-REM  4.14  RUST+ COMPANION APP
-REM
-REM     Rust+ needs its own port forward, which is almost always why it
-REM     does not work.
-REM ----------------------------------------------------------------------
-
-REM   app.port -- Rust+ port, TCP. 0 derives server.port + 68, so 28083
-REM     here.
-REM   [int, default UNKNOWN]
-REM set "ARGS=!ARGS! +app.port VALUE"
-
-REM   app.listenip -- Bind address for Rust+.
-REM   [string, default ""]
-REM set "ARGS=!ARGS! +app.listenip VALUE"
-
-REM ----------------------------------------------------------------------
-REM  4.15  PERFORMANCE
-REM
-REM     Leave this alone unless you are chasing a problem you have
-REM     actually measured. Raising the tick rate is the most common thing
-REM     people try and the least likely to help: it multiplies CPU cost
-REM     and does nothing for a server that was not CPU-bound to begin
-REM     with.
-REM ----------------------------------------------------------------------
-
-REM   server.tickrate -- Server ticks per second.
-REM   [int, default 10]
-REM set "ARGS=!ARGS! +server.tickrate VALUE"
-
-REM === HOTWIRE SETTINGS END =============================================
-REM ======================================================================
-REM  4b. CHECKING THE OPTION LIST
+REM  7. CHECKING THE OPTION LIST
 REM
 REM     Machinery. Nothing in this section is a setting.
 REM
@@ -1642,7 +1676,7 @@ REM  must cost the diagnostic and nothing else.
 if "!ARGCHECK!"=="2" (
     echo [%date% %time%] ================================================
     echo [%date% %time%] The option list has problems, listed above.
-    echo [%date% %time%] Not starting. They are set in section 4.
+    echo [%date% %time%] Not starting. They are set in section 3.
     echo [%date% %time%] ================================================
     pause & exit /b 1
 )
@@ -1666,7 +1700,7 @@ if defined CHECK_ONLY (
 
 
 REM ======================================================================
-REM  5. LAUNCH
+REM  8. LAUNCH
 REM ======================================================================
 
 REM  Rotate the log. -logfile TRUNCATES on every start, so without this a
@@ -1766,9 +1800,9 @@ echo [%date% %time%]
 echo [%date% %time%] The log from the first crash is kept as
 echo [%date% %time%]   %ROOT%\logs\server_crash_*.txt
 echo [%date% %time%] and is the one worth reading. Usual causes: a bad
-echo [%date% %time%] convar in section 4, a port already in use, or a
+echo [%date% %time%] convar in section 3, a port already in use, or a
 echo [%date% %time%] corrupt save. On a machine with more than one server,
-echo [%date% %time%] check each has its own ports in section 4.2 -- two
+echo [%date% %time%] check each has its own ports in section 1 -- two
 echo [%date% %time%] servers on the same port is exactly this. Another copy
 echo [%date% %time%] of this launcher already running would do it too.
 echo [%date% %time%]
@@ -1781,11 +1815,11 @@ REM ======================================================================
 REM  THE LAUNCHER'S CODE HASH, AND ITS POWERSHELL
 REM
 REM     Never run by cmd: the line above exits. The hash is stamped at
-REM     release by tools/launcher-hash.sh; section 3b hands everything from
+REM     release by tools/launcher-hash.sh; section 6b hands everything from
 REM     the #HOTWIRE-EDITS line down to PowerShell, so it is written as
 REM     ordinary PowerShell rather than through cmd's quoting rules.
 REM ======================================================================
-HOTWIRE_LAUNCHER_HASH="3188f040adaec479636b63add692481f5103fb2ecd64cd14d6a280e54fdb5e55"
+HOTWIRE_LAUNCHER_HASH="0122849b8d99db50e09ad0b5e27ce40bff3e7d99d3c12b5b9f7c0daa9f9b8473"
 
 #HOTWIRE-EDITS
 # Wipes and permanent convars, for hotwire.bat (capabilities: wipe, convar_persist).
@@ -1795,11 +1829,11 @@ HOTWIRE_LAUNCHER_HASH="3188f040adaec479636b63add692481f5103fb2ecd64cd14d6a280e54
 # launcher's pre-launch step runs this between server runs. Every value is checked again here before
 # anything is written or deleted: those files are requests, not commands.
 #
-# It edits only this file's section 4, which lies AFTER the line that runs it. cmd reads a running
-# batch file by byte offset, so an edit may only touch bytes cmd has not reached yet; everything before
-# the pre-launch step stays exactly as it was. What is written is a typed setting, never a command:
-# a value that cmd would treat as syntax is refused, so a forged request cannot put a command into a
-# file this machine runs. Windows PowerShell 5.1, ASCII only.
+# It edits only this file's sections 1 and 3, between their settings markers. cmd reads a running
+# batch file by byte position, so the step that runs this jumps to a label as soon as it returns: cmd
+# finds a label by searching the text, and carries on from the right line of the edited file. What is
+# written is a typed setting, never a command: a value that cmd would treat as syntax is refused, so a
+# forged request cannot put a command into a file this machine runs. Windows PowerShell 5.1, ASCII only.
 $ErrorActionPreference = 'Stop'
 $self = $env:HOTWIRE_SELF
 $root = $env:HOTWIRE_ROOT
@@ -1817,39 +1851,62 @@ if ($text.Contains("`r`n")) { $eol = "`r`n" }
 $lines = New-Object 'System.Collections.Generic.List[string]'
 foreach ($l in ($text -split "`r?`n")) { $lines.Add($l) }
 
-# Section 4: from the settings marker after :buildargs to its end marker. Nothing outside is touched.
-# The markers are built in pieces: written whole, these lines would read as settings markers themselves, and
-# the code hash would skip this code instead of covering it.
+# Sections 1 and 3: each from the settings marker after its label to its end marker. Nothing outside is
+# touched. The markers are built in pieces: written whole, these lines would read as settings markers
+# themselves, and the code hash would skip this code instead of covering it.
 $beginMarker = '=== HOTWIRE SETTINGS ' + 'BEGIN ==='
 $endMarker = '=== HOTWIRE SETTINGS ' + 'END ==='
-$start = -1; $finish = -1; $seenArgs = $false
-for ($i = 0; $i -lt $lines.Count; $i++) {
-    if ($lines[$i] -eq ':buildargs') { $seenArgs = $true; continue }
-    if ($seenArgs -and $start -lt 0 -and $lines[$i].Contains($beginMarker)) { $start = $i; continue }
-    if ($start -ge 0 -and $lines[$i].Contains($endMarker)) { $finish = $i; break }
+function FindBlock([string]$label) {
+    $open = -1; $seen = $false
+    for ($i = 0; $i -lt $lines.Count; $i++) {
+        if ($lines[$i] -eq $label) { $seen = $true; continue }
+        if ($seen -and $open -lt 0 -and $lines[$i].Contains($beginMarker)) { $open = $i; continue }
+        if ($open -ge 0 -and $lines[$i].Contains($endMarker)) { return @($open, $i) }
+    }
+    return @(-1, -1)
 }
-if ($start -lt 0 -or $finish -lt 0) {
-    Say 'Section 4 has lost its settings markers, so no wipe or convar change can be written. Starting unchanged.'
+$top = FindBlock (':hotwire_server' + '_settings')
+$topStart = $top[0]; $topFinish = $top[1]
+$options = FindBlock (':hotwire_server' + '_options')
+$start = $options[0]; $finish = $options[1]
+if ($topStart -lt 0 -or $start -lt 0) {
+    Say 'Section 1 or 3 has lost its settings markers, so no wipe or convar change can be written. Starting unchanged.'
     exit 0
 }
 
+# Section 3's lines that match.
 function InBlock([string]$pattern) {
     $found = @()
     for ($i = $start + 1; $i -lt $finish; $i++) { if ($lines[$i] -match $pattern) { $found += $i } }
     return ,$found
 }
 
-# The plain-value settings of section 4.2/4.3, where | & < > are safe.
-$variables = @{ 'server.hostname' = 'SERVER_HOSTNAME'; 'server.description' = 'SERVER_DESCRIPTION'; 'server.tags' = 'SERVER_TAGS'; 'server.maxplayers' = 'SERVER_MAXPLAYERS'; 'server.seed' = 'SERVER_SEED' }
+# Section 1's lines that match. Section 1 lies before section 3, so an insertion into section 3 never moves it.
+function InTop([string]$pattern) {
+    $found = @()
+    for ($i = $topStart + 1; $i -lt $topFinish; $i++) { if ($lines[$i] -match $pattern) { $found += $i } }
+    return ,$found
+}
+
+# The plain-value settings of section 1, where | & < > are safe.
+$variables = @{ 'server.hostname' = 'SERVER_HOSTNAME'; 'server.description' = 'SERVER_DESCRIPTION'; 'server.tags' = 'SERVER_TAGS'; 'server.maxplayers' = 'SERVER_MAXPLAYERS'; 'server.identity' = 'SERVER_IDENTITY'; 'server.seed' = 'SERVER_SEED'; 'server.worldsize' = 'SERVER_WORLDSIZE'; 'server.port' = 'SERVER_PORT'; 'server.queryport' = 'SERVER_QUERYPORT'; 'rcon.port' = 'RCON_PORT' }
 
 # Returns '' when done, or why not.
 function SetVariable([string]$name, [string]$value) {
     if ($value -match '["^]' -or $value -match '[^\x20-\x7E]') { return 'the value has a character a batch file cannot hold here' }
     $written = $value.Replace('%', '%%').Replace('!', '^!')
-    $found = InBlock ('^set "' + $name + '=[^"]*"$')
-    if ($found.Count -ne 1) { return ('section 4 has no single ' + $name + ' line') }
+    $found = InTop ('^set "' + $name + '=[^"]*"$')
+    if ($found.Count -ne 1) { return ('section 1 has no single ' + $name + ' line') }
     $lines[$found[0]] = 'set "' + $name + '=' + $written + '"'
     return ''
+}
+
+# A section 1 value as the launcher reads it: ^! is !, %% is %.
+function VariableValue([string]$name) {
+    $found = InTop ('^set "' + $name + '=[^"]*"$')
+    if ($found.Count -ne 1) { return '' }
+    $m = [regex]::Match($lines[$found[0]], '^set "[A-Z_]+=([^"]*)"$')
+    return $m.Groups[1].Value.Replace('^!', '!').Replace('%%', '%')
 }
 
 function SetOption([string]$convar, [string]$value) {
@@ -1858,7 +1915,7 @@ function SetOption([string]$convar, [string]$value) {
     if ($value -match '\s') { $word = '"' + $value + '"' }
     $escaped = [regex]::Escape($convar)
     $active = InBlock ('^set "ARGS=!ARGS! \+' + $escaped + ' ')
-    if ($active.Count -gt 1) { return ('it is set on more than one line in section 4') }
+    if ($active.Count -gt 1) { return ('it is set on more than one line in section 3') }
     if ($active.Count -eq 1) {
         $m = [regex]::Match($lines[$active[0]], '^set "ARGS=!ARGS! \+(\S+) ')
         $lines[$active[0]] = 'set "ARGS=!ARGS! +' + $m.Groups[1].Value + ' ' + $word + '"'
@@ -1870,7 +1927,7 @@ function SetOption([string]$convar, [string]$value) {
         $lines[$listed[0]] = 'set "ARGS=!ARGS! +' + $m.Groups[1].Value + ' ' + $word + '"'
         return ''
     }
-    # Not in the list: a managed line of its own, just above the end of section 4, replacing an earlier one.
+    # Not in the list: a managed line of its own, just above the end of section 3, replacing an earlier one.
     $marker = 'REM hotwire-managed: ' + $convar
     for ($i = $finish - 1; $i -gt $start; $i--) {
         if ($lines[$i] -eq $marker) { $lines.RemoveAt($i + 1); $lines.RemoveAt($i); $script:finish -= 2 }
@@ -1879,13 +1936,6 @@ function SetOption([string]$convar, [string]$value) {
     $lines.Insert($finish + 1, 'set "ARGS=!ARGS! +' + $convar + ' ' + $word + '"')
     $script:finish += 2
     return ''
-}
-
-function ActiveValue([string]$convar) {
-    $found = InBlock ('^set "ARGS=!ARGS! \+' + [regex]::Escape($convar) + ' ')
-    if ($found.Count -ne 1) { return '' }
-    $m = [regex]::Match($lines[$found[0]], '^set "ARGS=!ARGS! \+\S+ "?([^"]*)"?"$')
-    return $m.Groups[1].Value
 }
 
 $changed = $false
@@ -1919,7 +1969,7 @@ if (Test-Path -LiteralPath $flag) {
         elseif ($size -and ($size -notmatch '^\d{1,5}$' -or [int]$size -lt 1000 -or [int]$size -gt 6000)) { $why = 'size is not a whole number from 1000 to 6000' }
         elseif ('keep', 'rename', 'delete' -notcontains $bp) { $why = 'blueprints must be keep, rename or delete' }
         if (-not $why) { $why = SetVariable 'SERVER_SEED' $seed }
-        if (-not $why -and $size) { $why = SetOption 'server.worldsize' $size }
+        if (-not $why -and $size) { $why = SetVariable 'SERVER_WORLDSIZE' $size }
         if ($why) {
             Say ('Wipe CANCELLED: ' + $why + '. Starting unchanged.')
             [IO.File]::WriteAllText($result, 'cancelled: ' + $why + "`n")
@@ -1928,7 +1978,7 @@ if (Test-Path -LiteralPath $flag) {
             $lines.Clear(); foreach ($l in ($text -split "`r?`n")) { $lines.Add($l) }
         } else {
             $changed = $true
-            $identity = ActiveValue 'server.identity'
+            $identity = VariableValue 'SERVER_IDENTITY'
             if (-not $identity) { $identity = 'my_server_identity' }
             $wipe = @{ seed = $seed; size = $size; bp = $bp; cycle = $cycle; flag = $flag; identity = $identity }
         }

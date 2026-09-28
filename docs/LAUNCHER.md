@@ -52,7 +52,7 @@ Section 1 holds every choice the launcher makes. The defaults are ours, and ever
 | `MAX_CRASH_STREAK` | `10` | crashes in a row before stopping; `0` never stops |
 | `CRASH_BACKOFF` | `1` | wait 30, 60, 120, then 300 seconds after repeated crashes; `0` always waits `RESTART_DELAY` |
 | `RCON_PASSWORD_MIN` | `8` | shortest RCON password it starts with; `0` is refused, because an empty one crashes Rust |
-| `CHECK_OPTIONS` | `1` | `0` skips the section 4 check |
+| `CHECK_OPTIONS` | `1` | `0` skips the section 3 check |
 | `HOOK_BEFORE`, `HOOK_AFTER` | empty | commands to run around updates |
 
 A value that cannot work stops the launcher at start with the line to fix, rather than failing somewhere
@@ -153,7 +153,7 @@ A production and a dev server side by side, often on different branches, is norm
   folder, so a copied server folder runs *its* server, not the original's. A launcher whose `ROOT` names a
   different folder that has its own `hotwire.bat` refuses to start, because starting it would update and
   run that other server.
-- **Its own ports**, in section 4.2 (`server.port`, `server.queryport`, `rcon.port`). Two servers on one
+- **Its own ports**, in section 1 (`SERVER_PORT`, `SERVER_QUERYPORT`, `RCON_PORT`). Two servers on one
   port crash-loop, and the crash-loop stop says so. `hotwire-setup` suggests a free set for each server.
 - **Its own `STEAM_BRANCH`**, if they differ.
 
@@ -190,16 +190,18 @@ password and `rcon.web`. Everything else — world size, save interval, player c
 the game's own default until you choose otherwise.
 
 **The seed is the exception, and why.** Rust's own default seed is **1337** (read from the build), so a
-server left to the default plays the same map as every other one. `SERVER_SEED` in section 4.1 sets it;
+server left to the default plays the same map as every other one. `SERVER_SEED` in section 1 sets it;
 empty means the game's 1337. `hotwire-setup` writes a random one there when it builds a new server — once,
 so every restart keeps the same map — and leaves it empty for a server that already has a save, because a
 new seed on a played server starts a new map. Change it only before the first start, or as a deliberate
 wipe. `server.randomize_seed` is not used: it picks a new seed on every start, which on a restart means a
 new map.
 
-**The server's name, description, tags and player count have their own settings**, filled in rather than
-switched on with `REM`: `SERVER_HOSTNAME` and `SERVER_DESCRIPTION` in section 4.3, `SERVER_TAGS` beside
-them, `SERVER_MAXPLAYERS` in 4.2. Left empty, the game's default is used. They are separate because a
+**The settings most servers change are at the top of the file, in section 1**: `SERVER_HOSTNAME`,
+`SERVER_DESCRIPTION`, `SERVER_TAGS`, `SERVER_MAXPLAYERS`, `SERVER_IDENTITY`, `SERVER_SEED`,
+`SERVER_WORLDSIZE`, `SERVER_PORT`, `SERVER_QUERYPORT` and `RCON_PORT`. Each is filled in rather than
+switched on with `REM`, with the game's default beside it; left empty, that default is used. Launcher
+settings are in section 2 and every other option in section 3. The values are separate settings because a
 `|`, `&`, `<` or `>` typed straight into a `set "ARGS=..."` line splits the line and the server never
 starts; in those settings they are safe. `!` and `"` are not safe anywhere, a percent sign is written
 `%%`, and a web address containing `&` needs `^&` in its `ARGS` line.
@@ -223,8 +225,9 @@ and later, are used for dates, downloads, the SteamCMD lock and the checks.
    example** — RCON is remote code execution on that machine. The launcher refuses a password that is
    empty, shorter than `RCON_PASSWORD_MIN` (8), still the example value, or has a double quote in it, and
    one that starts with a semicolon does not survive being read. Write a percent sign as `%%`.
-3. Open `hotwire.bat`. Check `STEAMCMD` at the top; `ROOT` is already the file's own folder. Fill in
-   `SERVER_HOSTNAME` and `SERVER_DESCRIPTION`, then work down the other options.
+3. Open `hotwire.bat`. In section 1, at the top, fill in `SERVER_HOSTNAME` and `SERVER_DESCRIPTION` and
+   check the ports. In section 2, check `STEAMCMD`; `ROOT` is already the file's own folder. Then work
+   through the options in section 3.
 4. Run `hotwire.bat check`, then run `hotwire.bat`.
 
 To have the plugin drive the updates, set `UPDATE_MODE=hotwire` once the
@@ -248,13 +251,13 @@ hotwire.bat check
 ```
 
 Reads back everything you set, says what is wrong, and exits without updating or starting the server. It
-does ask Steam for the current build, and it does not run `HOOK_BEFORE`. Run it after editing section 4.
+does ask Steam for the current build, and it does not run `HOOK_BEFORE`. Run it after editing any setting.
 
 The same checks run on every start, and refuse to launch if they fail. They
 exist because Rust ignores a convar it does not recognize and accepts an empty
 value for one it does — both in silence.
 
-**The settings in section 1** are checked for the mistakes listed under *Every behaviour is a setting*. A
+**The settings in section 2** are checked for the mistakes listed under *Every behaviour is a setting*. A
 trailing backslash on `ROOT` or `STEAMCMD` is removed rather than reported — it would otherwise escape the
 closing quote of every path handed to another program.
 
