@@ -20,7 +20,8 @@ Steps 1 to 6 give you a working server. Steps 7 to 9 connect it to AFKPanel and 
 choose, Oxide, the start script with its ports, an RCON password and the firewall, then the Hotwire plugin. It can also
 connect the server to AFKPanel.
 
-1. Put `hotwire-setup.bat` and `hotwire-setup.ps1` in the same folder.
+1. Download https://afkpanel.com/get/windows and unzip it. `hotwire-setup.bat` and `hotwire-setup.ps1` are in it,
+   side by side; keep them together.
 2. Right-click `hotwire-setup.bat` and select **Run as administrator**.
 3. Select **Install**.
 4. When it finishes, fill in your server's name in `hotwire.bat` (step 6, item 4) and start the server.
@@ -124,7 +125,8 @@ as `%%`.
 Hotwire has two parts. The plugin schedules announced restarts. The launcher starts the server again when it exits,
 tells a restart apart from an update, and stops a crash loop from filling the disk with logs.
 
-1. Download Hotwire from https://github.com/xman2000/hotwire.
+1. Download https://afkpanel.com/get/windows and unzip it. It holds `hotwire.bat`, `secrets.example.bat` and
+   `Hotwire.cs`.
 2. Put `hotwire.bat` in `C:\rustserver\`, next to `RustDedicated.exe`. It treats its own folder as the server folder,
    so there is no path to set.
 3. Put `Hotwire.cs` in `C:\rustserver\oxide\plugins\`. If the `plugins` folder does not exist yet, create it.

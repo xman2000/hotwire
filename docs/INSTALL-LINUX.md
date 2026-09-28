@@ -21,7 +21,7 @@ Steps 1 to 7 give you a working server. Steps 8 to 10 connect it to AFKPanel and
 shows what it will do, asks before each step, and is safe to stop and run again.
 
 ```bash
-curl -fsSLO https://raw.githubusercontent.com/xman2000/hotwire/connect-and-report/setup/hotwire-setup.sh && sudo bash hotwire-setup.sh install
+curl -fsSLO https://afkpanel.com/get/hotwire-setup.sh && sudo bash hotwire-setup.sh install
 ```
 
 The script is plain bash, saved in the folder where you ran that line, so you can read it first. It:
@@ -245,9 +245,9 @@ once by `always`, which defeats that protection.
 
    ```bash
    cd /home/rust/server
-   curl -fsSL https://raw.githubusercontent.com/xman2000/hotwire/connect-and-report/setup/hotwire-setup.sh -o hotwire-setup.sh && chmod +x hotwire-setup.sh
+   curl -fsSL https://afkpanel.com/get/hotwire-setup.sh -o hotwire-setup.sh && chmod +x hotwire-setup.sh
    mkdir -p oxide/plugins
-   curl -fsSL https://raw.githubusercontent.com/xman2000/hotwire/connect-and-report/src/Hotwire.cs -o oxide/plugins/Hotwire.cs
+   curl -fsSL https://afkpanel.com/get/Hotwire.cs -o oxide/plugins/Hotwire.cs
    ```
 
 2. Run `doctor`:
