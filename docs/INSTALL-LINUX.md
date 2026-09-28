@@ -1,55 +1,61 @@
-# A Rust server on a blank Ubuntu machine
+# Install a Rust server on Ubuntu
 
-From nothing to a running, connected server. No prior Rust experience assumed.
+This guide installs a Rust server with Oxide and Hotwire on an Ubuntu machine, then connects it to AFKPanel. It assumes
+no Rust experience.
 
-Roughly **45 minutes**, most of it waiting for downloads. You need **a current Ubuntu LTS** (22.04,
-24.04 or 26.04 all work; the installer was run on 26.04), about **20 GB free**, and **8 GB of RAM** as a realistic floor for a modded
-server.
+| Requirement | Value |
+| --- | --- |
+| Time | About 45 minutes, most of it downloading |
+| Operating system | A current Ubuntu LTS: 22.04, 24.04 or 26.04 |
+| Free disk space | About 20 GB |
+| Memory | 8 GB for a server with plugins |
+| Access | An account with `sudo` |
 
-You can stop after step 7 and have a perfectly good server; steps 8-10 add the panel, which is
-optional.
+The installer was tested on Ubuntu 26.04.
 
-> **Or let the installer do it.** Every step below, from SteamCMD to connecting, is also one
-> script. It checks the machine first, shows you what it is going to do, asks before each step,
-> and is safe to stop and run again:
->
-> ```bash
-> curl -fsSLO https://raw.githubusercontent.com/xman2000/hotwire/connect-and-report/setup/hotwire-setup.sh && sudo bash hotwire-setup.sh install
-> ```
->
-> Read it first if you like -- it is plain bash, and it is saved where you ran that line. It installs
-> the server into `/home/rust/server` as a `rust` user, with Hotwire's launcher, a random map seed, a
-> generated RCON password and a `rust-server` service that starts with the machine (switched on, not
-> started). It never touches a Rust server it did not install. Every change it makes, and how to
-> undo it, goes in `hotwire/changes.log`. For a second server, add `--root /home/rust/server2`: it
-> gets its own ports and its own service. The rest of this page is the same install by hand.
+Steps 1 to 7 give you a working server. Steps 8 to 10 connect it to AFKPanel and are optional.
 
-> **What this never does:** nothing here, and nothing Hotwire does later, can stop your server
-> starting. If the panel is slow, unreachable or gone, your server still boots and restarts. That is
-> a design rule, not a hope.
+## Let the installer do it
 
-> **The launcher.** Hotwire now has a Linux launcher (`hotwire.sh`) that keeps the server running,
-> updates Rust and Oxide, and survives a crash loop — the bash sibling of the Windows one. This guide
-> uses a plain start script or a systemd unit so you can see every step; once it works, `hotwire.sh`
-> from the repo is the drop-in that does all of it for you (and it links `steamclient.so` for you —
-> see step 7).
+`hotwire-setup.sh install` does every step in this guide, from SteamCMD to connecting. It checks the machine first,
+shows what it will do, asks before each step, and is safe to stop and run again.
 
----
+```bash
+curl -fsSLO https://raw.githubusercontent.com/xman2000/hotwire/connect-and-report/setup/hotwire-setup.sh && sudo bash hotwire-setup.sh install
+```
 
-## 1. A user that is not root
+The script is plain bash, saved in the folder where you ran that line, so you can read it first. It:
 
-The game server should never run as root. This takes ten seconds and removes a whole category of bad
-day.
+- installs the server into `/home/rust/server`, running as a `rust` user
+- uses Hotwire's launcher, a random map seed and a generated RCON password
+- creates a `rust-server` service that starts with the machine (enabled, not started)
+- never touches a Rust server it did not install
+- records every change it makes, and how to undo it, in `hotwire/changes.log`
+
+For a second server, add `--root /home/rust/server2`. It gets its own ports and its own service.
+
+The rest of this guide is the same install by hand.
+
+Nothing in this guide, and nothing Hotwire does later, can stop your server starting. If AFKPanel is slow, unreachable
+or gone, the server still boots and restarts.
+
+This guide uses a plain start script or a systemd unit, so you can see every step. Hotwire's Linux launcher,
+`hotwire.sh`, replaces either one: it keeps the server running, updates Rust and Oxide, stops a crash loop, and links
+`steamclient.so` for you (see step 7).
+
+## 1. Create a user that is not root
+
+Never run the game server as root.
 
 ```bash
 sudo adduser --disabled-password --gecos "" rust
 sudo -iu rust      # you are now the rust user; everything below runs as them
 ```
 
-## 2. Swap, if you have none
+## 2. Add swap, if you have none
 
-Rust is memory-hungry, and an out-of-memory kill looks exactly like a crash nobody can explain.
-Check first — if `free -h` already shows swap, skip this.
+Rust uses a lot of memory, and an out-of-memory kill looks like an unexplained crash. If `free -h` already shows swap,
+skip this step.
 
 ```bash
 exit                                    # back to your admin user
@@ -59,25 +65,24 @@ sudo mkswap /swapfile && sudo swapon /swapfile
 echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
 ```
 
-## 3. The clock
+## 3. Synchronise the clock
 
-A drifting clock makes every signed request to the panel fail with a message that explains nothing.
-Fix it now rather than debugging it later.
+A wrong clock makes every signed request to AFKPanel fail, with an error that does not mention the clock.
 
 ```bash
 sudo timedatectl set-ntp true
 timedatectl status        # "System clock synchronized: yes"
 ```
 
-## 4. Firewall
+## 4. Open the firewall
 
-Three ports, and **one of them must not be public**.
+Rust uses three ports. Open two of them. Keep RCON closed to the internet.
 
-| port | protocol | who needs it |
-|---|---|---|
-| 28015 | UDP | players |
-| 28017 | UDP | the server browser |
-| 28016 | TCP | **RCON — you, and nobody else** |
+| Port | Protocol | Used by | Open to the internet |
+| --- | --- | --- | --- |
+| 28015 | UDP | Players | Yes |
+| 28017 | UDP | The Steam server browser | Yes |
+| 28016 | TCP | RCON | No |
 
 ```bash
 sudo ufw allow 28015/udp comment 'Rust game'
@@ -86,12 +91,15 @@ sudo ufw allow OpenSSH
 sudo ufw enable
 ```
 
-**28016 is deliberately absent.** RCON is remote control of the machine. Reach it over SSH or a VPN.
-If you must expose it, scope it to your own address: `sudo ufw allow from YOUR.IP.HERE to any port 28016 proto tcp`.
+RCON controls the server. Reach it over SSH or a VPN. If you must open it, allow only your own address:
+
+```bash
+sudo ufw allow from YOUR.IP.HERE to any port 28016 proto tcp
+```
 
 ## 5. Install SteamCMD
 
-Rust's server is 32-bit-linked, so the i386 architecture has to be enabled.
+Rust's server needs 32-bit libraries, so enable the i386 architecture.
 
 ```bash
 sudo add-apt-repository -y multiverse
@@ -100,24 +108,24 @@ sudo apt update
 sudo apt install -y steamcmd lib32gcc-s1 curl jq unzip zstd
 ```
 
-The installer shows a licence prompt — accept it.
+Accept the licence prompt when the installer shows it.
 
 ## 6. Download the Rust server
 
-App **258550** is the dedicated server. It is free and needs no Steam account — `anonymous` is a real
-login, not a placeholder.
+The dedicated server is Steam app 258550. It is free, and `anonymous` is a real login: no Steam account is needed.
 
 ```bash
 sudo -iu rust
 /usr/games/steamcmd +force_install_dir /home/rust/server +login anonymous +app_update 258550 validate +quit
 ```
 
-About 6 GB to download. When it finishes you should have `/home/rust/server/RustDedicated`.
+The download is about 6 GB. When it finishes, `/home/rust/server/RustDedicated` exists.
 
-## 7. Install Oxide, and a start script
+## 7. Install Oxide and a start script
 
-Oxide (uMod) is what lets the server run plugins. Hotwire is a plugin, so this is required to connect
-to the panel later.
+Oxide (uMod) lets the server run plugins. Hotwire is a plugin, so you need Oxide to connect to AFKPanel.
+
+### Install Oxide
 
 ```bash
 cd /home/rust/server
@@ -125,13 +133,16 @@ curl -fSL "https://github.com/OxideMod/Oxide.Rust/releases/latest/download/Oxide
 unzip -o oxide.zip && rm oxide.zip
 ```
 
-That is Oxide's own release, the **Linux** build. `umod.org/games/rust/download` serves the **Windows**
-build, and the two unpack to the same file names, so the wrong one cannot be spotted by looking.
+This is Oxide's own Linux release. `umod.org/games/rust/download` serves the Windows build, which unpacks to the same
+file names, so the wrong build cannot be spotted by looking.
 
-**One required link, or the server will not start.** RustDedicated loads Steam's client library from a
-path it does not create itself. Without it the server generates its whole map and *then* aborts with a
-`NullReferenceException` that says nothing about Steam — a dead end that has cost people hours. Link it
-once, as the `rust` user:
+### Link Steam's client library
+
+The server does not start without this link. RustDedicated loads Steam's client library from a path it does not
+create. Without the link, the server generates the whole map and then stops with a `NullReferenceException` that does
+not mention Steam.
+
+As the `rust` user:
 
 ```bash
 mkdir -p ~/.steam/sdk64 ~/.steam/sdk32
@@ -139,10 +150,11 @@ ln -sf ~/.local/share/Steam/steamcmd/linux64/steamclient.so ~/.steam/sdk64/steam
 ln -sf ~/.local/share/Steam/steamcmd/linux32/steamclient.so ~/.steam/sdk32/steamclient.so
 ```
 
-(The `hotwire.sh` launcher makes this link for you at boot; a hand-written start script does not, so do
-it here.)
+The `hotwire.sh` launcher makes this link at every start. A start script you write yourself does not.
 
-Now a start script. Create `/home/rust/server/start.sh`:
+### Write the start script
+
+Create `/home/rust/server/start.sh`:
 
 ```bash
 #!/usr/bin/env bash
@@ -163,42 +175,41 @@ while true; do
         +rcon.web          1 \
         -logfile /home/rust/server/logs/server.log
 
-    echo "Server exited. Restarting in 10 seconds -- Ctrl-C to stop."
+    echo "Server exited. Restarting in 10 seconds. Press Ctrl+C to stop."
     sleep 10
 done
 ```
 
-Set the name and description to your own. Everything not on that list, including player count, world
-size, how often it saves and the save folder, is left to the game's own defaults. To choose one yourself,
-add it as another line, for example `+server.maxplayers 100 \`.
+1. Set the name and description to your own.
+2. Choose a map seed before the first start. Rust's default seed is 1337, so without one your server has the same map
+   as every other server left at the default. Generate one with `shuf -i 1-2147483647 -n 1`, and add
+   `+server.seed <that number> \` to the script. Keep it: a new seed on a server that has been played is a new map.
+   Never put `+server.randomize_seed true` in the start script; it picks a new seed on every start.
+3. Leave the ports as they are. They match the firewall in step 4. A second server on the same machine needs its own
+   ports, for example 28115, 28117 and 28116; open those too.
 
-**Pick a seed before the first start.** Rust's default seed is 1337, so without one your server plays the
-same map as every other server left at the default. Choose a random one once with
-`shuf -i 1-2147483647 -n 1` and add `+server.seed <that number> \`. Keep it: a different seed on a server
-that has been played is a new map. (`+server.randomize_seed true` picks a new seed on every start, so never
-put it in the start script.) The ports are set because
-they have to match the firewall in step 4. On a machine with a second server, give that one different
-ports — for example 28115, 28117 and 28116 — and open them too.
+Every setting not in the script, including player count, world size, save interval and save folder, uses the game's
+default. To set one, add it as another line, for example `+server.maxplayers 100 \`.
 
-Then:
+### Start the server
 
 ```bash
 mkdir -p /home/rust/server/logs
 printf 'RCON_PASSWORD="%s"\n' "$(openssl rand -base64 24)" > /home/rust/server/secrets.env
 chmod 600 /home/rust/server/secrets.env
-cat /home/rust/server/secrets.env      # save this in your password manager NOW
+cat /home/rust/server/secrets.env      # save this in your password manager
 chmod +x start.sh
 ./start.sh
 ```
 
-The first start takes several minutes — it generates the map. When your server appears in Rust's
-browser under your hostname, you have a working Rust server.
+The first start takes several minutes while the server generates the map. When the server appears in Rust's server
+browser under your name, it is working.
 
-**Stop here if that is all you wanted.**
+This is a complete server. The next steps connect it to AFKPanel.
 
-### Optional: run it under systemd instead
+### Optional: run the server under systemd
 
-So it starts on boot and restarts if it dies. As your admin user, create
+systemd starts the server when the machine boots and restarts it if it fails. As your admin user, create
 `/etc/systemd/system/rust.service`:
 
 ```ini
@@ -225,69 +236,65 @@ sudo systemctl daemon-reload && sudo systemctl enable --now rust
 sudo journalctl -u rust -f
 ```
 
-**`Restart=on-failure`, not `always`.** If you later use a launcher that deliberately stops after a
-crash streak, `always` would restart it immediately and defeat that protection.
+Use `Restart=on-failure`, not `always`. A launcher that stops on purpose after repeated crashes would be restarted at
+once by `always`, which defeats that protection.
 
----
+## 8. Check that the machine can reach AFKPanel
 
-## 8. Check the machine can talk to the panel
+1. Download the setup script and the plugin. The setup script runs `doctor` and `connect`; the plugin is what reports.
 
-First get the Hotwire tooling onto the box — the setup script (for `doctor`/`connect`) and the plugin
-itself (so the server actually reports). Until the packaged release lands, fetch them from the repo:
+   ```bash
+   cd /home/rust/server
+   curl -fsSL https://raw.githubusercontent.com/xman2000/hotwire/connect-and-report/setup/hotwire-setup.sh -o hotwire-setup.sh && chmod +x hotwire-setup.sh
+   mkdir -p oxide/plugins
+   curl -fsSL https://raw.githubusercontent.com/xman2000/hotwire/connect-and-report/src/Hotwire.cs -o oxide/plugins/Hotwire.cs
+   ```
 
-```bash
-cd /home/rust/server
-curl -fsSL https://raw.githubusercontent.com/xman2000/hotwire/connect-and-report/setup/hotwire-setup.sh -o hotwire-setup.sh && chmod +x hotwire-setup.sh
-mkdir -p oxide/plugins
-curl -fsSL https://raw.githubusercontent.com/xman2000/hotwire/connect-and-report/src/Hotwire.cs -o oxide/plugins/Hotwire.cs
-```
+2. Run `doctor`:
 
-Then check the machine:
+   ```bash
+   ./hotwire-setup.sh doctor
+   ```
 
-```bash
-./hotwire-setup.sh doctor
-```
+`doctor` checks that the machine signs requests correctly, that it can reach AFKPanel, that its clock is accurate
+enough, and that it can find your server. It changes nothing, so you can run it at any time.
 
-`doctor` checks everything in one go: that this machine signs requests correctly, that it can reach
-the panel, that its clock is close enough, and that it can find your server. **It writes nothing**,
-so run it as often as you like.
+## 9. Connect the server
 
-## 9. Connect it
+1. Run `connect`:
 
-```bash
-./hotwire-setup.sh connect
-```
+   ```bash
+   ./hotwire-setup.sh connect
+   ```
 
-It tells you where to get a code and waits while you fetch it — **Servers → Connect a server** in the
-panel — then asks you to paste it. You never type the code as part of a command, so it does not end
-up in your shell history.
+2. In AFKPanel, select **Connect a server** and copy the connect code.
+3. Paste the code when `connect` asks for it. The code is not part of the command, so it stays out of your shell
+   history.
 
-It re-checks everything `doctor` checks, shows you exactly which files it will write, and asks before
-writing any of them.
+`connect` repeats the `doctor` checks, lists the files it will write, and asks before writing them.
 
 ## 10. Restart the server
 
 ```bash
-sudo systemctl restart rust      # or Ctrl-C and ./start.sh again
+sudo systemctl restart rust      # or press Ctrl+C and run ./start.sh again
 ```
 
-The plugin picks up its key on load and starts reporting. Within a minute or two your server appears
-in the panel with a live status.
+The plugin loads its key and starts reporting. The server appears in AFKPanel within about 2 minutes.
 
----
+## Troubleshooting
 
-## If something goes wrong
+| Symptom | Cause | Fix |
+| --- | --- | --- |
+| `doctor` says the clock is too far out | The clock has drifted | Repeat step 3, wait, then run `doctor` again |
+| `connect` says the code is invalid or expired | A code works for 60 minutes, once | Make a new code |
+| The server fails with "not found", but `RustDedicated` exists | The i386 architecture or `lib32gcc-s1` is missing | Repeat step 5 |
+| The server never appears in the server browser | Port 28017/UDP is closed, or your provider blocks it | Open the port, or ask your provider |
+| The server is in AFKPanel but shows no player counts | The plugin is not loaded | Look in `oxide/logs/` for a compile error |
 
-| what you see | what it means |
-|---|---|
-| `doctor` says the clock is too far out | `sudo timedatectl set-ntp true`, wait, try again |
-| `connect` says the code is invalid or expired | codes last 60 minutes and work once — make another |
-| `./RustDedicated: not found` with the file present | the i386 architecture or `lib32gcc-s1` is missing (step 5) |
-| The server browser never shows your server | 28017/UDP is not open, or your provider blocks it |
-| The panel shows the server but no player counts | the plugin is not loaded — check `oxide/logs/` for a compile error |
-
-**Disconnecting** is one command and leaves everything running:
+## Disconnect the server
 
 ```bash
 ./hotwire-setup.sh detach
 ```
+
+The server keeps running.

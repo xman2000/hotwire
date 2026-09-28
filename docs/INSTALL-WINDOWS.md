@@ -1,47 +1,53 @@
-# A Rust server on a blank Windows machine
+# Install a Rust server on Windows
 
-From nothing to a running, scheduled, connected server. No prior Rust experience assumed.
+This guide installs a Rust server with Oxide and Hotwire on a Windows machine, then connects it to AFKPanel. It assumes
+no Rust experience.
 
-Roughly **45 minutes**, most of it waiting for downloads. You need a Windows machine you can
-administer, about **20 GB free**, and **8 GB of RAM** as a realistic floor for a modded server.
+| Requirement | Value |
+| --- | --- |
+| Time | About 45 minutes, most of it downloading |
+| Free disk space | About 20 GB |
+| Memory | 8 GB for a server with plugins |
+| Access | An administrator account on the machine |
 
-Every command below is run in **PowerShell as Administrator** unless it says otherwise. You can
-stop after step 6 and have a perfectly good server; steps 7-9 add the panel, which is optional.
+Run every command in **PowerShell as Administrator** unless the step says otherwise.
 
-> **Rather not type steps 1–6?** [`setup/hotwire-setup.bat`](../setup/README.md) does them one
-> confirmed step at a time: the clock, SteamCMD, Rust on the branch you choose, Oxide, the start script
-> with its ports, an RCON password and the firewall, then the Hotwire plugin and connecting to the panel.
-> Put `hotwire-setup.bat` and `hotwire-setup.ps1` together in any folder, right-click the `.bat`, choose
-> **Run as administrator** and pick **Install**. When it finishes, fill in your server's name in
-> `hotwire.bat` (step 6, item 4) and start it.
+Steps 1 to 6 give you a working server. Steps 7 to 9 connect it to AFKPanel and are optional.
 
-> **A second server on the same machine?** Use setup: it gives each server its own ports and firewall
-> rules, and never mixes the two up. By hand, see *Running a second server* at the end.
+## Let the setup script do steps 1 to 6
 
-> **What this never does:** nothing here, and nothing Hotwire does later, can stop your server
-> starting. If the panel is slow, unreachable or gone, your server still boots, restarts and
-> updates. That is a design rule, not a hope.
+`hotwire-setup.bat` runs steps 1 to 6 for you and asks before each one: the clock, SteamCMD, Rust on the branch you
+choose, Oxide, the start script with its ports, an RCON password and the firewall, then the Hotwire plugin. It can also
+connect the server to AFKPanel.
 
----
+1. Put `hotwire-setup.bat` and `hotwire-setup.ps1` in the same folder.
+2. Right-click `hotwire-setup.bat` and select **Run as administrator**.
+3. Select **Install**.
+4. When it finishes, fill in your server's name in `hotwire.bat` (step 6, item 4) and start the server.
+
+For a second server on the same machine, use the setup script. It gives each server its own ports and firewall rules.
+To do it by hand, see [Run a second server](#run-a-second-server).
+
+Nothing in this guide, and nothing Hotwire does later, can stop your server starting. If AFKPanel is slow, unreachable
+or gone, the server still boots, restarts and updates.
 
 ## 1. Open the ports
 
-Rust needs three, and **one of them must not be public**.
+Rust uses three ports. Open two of them. Keep RCON closed to the internet.
 
-| port | protocol | who needs it |
-|---|---|---|
-| 28015 | UDP | players |
-| 28017 | UDP | the server browser |
-| 28016 | TCP | **RCON — you, and nobody else** |
+| Port | Protocol | Used by | Open to the internet |
+| --- | --- | --- | --- |
+| 28015 | UDP | Players | Yes |
+| 28017 | UDP | The Steam server browser | Yes |
+| 28016 | TCP | RCON | No |
 
 ```powershell
 New-NetFirewallRule -DisplayName "Rust game"  -Direction Inbound -Protocol UDP -LocalPort 28015 -Action Allow
 New-NetFirewallRule -DisplayName "Rust query" -Direction Inbound -Protocol UDP -LocalPort 28017 -Action Allow
 ```
 
-**Do not open 28016 to the internet.** RCON is remote control of the machine: anyone who reaches it
-with the password runs commands on your server. Leave it closed and reach it over a VPN, or from the
-machine itself. If you must open it, restrict it to your own address:
+RCON controls the server: anyone who reaches it with the password can run commands on it. Reach it from the machine
+itself or over a VPN. If you must open it, allow only your own address:
 
 ```powershell
 New-NetFirewallRule -DisplayName "Rust RCON (me only)" -Direction Inbound -Protocol TCP `
@@ -50,7 +56,7 @@ New-NetFirewallRule -DisplayName "Rust RCON (me only)" -Direction Inbound -Proto
 
 ## 2. Install SteamCMD
 
-This is Valve's downloader. Rust's server files come through it.
+SteamCMD is Valve's command-line downloader. Rust's server files come through it.
 
 ```powershell
 New-Item -ItemType Directory -Force C:\steamcmd | Out-Null
@@ -59,7 +65,7 @@ Expand-Archive C:\steamcmd\steamcmd.zip -DestinationPath C:\steamcmd -Force
 Remove-Item C:\steamcmd\steamcmd.zip
 ```
 
-Run it once so it can update itself — it will print a lot and end at a `Steam>` prompt:
+Run it once so it updates itself. It ends at a `Steam>` prompt.
 
 ```powershell
 C:\steamcmd\steamcmd.exe +quit
@@ -67,23 +73,21 @@ C:\steamcmd\steamcmd.exe +quit
 
 ## 3. Download the Rust server
 
-App **258550** is the dedicated server. It is free and needs no Steam account — `anonymous` is a
-real login, not a placeholder.
+The dedicated server is Steam app 258550. It is free, and `anonymous` is a real login: no Steam account is needed.
 
 ```powershell
 C:\steamcmd\steamcmd.exe +force_install_dir C:\rustserver +login anonymous +app_update 258550 -beta public +quit
 ```
 
-`-beta public` names the normal game. Steam keeps an install on whatever branch that machine used last, so
-naming it matters if this machine has ever run a test branch. For Facepunch's test build, write
-`-beta staging` instead — and then set `STEAM_BRANCH=staging` in `hotwire.bat` in step 6.
+`-beta public` selects the normal game. Steam keeps an install on the branch the machine used last, so name it if the
+machine has ever run a test branch. For Facepunch's test build, use `-beta staging` instead, and set
+`STEAM_BRANCH=staging` in `hotwire.bat` in step 6.
 
-About 12 GB. Go and make a coffee. When it finishes you should have `C:\rustserver\RustDedicated.exe`.
+The download is about 12 GB. When it finishes, `C:\rustserver\RustDedicated.exe` exists.
 
 ## 4. Install Oxide
 
-Oxide (uMod) is what lets the server run plugins. Hotwire is a plugin, so this is required if you
-want to connect to the panel later.
+Oxide (uMod) lets the server run plugins. Hotwire is a plugin, so you need Oxide to connect to AFKPanel.
 
 ```powershell
 Invoke-WebRequest "https://umod.org/games/rust/download" -UserAgent "Mozilla/5.0" -OutFile C:\rustserver\OxideMod.zip
@@ -91,131 +95,135 @@ Expand-Archive C:\rustserver\OxideMod.zip -DestinationPath C:\rustserver -Force
 Remove-Item C:\rustserver\OxideMod.zip
 ```
 
-You will not see much yet — Oxide creates its folders the first time the server starts.
+Oxide creates its folders the first time the server starts.
 
-## 5. Pick an RCON password
+## 5. Set an RCON password
 
-Make it long and unique. **This is a root password for your server.** The launcher refuses to start
-if it is shorter than 8 characters, still the example value, or has a double quote in it.
+The RCON password gives full control of the server. Make it long and unique. The launcher does not start if the
+password is shorter than 8 characters, is still the example value, or contains a double quote.
 
-```powershell
-# Generates one and copies it to your clipboard. Save it in your password manager NOW.
--join ((48..57) + (65..90) + (97..122) | Get-Random -Count 32 | ForEach-Object { [char]$_ }) | Set-Clipboard
-```
+1. Generate a password. This copies it to your clipboard:
 
-Create `C:\rustserver\secrets.bat` containing it, and **never commit this file anywhere**:
+   ```powershell
+   -join ((48..57) + (65..90) + (97..122) | Get-Random -Count 32 | ForEach-Object { [char]$_ }) | Set-Clipboard
+   ```
 
-```bat
-@echo off
-set "RCON_PASSWORD=the-long-thing-you-just-generated"
-```
+2. Save it in your password manager.
+3. Create `C:\rustserver\secrets.bat` with the password in it. Never commit this file anywhere.
 
-If you type your own rather than generating one: no double quote, do not start it with a semicolon, and
-write a percent sign as `%%`.
+   ```bat
+   @echo off
+   set "RCON_PASSWORD=the-long-thing-you-just-generated"
+   ```
+
+If you type your own password: do not use a double quote, do not start it with a semicolon, and write a percent sign
+as `%%`.
 
 ## 6. Install Hotwire and start the server
 
-Hotwire is the launcher and the plugin. The plugin schedules announced restarts; the launcher starts the
-server again when it exits, separates "restart" from "install an update", and keeps a crash loop from
-becoming a disk full of logs.
+Hotwire has two parts. The plugin schedules announced restarts. The launcher starts the server again when it exits,
+tells a restart apart from an update, and stops a crash loop from filling the disk with logs.
 
-1. Download it: **https://github.com/xman2000/hotwire**
-2. Put `hotwire.bat` in `C:\rustserver\`, beside `RustDedicated.exe`. It uses its own folder as the
-   server's folder, so there is no path to set.
-3. Put `Hotwire.cs` in `C:\rustserver\oxide\plugins\`. Create the `plugins` folder if it is not there
-   yet — Oxide makes it on the first start.
-4. Open `hotwire.bat` in Notepad. In section 4.3 fill in `SERVER_HOSTNAME` and `SERVER_DESCRIPTION`; in
-   section 4.2, `SERVER_MAXPLAYERS` if you want a number other than the game's. `SERVER_TAGS` is optional.
-   `SERVER_SEED` in section 4.1 is the map: install picked a random one. Change it now if you want a
-   particular map — after the server has been played, a new seed is a new map.
-   Each option is explained beside it. Anything left empty is the game's own default. The plugin's
-   **schedules all ship disabled**, so installing it cannot restart anything by surprise.
+1. Download Hotwire from https://github.com/xman2000/hotwire.
+2. Put `hotwire.bat` in `C:\rustserver\`, next to `RustDedicated.exe`. It treats its own folder as the server folder,
+   so there is no path to set.
+3. Put `Hotwire.cs` in `C:\rustserver\oxide\plugins\`. If the `plugins` folder does not exist yet, create it.
+4. Open `hotwire.bat` in Notepad and set:
 
-Check it, then start it:
+   | Setting | Section | What it sets |
+   | --- | --- | --- |
+   | `SERVER_HOSTNAME` | 4.3 | The server's name in the browser |
+   | `SERVER_DESCRIPTION` | 4.3 | The server's description |
+   | `SERVER_MAXPLAYERS` | 4.2 | Player limit, if not the game's |
+   | `SERVER_TAGS` | 4.3 | Browser tags (optional) |
+   | `SERVER_SEED` | 4.1 | The map |
 
-```powershell
-cd C:\rustserver
-.\hotwire.bat check
-.\hotwire.bat
-```
+   If you used the setup script, it picked a random `SERVER_SEED`. To play a particular map, change it now: after the
+   server has been played, a new seed is a new map. Each option is explained next to it in the file, and an empty
+   option uses the game's default. The plugin's schedules are all off when it is installed, so it cannot restart
+   anything until you turn one on.
+5. Check the settings, then start the server:
 
-The first start takes several minutes — it generates the map. When you see the server appear in
-Rust's server browser under the name you set (or "My Untitled Rust Server" if you left it empty), you
-have a working Rust server.
+   ```powershell
+   cd C:\rustserver
+   .\hotwire.bat check
+   .\hotwire.bat
+   ```
 
-**Stop here if that is all you wanted.** Everything above is free, open source, and yours.
+The first start takes several minutes while the server generates the map. When the server appears in Rust's server
+browser under your name (or "My Untitled Rust Server" if you left it empty), it is working.
 
----
+This is a complete server. Everything so far is free and open source. The next steps connect it to AFKPanel.
 
-## 7. Check the machine can talk to the panel
+## 7. Check that the machine can reach AFKPanel
 
 ```powershell
 cd C:\rustserver
 .\hotwire-setup.bat doctor
 ```
 
-`doctor` checks everything in one go: that this machine signs requests correctly, that it can reach
-the panel, that its clock is close enough, and that it can find your server. **It writes nothing**,
-so run it as often as you like.
+`doctor` checks that the machine signs requests correctly, that it can reach AFKPanel, that its clock is accurate
+enough, and that it can find your server. It changes nothing, so you can run it at any time.
 
-If `doctor` complains about the clock, fix it before going further — a drifting clock makes every
-later request fail with a message that explains nothing:
+If `doctor` reports the clock, fix it before you continue. A wrong clock makes every later request fail with an error
+that does not mention the clock.
 
 ```powershell
 w32tm /resync
 ```
 
-## 8. Connect it
+## 8. Connect the server
 
-```powershell
-.\hotwire-setup.bat connect
-```
+1. Run `connect`:
 
-It tells you where to get a code and waits while you fetch it — **Servers → Connect a server** in
-the panel — then asks you to paste it. You never type the code as part of a command, so it does not
-end up in your PowerShell history.
+   ```powershell
+   .\hotwire-setup.bat connect
+   ```
 
-It re-checks everything `doctor` checks, shows you exactly which files it will write, and asks
-before writing any of them.
+2. In AFKPanel, select **Connect a server** and copy the connect code.
+3. Paste the code when `connect` asks for it. The code is not part of the command, so it stays out of your PowerShell
+   history.
+
+`connect` repeats the `doctor` checks, lists the files it will write, and asks before writing them.
 
 ## 9. Restart the server
 
+Stop `hotwire.bat` with Ctrl+C, then start it again:
+
 ```powershell
-# stop hotwire.bat with Ctrl-C, then
 .\hotwire.bat
 ```
 
-The plugin picks up its key on load and starts reporting. Within a minute or two your server appears
-in the panel with a live status.
+The plugin loads its key and starts reporting. The server appears in AFKPanel within about 2 minutes.
 
----
+## Troubleshooting
 
-## If something goes wrong
+| Symptom | Cause | Fix |
+| --- | --- | --- |
+| `doctor` says the clock is too far out | The clock has drifted | Run `w32tm /resync`, then run `doctor` again |
+| `connect` says the code is invalid or expired | A code works for 60 minutes, once | Make a new code |
+| The server never appears in the server browser | Port 28017/UDP is closed, or your host blocks it | Open the port, or ask your host |
+| The server stops after "consecutive crashes", on a machine with another server | Both servers use the same ports | Give one of them different ports in section 4.2 |
+| The server is in AFKPanel but shows no player counts | The plugin is not loaded | Look in `oxide\logs\` for a compile error |
 
-| what you see | what it means |
-|---|---|
-| `doctor` says the clock is too far out | `w32tm /resync`, then try again |
-| `connect` says the code is invalid or expired | codes last 60 minutes and work once — make another |
-| The server browser never shows your server | port 28017/UDP is not open, or your host blocks it |
-| The server stops after "consecutive crashes" on a machine with another server | both servers are on the same ports — give one different ports in section 4.2 |
-| The panel shows the server but no player counts | the plugin is not loaded — check `oxide\logs\` for a compile error |
-
-**Disconnecting** is one command and leaves everything running:
+## Disconnect the server
 
 ```powershell
 .\hotwire-setup.bat detach
 ```
 
-## Running a second server
+The server keeps running.
 
-Setup does this for you. By hand, the second server needs:
+## Run a second server
 
-1. **Its own folder**, for example `C:\rust-dev`, with its own `hotwire.bat` and `secrets.bat`. Copying
-   the whole first server's folder is fine: `hotwire.bat` follows its own folder, so the copy runs the
-   copy. Do not copy `hotwire\connect.json` and the keys if you plan to connect it — or run connect in the
-   copy and answer yes to connecting it as a new server.
-2. **Its own ports.** In the second `hotwire.bat`, section 4.2, use for example `28115`, `28117` and `28116`
-   for `server.port`, `server.queryport` and `rcon.port`, and open UDP 28115 and 28117 as in step 1.
-3. **Its own branch**, if it differs: `STEAM_BRANCH` in section 1.
+The setup script does this for you. By hand, the second server needs:
 
-Both may share `C:\steamcmd`: the launchers take turns using it.
+1. Its own folder, for example `C:\rust-dev`, with its own `hotwire.bat` and `secrets.bat`. You can copy the
+   first server's folder: `hotwire.bat` follows its own folder, so the copy runs the copy. If you plan to connect the
+   copy, do not copy `hotwire\connect.json` and the keys, or run `connect` in the copy and choose to connect it as a
+   new server.
+2. Its own ports. In the second `hotwire.bat`, section 4.2, set `server.port`, `server.queryport` and `rcon.port`,
+   for example to 28115, 28117 and 28116. Open UDP 28115 and 28117 as in step 1.
+3. Its own branch, if it differs: `STEAM_BRANCH` in section 1.
+
+Both servers can share `C:\steamcmd`. The launchers take turns using it.

@@ -28,7 +28,7 @@
 #
 set -uo pipefail
 
-VERSION="0.2.1"
+VERSION="0.2.2"
 DEFAULT_PANEL="https://hotpanel.on-forge.com"
 
 # ---------------------------------------------------------------- output ----
@@ -657,7 +657,7 @@ REPO_RAW="https://raw.githubusercontent.com/xman2000/hotwire/connect-and-report"
 LAUNCHER_URL="$REPO_RAW/launcher/hotwire.sh"
 PLUGIN_URL="$REPO_RAW/src/Hotwire.cs"
 SETUP_URL="$REPO_RAW/setup/hotwire-setup.sh"
-GUIDE_URL="https://github.com/xman2000/hotwire/blob/connect-and-report/docs/INSTALL-LINUX.md"
+GUIDE_URL="https://afkpanel.com/docs/install-linux"
 OXIDE_URL="https://github.com/OxideMod/Oxide.Rust/releases/latest/download/Oxide.Rust-linux.zip"
 OXIDE_RELEASES="https://api.github.com/repos/OxideMod/Oxide.Rust/releases/latest"
 OXIDE_ASSET="Oxide.Rust-linux.zip"

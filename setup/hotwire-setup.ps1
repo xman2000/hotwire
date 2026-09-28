@@ -42,7 +42,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$Version = '0.1.1'
+$Version = '0.1.2'
 
 # Captured here: inside a function, $PSBoundParameters describes that function, not this script.
 $SteamCmdGiven = $PSBoundParameters.ContainsKey('SteamCmd')
@@ -101,7 +101,7 @@ $PinnedHashes = @{
 }
 
 $Docs = [ordered]@{
-    'This guide, step by step'  = 'https://github.com/xman2000/hotwire/blob/connect-and-report/docs/INSTALL-WINDOWS.md'
+    'This guide, step by step'  = 'https://afkpanel.com/docs/install-windows'
     'SteamCMD (Valve)'          = 'https://developer.valvesoftware.com/wiki/SteamCMD'
     'Creating a server (Rust)'  = 'https://wiki.facepunch.com/rust/Creating-a-server'
     'Rust+ companion (Rust)'    = 'https://wiki.facepunch.com/rust/rust-companion-server'
@@ -684,7 +684,7 @@ function Confirm-DownloadHash([string]$OutFile, [string]$ArtifactKey, [string]$W
 # The two things nothing else can work around. Everything else is a pre-flight line, not a stop.
 function Test-Requirements {
     if ($env:OS -ne 'Windows_NT') {
-        Stop-Politely "checking this is Windows" "OS reports '$env:OS'" "on Linux, follow docs/INSTALL-LINUX.md instead"
+        Stop-Politely "checking this is Windows" "OS reports '$env:OS'" "on Linux, follow https://afkpanel.com/docs/install-linux instead"
     }
     $ps = $PSVersionTable.PSVersion
     if ($ps.Major -lt 5 -or ($ps.Major -eq 5 -and $ps.Minor -lt 1)) {
