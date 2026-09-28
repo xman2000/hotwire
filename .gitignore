@@ -40,3 +40,6 @@ docs/DECISIONS.md
 tests/**/bin/
 tests/**/obj/
 tests/plugin-signing/Extracted.cs
+
+# tools/build-release.sh output
+dist/
