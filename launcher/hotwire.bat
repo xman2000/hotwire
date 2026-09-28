@@ -89,17 +89,19 @@ REM ----------------------------------------------------------------------
 REM  1.3  UPDATES
 REM ----------------------------------------------------------------------
 
-REM  When Rust and Oxide are updated. Pick the mode that matches who
-REM  decides when the server restarts.
+REM  When Rust and Oxide are updated.
+REM    auto      As hotwire while the Hotwire plugin has an update scheduled,
+REM              otherwise as always. The plugin says so in UPDATE.schedule,
+REM              which it keeps fresh; missing or over two hours old, this
+REM              start updates. Leave it on auto unless you have a reason.
 REM    always    Every start. Restarts take longer and the server is never
-REM              behind. Use this if you restart by hand.
-REM    hotwire   When the Hotwire plugin asks, when Steam has a newer build,
-REM              or after MAX_DAYS_WITHOUT_UPDATE days (section 2). Restarts
-REM              are quick. Use this with the plugin's schedules:
-REM              hotwire-setup sets it when it installs the plugin.
+REM              behind.
+REM    hotwire   When the plugin asks, when Steam has a newer build, when the
+REM              launcher cannot tell whether Steam has one, or after
+REM              MAX_DAYS_WITHOUT_UPDATE days (section 2). Restarts are quick.
 REM    off       Never. A flag file is left in place and the console says
 REM              so. For a server whose files are managed some other way.
-set "UPDATE_MODE=always"
+set "UPDATE_MODE=auto"
 
 REM === HOTWIRE SETTINGS END =============================================
 REM  Section 6b reads section 1 again before every start; this ends that.
@@ -152,21 +154,28 @@ REM
 REM  UPDATE MODES
 REM     Set UPDATE_MODE in section 1.
 REM
-REM     always     steamcmd and the mod framework run on every start. This
-REM                is the default and matches most Rust launchers.
+REM     auto       The default. hotwire while the plugin has an update
+REM                scheduled (it keeps UPDATE.schedule fresh in ROOT),
+REM                otherwise always. Turning on an update schedule in the
+REM                plugin is all it takes.
+REM
+REM     always     steamcmd and the mod framework run on every start, as
+REM                in most Rust launchers.
 REM
 REM     hotwire    steamcmd and the mod framework run when a flag file is
 REM                present in ROOT (UPDATE_FLAG or VALIDATE_FLAG, by default
 REM                UPDATE.flag and VALIDATE.flag), when Steam has a newer
-REM                build (UPDATE_ON_NEW_BUILD), or when the backstop below
-REM                fires. A flag is deleted only once its update completes:
-REM                one flag, one update. Other restarts just relaunch.
+REM                build (UPDATE_ON_NEW_BUILD), when the launcher cannot
+REM                find out whether it has one, or when the backstop below
+REM                fires. Steam is asked afresh on every start, except
+REM                during a crash streak. A flag is deleted only once its
+REM                update completes: one flag, one update. Other restarts
+REM                just relaunch.
 REM
 REM     off        Never. A flag file is left in place and reported.
 REM
-REM     Use hotwire when restarts are automated. In always mode an
-REM     unattended restart installs whatever build is current at the time,
-REM     with no operator present.
+REM     In always mode an unattended restart installs whatever build is
+REM     current at the time, with no operator present.
 REM
 REM     Create a flag by hand, in the server's folder:
 REM       New-Item -ItemType File UPDATE.flag
@@ -873,9 +882,9 @@ if defined ROOT if /i not "!ROOT!"=="!HW_HERE!" if exist "!ROOT!\hotwire.bat" (
     set "CFGBAD=1"
 )
 
-if /i not "%UPDATE_MODE%"=="always" if /i not "%UPDATE_MODE%"=="hotwire" if /i not "%UPDATE_MODE%"=="off" (
-    echo [%date% %time%] UPDATE_MODE is [%UPDATE_MODE%]. It must be
-    echo [%date% %time%] exactly "always", "hotwire" or "off" -- anything
+if /i not "%UPDATE_MODE%"=="auto" if /i not "%UPDATE_MODE%"=="always" if /i not "%UPDATE_MODE%"=="hotwire" if /i not "%UPDATE_MODE%"=="off" (
+    echo [%date% %time%] UPDATE_MODE is [%UPDATE_MODE%]. It must be exactly
+    echo [%date% %time%] "auto", "always", "hotwire" or "off" -- anything
     echo [%date% %time%] else is treated as hotwire, which is probably not
     echo [%date% %time%] what you meant.
     set "CFGBAD=1"
@@ -1045,6 +1054,21 @@ if not exist "%ROOT%\logs" (
 
 :start
 
+REM  Who decides updates on this pass. auto follows the Hotwire plugin: while
+REM  it has an update scheduled it keeps UPDATE.schedule in the server's
+REM  folder, rewritten every 15 minutes. A marker that is missing, over two
+REM  hours old, or cannot be read means nobody is scheduling updates, so this
+REM  pass updates as always does: the direction that keeps a server joinable.
+set "UPDATE_EFFECTIVE=%UPDATE_MODE%"
+if /i not "%UPDATE_MODE%"=="auto" goto :updatemodeknown
+set "UPDATE_EFFECTIVE=always"
+set "HOTWIRE_MARKER=%ROOT%\UPDATE.schedule"
+for /f %%m in ('powershell -NoProfile -NonInteractive -Command "$f=$env:HOTWIRE_MARKER; if((Test-Path -LiteralPath $f) -and (((Get-Date)-(Get-Item -LiteralPath $f).LastWriteTime).TotalHours -lt 2)){'fresh'}else{'none'}"') do if "%%m"=="fresh" set "UPDATE_EFFECTIVE=hotwire"
+set "HOTWIRE_MARKER="
+if /i "!UPDATE_EFFECTIVE!"=="hotwire" echo [%date% %time%] UPDATE_MODE is auto: the Hotwire plugin schedules updates.
+if /i "!UPDATE_EFFECTIVE!"=="always" echo [%date% %time%] UPDATE_MODE is auto: no update schedule from the Hotwire plugin.
+:updatemodeknown
+
 REM ======================================================================
 REM  6a. WHAT BUILD IS OUT THERE
 REM
@@ -1083,6 +1107,10 @@ set "HOTWIRE_APPINFO=%ROOT%\logs\.appinfo.tmp"
 set "HOTWIRE_STEAMCMD=%STEAMCMD%"
 set "HOTWIRE_APPID=%APPID%"
 set "HOTWIRE_BUILDHOURS=%BUILD_CHECK_HOURS%"
+REM  When flags decide updates, the answer must be today's: a cached
+REM  "current" from before a Rust release would start the old build. So the
+REM  cache is used only during a crash streak, which is what it is for.
+if /i not "!UPDATE_EFFECTIVE!"=="always" if /i not "!UPDATE_EFFECTIVE!"=="off" if !CRASH_STREAK! EQU 0 set "HOTWIRE_BUILDHOURS=0"
 set "HOTWIRE_BRANCH=%BRANCH_NAME%"
 
 set "PSBUILD="
@@ -1178,16 +1206,16 @@ REM ======================================================================
 set "DO_UPDATE=0"
 set "DO_VALIDATE=0"
 
-if /i "%UPDATE_MODE%"=="off" (
+if /i "!UPDATE_EFFECTIVE!"=="off" (
     echo [%date% %time%] UPDATE_MODE is off -- not updating.
     if exist "%ROOT%\%UPDATE_FLAG%" echo [%date% %time%] %UPDATE_FLAG% is being left in place, not acted on.
     if exist "%ROOT%\%VALIDATE_FLAG%" echo [%date% %time%] %VALIDATE_FLAG% is being left in place, not acted on.
     goto :updatedecided
 )
 
-if /i "%UPDATE_MODE%"=="always" (
+if /i "!UPDATE_EFFECTIVE!"=="always" (
     set "DO_UPDATE=1"
-    echo [%date% %time%] UPDATE_MODE is always -- updating before launch.
+    echo [%date% %time%] UPDATE_MODE is %UPDATE_MODE% -- updating before launch.
 )
 
 if exist "%ROOT%\%UPDATE_FLAG%" (
@@ -1204,15 +1232,15 @@ REM  The backstop. Only in hotwire mode, only when nothing has already
 REM  asked for an update, and skipped entirely when set to 0. A missing
 REM  stamp counts as forever, so a fresh install updates once on its first
 REM  start rather than waiting a fortnight to find out it is out of date.
-if /i "%UPDATE_MODE%"=="always" goto :updatedecided
+if /i "!UPDATE_EFFECTIVE!"=="always" goto :updatedecided
 if "%DO_UPDATE%"=="1" goto :updatedecided
 REM  A build that has actually changed beats a calendar. This runs before
 REM  the day count, so a server that is behind updates today rather than
 REM  on day fourteen -- and one that is current is left alone no matter
 REM  how long it has been.
 if not "%UPDATE_ON_NEW_BUILD%"=="1" goto :nobuildtrigger
-if not defined INSTALLED_BUILD goto :nobuildtrigger
-if not defined PUBLIC_BUILD goto :nobuildtrigger
+if not defined INSTALLED_BUILD goto :buildunknown
+if not defined PUBLIC_BUILD goto :buildunknown
 if "!INSTALLED_BUILD!"=="!PUBLIC_BUILD!" goto :nobuildtrigger
 REM  Behind means public is higher. A server on a newer build than public,
 REM  as a test branch is, is not behind, and updating it every start would
@@ -1221,6 +1249,14 @@ if !INSTALLED_BUILD! GTR !PUBLIC_BUILD! goto :nobuildtrigger
 set "DO_UPDATE=1"
 echo [%date% %time%] Updating: installed build !INSTALLED_BUILD! is behind
 echo [%date% %time%] Steam's !PUBLIC_BUILD!.
+goto :updatedecided
+:buildunknown
+REM  Not knowing is not the same as current. A server left on an old build
+REM  turns every player away after a Rust release, so an unanswered question
+REM  costs an update, never the server.
+set "DO_UPDATE=1"
+echo [%date% %time%] Updating: the launcher could not tell whether this
+echo [%date% %time%] install is on Steam's current build.
 goto :updatedecided
 :nobuildtrigger
 
@@ -1743,7 +1779,7 @@ REM  hash, capabilities and path, in oxide\data\Hotwire\launcher.json. Written
 REM  before every start, so it follows this file. Best effort: a failure here
 REM  costs the panel's view of the launcher and nothing else.
 set "HOTWIRE_STATE=%ROOT%\oxide\data\Hotwire\launcher.json"
-powershell -NoProfile -NonInteractive -Command "$t=[IO.File]::ReadAllText($env:HOTWIRE_SELF,[Text.Encoding]::GetEncoding(28591)); $h=''; $m=[regex]::Match($t,'(?m)^HOTWIRE_LAUNCHER_HASH=.?([0-9a-f]{64})'); if($m.Success){ $h=$m.Groups[1].Value }; [void](New-Item -ItemType Directory -Force -Path (Split-Path -Parent $env:HOTWIRE_STATE)); $o=[ordered]@{ version=$env:HOTWIRE_LAUNCHER_VERSION; hash=$h; capabilities=$env:HOTWIRE_LAUNCHER_CAPABILITIES; platform='windows'; path=$env:HOTWIRE_SELF }; [IO.File]::WriteAllText($env:HOTWIRE_STATE, ($o | ConvertTo-Json))" >nul 2>&1
+powershell -NoProfile -NonInteractive -Command "$t=[IO.File]::ReadAllText($env:HOTWIRE_SELF,[Text.Encoding]::GetEncoding(28591)); $h=''; $m=[regex]::Match($t,'(?m)^HOTWIRE_LAUNCHER_HASH=.?([0-9a-f]{64})'); if($m.Success){ $h=$m.Groups[1].Value }; [void](New-Item -ItemType Directory -Force -Path (Split-Path -Parent $env:HOTWIRE_STATE)); $o=[ordered]@{ version=$env:HOTWIRE_LAUNCHER_VERSION; hash=$h; capabilities=$env:HOTWIRE_LAUNCHER_CAPABILITIES; platform='windows'; path=$env:HOTWIRE_SELF; update_mode=$env:UPDATE_MODE }; [IO.File]::WriteAllText($env:HOTWIRE_STATE, ($o | ConvertTo-Json))" >nul 2>&1
 set "HOTWIRE_STATE="
 
 echo [%date% %time%] Starting server...
@@ -1827,7 +1863,7 @@ REM     release by tools/launcher-hash.sh; section 6b hands everything from
 REM     the #HOTWIRE-EDITS line down to PowerShell, so it is written as
 REM     ordinary PowerShell rather than through cmd's quoting rules.
 REM ======================================================================
-HOTWIRE_LAUNCHER_HASH="38651586a5245bf750acf17e74bfb72ceef7bcd3efbe8bc9af8888176ad1efa2"
+HOTWIRE_LAUNCHER_HASH="314c7ddb4d5ecfb1fe6711ab2cfdb2c70247be800cebc8351c87e9df47d47961"
 
 #HOTWIRE-EDITS
 # Wipes and permanent convars, for hotwire.bat (capabilities: wipe, convar_persist).

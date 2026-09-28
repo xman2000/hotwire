@@ -143,10 +143,10 @@ tells a restart apart from an update, and stops a crash loop from filling the di
    | `UPDATE_MODE` | When Rust and Oxide update |
 
    If you used the setup script, it picked a random `SERVER_SEED`. To play a particular map, change the seed now:
-   after the server has been played, a new seed is a new map. The setup script also set `UPDATE_MODE` to `hotwire`
-   when it installed the plugin, so updates follow the plugin's schedule. Each option is explained next to it in the
-   file, and an empty option uses the game's default. The plugin's schedules are all off when it is installed, so it
-   cannot restart anything until you turn one on.
+   after the server has been played, a new seed is a new map. Leave `UPDATE_MODE` on `auto`: the server updates on
+   every start until you turn on an update schedule in the plugin, and then follows that schedule. Each option is
+   explained next to it in the file, and an empty option uses the game's default. The plugin's schedules are all off
+   when it is installed, so it cannot restart anything until you turn one on.
 5. Check the settings, then start the server:
 
    ```powershell

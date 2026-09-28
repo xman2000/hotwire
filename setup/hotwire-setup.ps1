@@ -96,8 +96,8 @@ $PluginUrl = 'https://raw.githubusercontent.com/xman2000/hotwire/connect-and-rep
 # ABSENT: their versions vary, so they are not pinned. They are reported as
 # "unverified (third-party)" rather than blocked -- the omission is never silent.
 $PinnedHashes = @{
-    'hotwire.bat' = 'e836882338233010900523b798da14fcccc5b941a5db68a7db9cb524975e4b02'
-    'Hotwire.cs'  = '886ba405512e30ce633891a3fb8e73bce3e68be8694e804fadd1ed4e03de0472'
+    'hotwire.bat' = 'ba9539e4df297531569d80dbe2871acc413fa7ce5e27f012cde2d25a714358ae'
+    'Hotwire.cs'  = '017bc589a5471a9e5a8ec907914ea8cf58bd3c99d22e0a3f7d499f07ed460f84'
 }
 
 $Docs = [ordered]@{
@@ -1690,37 +1690,6 @@ function Sync-LauncherFramework([string]$d) {
     Add-Change "set INSTALL_FRAMEWORK=$want in $launcher" "copy $backup back over it"
 }
 
-# With the Hotwire plugin installed, hotwire.bat leaves updates to its schedule: UPDATE_MODE always
-# becomes hotwire. Once per install, recorded as 'update-mode', so an admin who sets it back is not
-# overruled by the next run; only a hotwire.bat install created that still says always, never while
-# it runs, and after a copy is kept. Anyone else's gets the exact line to change.
-function Sync-LauncherUpdateMode([string]$d) {
-    $launcher = Join-Path $d 'hotwire.bat'
-    if ((Test-Done $d 'update-mode') -or -not (Test-Path -LiteralPath $launcher)) { return }
-    if (-not (Test-Path -LiteralPath (Join-Path $d 'oxide\plugins\Hotwire.cs'))) { return }
-    $always = 'set "UPDATE_MODE=always"'
-    $wanted = 'set "UPDATE_MODE=hotwire"'
-    $lines = ([System.IO.File]::ReadAllText($launcher) -replace "`r`n", "`n") -split "`n"
-    if (@($lines | Where-Object { $_ -eq $always }).Count -ne 1) { Save-Record $d 'update-mode'; return }
-    if (-not (Test-Created $d $launcher)) {
-        Write-Note "hotwire.bat was not created by install, so it is left alone. To update on the plugin's"
-        Write-Note "schedule, change   $always   to   $wanted"
-        Save-Record $d 'update-mode'
-        return
-    }
-    if (Test-LauncherRunning $d) {
-        Write-Warn "hotwire.bat is running, so UPDATE_MODE was not changed. Stop it, then run install again."
-        return
-    }
-    $backup = Backup-File $d $launcher 'hotwire.bat'
-    $text = ($lines | ForEach-Object { if ($_ -eq $always) { $wanted } else { $_ } }) -join "`r`n"
-    Write-FileAtomic $launcher $text
-    Write-Ok "hotwire.bat now has UPDATE_MODE=hotwire, because the Hotwire plugin is installed"
-    Write-Note "It updates when the plugin asks, when Steam has a newer build, or after MAX_DAYS_WITHOUT_UPDATE days without one."
-    Add-Change "set UPDATE_MODE=hotwire in $launcher" "copy $backup back over it"
-    Save-Record $d 'update-mode'
-}
-
 # Keeps hotwire.bat's STEAM_BRANCH on the branch chosen for this server, on the same terms as
 # INSTALL_FRAMEWORK: only a hotwire.bat install created, never while it runs, and after a copy is kept.
 function Sync-LauncherBranch([string]$d) {
@@ -1881,7 +1850,6 @@ function Install-Plugin([string]$d) {
     if (Test-Path -LiteralPath $plugin) {
         Write-Ok "oxide\plugins\Hotwire.cs is already here -- kept"
         Save-Record $d 'plugin'
-        Sync-LauncherUpdateMode $d
         return
     }
     if (-not ((Test-Done $d 'oxide') -and (Test-Path -LiteralPath (Join-Path $d 'RustDedicated_Data\Managed\Oxide.Rust.dll')))) {
@@ -1919,7 +1887,6 @@ function Install-Plugin([string]$d) {
     Write-Note "Oxide compiles it the first time the server starts."
     Add-Change "created $plugin (Hotwire $($info.Groups[1].Value))" "delete oxide\plugins\Hotwire.cs"
     Save-Record $d 'plugin'
-    Sync-LauncherUpdateMode $d
 }
 
 # ---------------------------------------------------------------- 8. rcon --

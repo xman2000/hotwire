@@ -17,7 +17,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Hotwire", "xman2000", "1.1.42")]
+    [Info("Hotwire", "xman2000", "1.1.43")]
     [Description("Scheduled restarts and updates. Announces, counts down, writes a flag, quits.")]
     internal class Hotwire : CovalencePlugin
     {
@@ -580,6 +580,7 @@ namespace Oxide.Plugins
         {
             EnsureEntryIds();
             Config.WriteObject(_config, true);
+            RefreshScheduleMarker(true);
         }
 
         private void EnsureEntryIds()
@@ -907,6 +908,7 @@ namespace Oxide.Plugins
 
         private void Scan()
         {
+            RefreshScheduleMarker(false);
             if (_countdownActive || _shuttingDown) return;
 
             var now = DateTime.Now;
@@ -1670,6 +1672,60 @@ namespace Oxide.Plugins
             catch (Exception ex)
             {
                 PrintError($"Could not write {path}: {ex.Message}. Restarting without updating.");
+            }
+        }
+
+        // UPDATE.schedule tells the launcher that updates are scheduled here. With UPDATE_MODE=auto, the launcher
+        // leaves updates to this plugin only while the file is there and less than two hours old; otherwise it
+        // updates on every start. So the file exists only while an update entry or the framework check is on, and
+        // is rewritten every 15 minutes: a plugin that has stopped running stops vouching for the schedule. It is
+        // not deleted on unload, because a scheduled restart unloads the plugin too. Never throws.
+        private const string ScheduleMarkerName = "UPDATE.schedule";
+        private DateTime _scheduleMarkerWritten = DateTime.MinValue;
+
+        private void RefreshScheduleMarker(bool force)
+        {
+            try
+            {
+                if (_config == null) return;
+                if (!force && (DateTime.UtcNow - _scheduleMarkerWritten).TotalMinutes < 15) return;
+                var root = ServerRoot();
+                if (root == null) return;
+                var path = Path.Combine(root, ScheduleMarkerName);
+
+                var now = DateTime.Now;
+                var active = _config.Framework != null && _config.Framework.Enabled;
+                if (!active && _config.Updates != null)
+                {
+                    foreach (var e in _config.Updates)
+                    {
+                        if (e == null || !e.Enabled || ValidationError(e) != null) continue;
+                        DateTime? next = null;
+                        try { next = NextOccurrence(e, now); } catch { next = null; }
+                        if (next != null) { active = true; break; }
+                    }
+                }
+
+                if (!active)
+                {
+                    if (File.Exists(path))
+                    {
+                        File.Delete(path);
+                        Puts($"No update is scheduled here now, so {path} was removed: the launcher decides updates itself (UPDATE_MODE=auto).");
+                    }
+                    _scheduleMarkerWritten = DateTime.UtcNow;
+                    return;
+                }
+
+                var existed = File.Exists(path);
+                File.WriteAllText(path, $"Written by Hotwire at {now:yyyy-MM-dd HH:mm:ss}. Updates are scheduled in the Hotwire plugin." + Environment.NewLine);
+                _scheduleMarkerWritten = DateTime.UtcNow;
+                if (!existed) Puts($"Updates are scheduled here, so {path} was written: a launcher on UPDATE_MODE=auto leaves updates to this schedule.");
+            }
+            catch (Exception ex)
+            {
+                _scheduleMarkerWritten = DateTime.UtcNow;
+                PrintWarning($"Could not update {ScheduleMarkerName} ({ex.Message}). A launcher on UPDATE_MODE=auto updates on every start until it can.");
             }
         }
 

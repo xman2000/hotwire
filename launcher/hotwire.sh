@@ -87,17 +87,19 @@ RCON_PORT="28016"
 #  1.3  UPDATES
 # ----------------------------------------------------------------------
 
-#  When Rust and Oxide are updated. Pick the mode that matches who
-#  decides when the server restarts.
+#  When Rust and Oxide are updated.
+#    auto      As hotwire while the Hotwire plugin has an update scheduled,
+#              otherwise as always. The plugin says so in UPDATE.schedule,
+#              which it keeps fresh; missing or over two hours old, this
+#              start updates. Leave it on auto unless you have a reason.
 #    always    Every start. Restarts take longer and the server is never
-#              behind. Use this if you restart by hand.
-#    hotwire   When the Hotwire plugin asks, when Steam has a newer build,
-#              or after MAX_DAYS_WITHOUT_UPDATE days (section 2). Restarts
-#              are quick. Use this with the plugin's schedules:
-#              hotwire-setup sets it when it installs the plugin.
+#              behind.
+#    hotwire   When the plugin asks, when Steam has a newer build, when the
+#              launcher cannot tell whether Steam has one, or after
+#              MAX_DAYS_WITHOUT_UPDATE days (section 2). Restarts are quick.
 #    off       Never. A flag file is left in place and the console says
 #              so. For a server whose files are managed some other way.
-UPDATE_MODE="always"
+UPDATE_MODE="auto"
 
 # === HOTWIRE SETTINGS END =============================================
 
@@ -110,7 +112,7 @@ UPDATE_MODE="always"
 #     number, are what a feature is gated on.
 HOTWIRE_LAUNCHER_VERSION="1.1.1-linux"
 HOTWIRE_LAUNCHER_CAPABILITIES="supervise,update,framework_verify,crash_backstop,log_rotate,convar_persist,wipe,backup"
-HOTWIRE_LAUNCHER_HASH="80ef87053a495a6129f97e006db42ba5548219a2872fc2410457e6a1d230e5dc"
+HOTWIRE_LAUNCHER_HASH="9befbcfd622af32cb08082b8a9aff6059704708f0cb7109dcd220107a21f2203"
 
 # ======================================================================
 #  HOW THIS LAUNCHER WORKS
@@ -353,8 +355,8 @@ validate_settings() {
 
     [ -z "$ROOT" ] && bad_cfg+=$'\n  ROOT is empty.'
     case "$UPDATE_MODE" in
-        always|hotwire|off) ;;
-        *) bad_cfg+=$'\n  UPDATE_MODE must be always, hotwire or off.' ;;
+        auto|always|hotwire|off) ;;
+        *) bad_cfg+=$'\n  UPDATE_MODE must be auto, always, hotwire or off.' ;;
     esac
     [ -z "$UPDATE_FLAG" ]   && bad_cfg+=$'\n  UPDATE_FLAG is empty.'
     [ -z "$VALIDATE_FLAG" ] && bad_cfg+=$'\n  VALIDATE_FLAG is empty.'
@@ -449,8 +451,11 @@ read_installed_build() {
 read_public_build() {
     PUBLIC_BUILD=""
     [ "$BUILD_CHECK_HOURS" = "0" ] && return 0
-    # Fresh cache wins.
-    if [ -f "$BUILD_CACHE" ]; then
+    # Fresh cache wins -- except when flags decide updates outside a crash streak. Then the answer must be
+    # today's: a cached "current" from before a Rust release would start the old build.
+    local use_cache=1
+    if [ "$UPDATE_EFFECTIVE" = "hotwire" ] && [ "$CRASH_STREAK" -eq 0 ] 2>/dev/null; then use_cache=0; fi
+    if [ "$use_cache" = "1" ] && [ -f "$BUILD_CACHE" ]; then
         local age_h; age_h=$(( ( $(date +%s) - $(stat -c %Y "$BUILD_CACHE") ) / 3600 ))
         if [ "$age_h" -lt "$BUILD_CHECK_HOURS" ]; then
             PUBLIC_BUILD="$(tr -dc '0-9' < "$BUILD_CACHE" 2>/dev/null || true)"
@@ -496,18 +501,45 @@ build_check() {
 # Section 6 -- decide whether to update this pass.
 # ======================================================================
 DO_UPDATE=0; DO_VALIDATE=0
+# Who decides updates on this pass. auto follows the Hotwire plugin: while it has an update scheduled it keeps
+# UPDATE.schedule in the server's folder, rewritten every 15 minutes. A marker that is missing or over two hours
+# old means nobody is scheduling updates, so this pass updates as always does: the direction that keeps a server
+# joinable.
+UPDATE_EFFECTIVE="always"
+decide_update_mode() {
+    UPDATE_EFFECTIVE="$UPDATE_MODE"
+    [ "$UPDATE_MODE" = "auto" ] || return 0
+    UPDATE_EFFECTIVE="always"
+    local marker="$ROOT/UPDATE.schedule" age
+    if [ -f "$marker" ]; then
+        age=$(( $(date +%s) - $(stat -c %Y "$marker" 2>/dev/null || echo 0) ))
+        [ "$age" -ge 0 ] && [ "$age" -lt 7200 ] && UPDATE_EFFECTIVE="hotwire"
+    fi
+    if [ "$UPDATE_EFFECTIVE" = "hotwire" ]; then
+        log "UPDATE_MODE is auto: the Hotwire plugin schedules updates."
+    else
+        log "UPDATE_MODE is auto: no update schedule from the Hotwire plugin."
+    fi
+}
+
 update_decision() {
     DO_UPDATE=0; DO_VALIDATE=0
-    if [ "$UPDATE_MODE" = "off" ]; then
+    if [ "$UPDATE_EFFECTIVE" = "off" ]; then
         [ -e "$ROOT/$UPDATE_FLAG" ] && log "UPDATE_MODE is off; leaving $UPDATE_FLAG in place, not acting on it."
         return 0
     fi
-    [ "$UPDATE_MODE" = "always" ] && { DO_UPDATE=1; return 0; }
+    [ "$UPDATE_EFFECTIVE" = "always" ] && { log "UPDATE_MODE is $UPDATE_MODE -- updating before launch."; DO_UPDATE=1; return 0; }
 
     # hotwire mode:
     if [ -e "$ROOT/$VALIDATE_FLAG" ]; then DO_UPDATE=1; DO_VALIDATE=1; return 0; fi
     if [ -e "$ROOT/$UPDATE_FLAG" ]; then DO_UPDATE=1; return 0; fi
 
+    # Not knowing is not the same as current: a server left on an old build turns every player away after a
+    # Rust release, so an unanswered question costs an update, never the server.
+    if [ "$UPDATE_ON_NEW_BUILD" = "1" ] && { [ -z "$INSTALLED_BUILD" ] || [ -z "$PUBLIC_BUILD" ]; }; then
+        log "Updating: the launcher could not tell whether this install is on Steam's current build."
+        DO_UPDATE=1; return 0
+    fi
     # New-build trigger.
     if [ "$UPDATE_ON_NEW_BUILD" = "1" ] && [ -n "$INSTALLED_BUILD" ] && [ -n "$PUBLIC_BUILD" ] \
        && [ "$INSTALLED_BUILD" != "$PUBLIC_BUILD" ] && [ "$INSTALLED_BUILD" -lt "$PUBLIC_BUILD" ] 2>/dev/null; then
@@ -724,6 +756,7 @@ write_launcher_state() {
   "hash": "$HOTWIRE_LAUNCHER_HASH",
   "capabilities": "$HOTWIRE_LAUNCHER_CAPABILITIES",
   "platform": "linux",
+  "update_mode": "$UPDATE_MODE",
   "path": "$self"
 }
 JSON
@@ -1347,6 +1380,7 @@ backup_before_launch() {
 # ======================================================================
 per_launch_prep() {
     UPDATE_ATTEMPTED=0
+    decide_update_mode
     build_check
     update_decision
     [ -n "$CHECK_ONLY" ] && DO_UPDATE=0

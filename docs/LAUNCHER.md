@@ -35,7 +35,7 @@ defaults are ours, and every one can be changed:
 | `STEAMCMD` | `C:\steamcmd\steamcmd.exe` | SteamCMD; several servers may share one |
 | `STEAMCMD_WAIT_MINUTES` | `60` | how long to wait for another server's SteamCMD run before starting as-is |
 | `STEAM_BRANCH` | `public` | the Steam branch; empty lets Steam choose, which keeps an install on whatever branch it was last on |
-| `UPDATE_MODE` | `always` | `always` updates every start; `hotwire` for a flag file, a newer build or the backstop; `off` never |
+| `UPDATE_MODE` | `auto` | `auto` follows the plugin's update schedule, and updates every start without one; `always` updates every start; `hotwire` for a flag file, a newer build, an unknown build or the backstop; `off` never |
 | `UPDATE_FLAG`, `VALIDATE_FLAG` | `UPDATE.flag`, `VALIDATE.flag` | the flag file names, which must match the plugin's |
 | `MAX_DAYS_WITHOUT_UPDATE` | `14` | `hotwire` mode's backstop; `0` turns it off |
 | `UPDATE_ON_NEW_BUILD` | `1` | `hotwire` mode updates when Steam's build is ahead |
@@ -107,13 +107,19 @@ can stop a server starting.
 
 `UPDATE_MODE` decides whether a restart is also an update.
 
-**`always`** is the default and behaves like every other Rust launcher: it
-updates on every start. That is the right policy while you are the one
-deciding when the server restarts.
+**`auto`** is the default. It behaves as `hotwire` while the plugin has an update scheduled, and as `always`
+otherwise. The plugin keeps `UPDATE.schedule` in the server folder while an update entry or its framework check
+is on, and rewrites it every 15 minutes; a file that is missing or over two hours old counts as no schedule. So a
+server with no schedule updates on every start, and turning a schedule on in the plugin is all it takes to hand
+updates to it.
+
+**`always`** behaves like every other Rust launcher: it updates on every start.
 
 **`hotwire`** separates the two. A restart is only a restart, and an update happens when a flag file is
-present in the server folder, when Steam has a newer build (`UPDATE_ON_NEW_BUILD`), or when the backstop
-fires. The flag files are named by `UPDATE_FLAG` and `VALIDATE_FLAG`:
+present in the server folder, when Steam has a newer build (`UPDATE_ON_NEW_BUILD`), when the launcher cannot
+find out whether Steam has one, or when the backstop fires. It asks Steam afresh on every start and uses its
+cached answer only during a crash streak, because a cached "current" from before a Rust release would start the
+old build. The flag files are named by `UPDATE_FLAG` and `VALIDATE_FLAG`:
 
 | File in the server folder | The next launch |
 |---|---|
@@ -131,10 +137,8 @@ Anything can create a flag — you, a scheduled task, or the plugin:
 New-Item -ItemType File UPDATE.flag     # in the server's folder
 ```
 
-That mode is opt-in because Rust clients update themselves: a server that
-never updates does not go stale, it becomes unjoinable, and it usually happens
-on force wipe day. So the default is the safe, slow behavior and the sharp
-behavior is a deliberate choice.
+Every doubt in that mode resolves toward updating, because Rust clients update themselves: a server that
+never updates does not go stale, it becomes unjoinable, and it usually happens on force wipe day.
 
 **`hotwire` mode carries a backstop.** If `MAX_DAYS_WITHOUT_UPDATE` (14) full
 days pass with no *successful* update, one happens anyway and says so loudly
@@ -231,8 +235,14 @@ and later, are used for dates, downloads, the SteamCMD lock and the checks.
    through the options in section 3.
 4. Run `hotwire.bat check`, then run `hotwire.bat`.
 
-To have the plugin drive the updates, set `UPDATE_MODE=hotwire` in section 1. `hotwire-setup` does this
-when it installs the plugin, once, and only in a `hotwire.bat` it created that still says `always`.
+The plugin drives the updates with no change here: on `UPDATE_MODE=auto`, turning on an update schedule in
+the plugin is enough. While one is on, the plugin keeps `UPDATE.schedule` in the server's folder and rewrites it
+every 15 minutes. The launcher follows the schedule while that file is under two hours old, and updates on every
+start when it is missing or older, so a plugin that has stopped running cannot leave the server behind.
+
+When the schedule decides, the launcher still updates on its own when Steam has a newer build, and when it cannot
+find out whether Steam has one: it asks Steam afresh on every start, using its cached answer only during a crash
+streak. Not knowing costs an update, never the server.
 
 ## Generating the option reference for your own build
 

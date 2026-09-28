@@ -92,9 +92,7 @@ nothing broken, and running it again simply carries on.
 - **A Rust server it did not install.**
 - **An existing `hotwire.bat`, `Hotwire.cs` or valid `secrets.bat`.** They are kept as they are. The one
   exception is a `hotwire.bat` that install created: its `INSTALL_FRAMEWORK` and `STEAM_BRANCH` lines are
-  kept in step with Oxide and the chosen branch, after a copy is saved, and never while it is running. When
-  it installs the plugin, it also sets `UPDATE_MODE=hotwire` in that `hotwire.bat` if it still says
-  `always`, once: set it back and install leaves it.
+  kept in step with Oxide and the chosen branch, after a copy is saved, and never while it is running.
 - **The game's own files, without a copy.** Before Oxide first replaces anything, the originals go to
   `hotwire\backups\<time>-before-oxide\`.
 - **Anything in a SteamCMD folder that already exists.** Only `steamcmd.exe` is added, and you are asked
@@ -153,7 +151,7 @@ It runs in four parts, and only the third one changes anything:
 | 4 | The Rust server, app 258550, about 12 GB. **Asks which branch first:** public (the game everyone plays), staging (Facepunch's test build), or a branch typed by name. The choice is kept, used for every download, and written into `hotwire.bat` as `STEAM_BRANCH` | the server folder |
 | 5 | Oxide, checked to be the Windows build and a real archive before it is unpacked. Defaults to yes; no leaves a vanilla server, and the start script is set up to stay vanilla | the server folder |
 | 6 | **Start script**: `hotwire.bat`, with its ports and `STEAMCMD` set, `INSTALL_FRAMEWORK=0` when there is no Oxide, the chosen `STEAM_BRANCH`, and Windows line endings. `ROOT` stays the file's own folder. Asks for ports first if none are chosen. Defaults to yes; no means you use your own start script, and step 8 is skipped | `hotwire.bat`; an existing one is left alone |
-| 7 | **Hotwire plugin**, asked separately, defaults to yes. Scheduled, announced restarts. Skipped without Oxide. Sets `UPDATE_MODE=hotwire` in a `hotwire.bat` install created, so updates follow the plugin's schedule | `oxide\plugins\Hotwire.cs` |
+| 7 | **Hotwire plugin**, asked separately, defaults to yes. Scheduled, announced restarts. Skipped without Oxide | `oxide\plugins\Hotwire.cs` |
 | 8 | **RCON password**, walked through: type your own (hidden, twice, checked against the launcher's rules), or press Enter for 32 random letters and digits, shown once and copied to the clipboard | `secrets.bat`, readable only by Administrators and you; an existing valid one is left alone, an invalid one replaced only if you say yes |
 | 9 | **Windows Firewall**: opens this server's game and query ports, and its Rust+ port only if asked. Asks for ports first if none are chosen | rules named for the port and the server's folder, in the group `Hotwire` |
 | 10 | **Hotwire Panel**, asked last, defaults to yes. Yes runs `connect`; no changes nothing | only if yes: the files under *doctor and connect* |

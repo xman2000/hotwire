@@ -25,6 +25,14 @@ sit above a launcher `1.1.7`. Read the label, not the number.
 at the top of the file — it is a comment, not something it echoes, so read it
 rather than watch for it.
 
+## 1.1.43 — plugin — 2026-09-28
+
+**The launcher knows when updates are scheduled here.** While at least one update entry, or the framework check, is
+switched on, the plugin keeps `UPDATE.schedule` in the server root and rewrites it every 15 minutes; with none it
+deletes the file. A launcher on `UPDATE_MODE=auto` (Windows 1.1.15, Linux 1.1.1) follows the schedule while the file
+is fresh and updates on every start otherwise. The file is left in place when the plugin unloads, because a scheduled
+restart unloads it too; it goes stale on its own.
+
 ## 1.1.15 — launcher (Windows) — 2026-09-27
 
 **The settings most servers change are at the top of the file.**
@@ -34,8 +42,14 @@ rather than watch for it.
   every other option in section 3; the launcher's own code comes last.
 - The save folder and world size are filled-in settings now, `SERVER_IDENTITY` and `SERVER_WORLDSIZE`, and the ports
   are `SERVER_PORT`, `SERVER_QUERYPORT` and `RCON_PORT`: the same names the Linux launcher uses.
-- `UPDATE_MODE` is in section 1 too, as "1.3 Updates", with the three modes on three lines. `hotwire-setup` 0.1.3 sets
-  it to `hotwire` when it installs the plugin, once, and only in a `hotwire.bat` it created that still says `always`.
+- `UPDATE_MODE` is in section 1 too, as "1.3 Updates", and has a new default, `auto`: updates follow the Hotwire
+  plugin's update schedule while it has one switched on, and happen on every start while it does not. The plugin
+  says which in `UPDATE.schedule`; a file that is missing or over two hours old counts as no schedule.
+- **When a schedule decides updates, the launcher still errs toward updating.** It asks Steam for the current build
+  afresh on every start (the cached answer only during a crash streak), and updates when Steam has a newer build or
+  when it cannot find out. Before, a cached answer up to six hours old, or no answer, meant no update: a restart soon
+  after a Rust release could start the old build, and players could not join.
+- `launcher.json` carries `update_mode`.
 - Wipes and permanent settings from the panel write these into section 1. Because section 1 lies before the line
   that makes the change, the launcher then jumps to a label, which cmd finds by searching the file's text, and reads
   sections 1 and 3 again before every start.
@@ -47,8 +61,8 @@ rather than watch for it.
 **The same layout as the Windows launcher.** Section 1, at the top, holds the server's name, description, tags,
 player count, save folder, seed, world size, ports and `UPDATE_MODE`, each with its default beside it; section 2 the launcher
 settings; section 3 the map level, `rcon.web` and any extra convars. The setting names are unchanged, so an existing
-`hotwire.sh` and `hotwire-setup.sh` keep working. `hotwire-setup.sh` 0.2.3 sets `UPDATE_MODE=hotwire` when it installs the
-plugin, on the same terms as on Windows.
+`hotwire.sh` and `hotwire-setup.sh` keep working. `UPDATE_MODE=auto` and the update checks work as on Windows, and
+`launcher.json` carries `update_mode`.
 
 ## 1.1.42 — plugin — 2026-09-25
 

@@ -171,6 +171,14 @@ bad entry disables itself and leaves the rest of the schedule running.
 update entry is a restart entry that also writes a flag, so running it
 satisfies both. Validate beats update for the same reason.
 
+**While an update is scheduled, the plugin says so to the launcher.** With
+at least one update entry, or the framework check, switched on, it keeps
+`UPDATE.schedule` in the server root and rewrites it every 15 minutes; with
+none, it deletes the file. A Hotwire launcher on `UPDATE_MODE=auto` leaves
+updates to this schedule while the file is under two hours old, and updates
+on every start otherwise, so a schedule that is off, or a plugin that has
+stopped running, never leaves the server on an old build.
+
 ## Countdown
 
 ```json
