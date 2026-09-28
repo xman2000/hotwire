@@ -83,6 +83,22 @@ SERVER_QUERYPORT="28017"
 #  the password crosses the network in plain text.
 RCON_PORT="28016"
 
+# ----------------------------------------------------------------------
+#  1.3  UPDATES
+# ----------------------------------------------------------------------
+
+#  When Rust and Oxide are updated. Pick the mode that matches who
+#  decides when the server restarts.
+#    always    Every start. Restarts take longer and the server is never
+#              behind. Use this if you restart by hand.
+#    hotwire   When the Hotwire plugin asks, when Steam has a newer build,
+#              or after MAX_DAYS_WITHOUT_UPDATE days (section 2). Restarts
+#              are quick. Use this with the plugin's schedules:
+#              hotwire-setup sets it when it installs the plugin.
+#    off       Never. A flag file is left in place and the console says
+#              so. For a server whose files are managed some other way.
+UPDATE_MODE="always"
+
 # === HOTWIRE SETTINGS END =============================================
 
 # --- Launcher identity. Not settings; do not edit.
@@ -94,7 +110,7 @@ RCON_PORT="28016"
 #     number, are what a feature is gated on.
 HOTWIRE_LAUNCHER_VERSION="1.1.1-linux"
 HOTWIRE_LAUNCHER_CAPABILITIES="supervise,update,framework_verify,crash_backstop,log_rotate,convar_persist,wipe,backup"
-HOTWIRE_LAUNCHER_HASH="a48fa65420c8dee02b2eb7ca3a6d43b8d775a2a3748b3d7c15d4a7a1083f7e23"
+HOTWIRE_LAUNCHER_HASH="80ef87053a495a6129f97e006db42ba5548219a2872fc2410457e6a1d230e5dc"
 
 # ======================================================================
 #  HOW THIS LAUNCHER WORKS
@@ -157,10 +173,7 @@ APPID="258550"
 STEAM_BRANCH="public"
 
 # -- Updating -----------------------------------------------------------
-# always  = update the game and Oxide every start (simple, a little slower).
-# hotwire = update only on a flag, a newer build, or the day backstop below.
-# off     = never update here; a flag is left in place and reported.
-UPDATE_MODE="always"
+# UPDATE_MODE, when updates happen, is in section 1.
 
 # The flag files the plugin writes to ask for an update. Must match the
 # plugin's config. UPDATE = update; VALIDATE = update and re-verify every file.
@@ -421,7 +434,7 @@ preflight() {
 }
 
 # ======================================================================
-# Section 3a -- the "am I behind?" build check. Reads the installed build
+# Section 6a -- the "am I behind?" build check. Reads the installed build
 # id from the appmanifest, and the public build id from steamcmd (behind
 # a non-blocking lock, cached). Any failure leaves both empty and decides
 # nothing on its own -- fail toward starting the server.
@@ -480,7 +493,7 @@ build_check() {
 }
 
 # ======================================================================
-# Section 3 -- decide whether to update this pass.
+# Section 6 -- decide whether to update this pass.
 # ======================================================================
 DO_UPDATE=0; DO_VALIDATE=0
 update_decision() {
@@ -513,7 +526,7 @@ update_decision() {
 }
 
 # ======================================================================
-# Section 3-steam -- run steamcmd under a blocking lock with a deadline.
+# Section 6-steam -- run steamcmd under a blocking lock with a deadline.
 # ======================================================================
 STEAM_OK=0
 steam_update() {
@@ -549,7 +562,7 @@ steam_update() {
 }
 
 # ======================================================================
-# Section 3-framework -- install/refresh Oxide (the Linux build), with a
+# Section 6-framework -- install/refresh Oxide (the Linux build), with a
 # skip-when-unchanged optimisation and a GitHub SHA-256 verification.
 # ======================================================================
 FRAMEWORK_OK=0
@@ -632,7 +645,7 @@ finalize_update() {
 }
 
 # ======================================================================
-# Section 4 -- build the launch arguments.
+# Section 7 -- build the launch arguments, and check them.
 # ======================================================================
 ARGS=()
 build_args() {
@@ -1362,7 +1375,7 @@ per_launch_prep() {
 }
 
 # ======================================================================
-# Section 5 -- the run loop.
+# Section 8 -- the run loop.
 # ======================================================================
 run_loop() {
     while :; do

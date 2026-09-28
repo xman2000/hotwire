@@ -85,6 +85,22 @@ REM  Remote console, TCP. Never forward this port. RCON is not encrypted:
 REM  the password crosses the network in plain text.
 set "RCON_PORT=28016"
 
+REM ----------------------------------------------------------------------
+REM  1.3  UPDATES
+REM ----------------------------------------------------------------------
+
+REM  When Rust and Oxide are updated. Pick the mode that matches who
+REM  decides when the server restarts.
+REM    always    Every start. Restarts take longer and the server is never
+REM              behind. Use this if you restart by hand.
+REM    hotwire   When the Hotwire plugin asks, when Steam has a newer build,
+REM              or after MAX_DAYS_WITHOUT_UPDATE days (section 2). Restarts
+REM              are quick. Use this with the plugin's schedules:
+REM              hotwire-setup sets it when it installs the plugin.
+REM    off       Never. A flag file is left in place and the console says
+REM              so. For a server whose files are managed some other way.
+set "UPDATE_MODE=always"
+
 REM === HOTWIRE SETTINGS END =============================================
 REM  Section 6b reads section 1 again before every start; this ends that.
 if "%~1"=="hotwire-reread-settings" exit /b 0
@@ -134,7 +150,7 @@ REM     RESTART_DELAY seconds. Close the window to stop the server
 REM     permanently.
 REM
 REM  UPDATE MODES
-REM     Set UPDATE_MODE in section 2.
+REM     Set UPDATE_MODE in section 1.
 REM
 REM     always     steamcmd and the mod framework run on every start. This
 REM                is the default and matches most Rust launchers.
@@ -253,21 +269,7 @@ REM     to public's build on the next update. Empty lets Steam choose, as
 REM     launchers before 1.1.10 did.
 set "STEAM_BRANCH=public"
 
-REM   When updates happen. Pick the mode that matches who decides when the
-REM     server restarts.
-REM
-REM     always     Every start. Restarts take longer and the server is
-REM                never behind. Use this if you restart by hand.
-REM
-REM     hotwire    Only when a flag file says so. Restarts are quick and
-REM                updates happen when you choose. Use this if anything
-REM                else restarts the server for you.
-REM
-REM     off        Never. Not on start, not for a flag file, not for the
-REM                backstop or a new build. A flag file is left in place and
-REM                the console says so. For a server whose files are
-REM                managed some other way.
-set "UPDATE_MODE=always"
+REM   UPDATE_MODE, when updates happen, is in section 1.
 
 REM   The names of the two flag files, in ROOT. The plugin writes them under
 REM     the names in its own config ("Update flag file name" and "Validate
@@ -929,7 +931,7 @@ if "%RCON_PASSWORD_MIN%"=="0" (
 
 if defined CFGBAD (
     echo [%date% %time%] ================================================
-    echo [%date% %time%] Section 2 has a setting that cannot work.
+    echo [%date% %time%] Section 1 or 2 has a setting that cannot work.
     echo [%date% %time%] Not starting. Fix the lines named above.
     echo [%date% %time%] ================================================
     pause & exit /b 1
@@ -1825,7 +1827,7 @@ REM     release by tools/launcher-hash.sh; section 6b hands everything from
 REM     the #HOTWIRE-EDITS line down to PowerShell, so it is written as
 REM     ordinary PowerShell rather than through cmd's quoting rules.
 REM ======================================================================
-HOTWIRE_LAUNCHER_HASH="b9d1bc2c09789d7f3dfeaccaa16241712a52ac899ae6186585e420325c3be992"
+HOTWIRE_LAUNCHER_HASH="38651586a5245bf750acf17e74bfb72ceef7bcd3efbe8bc9af8888176ad1efa2"
 
 #HOTWIRE-EDITS
 # Wipes and permanent convars, for hotwire.bat (capabilities: wipe, convar_persist).

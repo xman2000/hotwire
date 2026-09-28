@@ -26,7 +26,8 @@ restart daily to shed the memory a busy modded server accumulates:
 
 ## Every behaviour is a setting
 
-Section 1 holds every choice the launcher makes. The defaults are ours, and every one can be changed:
+Section 2 holds every choice the launcher makes, except `UPDATE_MODE`, which is at the top in section 1. The
+defaults are ours, and every one can be changed:
 
 | setting | default | what it does |
 |---|---|---|
@@ -230,8 +231,8 @@ and later, are used for dates, downloads, the SteamCMD lock and the checks.
    through the options in section 3.
 4. Run `hotwire.bat check`, then run `hotwire.bat`.
 
-To have the plugin drive the updates, set `UPDATE_MODE=hotwire` once the
-plugin is installed and you have a schedule you trust.
+To have the plugin drive the updates, set `UPDATE_MODE=hotwire` in section 1. `hotwire-setup` does this
+when it installs the plugin, once, and only in a `hotwire.bat` it created that still says `always`.
 
 ## Generating the option reference for your own build
 

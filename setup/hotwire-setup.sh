@@ -670,7 +670,7 @@ RUST_APPID="258550"
 # branch, these change in the same commit (and so does $PinnedHashes in hotwire-setup.ps1 for Hotwire.cs),
 # or every install stops at a hash mismatch. Third-party downloads (SteamCMD from Ubuntu's archive, Oxide
 # from GitHub) are not pinned: Oxide is checked against the SHA-256 GitHub publishes for it instead.
-PIN_LAUNCHER="b599ccd16555ce5471f4014512ad7e0f51e755593953b3e48d3ce4c3b84d84d0"
+PIN_LAUNCHER="7ef3dc646124989e6b8ac0509fefd6750ff79a72724420563d4facce69a10cf1"
 PIN_PLUGIN="886ba405512e30ce633891a3fb8e73bce3e68be8694e804fadd1ed4e03de0472"
 
 # Rust's own floor (wiki.facepunch.com/rust/Creating-a-server), warned about and never enforced. A small
@@ -1376,6 +1376,27 @@ sync_launcher_framework() {
     fi
 }
 
+# With the Hotwire plugin installed, hotwire.sh leaves updates to its schedule: UPDATE_MODE always
+# becomes hotwire. Once per install (recorded as update-mode), so an admin who sets it back is not
+# overruled by the next run; only a hotwire.sh install wrote that still says always, and after a copy is
+# kept. Anyone else's is told the line to change.
+sync_launcher_update_mode() {
+    local l="$IROOT/hotwire.sh"
+    done_step update-mode && return 0
+    [ -f "$l" ] && [ -f "$IROOT/oxide/plugins/Hotwire.cs" ] || return 0
+    if [ "$(grep -cx 'UPDATE_MODE="always"' "$l")" != 1 ]; then save_step update-mode; return 0; fi
+    if created "$l"; then
+        cp -p "$l" "$l.backup-$(date '+%Y%m%d-%H%M%S')"
+        sed 's/^UPDATE_MODE="always"$/UPDATE_MODE="hotwire"/' "$l" > "$l.hotwire-tmp" && chmod 755 "$l.hotwire-tmp" && mv -f "$l.hotwire-tmp" "$l"
+        own "$l"; ok "hotwire.sh now has UPDATE_MODE=\"hotwire\", because the Hotwire plugin is installed"
+        note "        It updates when the plugin asks, when Steam has a newer build, or after MAX_DAYS_WITHOUT_UPDATE days without one."
+        change "set UPDATE_MODE=\"hotwire\" in $l" "put back the .backup- copy beside it"
+    else
+        note "hotwire.sh is not one install wrote: to update on the plugin's schedule, set UPDATE_MODE=\"hotwire\" in it"
+    fi
+    save_step update-mode
+}
+
 # A saved map means the server has been played: a seed now would start a different map, which is a wipe.
 has_saves() { find "$IROOT/server" -type f \( -name '*.sav' -o -name '*.sav.*' -o -name '*.map' \) 2>/dev/null | grep -q .; }
 
@@ -1526,7 +1547,7 @@ step_rcon() {
 step_plugin() {
     step "Hotwire plugin"
     local dir="$IROOT/oxide/plugins" p="$IROOT/oxide/plugins/Hotwire.cs"
-    if [ -f "$p" ]; then ok "oxide/plugins/Hotwire.cs is already here -- kept"; save_step plugin; return 0; fi
+    if [ -f "$p" ]; then ok "oxide/plugins/Hotwire.cs is already here -- kept"; save_step plugin; sync_launcher_update_mode; return 0; fi
     if ! { done_step oxide && [ -f "$(oxide_dll)" ]; }; then note "Skipped: the plugin runs on Oxide, which is not installed."; return 0; fi
     why "The Hotwire plugin adds scheduled, announced restarts: it counts down in game, saves, and hands" \
         "over to hotwire.sh. It is also what reports to Hotwire Panel, once you connect. Every schedule" \
@@ -1544,6 +1565,7 @@ step_plugin() {
     note "        Oxide compiles it the first time the server starts."
     change "created $p (Hotwire $v)" "delete $p"
     save_step plugin
+    sync_launcher_update_mode
 }
 
 # One unit per server folder, so two servers on one machine are two services.

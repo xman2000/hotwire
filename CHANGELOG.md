@@ -34,6 +34,8 @@ rather than watch for it.
   every other option in section 3; the launcher's own code comes last.
 - The save folder and world size are filled-in settings now, `SERVER_IDENTITY` and `SERVER_WORLDSIZE`, and the ports
   are `SERVER_PORT`, `SERVER_QUERYPORT` and `RCON_PORT`: the same names the Linux launcher uses.
+- `UPDATE_MODE` is in section 1 too, as "1.3 Updates", with the three modes on three lines. `hotwire-setup` 0.1.3 sets
+  it to `hotwire` when it installs the plugin, once, and only in a `hotwire.bat` it created that still says `always`.
 - Wipes and permanent settings from the panel write these into section 1. Because section 1 lies before the line
   that makes the change, the launcher then jumps to a label, which cmd finds by searching the file's text, and reads
   sections 1 and 3 again before every start.
@@ -43,9 +45,10 @@ rather than watch for it.
 ## 1.1.1-linux — launcher (Linux) — 2026-09-27
 
 **The same layout as the Windows launcher.** Section 1, at the top, holds the server's name, description, tags,
-player count, save folder, seed, world size and ports, each with the game's default beside it; section 2 the launcher
+player count, save folder, seed, world size, ports and `UPDATE_MODE`, each with its default beside it; section 2 the launcher
 settings; section 3 the map level, `rcon.web` and any extra convars. The setting names are unchanged, so an existing
-`hotwire.sh` and `hotwire-setup.sh` keep working.
+`hotwire.sh` and `hotwire-setup.sh` keep working. `hotwire-setup.sh` 0.2.3 sets `UPDATE_MODE=hotwire` when it installs the
+plugin, on the same terms as on Windows.
 
 ## 1.1.42 — plugin — 2026-09-25
 
