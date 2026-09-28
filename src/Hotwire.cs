@@ -223,7 +223,8 @@ namespace Oxide.Plugins
 
             // What players say in chat, with its channel (global, team, local,
             // clan). Only at the "identified" level, with card numbers and SSNs
-            // masked first. Chat commands are not chat and are never sent.
+            // masked first, and only while the panel's report policy includes
+            // chat (a Pro feature). Chat commands are not chat and are never sent.
             [JsonProperty("Send chat")]
             public bool SendChat = true;
 
@@ -2985,6 +2986,7 @@ namespace Oxide.Plugins
                 return;
             }
 
+            DropChatThePolicyStops();
             while (_events.Count > 0 && (all || _events.Count >= EventsPerReport || OldestEventAge() >= TimeSpan.FromHours(1)))
             {
                 var batch = _events.Take(EventsPerReport).ToList();
@@ -5259,6 +5261,15 @@ namespace Oxide.Plugins
         // verified answer, or one that does not say so, no positions are sent.
         private bool PolicyAllowsPositions() => _policy != null && _policy.Positions && PolicyAllowsKind("player_positions");
 
+        // Chat leaves only when the panel's policy says so: it is part of Pro. No policy yet means no, like positions.
+        private bool PolicyAllowsChat() => _policy != null && _policy.Chat;
+
+        // Chat the policy does not allow, taken out of the queue before anything is sent or spooled.
+        private void DropChatThePolicyStops()
+        {
+            if (!PolicyAllowsChat()) _events.RemoveAll(e => (string)e["kind"] == "chat");
+        }
+
         // The panel can ask to be asked less often, never more often.
         private int PolicyPollInterval() => PolicyInterval(PolicyPollSeconds, PolicyPollSeconds, _policy == null ? 0 : _policy.PolicySeconds, PolicyPollMaxSeconds);
 
@@ -5286,6 +5297,7 @@ namespace Oxide.Plugins
             parts.Add($"map markers every {MarkerInterval()}s");
             if (_policy.Positions) parts.Add($"player positions every {PositionInterval()}s");
             if (_policy.Backups) parts.Add("backups");
+            if (_policy.Chat) parts.Add("chat");
             if (PolicyAllowsCommands()) parts.Add($"commands checked every {CommandInterval()}s");
             if (PolicyAllowsBans()) parts.Add($"ban list checked every {BanInterval()}s");
             parts.Add($"this policy checked every {PolicyPollInterval()}s");
@@ -5583,6 +5595,9 @@ namespace Oxide.Plugins
         {
             if (!enabled || _panel == null || !_config.Panel.Enabled || EffectiveSharingLevel() < 3) return;
             if (!PolicyAllowsKind("events") && !PolicyHolds(_policy)) return;
+            // Chat is not even queued once a policy has said no; before the first answer it waits, and goes if the
+            // answer is no.
+            if (kind == "chat" && _policy != null && !_policy.Chat) return;
             if (_events.Count >= MaxQueuedEvents)
             {
                 _events.RemoveAt(0);
@@ -5604,6 +5619,13 @@ namespace Oxide.Plugins
             {
                 _events.Clear();
                 _eventsState = "not sent: the player data level is below identified";
+                _eventsDue = DateTime.UtcNow.AddSeconds(interval);
+                return;
+            }
+
+            DropChatThePolicyStops();
+            if (_events.Count == 0)
+            {
                 _eventsDue = DateTime.UtcNow.AddSeconds(interval);
                 return;
             }
@@ -7653,6 +7675,7 @@ namespace Oxide.Plugins
             public bool Hold;                 // keep what Kinds stops, to send later
             public bool Positions;            // send player positions; false unless the panel says true
             public bool Backups;              // the plan includes backups; false unless the panel says true
+            public bool Chat;                 // send chat lines; false unless the panel says true (chat is part of Pro)
             public DateTime ReceivedUtc;
         }
 
@@ -7705,6 +7728,8 @@ namespace Oxide.Plugins
                     Positions = data["positions"] != null && data["positions"].Type == JTokenType.Boolean && (bool)data["positions"],
                     // Backups likewise: only true means the plan includes them.
                     Backups = data["backups"] != null && data["backups"].Type == JTokenType.Boolean && (bool)data["backups"],
+                    // Chat likewise: only true means the plan includes it. Joins, leaves and reports are not chat.
+                    Chat = data["chat"] != null && data["chat"].Type == JTokenType.Boolean && (bool)data["chat"],
                     ReceivedUtc = DateTime.UtcNow
                 };
 

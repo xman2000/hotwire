@@ -33,6 +33,11 @@ deletes the file. A launcher on `UPDATE_MODE=auto` (Windows 1.1.15, Linux 1.1.1)
 is fresh and updates on every start otherwise. The file is left in place when the plugin unloads, because a scheduled
 restart unloads it too; it goes stale on its own.
 
+**Chat is sent only when the panel's report policy says so.** Chat is part of AFKPanel Pro, so the policy's new `chat`
+value is `true` on Pro and `false` on the free plan, and chat lines are not sent or kept on the server without it. Joins,
+leaves and in-game reports are unaffected. Until the first policy arrives, chat waits in the queue and goes if the
+answer is no.
+
 ## 1.1.15 — launcher (Windows) — 2026-09-27
 
 **The settings most servers change are at the top of the file.**
