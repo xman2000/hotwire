@@ -14,29 +14,38 @@ REM ======================================================================
 REM === HOTWIRE SETTINGS BEGIN ===========================================
 REM  1. YOUR SERVER
 REM
-REM     The settings most servers change. An empty value uses the game's
-REM     own default, shown in brackets. In any value, write a percent sign
-REM     as %%, and never use ! or a double quote. Every other convar is in
-REM     section 3. The RCON password is in secrets.bat, not here.
+REM     An empty value uses the game's default, shown in brackets.
+REM     In a value, write a percent sign as %%, and never use ! or a
+REM     double quote. | & < and > are safe here.
+REM     Every other convar is in section 3. The RCON password is in
+REM     secrets.bat.
 REM ======================================================================
 
+REM ----------------------------------------------------------------------
+REM  1.1  THE SERVER
+REM ----------------------------------------------------------------------
+
 REM  +server.hostname [default: "My Untitled Rust Server"]
-REM  The name in the server browser. | & < and > are safe here.
+REM  The name in the server browser.
 set "SERVER_HOSTNAME="
 
 REM  +server.description [default: "No server description has been provided."]
 REM  Shown with your server in the server browser. \n starts a new line.
 set "SERVER_DESCRIPTION="
 
-REM  +server.tags [default: none]
-REM  Browser filter tags, comma separated, no spaces. The browser filters
-REM  on these: monthly biweekly weekly, vanilla softcore hardcore primitive
-REM  pve, roleplay creative minigame training battlefield builds, and a
-REM  region such as NA or EU. Tags it does not filter on have no effect.
+REM  +server.tags [default: UNKNOWN]
+REM  Browser filter tags, separated by commas, with no spaces. For example:
+REM    monthly,vanilla,NA
+REM  The tags the browser filters on:
+REM    wipe schedule   monthly, biweekly, weekly
+REM    ruleset         vanilla, softcore, hardcore, primitive, pve
+REM    style           roleplay, creative, minigame, training,
+REM                    battlefield, builds
+REM    region          a region tag, such as NA or EU
 set "SERVER_TAGS="
 
 REM  +server.maxplayers [default: 500]
-REM  Player slots. A whole number.
+REM  Player slots.
 set "SERVER_MAXPLAYERS="
 
 REM  +server.identity [default: "my_server_identity"]
@@ -46,29 +55,28 @@ REM  server and leaves the old one on disk.
 set "SERVER_IDENTITY="
 
 REM  +server.seed [default: 1337]
-REM  The map. A whole number from 0 to 2147483647. The same seed and size
-REM  always make the same map, so left empty the server plays the same map
-REM  as every server left at the default. hotwire-setup writes a random
-REM  seed here for a new server. Changing it on a server that has been
-REM  played starts a new map, which wipes everything built on the old one.
+REM  The map. Any whole number from 0 to 2147483647. hotwire-setup picks a
+REM  random one for a new server. Changing it wipes the map.
 set "SERVER_SEED="
 
 REM  +server.worldsize [default: 4500]
-REM  Map width in metres, 1000 to 6000. Bigger maps boot slower and use
-REM  more memory. Changing it starts a new map.
+REM  Map width in meters, 1000 to 6000. Bigger maps boot slower and use
+REM  more memory. Changing it wipes the map.
 set "SERVER_WORLDSIZE="
 
-REM  Ports. Forward the game and query ports at your router, and nothing
-REM  else. Every server on this machine needs its own three.
+REM ----------------------------------------------------------------------
+REM  1.2  PORTS -- forward the game and query ports at your router, and
+REM       nothing else. Each server on this machine needs its own three.
+REM ----------------------------------------------------------------------
 
 REM  +server.port [default: 28015]
 REM  Game traffic, UDP.
 set "SERVER_PORT=28015"
 
-REM  +server.queryport [default: 0, one above the higher of the other two]
-REM  The server browser, UDP. If this is wrong the server runs but nobody
-REM  can see it. Do not use 27015, or anything from 27000 to 27030: that
-REM  is Steam's own range, and on a machine that also runs Steam the client
+REM  +server.queryport [default: 0]
+REM  Server browser, UDP. If this is wrong the server runs but nobody can
+REM  see it. Do not use 27015, or anything from 27000 to 27030: that is
+REM  Steam's own range, and on a machine that also runs Steam the client
 REM  can take the port and hide your server from the browser.
 set "SERVER_QUERYPORT=28017"
 
@@ -76,7 +84,9 @@ REM  +rcon.port [default: 0]
 REM  Remote console, TCP. Never forward this port. RCON is not encrypted:
 REM  the password crosses the network in plain text.
 set "RCON_PORT=28016"
+
 REM === HOTWIRE SETTINGS END =============================================
+REM  Section 6b reads section 1 again before every start; this ends that.
 if "%~1"=="hotwire-reread-settings" exit /b 0
 
 REM  "hotwire.bat check" checks the settings and the option list, says
@@ -209,12 +219,12 @@ REM ======================================================================
 
 
 REM === HOTWIRE SETTINGS BEGIN ===========================================
-REM     Sections 1, 2 and 3 are yours to edit. All three are left out of
-REM     the launcher's code hash, so changing a setting never marks the
-REM     launcher "modified" or turns off a panel feature. The rest is the
-REM     launcher.
-REM ======================================================================
 REM  2. LAUNCHER SETTINGS
+REM
+REM     How the launcher behaves: where things are, updates, restarts and
+REM     logs. Sections 1, 2 and 3 are yours to edit and are left out of the
+REM     launcher's code hash, so changing a setting never marks the
+REM     launcher "modified" or turns off a panel feature.
 REM ======================================================================
 
 REM   Where the server is installed. steamcmd writes here. %~dp0 is the
@@ -382,12 +392,11 @@ set "LOGFILE=%ROOT%\logs\server_log.txt"
 set "UPDATE_STAMP=%ROOT%\logs\last_update.txt"
 REM === HOTWIRE SETTINGS END =============================================
 
-REM  Section 3 is run at every start, from section 6b, so that a change
-REM  made there reaches the next start. The launcher steps over it here.
+REM  Section 3 is read before every start, from section 6b, so the
+REM  launcher steps over it here.
 goto :hotwire_options_end
 :hotwire_server_options
 REM === HOTWIRE SETTINGS BEGIN ===========================================
-REM ======================================================================
 REM  3. SERVER OPTIONS
 REM
 REM     One option per line. REM a line to switch it off; an option you do
@@ -408,29 +417,24 @@ REM   Run headless, with no window and no renderer. Required on a server.
 set "ARGS=!ARGS! -batchmode -nographics"
 
 REM ----------------------------------------------------------------------
-REM  3.1  IDENTITY AND THE MAP
+REM  3.1  THE MAP
 REM
-REM     Get these right before the first boot. server.identity names the
-REM     folder under server\ that holds the map, blueprints, bans and
-REM     every player's progress: change it later and you have a brand new
-REM     server with the old one orphaned on disk. Changing level, seed or
-REM     worldsize regenerates the map, which wipes everything built on it.
+REM     The save folder, seed and world size are set in section 1.
+REM     Changing the level, seed or world size starts a new map, which
+REM     wipes everything built on the old one. server.randomize_seed picks
+REM     a new seed on every start, so it belongs in a wipe script, never
+REM     here.
 REM ----------------------------------------------------------------------
 
-REM   server.identity, server.seed and server.worldsize are set in
-REM     section 1.
-if defined SERVER_IDENTITY set "ARGS=!ARGS! +server.identity "!SERVER_IDENTITY!""
+REM   From section 1.
+if defined SERVER_IDENTITY  set "ARGS=!ARGS! +server.identity "!SERVER_IDENTITY!""
+if defined SERVER_SEED      set "ARGS=!ARGS! +server.seed !SERVER_SEED!"
+if defined SERVER_WORLDSIZE set "ARGS=!ARGS! +server.worldsize !SERVER_WORLDSIZE!"
 
 REM   server.level -- Leave as-is for a generated map. For a custom map
 REM     use server.levelurl instead.
 REM   [string, default "Procedural Map"]
 set "ARGS=!ARGS! +server.level "Procedural Map""
-
-REM   server.randomize_seed picks a new seed on every start, and so a new
-REM     map on every restart: that belongs in a wipe script, never here.
-if defined SERVER_SEED set "ARGS=!ARGS! +server.seed !SERVER_SEED!"
-
-if defined SERVER_WORLDSIZE set "ARGS=!ARGS! +server.worldsize !SERVER_WORLDSIZE!"
 
 REM   server.levelurl -- Custom map URL. Replaces level, seed and
 REM     worldsize -- do not set both.
@@ -445,9 +449,10 @@ REM     this machine's address in DHCP when you forward the ports: if the
 REM     lease moves, every forward breaks at once.
 REM ----------------------------------------------------------------------
 
-if defined SERVER_PORT set "ARGS=!ARGS! +server.port !SERVER_PORT!"
-if defined SERVER_QUERYPORT set "ARGS=!ARGS! +server.queryport !SERVER_QUERYPORT!"
-if defined RCON_PORT set "ARGS=!ARGS! +rcon.port !RCON_PORT!"
+REM   From section 1.
+if defined SERVER_PORT       set "ARGS=!ARGS! +server.port !SERVER_PORT!"
+if defined SERVER_QUERYPORT  set "ARGS=!ARGS! +server.queryport !SERVER_QUERYPORT!"
+if defined RCON_PORT         set "ARGS=!ARGS! +rcon.port !RCON_PORT!"
 if defined SERVER_MAXPLAYERS set "ARGS=!ARGS! +server.maxplayers !SERVER_MAXPLAYERS!"
 
 REM   server.ip -- Bind address. Leave alone unless the machine is multi-
@@ -472,9 +477,10 @@ REM     What people see before they join. The name, description and tags
 REM     are set in section 1.
 REM ----------------------------------------------------------------------
 
-if defined SERVER_HOSTNAME set "ARGS=!ARGS! +server.hostname "!SERVER_HOSTNAME!""
+REM   From section 1.
+if defined SERVER_HOSTNAME    set "ARGS=!ARGS! +server.hostname "!SERVER_HOSTNAME!""
 if defined SERVER_DESCRIPTION set "ARGS=!ARGS! +server.description "!SERVER_DESCRIPTION!""
-if defined SERVER_TAGS set "ARGS=!ARGS! +server.tags "!SERVER_TAGS!""
+if defined SERVER_TAGS        set "ARGS=!ARGS! +server.tags "!SERVER_TAGS!""
 
 REM   server.headerimage -- 512x256 banner. Direct image URL, not a page
 REM     containing one.
@@ -1819,7 +1825,7 @@ REM     release by tools/launcher-hash.sh; section 6b hands everything from
 REM     the #HOTWIRE-EDITS line down to PowerShell, so it is written as
 REM     ordinary PowerShell rather than through cmd's quoting rules.
 REM ======================================================================
-HOTWIRE_LAUNCHER_HASH="0122849b8d99db50e09ad0b5e27ce40bff3e7d99d3c12b5b9f7c0daa9f9b8473"
+HOTWIRE_LAUNCHER_HASH="b9d1bc2c09789d7f3dfeaccaa16241712a52ac899ae6186585e420325c3be992"
 
 #HOTWIRE-EDITS
 # Wipes and permanent convars, for hotwire.bat (capabilities: wipe, convar_persist).

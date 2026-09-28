@@ -670,7 +670,7 @@ RUST_APPID="258550"
 # branch, these change in the same commit (and so does $PinnedHashes in hotwire-setup.ps1 for Hotwire.cs),
 # or every install stops at a hash mismatch. Third-party downloads (SteamCMD from Ubuntu's archive, Oxide
 # from GitHub) are not pinned: Oxide is checked against the SHA-256 GitHub publishes for it instead.
-PIN_LAUNCHER="47b716f736839d5261edf0f08bf56b9800f828b0913fc67243da75860784ac9f"
+PIN_LAUNCHER="b599ccd16555ce5471f4014512ad7e0f51e755593953b3e48d3ce4c3b84d84d0"
 PIN_PLUGIN="886ba405512e30ce633891a3fb8e73bce3e68be8694e804fadd1ed4e03de0472"
 
 # Rust's own floor (wiki.facepunch.com/rust/Creating-a-server), warned about and never enforced. A small

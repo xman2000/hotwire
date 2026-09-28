@@ -12,11 +12,16 @@
 # === HOTWIRE SETTINGS BEGIN ===========================================
 #  1. YOUR SERVER
 #
-#     The settings most servers change. An empty value uses the game's
-#     own default, shown in brackets. Write each value between the double
-#     quotes, and never use " $ ` or \ in one. Every other convar is in
-#     section 3. The RCON password is in secrets.sh, not here.
+#     An empty value uses the game's default, shown in brackets.
+#     Write each value between the double quotes, and never use
+#     " $ or ` in one.
+#     Every other convar is in section 3. The RCON password is in
+#     secrets.sh.
 # ======================================================================
+
+# ----------------------------------------------------------------------
+#  1.1  THE SERVER
+# ----------------------------------------------------------------------
 
 #  +server.hostname [default: "My Untitled Rust Server"]
 #  The name in the server browser.
@@ -26,15 +31,19 @@ SERVER_HOSTNAME=""
 #  Shown with your server in the server browser. \n starts a new line.
 SERVER_DESCRIPTION=""
 
-#  +server.tags [default: none]
-#  Browser filter tags, comma separated, no spaces. The browser filters
-#  on these: monthly biweekly weekly, vanilla softcore hardcore primitive
-#  pve, roleplay creative minigame training battlefield builds, and a
-#  region such as NA or EU. Tags it does not filter on have no effect.
+#  +server.tags [default: UNKNOWN]
+#  Browser filter tags, separated by commas, with no spaces. For example:
+#    monthly,vanilla,NA
+#  The tags the browser filters on:
+#    wipe schedule   monthly, biweekly, weekly
+#    ruleset         vanilla, softcore, hardcore, primitive, pve
+#    style           roleplay, creative, minigame, training,
+#                    battlefield, builds
+#    region          a region tag, such as NA or EU
 SERVER_TAGS=""
 
 #  +server.maxplayers [default: 500]
-#  Player slots. A whole number.
+#  Player slots.
 SERVER_MAXPLAYERS=""
 
 #  +server.identity [default: "my_server_identity"]
@@ -44,29 +53,28 @@ SERVER_MAXPLAYERS=""
 SERVER_IDENTITY=""
 
 #  +server.seed [default: 1337]
-#  The map. A whole number from 0 to 2147483647. The same seed and size
-#  always make the same map, so left empty the server plays the same map
-#  as every server left at the default. hotwire-setup writes a random
-#  seed here for a new server. Changing it on a server that has been
-#  played starts a new map, which wipes everything built on the old one.
+#  The map. Any whole number from 0 to 2147483647. hotwire-setup picks a
+#  random one for a new server. Changing it wipes the map.
 SERVER_SEED=""
 
 #  +server.worldsize [default: 4500]
-#  Map width in metres, 1000 to 6000. Bigger maps boot slower and use
-#  more memory. Changing it starts a new map.
+#  Map width in meters, 1000 to 6000. Bigger maps boot slower and use
+#  more memory. Changing it wipes the map.
 SERVER_WORLDSIZE=""
 
-#  Ports. Forward the game and query ports at your router, and nothing
-#  else. Every server on this machine needs its own three.
+# ----------------------------------------------------------------------
+#  1.2  PORTS -- forward the game and query ports at your router, and
+#       nothing else. Each server on this machine needs its own three.
+# ----------------------------------------------------------------------
 
 #  +server.port [default: 28015]
 #  Game traffic, UDP.
 SERVER_PORT="28015"
 
-#  +server.queryport [default: 0, one above the higher of the other two]
-#  The server browser, UDP. If this is wrong the server runs but nobody
-#  can see it. Do not use 27015, or anything from 27000 to 27030: that
-#  is Steam's own range, and on a machine that also runs Steam the client
+#  +server.queryport [default: 0]
+#  Server browser, UDP. If this is wrong the server runs but nobody can
+#  see it. Do not use 27015, or anything from 27000 to 27030: that is
+#  Steam's own range, and on a machine that also runs Steam the client
 #  can take the port and hide your server from the browser.
 SERVER_QUERYPORT="28017"
 
@@ -74,6 +82,7 @@ SERVER_QUERYPORT="28017"
 #  Remote console, TCP. Never forward this port. RCON is not encrypted:
 #  the password crosses the network in plain text.
 RCON_PORT="28016"
+
 # === HOTWIRE SETTINGS END =============================================
 
 # --- Launcher identity. Not settings; do not edit.
@@ -85,7 +94,7 @@ RCON_PORT="28016"
 #     number, are what a feature is gated on.
 HOTWIRE_LAUNCHER_VERSION="1.1.1-linux"
 HOTWIRE_LAUNCHER_CAPABILITIES="supervise,update,framework_verify,crash_backstop,log_rotate,convar_persist,wipe,backup"
-HOTWIRE_LAUNCHER_HASH="5cc848aa2e81a7c10d8e58041a3109e9c7675cff76874aec0f838ed00fea7bc0"
+HOTWIRE_LAUNCHER_HASH="a48fa65420c8dee02b2eb7ca3a6d43b8d775a2a3748b3d7c15d4a7a1083f7e23"
 
 # ======================================================================
 #  HOW THIS LAUNCHER WORKS
@@ -109,19 +118,27 @@ HOTWIRE_LAUNCHER_HASH="5cc848aa2e81a7c10d8e58041a3109e9c7675cff76874aec0f838ed00
 #   download is taken unverified, with a warning, exactly as the guide
 #   describes.
 #
+#   Setup:
+#     1. Section 1: name the server, and check its ports.
+#     2. Copy secrets.example.sh to secrets.sh and set RCON_PASSWORD.
+#     3. Section 2: check STEAMCMD. ROOT is this file's own folder, so
+#        keep hotwire.sh beside RustDedicated.
+#     4. Section 3: add any other convars you need.
+#     5. Run ./hotwire.sh check, then ./hotwire.sh.
+#
 #   Usage:
 #     ./hotwire.sh          start (or resume) the supervised server
 #     ./hotwire.sh check    run every check and report, but do not start
 #
 # ======================================================================
 
-# ======================================================================
 # === HOTWIRE SETTINGS BEGIN ===========================================
-#   Sections 1, 2 and 3 are yours to edit. All three are left out of
-#   the launcher's code hash, so changing a setting never marks the
-#   launcher "modified" or turns off a panel feature.
-#
 #  2. LAUNCHER SETTINGS
+#
+#     How the launcher behaves: where things are, updates, restarts, logs
+#     and backups. Sections 1, 2 and 3 are yours to edit and are left out
+#     of the launcher's code hash, so changing a setting never marks the
+#     launcher "modified" or turns off a panel feature.
 # ======================================================================
 
 # -- Where things are ---------------------------------------------------
@@ -231,7 +248,7 @@ BACKUPS="1"
 SERVER_LEVEL="Procedural Map"
 SERVER_LEVELURL=""
 
-# -- RCON -----------------------------------------------------------------
+# -- RCON ---------------------------------------------------------------
 # 1 = WebSocket RCON, which is what current tools expect.
 RCON_WEB="1"
 
@@ -242,9 +259,7 @@ RCON_WEB="1"
 #EXTRA_CONVARS+=( "+server.printReportsToConsole" "1" )
 EXTRA_CONVARS=()
 
-# ======================================================================
 # === HOTWIRE SETTINGS END =============================================
-# ======================================================================
 
 set -uo pipefail
 
