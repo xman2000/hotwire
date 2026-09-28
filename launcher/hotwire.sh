@@ -1,118 +1,29 @@
 #!/usr/bin/env bash
 #
 # ==[ H O T W I R E ]===================================================
-#  Hotwire launcher for Linux, version 1.1.1-linux (2026-09-27)
+#  Hotwire launcher for Linux, version 1.1.2-linux (2026-09-28)
 #  Built by xman2000 and Claude.  MIT License.
 #  https://github.com/xman2000/hotwire
 #
-#  Fill in section 1, then run "./hotwire.sh check". How the launcher
-#  works, and every other setting, comes after section 1.
-# ======================================================================
-
-# === HOTWIRE SETTINGS BEGIN ===========================================
-#  1. YOUR SERVER
+#  Your settings are in hotwire.cfg, beside this file, and the RCON
+#  password is in hotwire-secrets.cfg. This file holds no settings:
+#  replace it with a newer release and nothing of yours changes.
 #
-#     An empty value uses the game's default, shown in brackets.
-#     Write each value between the double quotes, and never use
-#     " $ or ` in one.
-#     Every other convar is in section 3. The RCON password is in
-#     secrets.sh.
+#  Usage:
+#    ./hotwire.sh          start (or resume) the supervised server
+#    ./hotwire.sh check    check everything and report, but do not start
 # ======================================================================
-
-# ----------------------------------------------------------------------
-#  1.1  THE SERVER
-# ----------------------------------------------------------------------
-
-#  +server.hostname [default: "My Untitled Rust Server"]
-#  The name in the server browser.
-SERVER_HOSTNAME=""
-
-#  +server.description [default: "No server description has been provided."]
-#  Shown with your server in the server browser. \n starts a new line.
-SERVER_DESCRIPTION=""
-
-#  +server.tags [default: UNKNOWN]
-#  Browser filter tags, separated by commas, with no spaces. For example:
-#    monthly,vanilla,NA
-#  The tags the browser filters on:
-#    wipe schedule   monthly, biweekly, weekly
-#    ruleset         vanilla, softcore, hardcore, primitive, pve
-#    style           roleplay, creative, minigame, training,
-#                    battlefield, builds
-#    region          a region tag, such as NA or EU
-SERVER_TAGS=""
-
-#  +server.maxplayers [default: 500]
-#  Player slots.
-SERVER_MAXPLAYERS=""
-
-#  +server.identity [default: "my_server_identity"]
-#  The folder under server/ that holds the map, blueprints and bans.
-#  Short, lower case, no spaces. Changing it later starts a new, empty
-#  server and leaves the old one on disk.
-SERVER_IDENTITY=""
-
-#  +server.seed [default: 1337]
-#  The map. Any whole number from 0 to 2147483647. hotwire-setup picks a
-#  random one for a new server. Changing it wipes the map.
-SERVER_SEED=""
-
-#  +server.worldsize [default: 4500]
-#  Map width in meters, 1000 to 6000. Bigger maps boot slower and use
-#  more memory. Changing it wipes the map.
-SERVER_WORLDSIZE=""
-
-# ----------------------------------------------------------------------
-#  1.2  PORTS -- forward the game and query ports at your router, and
-#       nothing else. Each server on this machine needs its own three.
-# ----------------------------------------------------------------------
-
-#  +server.port [default: 28015]
-#  Game traffic, UDP.
-SERVER_PORT="28015"
-
-#  +server.queryport [default: 0]
-#  Server browser, UDP. If this is wrong the server runs but nobody can
-#  see it. Do not use 27015, or anything from 27000 to 27030: that is
-#  Steam's own range, and on a machine that also runs Steam the client
-#  can take the port and hide your server from the browser.
-SERVER_QUERYPORT="28017"
-
-#  +rcon.port [default: 0]
-#  Remote console, TCP. Never forward this port. RCON is not encrypted:
-#  the password crosses the network in plain text.
-RCON_PORT="28016"
-
-# ----------------------------------------------------------------------
-#  1.3  UPDATES
-# ----------------------------------------------------------------------
-
-#  When Rust and Oxide are updated.
-#    auto      As hotwire while the Hotwire plugin has an update scheduled,
-#              otherwise as always. The plugin says so in UPDATE.schedule,
-#              which it keeps fresh; missing or over two hours old, this
-#              start updates. Leave it on auto unless you have a reason.
-#    always    Every start. Restarts take longer and the server is never
-#              behind.
-#    hotwire   When the plugin asks, when Steam has a newer build, when the
-#              launcher cannot tell whether Steam has one, or after
-#              MAX_DAYS_WITHOUT_UPDATE days (section 2). Restarts are quick.
-#    off       Never. A flag file is left in place and the console says
-#              so. For a server whose files are managed some other way.
-UPDATE_MODE="auto"
-
-# === HOTWIRE SETTINGS END =============================================
 
 # --- Launcher identity. Not settings; do not edit.
 #     HOTWIRE_LAUNCHER_HASH is stamped by tools/launcher-hash.sh at release and
-#     is excluded from its own computation, as is the whole SETTINGS block, so an
-#     admin editing settings never changes the hash. The plugin recomputes the
-#     hash from these bytes to confirm this is an unmodified Hotwire launcher
-#     before it offers a launcher-editing feature. Capabilities, not the version
-#     number, are what a feature is gated on.
-HOTWIRE_LAUNCHER_VERSION="1.1.1-linux"
-HOTWIRE_LAUNCHER_CAPABILITIES="supervise,update,framework_verify,crash_backstop,log_rotate,convar_persist,wipe,backup"
-HOTWIRE_LAUNCHER_HASH="058df18b11f867d53f2add92ff9f6f7439c21ac8e11accfbee832600cd9d6093"
+#     is left out of its own computation. The plugin recomputes the hash from
+#     these bytes to confirm this is an unmodified Hotwire launcher before it
+#     offers a launcher-editing feature. Capabilities, not the version number,
+#     are what a feature is gated on; settings_file says the settings are read
+#     from hotwire.cfg.
+HOTWIRE_LAUNCHER_VERSION="1.1.2-linux"
+HOTWIRE_LAUNCHER_CAPABILITIES="supervise,update,framework_verify,crash_backstop,log_rotate,convar_persist,wipe,backup,settings_file"
+HOTWIRE_LAUNCHER_HASH="a88556cf5a0274be4912d6607006391f48810c83d2d17eee3398743f7f023b0c"
 
 # ======================================================================
 #  HOW THIS LAUNCHER WORKS
@@ -123,158 +34,76 @@ HOTWIRE_LAUNCHER_HASH="058df18b11f867d53f2add92ff9f6f7439c21ac8e11accfbee832600c
 #   and stops trying only when a server crashes over and over (so a
 #   broken server does not thrash forever).
 #
-#   THE PANEL NEVER REACHES IN. There is no inbound path: the plugin and the
-#   launcher speak only through the local flag file (UPDATE.flag / VALIDATE.flag),
-#   and the launcher reports OUTWARD to the panel as the contract's `script`
-#   component -- signed with the script key, best-effort, spooled on failure, and
-#   never able to block or fail the server (rule 1). It reports only what only it
-#   knows: how a run ended, the update outcome, and a crash-streak stop. It sends
-#   findings and facts; a file never travels.
+#   YOUR SETTINGS ARE DATA. hotwire.cfg and hotwire-secrets.cfg are read,
+#   one "name value" line at a time, and never run: a line that is not a
+#   setting is ignored and named by "./hotwire.sh check". Values reach Rust
+#   as separate arguments, never through a shell, so no character in one
+#   can break anything. The start-script converter on afkpanel.com makes a
+#   hotwire.cfg from an old start script; it can never make code.
 #
-#   Requires: bash 4+, curl, unzip, and flock (util-linux); zstd for backups. jq is used
-#   for the Oxide SHA-256 verification when present; without it the
-#   download is taken unverified, with a warning, exactly as the guide
-#   describes.
+#   YOUR OWN COMMANDS go in hotwire-before.sh (run before every start) and
+#   hotwire-after.sh (run after an update), beside this file. Copy the
+#   .example files to begin. A hook that fails is logged, and the server
+#   starts anyway; check mode runs no hook.
+#
+#   THE PANEL NEVER REACHES IN. There is no inbound path: the plugin and the
+#   launcher speak only through local files (UPDATE.flag / VALIDATE.flag,
+#   WIPE.flag, CONVAR.request), and the launcher reports OUTWARD to the panel
+#   as the contract's `script` component -- signed with the script key,
+#   best-effort, spooled on failure, and never able to block or fail the
+#   server (rule 1). It reports only what only it knows: how a run ended, the
+#   update outcome, and a crash-streak stop. It sends findings and facts; a
+#   file never travels.
+#
+#   Requires: bash 4+, curl, unzip, and flock (util-linux); zstd for backups.
+#   jq is used for the Oxide SHA-256 verification when present; without it
+#   the download is taken unverified, with a warning.
 #
 #   Setup:
-#     1. Section 1: name the server, and check its ports.
-#     2. Copy secrets.example.sh to secrets.sh and set RCON_PASSWORD.
-#     3. Section 2: check STEAMCMD. ROOT is this file's own folder, so
-#        keep hotwire.sh beside RustDedicated.
-#     4. Section 3: add any other convars you need.
-#     5. Run ./hotwire.sh check, then ./hotwire.sh.
-#
-#   Usage:
-#     ./hotwire.sh          start (or resume) the supervised server
-#     ./hotwire.sh check    run every check and report, but do not start
+#     1. Copy hotwire.example.cfg to hotwire.cfg and fill in sections 1 and 2.
+#     2. Copy hotwire-secrets.example.cfg to hotwire-secrets.cfg and set the
+#        RCON password.
+#     3. Keep hotwire.sh beside RustDedicated: its own folder is the server's.
+#     4. Run ./hotwire.sh check, then ./hotwire.sh.
 #
 # ======================================================================
 
-# === HOTWIRE SETTINGS BEGIN ===========================================
-#  2. LAUNCHER SETTINGS
-#
-#     How the launcher behaves: where things are, updates, restarts, logs
-#     and backups. Sections 1, 2 and 3 are yours to edit and are left out
-#     of the launcher's code hash, so changing a setting never marks the
-#     launcher "modified" or turns off a panel feature.
-# ======================================================================
-
-# -- Where things are ---------------------------------------------------
-# ROOT is worked out from this script's own location, so a copied server
-# folder brings its launcher with it. Leave it unless you know better.
+# ------------------------------------------------------ fixed, not settings ----
+# Where code comes from is never a setting: hotwire.cfg is data that other tools
+# may write, and data must never be able to say what gets downloaded or run.
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
-# The steamcmd executable. The Ubuntu package installs it here; other
-# distributions differ. Several servers may share one steamcmd.
-STEAMCMD="/usr/games/steamcmd"
-
-# Rust's Steam app id. Do not change this.
 APPID="258550"
-
-# Steam branch. "public" is the live game. Empty lets Steam keep the last one.
-STEAM_BRANCH="public"
-
-# -- Updating -----------------------------------------------------------
-# UPDATE_MODE, when updates happen, is in section 1.
-
-# The flag files the plugin writes to ask for an update. Must match the
-# plugin's config. UPDATE = update; VALIDATE = update and re-verify every file.
 UPDATE_FLAG="UPDATE.flag"
 VALIDATE_FLAG="VALIDATE.flag"
-# The wipe flag the plugin writes (must match the plugin's config). A wipe is a
-# restart with this flag: the launcher reads it between runs and changes the map.
 WIPE_FLAG="WIPE.flag"
-
-# hotwire mode only: force an update after this many days without one. 0 = off.
-MAX_DAYS_WITHOUT_UPDATE="14"
-
-# steamcmd attempts before giving up and starting what is on disk.
-MAX_STEAM_TRIES="5"
-# Seconds between steamcmd attempts.
-STEAM_RETRY_SECONDS="60"
-# Minutes to wait for another server's steamcmd run (the shared lock) before
-# giving up on updating this pass and starting as-is.
-STEAMCMD_WAIT_MINUTES="60"
-
-# -- The "am I behind?" build check (hotwire mode) ----------------------
-# Cache lifetime in hours for the Steam build check. 0 disables the check.
-BUILD_CHECK_HOURS="6"
-# Update when Steam's build is newer than the installed one. Needs the check on.
-UPDATE_ON_NEW_BUILD="1"
-
-# -- Oxide (the framework) ----------------------------------------------
-# 1 = install/refresh Oxide with the server; 0 = vanilla, never touched.
-INSTALL_FRAMEWORK="1"
-# 1 = skip re-extracting Oxide when neither it nor the game changed.
-SKIP_UNCHANGED_FRAMEWORK="1"
-# Verify the Oxide download against GitHub's published SHA-256 before extracting.
-VERIFY_FRAMEWORK="1"
-# The umod feed publishing Oxide's current version (used for the skip check).
 FRAMEWORK_FEED="https://assets.umod.org/games/rust.json"
-# The Linux Oxide build and where its SHA-256 is published.
 FRAMEWORK_RELEASES="https://api.github.com/repos/OxideMod/Oxide.Rust/releases/latest"
 FRAMEWORK_ASSET="Oxide.Rust-linux.zip"
 FRAMEWORK_URL="https://github.com/OxideMod/Oxide.Rust/releases/latest/download/Oxide.Rust-linux.zip"
+CFG="$ROOT/hotwire.cfg"
+SECRETS_CFG="$ROOT/hotwire-secrets.cfg"
+HOOK_BEFORE="$ROOT/hotwire-before.sh"
+HOOK_AFTER="$ROOT/hotwire-after.sh"
 
-# -- Restarting and crashes ---------------------------------------------
-# 1 = relaunch the server when it exits; 0 = the launcher stops when it does.
-RESTART_ON_EXIT="1"
-# Seconds to wait before a normal relaunch (grows on repeated crashes).
-RESTART_DELAY="15"
-# A run shorter than this many seconds counts as a crash, not a restart.
-CRASH_SECONDS="60"
-# Consecutive crashes before the launcher stops. 0 = never stop.
-MAX_CRASH_STREAK="10"
-# 1 = wait longer after repeated crashes (30, 60, 120, 300s). 0 = always the delay above.
-CRASH_BACKOFF="1"
-
-# -- Logs ---------------------------------------------------------------
-# 1 = keep each run's log; 0 lets the server truncate it every start.
-ROTATE_LOGS="1"
-# How many rotated logs to keep. Cannot be 0.
-LOG_KEEP="14"
-
-# -- Safety and hooks ---------------------------------------------------
-# Shortest RCON password allowed. Cannot be 0 (an empty password crashes Rust).
-RCON_PASSWORD_MIN="8"
-# 1 = check the convar list below before starting; 0 = skip the check.
-CHECK_OPTIONS="1"
-# Commands to run before every start (HOOK_BEFORE) and after an update (HOOK_AFTER).
-HOOK_BEFORE=""
-HOOK_AFTER=""
-
-# -- Backups ------------------------------------------------------------
-# 1 = carry out the backups Hotwire asks for. It asks only when backups are on
-# in its own config and the panel's plan includes them; what to back up, how
-# often and how many to keep are Hotwire's settings. 0 = never back up here,
-# whatever is asked. Backups go to backup/<save folder name>/ in this folder.
-BACKUPS="1"
-# === HOTWIRE SETTINGS END =============================================
-
-# === HOTWIRE SETTINGS BEGIN ===========================================
-#  3. SERVER OPTIONS
-#
-#     The name, map and ports are in section 1. These are the rest.
-# ======================================================================
-
-# -- The map ------------------------------------------------------------
-# Leave the level as it is for a generated map. A custom map URL replaces
-# the level, the seed and the world size.
-SERVER_LEVEL="Procedural Map"
-SERVER_LEVELURL=""
-
-# -- RCON ---------------------------------------------------------------
-# 1 = WebSocket RCON, which is what current tools expect.
-RCON_WEB="1"
-
-# -- Extra convars ------------------------------------------------------
-# Add one per line, uncommented, exactly as you would on the command line.
-# Examples (remove the '#' to use):
-#EXTRA_CONVARS+=( "+server.saveinterval" "300" )
-#EXTRA_CONVARS+=( "+server.printReportsToConsole" "1" )
-EXTRA_CONVARS=()
-
-# === HOTWIRE SETTINGS END =============================================
+# ---------------------------------------------- the defaults hotwire.cfg changes ----
+# Every value here is what the launcher uses when hotwire.cfg leaves it out. They
+# are set again before every read of the file, so a setting removed from it goes
+# back to its default on the next start.
+set_defaults() {
+    SERVER_HOSTNAME=""; SERVER_DESCRIPTION=""; SERVER_TAGS=""; SERVER_MAXPLAYERS=""
+    SERVER_IDENTITY=""; SERVER_SEED=""; SERVER_WORLDSIZE=""
+    SERVER_PORT="28015"; SERVER_QUERYPORT="28017"; RCON_PORT="28016"
+    SERVER_LEVEL="Procedural Map"; SERVER_LEVELURL=""; RCON_WEB="1"
+    UPDATE_MODE="auto"
+    STEAMCMD="/usr/games/steamcmd"; STEAM_BRANCH="public"
+    MAX_DAYS_WITHOUT_UPDATE="14"; MAX_STEAM_TRIES="5"; STEAM_RETRY_SECONDS="60"; STEAMCMD_WAIT_MINUTES="60"
+    BUILD_CHECK_HOURS="6"; UPDATE_ON_NEW_BUILD="1"
+    INSTALL_FRAMEWORK="1"; SKIP_UNCHANGED_FRAMEWORK="1"; VERIFY_FRAMEWORK="1"
+    RESTART_ON_EXIT="1"; RESTART_DELAY="15"; CRASH_SECONDS="60"; MAX_CRASH_STREAK="10"; CRASH_BACKOFF="1"
+    ROTATE_LOGS="1"; LOG_KEEP="14"; RCON_PASSWORD_MIN="8"; CHECK_OPTIONS="1"; BACKUPS="1"
+    EXTRA_CONVARS=()
+}
+set_defaults
 
 set -uo pipefail
 
@@ -338,7 +167,6 @@ STARTED_AT=""
 # (beside steamcmd) is not writable, unlike Windows. Override for a box whose
 # servers run as different users by pointing all of them at one shared path.
 STEAM_LOCK="${HOTWIRE_STEAMCMD_LOCK:-$HOME/.hotwire/steamcmd.lock}"
-SECRETS="$ROOT/secrets.sh"
 RUST_BIN="$ROOT/RustDedicated"
 APPMANIFEST="$ROOT/steamapps/appmanifest_${APPID}.acf"
 LAUNCHER_STATE="$ROOT/oxide/data/Hotwire/launcher.json"
@@ -346,61 +174,244 @@ LAUNCHER_STATE="$ROOT/oxide/data/Hotwire/launcher.json"
 CRASH_STREAK=0
 
 # ======================================================================
-# Section 4 -- settings validation. A wrong number here is caught now,
-# not with a broken server at three in the morning.
+# Section 4 -- reading hotwire.cfg and hotwire-secrets.cfg.
+#
+# Read as data, one line at a time, and never run. A line is a name, spaces,
+# then a value; a value with spaces is in double quotes and holds none inside;
+# no control characters. Each value is checked for what it sets before it is
+# used: a line that fails is ignored and named by check, and the default stays.
+# The few settings a wrong default would turn into a different server -- the
+# save folder, the map and the ports -- are not defaulted: a bad one stops the
+# first start, and on a later restart the last good settings are kept.
 # ======================================================================
-validate_settings() {
-    local bad_cfg=""
-    ROOT="${ROOT%/}"; STEAMCMD="${STEAMCMD%/}"
 
-    [ -z "$ROOT" ] && bad_cfg+=$'\n  ROOT is empty.'
-    case "$UPDATE_MODE" in
-        auto|always|hotwire|off) ;;
-        *) bad_cfg+=$'\n  UPDATE_MODE must be auto, always, hotwire or off.' ;;
+# hotwire.<name> -> "<VARIABLE> <kind>"
+declare -A HW_SETTINGS=(
+    [hotwire.update_mode]="UPDATE_MODE mode"
+    [hotwire.steamcmd]="STEAMCMD steamcmd"
+    [hotwire.steam_branch]="STEAM_BRANCH word"
+    [hotwire.max_days_without_update]="MAX_DAYS_WITHOUT_UPDATE int"
+    [hotwire.update_on_new_build]="UPDATE_ON_NEW_BUILD bool"
+    [hotwire.build_check_hours]="BUILD_CHECK_HOURS int"
+    [hotwire.steam_tries]="MAX_STEAM_TRIES int1"
+    [hotwire.steam_retry_seconds]="STEAM_RETRY_SECONDS int"
+    [hotwire.steamcmd_wait_minutes]="STEAMCMD_WAIT_MINUTES int"
+    [hotwire.install_framework]="INSTALL_FRAMEWORK bool"
+    [hotwire.skip_unchanged_framework]="SKIP_UNCHANGED_FRAMEWORK bool"
+    [hotwire.verify_framework]="VERIFY_FRAMEWORK bool"
+    [hotwire.restart_on_exit]="RESTART_ON_EXIT bool"
+    [hotwire.restart_delay]="RESTART_DELAY int"
+    [hotwire.crash_seconds]="CRASH_SECONDS int"
+    [hotwire.max_crash_streak]="MAX_CRASH_STREAK int"
+    [hotwire.crash_backoff]="CRASH_BACKOFF bool"
+    [hotwire.rotate_logs]="ROTATE_LOGS bool"
+    [hotwire.log_keep]="LOG_KEEP int1"
+    [hotwire.rcon_password_min]="RCON_PASSWORD_MIN int1"
+    [hotwire.check_options]="CHECK_OPTIONS bool"
+    [hotwire.backups]="BACKUPS bool"
+)
+# Rust convars the launcher itself reads -> "<VARIABLE> <kind>". "critical" kinds
+# are never defaulted when a line fails (see above).
+declare -A CV_SETTINGS=(
+    [server.hostname]="SERVER_HOSTNAME text"
+    [server.description]="SERVER_DESCRIPTION text"
+    [server.tags]="SERVER_TAGS tags"
+    [server.maxplayers]="SERVER_MAXPLAYERS int"
+    [server.identity]="SERVER_IDENTITY identity"
+    [server.seed]="SERVER_SEED seed"
+    [server.worldsize]="SERVER_WORLDSIZE worldsize"
+    [server.port]="SERVER_PORT port"
+    [server.queryport]="SERVER_QUERYPORT port"
+    [rcon.port]="RCON_PORT port"
+    [server.level]="SERVER_LEVEL text"
+    [server.levelurl]="SERVER_LEVELURL url"
+    [rcon.web]="RCON_WEB bool"
+)
+
+CFG_PROBLEMS=()   # "line N: name: why" for every line that was not used
+CFG_FATAL=()      # the ones that stop a start
+CFG_UNKNOWN=()    # convar names not in the file's own list, for the option check
+
+# cfg_line <text> -> CFG_NAME, CFG_VALUE; or CFG_WHY and a non-zero return.
+cfg_line() {
+    local l="$1" v
+    CFG_NAME=""; CFG_VALUE=""; CFG_WHY=""
+    if ! [[ "$l" =~ ^([A-Za-z][A-Za-z0-9_]*(\.[A-Za-z0-9_]+)+)([[:space:]]+(.*))?$ ]]; then
+        CFG_WHY="not a setting: a name, a space, then a value"; return 1
+    fi
+    CFG_NAME="${BASH_REMATCH[1]}"; v="${BASH_REMATCH[4]}"
+    v="${v%"${v##*[![:space:]]}"}"
+    if [[ "$v" == '"'* ]]; then
+        if [[ "$v" =~ ^\"([^\"]*)\"$ ]]; then v="${BASH_REMATCH[1]}"
+        else CFG_WHY="a quoted value must start and end with a double quote, and hold none inside"; return 1; fi
+    elif [[ "$v" == *[[:space:]]* ]]; then CFG_WHY="a value with spaces must be in double quotes"; return 1
+    elif [[ "$v" == *'"'* ]]; then CFG_WHY="a double quote inside the value"; return 1
+    fi
+    if [[ "$v" =~ [[:cntrl:]] ]]; then CFG_WHY="a control character in the value"; return 1; fi
+    [ "${#v}" -gt 1024 ] && { CFG_WHY="longer than 1024 characters"; return 1; }
+    CFG_VALUE="$v"; return 0
+}
+
+# cfg_check <kind> <value> -> 0, or CFG_WHY and a non-zero return. An empty value
+# always passes: it means "the default".
+cfg_check() {
+    local kind="$1" v="$2"
+    CFG_WHY=""
+    [ -z "$v" ] && return 0
+    case "$kind" in
+        int)   [[ "$v" =~ ^[0-9]{1,9}$ ]] || CFG_WHY="must be a whole number" ;;
+        int1)  { [[ "$v" =~ ^[0-9]{1,9}$ ]] && [ "$v" -ge 1 ]; } || CFG_WHY="must be a whole number of 1 or more" ;;
+        bool)  [[ "$v" =~ ^[01]$ ]] || CFG_WHY="must be 0 or 1" ;;
+        mode)  [[ "$v" =~ ^(auto|always|hotwire|off)$ ]] || CFG_WHY="must be auto, always, hotwire or off" ;;
+        word)  [[ "$v" =~ ^[A-Za-z0-9_.-]+$ ]] || CFG_WHY="letters, digits, _ . - only" ;;
+        steamcmd) { [[ "$v" == /* ]] && [[ "$(basename "$v")" =~ ^steamcmd(\.sh)?$ ]]; } || CFG_WHY="must be a full path to steamcmd or steamcmd.sh" ;;
+        text)  : ;;
+        tags)  [[ "$v" =~ ^[A-Za-z0-9,_-]+$ ]] || CFG_WHY="tags separated by commas, with no spaces" ;;
+        identity) [[ "$v" =~ ^[A-Za-z0-9_-]{1,64}$ ]] || CFG_WHY="letters, digits, _ and - only: it names a folder" ;;
+        seed)  { [[ "$v" =~ ^[0-9]{1,10}$ ]] && [ "$v" -le 2147483647 ]; } || CFG_WHY="must be a whole number from 0 to 2147483647" ;;
+        worldsize) { [[ "$v" =~ ^[0-9]{4}$ ]] && [ "$v" -ge 1000 ] && [ "$v" -le 6000 ]; } || CFG_WHY="must be a whole number from 1000 to 6000" ;;
+        port)  { [[ "$v" =~ ^[0-9]{1,5}$ ]] && [ "$v" -ge 1 ] && [ "$v" -le 65535 ]; } || CFG_WHY="must be a port number from 1 to 65535" ;;
+        url)   [[ "$v" =~ ^https?://[^[:space:]]+$ ]] || CFG_WHY="must be an http:// or https:// address" ;;
+        *)     CFG_WHY="unknown kind $kind" ;;
     esac
-    [ -z "$UPDATE_FLAG" ]   && bad_cfg+=$'\n  UPDATE_FLAG is empty.'
-    [ -z "$VALIDATE_FLAG" ] && bad_cfg+=$'\n  VALIDATE_FLAG is empty.'
+    [ -z "$CFG_WHY" ]
+}
 
-    local n
-    for n in MAX_DAYS_WITHOUT_UPDATE MAX_STEAM_TRIES STEAM_RETRY_SECONDS \
-             STEAMCMD_WAIT_MINUTES LOG_KEEP RESTART_DELAY CRASH_SECONDS \
-             MAX_CRASH_STREAK RCON_PASSWORD_MIN BUILD_CHECK_HOURS; do
-        case "${!n}" in
-            ''|*[!0-9]*) bad_cfg+=$'\n  '"$n must be a whole number (is '${!n}')." ;;
-        esac
+# The settings that turn into a different server when defaulted.
+cfg_critical() { case "$1" in identity|seed|worldsize|port|url) return 0 ;; esac; return 1; }
+
+# load_config: read hotwire.cfg into the settings. Returns non-zero when a
+# critical line failed (CFG_FATAL), in which case nothing is changed.
+load_config() {
+    CFG_PROBLEMS=(); CFG_FATAL=(); CFG_UNKNOWN=()
+    if [ ! -f "$CFG" ]; then
+        CFG_FATAL+=("hotwire.cfg is missing")
+        return 1
+    fi
+    local -A staged=() extra=() known=()
+    local -a order=()
+    local n=0 raw line name lower spec var kind listed=1
+    while IFS= read -r raw || [ -n "$raw" ]; do
+        n=$((n+1))
+        line="${raw%$'\r'}"
+        line="${line#"${line%%[![:space:]]*}"}"
+        # The file's own list is every name above its OTHER CONVARS heading, on or
+        # off (#name value): what the option check knows as spelled right. Names
+        # added below it are the ones worth a second look.
+        [[ "$line" == '#  OTHER CONVARS'* ]] && listed=0
+        if [[ "$line" =~ ^#([A-Za-z][A-Za-z0-9_]*(\.[A-Za-z0-9_]+)+)[[:space:]] ]]; then
+            [ "$listed" = 1 ] && known[${BASH_REMATCH[1],,}]=1; continue
+        fi
+        [ -z "$line" ] && continue
+        [[ "$line" == '#'* ]] && continue
+        if ! cfg_line "$line"; then CFG_PROBLEMS+=("line $n: $CFG_WHY"); continue; fi
+        name="$CFG_NAME"; lower="${name,,}"
+        [ "$listed" = 1 ] && known[$lower]=1
+        if [ "$lower" = "rcon.password" ]; then
+            CFG_PROBLEMS+=("line $n: rcon.password: belongs in hotwire-secrets.cfg, never here; ignored"); continue
+        fi
+        spec="${HW_SETTINGS[$lower]:-${CV_SETTINGS[$lower]:-}}"
+        if [ -n "$spec" ]; then
+            var="${spec%% *}"; kind="${spec#* }"
+            if ! cfg_check "$kind" "$CFG_VALUE"; then
+                if cfg_critical "$kind"; then CFG_FATAL+=("line $n: $name: $CFG_WHY")
+                else CFG_PROBLEMS+=("line $n: $name: $CFG_WHY; the default is used"); fi
+                continue
+            fi
+            staged[$var]="$CFG_VALUE"
+            continue
+        fi
+        if [[ "$lower" == hotwire.* ]]; then
+            CFG_PROBLEMS+=("line $n: $name: not a launcher setting; ignored"); continue
+        fi
+        # Any other Rust convar, passed through as it is. Empty means the default.
+        [ -z "$CFG_VALUE" ] && continue
+        [ -z "${extra[$lower]+x}" ] && order+=("$lower")
+        extra[$lower]="$name"$'\t'"$CFG_VALUE"
+    done < "$CFG"
+    [ "${#CFG_FATAL[@]}" -gt 0 ] && return 1
+
+    set_defaults
+    for var in "${!staged[@]}"; do printf -v "$var" '%s' "${staged[$var]}"; done
+    EXTRA_CONVARS=()
+    for lower in "${order[@]}"; do
+        EXTRA_CONVARS+=( "+${extra[$lower]%%$'\t'*}" "${extra[$lower]#*$'\t'}" )
+        [ -z "${known[$lower]+x}" ] && CFG_UNKNOWN+=("${extra[$lower]%%$'\t'*}")
     done
-    [ "$LOG_KEEP" = "0" ]          && bad_cfg+=$'\n  LOG_KEEP cannot be 0 (it would delete every log).'
-    [ "$MAX_STEAM_TRIES" = "0" ]   && bad_cfg+=$'\n  MAX_STEAM_TRIES cannot be 0.'
-    [ "$RCON_PASSWORD_MIN" = "0" ] && bad_cfg+=$'\n  RCON_PASSWORD_MIN cannot be 0 (an empty password crashes Rust).'
+    ROOT="${ROOT%/}"; STEAMCMD="${STEAMCMD%/}"
+    return 0
+}
 
-    # Backups never stop a start: a wrong value turns them off, with a warning.
-    : "${BACKUPS:=1}"
-    case "$BACKUPS" in 0|1) ;; *) warn "BACKUPS must be 0 or 1 (is '$BACKUPS'); backups are off until it is."; BACKUPS=0 ;; esac
-
-    if [ -n "$bad_cfg" ]; then
-        die "The launcher's settings need fixing before it can run:${bad_cfg}"
+# What check prints, and what a start logs in one line.
+report_config() {
+    local p
+    if [ "${#CFG_PROBLEMS[@]}" -eq 0 ]; then
+        ok "hotwire.cfg read: every line is a setting."
+    else
+        warn "hotwire.cfg: ${#CFG_PROBLEMS[@]} line(s) not used:"
+        for p in "${CFG_PROBLEMS[@]}"; do warn "  $p"; done
     fi
 }
 
+# First start: a missing file or a bad critical line stops here, with what to do.
+config_or_die() {
+    if load_config; then report_config; return 0; fi
+    if [ ! -f "$CFG" ]; then
+        die "No hotwire.cfg beside the launcher ($CFG).
+  A new server: copy hotwire.example.cfg to hotwire.cfg and fill in sections 1 and 2.
+  A server you already run: the start-script converter at https://afkpanel.com/get-started
+  makes one from your old start script.
+  Hotwire does not start without it: on the defaults it would open an empty save folder,
+  which looks like a wipe."
+    fi
+    local p msg="hotwire.cfg has settings that would change which server this is, so it does not start:"
+    for p in "${CFG_FATAL[@]}"; do msg+=$'\n'"  $p"; done
+    die "$msg"
+}
+
+# A later restart: keep the last good settings rather than stop a server that ran.
+# load_config changes nothing when it fails, so the last good values are still set.
+config_reload() {
+    if load_config; then
+        [ "${#CFG_PROBLEMS[@]}" -gt 0 ] && warn "hotwire.cfg: ${#CFG_PROBLEMS[@]} line(s) not used; ./hotwire.sh check lists them."
+        return 0
+    fi
+    rule
+    bad "hotwire.cfg changed and is not usable now; starting with the settings from the last start:"
+    local p; for p in "${CFG_FATAL[@]}"; do bad "  $p"; done
+    rule
+    return 0
+}
+
 # ======================================================================
-# Section 5 -- secrets and the RCON password.
+# Section 5 -- the RCON password, from hotwire-secrets.cfg. Read as data, like
+# hotwire.cfg; only rcon.password is taken from it.
 # ======================================================================
 load_secrets() {
-    if [ ! -f "$SECRETS" ]; then
-        die "No secrets file at $SECRETS. Copy secrets.example.sh to secrets.sh and set RCON_PASSWORD."
+    if [ ! -f "$SECRETS_CFG" ]; then
+        die "No hotwire-secrets.cfg beside the launcher. Copy hotwire-secrets.example.cfg to hotwire-secrets.cfg and set rcon.password."
     fi
-    # shellcheck disable=SC1090
-    . "$SECRETS"
-    if [ -z "${RCON_PASSWORD:-}" ]; then
-        die "secrets.sh did not set RCON_PASSWORD."
+    local raw line n=0
+    RCON_PASSWORD=""
+    while IFS= read -r raw || [ -n "$raw" ]; do
+        n=$((n+1))
+        line="${raw%$'\r'}"; line="${line#"${line%%[![:space:]]*}"}"
+        [ -z "$line" ] && continue
+        [[ "$line" == '#'* ]] && continue
+        if ! cfg_line "$line"; then warn "hotwire-secrets.cfg line $n: $CFG_WHY; ignored."; continue; fi
+        if [ "${CFG_NAME,,}" = "rcon.password" ]; then RCON_PASSWORD="$CFG_VALUE"
+        else warn "hotwire-secrets.cfg line $n: $CFG_NAME: only rcon.password belongs here; ignored."; fi
+    done < "$SECRETS_CFG"
+    if [ -z "$RCON_PASSWORD" ]; then
+        die "hotwire-secrets.cfg does not set rcon.password."
     fi
-    local len=${#RCON_PASSWORD}
     if [ "$RCON_PASSWORD" = "change_me" ]; then
-        die "RCON_PASSWORD is still the example 'change_me'. Set a real one in secrets.sh."
-    elif [ "$len" -lt "$RCON_PASSWORD_MIN" ]; then
-        die "RCON_PASSWORD is shorter than RCON_PASSWORD_MIN ($RCON_PASSWORD_MIN)."
-    elif [[ "$RCON_PASSWORD" == *'"'* ]]; then
-        die "RCON_PASSWORD contains a double quote, which Rust cannot accept. Choose another."
+        die "rcon.password is still the example 'change_me'. Set a real one in hotwire-secrets.cfg."
+    elif [ "${#RCON_PASSWORD}" -lt "$RCON_PASSWORD_MIN" ]; then
+        die "rcon.password is shorter than hotwire.rcon_password_min ($RCON_PASSWORD_MIN)."
+    fi
+    if [ -n "$(find "$SECRETS_CFG" -perm /o+r 2>/dev/null)" ]; then
+        warn "hotwire-secrets.cfg can be read by every user on this machine. chmod 600 it."
     fi
 }
 
@@ -516,19 +527,19 @@ decide_update_mode() {
         [ "$age" -ge 0 ] && [ "$age" -lt 7200 ] && UPDATE_EFFECTIVE="hotwire"
     fi
     if [ "$UPDATE_EFFECTIVE" = "hotwire" ]; then
-        log "UPDATE_MODE is auto: the Hotwire plugin schedules updates."
+        log "hotwire.update_mode is auto: the Hotwire plugin schedules updates."
     else
-        log "UPDATE_MODE is auto: no update schedule from the Hotwire plugin."
+        log "hotwire.update_mode is auto: no update schedule from the Hotwire plugin."
     fi
 }
 
 update_decision() {
     DO_UPDATE=0; DO_VALIDATE=0
     if [ "$UPDATE_EFFECTIVE" = "off" ]; then
-        [ -e "$ROOT/$UPDATE_FLAG" ] && log "UPDATE_MODE is off; leaving $UPDATE_FLAG in place, not acting on it."
+        [ -e "$ROOT/$UPDATE_FLAG" ] && log "hotwire.update_mode is off; leaving $UPDATE_FLAG in place, not acting on it."
         return 0
     fi
-    [ "$UPDATE_EFFECTIVE" = "always" ] && { log "UPDATE_MODE is $UPDATE_MODE -- updating before launch."; DO_UPDATE=1; return 0; }
+    [ "$UPDATE_EFFECTIVE" = "always" ] && { log "hotwire.update_mode is $UPDATE_MODE -- updating before launch."; DO_UPDATE=1; return 0; }
 
     # hotwire mode:
     if [ -e "$ROOT/$VALIDATE_FLAG" ]; then DO_UPDATE=1; DO_VALIDATE=1; return 0; fi
@@ -702,26 +713,14 @@ build_args() {
     [ "${#EXTRA_CONVARS[@]}" -gt 0 ] && ARGS+=( "${EXTRA_CONVARS[@]}" )
 }
 
-# A light option check: every convar starts with '+' and has a value.
+# The option check: a convar name that is not in hotwire.cfg's own list is
+# probably misspelled. A warning, never a stop: Rust ignores a name it does not
+# know, and the list is not every convar Rust has.
 check_options() {
-    [ "$CHECK_OPTIONS" = "0" ] && { log "Option check skipped."; return 0; }
-    local i=0 problems=0
-    while [ "$i" -lt "${#ARGS[@]}" ]; do
-        local a="${ARGS[$i]}"
-        case "$a" in
-            +*)
-                local dotted="${a#+}"
-                case "$dotted" in *.*) ;; *) warn "Convar '$a' has no dot; is it a real convar?"; problems=$((problems+1)) ;; esac
-                if [ $((i+1)) -ge "${#ARGS[@]}" ] || [[ "${ARGS[$((i+1))]}" == +* ]] || [[ "${ARGS[$((i+1))]}" == -* ]]; then
-                    warn "Convar '$a' has no value after it."; problems=$((problems+1))
-                fi ;;
-        esac
-        i=$((i+1))
-    done
-    if [ "$problems" -gt 0 ]; then
-        die "The option check found $problems problem(s) above. Fix the SETTINGS block, or set CHECK_OPTIONS=0 to bypass."
-    fi
-    ok "Options look sane."
+    [ "$CHECK_OPTIONS" = "0" ] && { log "Option check skipped (hotwire.check_options 0)."; return 0; }
+    local u
+    if [ "${#CFG_UNKNOWN[@]}" -eq 0 ]; then ok "Options look right."; return 0; fi
+    for u in "${CFG_UNKNOWN[@]}"; do warn "$u is not in hotwire.cfg's list of convars. Is it spelled right?"; done
 }
 
 # ======================================================================
@@ -872,22 +871,48 @@ report_launcher_stopped() {  # <detail>
 # Wipe (capability: wipe). A wipe is a restart with a flag, exactly as an update
 # is. The plugin announces, counts down, optionally backs up (Rust's own
 # server.backup), writes WIPE.flag and quits; the launcher reads the flag between
-# runs and changes the map by writing a new seed (and size) into its settings --
+# runs and changes the map by writing a new seed (and size) into hotwire.cfg --
 # Rust then finds no save by that name and generates a new world, and the old
 # save is simply left on disk. Blueprints are the admin's choice: kept, renamed
 # (recoverable), or deleted; player.tokens.db (Rust+ pairings) is never touched.
 #
-# Safety: seed/size are validated as plain integers before they are written into
-# a file the machine executes; a stale flag (past its expiry) or one already
+# Safety: seed/size are validated as plain integers before they are written; a stale flag (past its expiry) or one already
 # carried out this cycle never fires (the double-wipe guard); and if the new seed
 # cannot be written the wipe is CANCELLED and the server boots unchanged -- a
 # wipe that half-happened is worse than one that did not. This is why seed and
 # size live with wipe and are fenced out of the convar editor: a routine convar
 # edit must never be able to wipe a map.
 # ======================================================================
-set_setting() {  # set_setting <NAME> <integer-or-safe-value>  -- rewrite a SETTINGS value, keeping any trailing comment
-    local self; self="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
-    sed -i -E "s|^($1=)\"[^\"]*\"|\\1\"$2\"|" "$self"
+# cfg_set <name> <value>: write one setting into hotwire.cfg. The line that sets
+# it is changed where it is; a setting that is off in the list (#name value) is
+# switched on in its place; anything else is added at the end. The value is
+# written in double quotes when it has spaces or is empty. The caller has already
+# checked the name and value; a double quote or a control character never reaches
+# here. The file is written whole and moved into place, keeping its permissions.
+cfg_set() {
+    local name="$1" value="$2" tmp shown
+    [ -f "$CFG" ] || return 1
+    if [ -z "$value" ] || [[ "$value" == *[[:space:]]* ]]; then shown="\"$value\""; else shown="$value"; fi
+    tmp="$(mktemp "$ROOT/.hotwire.cfg.XXXXXX")" || return 1
+    # Through the environment, not -v: awk -v would read a backslash in the value
+    # (\n in a description) as an escape.
+    HW_NAME="$name" HW_LINE="$(printf '%-27s %s' "$name" "$shown")" awk '
+        BEGIN { ln = tolower(ENVIRON["HW_NAME"]); line = ENVIRON["HW_LINE"]; done = 0; off = 0 }
+        { rows[NR] = $0 }
+        !done {
+            s = $0; sub(/\r$/, "", s); sub(/^[ \t]+/, "", s)
+            split(s, f, /[ \t]+/)
+            if (tolower(f[1]) == ln) { done = NR }
+            else if (!off && substr(f[1], 1, 1) == "#" && tolower(substr(f[1], 2)) == ln) { off = NR }
+        }
+        END {
+            at = done ? done : off
+            for (i = 1; i <= NR; i++) print (i == at ? line : rows[i])
+            if (!at) print line
+        }
+    ' "$CFG" > "$tmp" && chmod --reference="$CFG" "$tmp" 2>/dev/null
+    if [ -s "$tmp" ] && mv -f "$tmp" "$CFG"; then return 0; fi
+    rm -f "$tmp"; return 1
 }
 
 apply_wipe() {
@@ -929,13 +954,13 @@ apply_wipe() {
     rule; log "Wiping (cycle ${cycle:-none}): new seed $seed${size:+, size $size}, blueprints: $bp."
     # 1) The map change first: write the new seed (and size) into settings. If this
     #    cannot be done, cancel before touching anything else and boot unchanged.
-    if ! set_setting SERVER_SEED "$seed"; then
+    if ! cfg_set server.seed "$seed"; then
         rule; bad "Wipe CANCELLED: could not write the new seed. Booting unchanged."; rule
         printf 'cancelled: could not write seed\n' > "$WIPE_RESULT" 2>/dev/null || true
         rm -f "$flag"; return 0
     fi
     SERVER_SEED="$seed"
-    if [ -n "$size" ]; then set_setting SERVER_WORLDSIZE "$size"; SERVER_WORLDSIZE="$size"; fi
+    if [ -n "$size" ]; then cfg_set server.worldsize "$size"; SERVER_WORLDSIZE="$size"; fi
 
     # 2) Blueprints, in the identity folder. Match by glob (the version in the name
     #    changes between builds). Never touch player.tokens.db.
@@ -955,41 +980,28 @@ apply_wipe() {
     [ -n "$cycle" ] && { mkdir -p "$(dirname "$WIPE_STATE")" 2>/dev/null; printf '%s' "$cycle" > "$WIPE_STATE" 2>/dev/null || true; }
     rm -f "$flag"
     printf 'applied: seed %s size %s blueprints %s (%s)\n' "$seed" "${size:-unchanged}" "$bp" "$bpmsg" > "$WIPE_RESULT" 2>/dev/null || true
+    WIPE_APPLIED=1
     ok "Wipe applied: seed $seed${size:+, size $size}, blueprints $bpmsg. The new world generates on this boot; the old save is left on disk."
 }
 
 # ======================================================================
 # Convar persist (capability: convar_persist). The plugin writes CONVAR.request
 # -- one "<convar> <value>" per line -- to ask that a start-arg convar be made
-# permanent. Between server runs (the safe moment) the launcher validates each,
-# writes it into its OWN settings block as a managed EXTRA_CONVARS line, and
-# leaves a CONVAR.result receipt. It takes effect on this and every future boot.
+# permanent. Between server runs (the safe moment) the launcher checks each and
+# writes it into hotwire.cfg with cfg_set, and leaves a CONVAR.result receipt. It
+# takes effect on this and every future boot.
 #
-# Two hard rules, enforced here and not merely in the panel:
+# Hard rules, enforced here and not merely in the panel:
 #   - It is a TYPED SET, never a console passthrough: the name must be a dotted
-#     convar and the value must carry no quote or control character, so a forged
-#     request can never inject a command into a file the machine executes.
+#     convar, and the value carries no double quote or control character.
 #   - The map-defining convars (seed/worldsize/level/levelurl) and the secret
-#     rcon.password are REFUSED here: those belong to wipe / secrets, not to the
-#     convar editor. A routine convar edit can never silently wipe a map.
-#
-# Editing the running script is safe on bash: every function and the run loop
-# are parsed before main begins, so by the time this runs the file is fully read
-# and the settings block (earlier in the file) is never re-read.
+#     rcon.password are REFUSED: those belong to wipe / secrets. A routine convar
+#     edit can never silently wipe a map.
+#   - hotwire.* is REFUSED: the launcher's own settings are the admin's, and a
+#     panel command never reconfigures the launcher.
+#   - A convar the launcher reads itself must also pass that setting's own check.
+# ======================================================================
 CONVAR_CHANGED=0
-persist_convar() {  # persist_convar <name> <value>
-    local name="$1" value="$2" self tmp
-    self="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
-    tmp="$(mktemp)" || return 1
-    awk -v n="$name" -v v="$value" '
-        $0 ~ ("# hotwire-managed:" n "$") { next }
-        { print }
-        /^EXTRA_CONVARS=\(\)/ { print "EXTRA_CONVARS+=( \"+" n "\" \"" v "\" )  # hotwire-managed:" n }
-    ' "$self" > "$tmp" || { rm -f "$tmp"; return 1; }
-    cat "$tmp" > "$self" && rm -f "$tmp" || { rm -f "$tmp"; return 1; }
-    EXTRA_CONVARS+=( "+$name" "$value" )
-    return 0
-}
 apply_convar_requests() {
     CONVAR_CHANGED=0
     [ -f "$CONVAR_REQUEST" ] || return 0
@@ -1002,22 +1014,29 @@ apply_convar_requests() {
             echo "reject $name : not a dotted convar name" >> "$CONVAR_RESULT"; rejected=$((rejected+1)); continue
         fi
         case "$name" in
+            hotwire.*)
+                echo "reject $name : a launcher setting, never set through the panel" >> "$CONVAR_RESULT"; rejected=$((rejected+1)); continue ;;
             server.seed|server.worldsize|server.level|server.levelurl)
                 echo "reject $name : map-defining, belongs to wipe not the convar editor" >> "$CONVAR_RESULT"; rejected=$((rejected+1)); continue ;;
             rcon.password)
                 echo "reject $name : a secret, never set through the panel" >> "$CONVAR_RESULT"; rejected=$((rejected+1)); continue ;;
         esac
-        # The value is written into a bash file that is later executed, so reject
-        # every character that stays active inside double quotes (", $, `, \) as
-        # well as any control character. This is the injection boundary.
-        if [ "$name" = "$value" ] || printf '%s' "$value" | LC_ALL=C grep -q '[^[:print:]]'; then
+        # hotwire.cfg is data, so only what the reader refuses matters here: a
+        # double quote and a control character.
+        if [ "$name" = "$value" ] || [[ "$value" =~ [[:cntrl:]] ]]; then
             echo "reject $name : missing or non-printable value" >> "$CONVAR_RESULT"; rejected=$((rejected+1)); continue
         fi
         case "$value" in
-            *'"'*|*'$'*|*'`'*|*'\'*)
-                echo "reject $name : value has a shell-active character (\" \$ \` \\)" >> "$CONVAR_RESULT"; rejected=$((rejected+1)); continue ;;
+            *'"'*) echo "reject $name : value has a double quote" >> "$CONVAR_RESULT"; rejected=$((rejected+1)); continue ;;
         esac
-        if persist_convar "$name" "$value"; then
+        if [ "${#value}" -gt 1024 ]; then
+            echo "reject $name : value longer than 1024 characters" >> "$CONVAR_RESULT"; rejected=$((rejected+1)); continue
+        fi
+        local own="${CV_SETTINGS[$name]:-}"
+        if [ -n "$own" ] && ! cfg_check "${own#* }" "$value"; then
+            echo "reject $name : $CFG_WHY" >> "$CONVAR_RESULT"; rejected=$((rejected+1)); continue
+        fi
+        if cfg_set "$name" "$value"; then
             echo "applied $name $value" >> "$CONVAR_RESULT"; applied=$((applied+1)); CONVAR_CHANGED=1
         else
             echo "reject $name : could not write settings" >> "$CONVAR_RESULT"; rejected=$((rejected+1))
@@ -1246,9 +1265,8 @@ backup_archive() {  # <trigger> <run> <staging|""> <sav name|""> <sav size|""> <
         if [ -n "$pdir" ]; then mkdir -p "$work/oxide/plugins" && cp -p "$pdir"/*.cs "$work/oxide/plugins/" 2>/dev/null; fi
     fi
     if [ -z "$fail" ] && [[ "$sets" == *,config,* ]]; then
-        local self; self="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
-        # The markers are matched through [N]/[D] so this line is never taken for one.
-        sed -n '/=== HOTWIRE SETTINGS BEGI[N] ===/,/=== HOTWIRE SETTINGS EN[D] ===/p' "$self" > "$work/launcher-settings.txt" 2>/dev/null
+        # The launcher's settings: hotwire.cfg, which holds no secret. hotwire-secrets.cfg is never backed up here.
+        [ -f "$CFG" ] && cp -p "$CFG" "$work/hotwire.cfg" 2>/dev/null
     fi
 
     # The map: once per map, compressed on its own, named in every backup that needs it.
@@ -1378,8 +1396,21 @@ backup_before_launch() {
 # and the option check. This is why a plugin that writes UPDATE.flag and
 # restarts the server gets its update -- it is picked up here on the relaunch.
 # ======================================================================
+# A hook: an admin's own script beside the launcher, run with bash. It never
+# blocks a start (a failure is logged) and never runs in check mode. Only the
+# admin writes these files; nothing Hotwire or the panel produces creates them.
+run_hook() {  # run_hook <file> <label>
+    [ -f "$1" ] || return 0
+    log "Running $2 ($(basename "$1"))..."
+    ( cd "$ROOT" && bash "$1" ) || warn "$(basename "$1") exited non-zero; carrying on."
+}
+
 per_launch_prep() {
     UPDATE_ATTEMPTED=0
+    # hotwire.cfg is read again before every start, so an edit takes effect on
+    # the next restart without restarting the launcher.
+    [ -n "${CONFIG_LOADED:-}" ] && config_reload
+    CONFIG_LOADED=1
     decide_update_mode
     build_check
     update_decision
@@ -1391,23 +1422,26 @@ per_launch_prep() {
     fi
     # A backup of the stopped server, before an update or a wipe changes it.
     [ -z "$CHECK_ONLY" ] && backup_before_launch
-    # HOOK_BEFORE runs on every real start (not in check mode), before any update.
-    [ -z "$CHECK_ONLY" ] && [ -n "$HOOK_BEFORE" ] && { log "Running HOOK_BEFORE..."; bash -c "$HOOK_BEFORE" || warn "HOOK_BEFORE exited non-zero."; }
+    # hotwire-before.sh runs on every real start (not in check mode), before any update.
+    [ -z "$CHECK_ONLY" ] && run_hook "$HOOK_BEFORE" "the before-start hook"
     if [ "$DO_UPDATE" = "1" ]; then
         UPDATE_ATTEMPTED=1
         steam_update
         framework_update
         finalize_update
-        # HOOK_AFTER runs after an update attempt (success or not), like the .bat.
-        [ -n "$HOOK_AFTER" ] && { log "Running HOOK_AFTER..."; bash -c "$HOOK_AFTER" || warn "HOOK_AFTER exited non-zero."; }
+        # hotwire-after.sh runs after an update attempt (success or not), like the .bat.
+        run_hook "$HOOK_AFTER" "the after-update hook"
     elif [ -z "$CHECK_ONLY" ]; then
         log "Plain restart: no update this pass."
     fi
     # Check mode changes nothing on your behalf (as hotwire.bat's does): a wipe or a
     # convar persist is a real mutation, so it is only carried out on a real start.
     if [ -z "$CHECK_ONLY" ]; then
+        WIPE_APPLIED=0
         apply_wipe
         apply_convar_requests
+        # Both write hotwire.cfg; read it again so this start uses what they wrote.
+        if [ "$WIPE_APPLIED" = 1 ] || [ "$CONVAR_CHANGED" = 1 ]; then load_config || config_reload; fi
     fi
     build_args
     check_options
@@ -1435,7 +1469,7 @@ run_loop() {
         if [ "$run_secs" -lt "$CRASH_SECONDS" ]; then CRASH_STREAK=$((CRASH_STREAK+1)); crashed=true; else CRASH_STREAK=0; crashed=false; fi
         report_session "$rc" "$crashed"
 
-        if [ "$RESTART_ON_EXIT" = "0" ]; then log "Server exited; RESTART_ON_EXIT is off. Stopping."; exit 0; fi
+        if [ "$RESTART_ON_EXIT" = "0" ]; then log "Server exited; hotwire.restart_on_exit is 0. Stopping."; exit 0; fi
 
         if [ "$MAX_CRASH_STREAK" != "0" ] && [ "$CRASH_STREAK" -ge "$MAX_CRASH_STREAK" ]; then
             rule
@@ -1471,7 +1505,7 @@ printf '%s%s H O T W I R E %s  launcher %s%s (linux)  --  %s\n' \
     "$C_BLD" "$C_CYN" "$C_OFF" "$C_BLD" "$HOTWIRE_LAUNCHER_VERSION" "$C_OFF"
 [ -n "$CHECK_ONLY" ] && log "Check mode: everything is checked, nothing is started."
 
-validate_settings
+config_or_die
 load_secrets
 preflight
 init_reporting

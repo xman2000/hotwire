@@ -25,6 +25,31 @@ sit above a launcher `1.1.7`. Read the label, not the number.
 at the top of the file — it is a comment, not something it echoes, so read it
 rather than watch for it.
 
+## 1.1.2-linux — launcher (Linux) — unreleased
+
+**Your settings are in hotwire.cfg, and the launcher only reads them.** `hotwire.sh` holds no settings any more:
+replace it with a newer release and nothing of yours changes.
+
+- `hotwire.cfg`, beside the launcher, holds every setting, in the style of Rust's own `server.cfg`: a name, a space, a
+  value. Rust convars by their own names (`server.hostname "My Server"`), the launcher's under `hotwire.`
+  (`hotwire.update_mode auto`). Below your server, ports and updates, it lists the options people set, each off (`#`)
+  with the game's default. Copy `hotwire.example.cfg` to begin.
+- The file is read, never run. A line that is not a setting is ignored and `./hotwire.sh check` names it; a value that
+  fails its check falls back to the default. The save folder, seed, world size, ports and a custom map URL are never
+  defaulted: a bad one stops the first start with the reason, and on a later restart the last good settings are kept.
+  Values reach Rust as separate arguments, so no character in a server name can break anything. hotwire.cfg is read
+  again before every restart, so an edit takes effect without restarting the launcher.
+- The RCON password moves to `hotwire-secrets.cfg` (copy `hotwire-secrets.example.cfg`), read the same way.
+  `secrets.sh` is no longer read.
+- Your own commands go in `hotwire-before.sh` (before every start) and `hotwire-after.sh` (after an update); copy the
+  `.example` files. A hook that fails is logged and the server starts anyway. `HOOK_BEFORE`/`HOOK_AFTER` are gone.
+- Where Oxide is downloaded from and checked against, the Steam app id and the flag file names are fixed in the
+  launcher, never settings.
+- Permanent settings and wipes from the panel are written into `hotwire.cfg`. A request can no longer change a
+  `hotwire.` launcher setting, and a value the launcher reads itself (the save folder, ports) must pass its own check.
+- Backups keep a copy of `hotwire.cfg` (never the secrets file).
+- `launcher.json` lists the capability `settings_file`.
+
 ## 1.1.43 — plugin — 2026-09-28
 
 **The panel's address is https://afkpanel.com.** `hotwire connect <code>` with no address, and both setup scripts
