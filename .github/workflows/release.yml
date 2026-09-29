@@ -37,5 +37,5 @@ jobs:
             cat dist/SHA256SUMS
             echo '```'
           } > dist/notes.md
-          gh release create "$TAG" dist/hotwire-windows.zip dist/hotwire-setup.sh dist/Hotwire.cs dist/SHA256SUMS \
+          gh release create "$TAG" dist/hotwire-windows.zip dist/hotwire-linux.zip dist/hotwire-setup.sh dist/Hotwire.cs dist/SHA256SUMS \
             --title "$TAG" --notes-file dist/notes.md --latest

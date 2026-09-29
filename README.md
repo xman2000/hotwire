@@ -263,8 +263,11 @@ Wipe. Manage maps. Restart on a schedule someone else owns — it does not know 
 
 ```
 src/Hotwire.cs                  the plugin
-launcher/hotwire.bat            the launcher
-launcher/secrets.example.bat    copy to secrets.bat; never committed
+launcher/hotwire.bat            the launcher for Windows
+launcher/hotwire.sh             the launcher for Linux
+launcher/hotwire.example.cfg    every setting both launchers read; copy to hotwire.cfg
+launcher/hotwire-secrets.example.cfg   copy to hotwire-secrets.cfg for the RCON password; never committed
+launcher/hotwire-*.example.*    your own commands before a start and after an update
 CHANGELOG.md                    what is in this release, and what is not
 docs/LAUNCHER.md                the launcher in full
 docs/CONFIG.md                  every config field, command and permission

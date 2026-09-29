@@ -42,7 +42,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$Version = '0.1.3'
+$Version = '0.1.4'
 
 # Captured here: inside a function, $PSBoundParameters describes that function, not this script.
 $SteamCmdGiven = $PSBoundParameters.ContainsKey('SteamCmd')
@@ -73,6 +73,9 @@ $OxideZipUrl = 'https://umod.org/games/rust/download'
 # a vanilla install needs. Repoint at main when the branch merges. GitHub serves both with LF line
 # endings (checked 2026-09-13), which cmd.exe misreads in a .bat, so the launcher is saved with CRLF.
 $LauncherUrl = 'https://raw.githubusercontent.com/xman2000/hotwire/connect-and-report/launcher/hotwire.bat'
+# The settings list the launcher reads from (1.1.16 and later): kept as hotwire.example.cfg, and copied into this
+# server's hotwire.cfg with its ports, map and branch filled in.
+$CfgUrl = 'https://raw.githubusercontent.com/xman2000/hotwire/connect-and-report/launcher/hotwire.example.cfg'
 $PluginUrl = 'https://raw.githubusercontent.com/xman2000/hotwire/connect-and-report/src/Hotwire.cs'
 
 # ---------------------------------------------------------------------------
@@ -87,17 +90,19 @@ $PluginUrl = 'https://raw.githubusercontent.com/xman2000/hotwire/connect-and-rep
 # CRLF. Compute a value as: (read file, replace CRLF with LF, sha256).
 #
 # !! REGENERATED AT RELEASE TIME -- NO AUTOMATION EXISTS YET !!
-# Whenever launcher/hotwire.bat or src/Hotwire.cs changes on the branch the URLs
-# above point at, these values MUST change in the same commit, or every install
-# aborts with a hash mismatch. A value must match what that branch actually
+# Whenever launcher/hotwire.bat, launcher/hotwire.example.cfg or src/Hotwire.cs
+# changes on the branch the URLs above point at, these values MUST change in the
+# same commit, or every install aborts with a hash mismatch. tools/build-release.sh
+# refuses to build a release while any of them is stale. A value must match what that branch actually
 # serves once pushed; a hash computed from an unpushed working tree will not.
 #
 # Third-party downloads (SteamCMD from Valve, Oxide from uMod) are deliberately
 # ABSENT: their versions vary, so they are not pinned. They are reported as
 # "unverified (third-party)" rather than blocked -- the omission is never silent.
 $PinnedHashes = @{
-    'hotwire.bat' = 'a8055ad272b75208666af8a4a1fccbf5cfad6c45007be8e016897ceff1e302cd'
+    'hotwire.bat' = '173f805eca7c29ae8c6ee0c4413c2e93acc8c4f271c96f34fb3f7d382b4732fa'
     'Hotwire.cs'  = '7d2176b47c664eae4a58bc792fb2147390d2aeb7f06c4b6c906cf11f6ba36675'
+    'hotwire.example.cfg' = '322b099f00965a581ec8c8a1ece4d6205e1e6b78fd1a53fe14e7adeb96ebbecb'
 }
 
 $Docs = [ordered]@{
@@ -110,7 +115,7 @@ $Docs = [ordered]@{
     'Hotwire (source)'          = 'https://github.com/xman2000/hotwire'
 }
 
-# The same layout hotwire.bat ships with (section 1). If you change the ports there, change the
+# The same layout hotwire.cfg ships with (section 2). If you change the ports there, change the
 # firewall rules to match -- a rule for the wrong port looks exactly like a rule that works.
 $GamePort = 28015    # UDP, server.port
 $QueryPort = 28017   # UDP, server.queryport -- the server browser. Without it the server is invisible.
@@ -525,9 +530,58 @@ function New-PortSet([int]$Game, [int]$Query, [int]$Rcon) {
     return [pscustomobject]@{ Game = $Game; Query = $Query; Rcon = $Rcon; App = ([math]::Max($Game, $Rcon) + 67) }
 }
 
+# Whether the hotwire.bat here reads its settings from hotwire.cfg (1.1.16 and later) rather than keeping them
+# inside itself.
+function Test-CfgLauncher([string]$d) {
+    $launcher = Join-Path $d 'hotwire.bat'
+    if (-not (Test-Path -LiteralPath $launcher)) { return $false }
+    try { return [regex]::IsMatch([IO.File]::ReadAllText($launcher), '(?m)^set "HOTWIRE_LAUNCHER_CAPABILITIES=[^"]*settings_file') } catch { return $false }
+}
+
+# A setting's value in hotwire.cfg, from the last line that sets it, quotes taken off; $null when none does.
+function Get-CfgValue([string]$d, [string]$Name) {
+    $cfg = Join-Path $d 'hotwire.cfg'
+    if (-not (Test-Path -LiteralPath $cfg)) { return $null }
+    $value = $null
+    foreach ($line in [IO.File]::ReadAllLines($cfg)) {
+        $m = [regex]::Match($line.Trim(), '^(\S+)\s*(.*)$')
+        if ($m.Success -and $m.Groups[1].Value -ieq $Name) {
+            $value = $m.Groups[2].Value.Trim()
+            if ($value.Length -ge 2 -and $value.StartsWith('"') -and $value.EndsWith('"')) { $value = $value.Substring(1, $value.Length - 2) }
+        }
+    }
+    return $value
+}
+
+# Sets one setting in hotwire.cfg text, as the launcher itself does: the line that sets it is changed where it
+# is, one that is off in the list (#name value) is switched on in its place, and anything else is added at the
+# end. The value goes in double quotes when it has spaces or is empty. Returns the text with CRLF endings.
+function Set-CfgText([string]$Text, [string]$Name, [string]$Value) {
+    $lines = New-Object 'System.Collections.Generic.List[string]'
+    foreach ($l in (($Text -replace "`r`n", "`n") -split "`n")) { $lines.Add($l) }
+    $shown = $Value; if ($Value -eq '' -or $Value -match '\s') { $shown = '"' + $Value + '"' }
+    $new = '{0,-27} {1}' -f $Name, $shown
+    $done = -1; $off = -1
+    for ($i = 0; $i -lt $lines.Count; $i++) {
+        $first = ($lines[$i].TrimStart() -split '[ \t]+')[0]
+        if ($first -ieq $Name) { $done = $i; break }
+        if ($off -lt 0 -and $first.StartsWith('#') -and $first.Substring(1) -ieq $Name) { $off = $i }
+    }
+    $at = $done; if ($at -lt 0) { $at = $off }
+    if ($at -ge 0) { $lines[$at] = $new }
+    elseif ($lines.Count -gt 0 -and $lines[$lines.Count - 1] -eq '') { $lines.Insert($lines.Count - 1, $new) }
+    else { $lines.Add($new) }
+    return ($lines -join "`r`n")
+}
+
 function Get-LauncherPorts([string]$d) {
     $launcher = Join-Path $d 'hotwire.bat'
     if (-not (Test-Path -LiteralPath $launcher)) { return $null }
+    if (Test-CfgLauncher $d) {
+        $game = Get-CfgValue $d 'server.port'; $query = Get-CfgValue $d 'server.queryport'; $rcon = Get-CfgValue $d 'rcon.port'
+        if ($game -match '^\d+$' -and $query -match '^\d+$' -and $rcon -match '^\d+$') { return New-PortSet ([int]$game) ([int]$query) ([int]$rcon) }
+        return $null
+    }
     $text = [System.IO.File]::ReadAllText($launcher)
     # Launcher 1.1.15 and later set the ports in section 1; earlier ones on their ARGS lines.
     $game = [regex]::Match($text, '(?m)^set "SERVER_PORT=(\d+)"\r?$')
@@ -1005,17 +1059,24 @@ function Get-InstallState([string]$d) {
 
     $launcher = Join-Path $d 'hotwire.bat'
     $s.HasLauncher = Test-Path -LiteralPath $launcher
-    $s.LauncherVanilla = $s.HasLauncher -and (Select-String -LiteralPath $launcher -SimpleMatch 'set "INSTALL_FRAMEWORK=0"' -Quiet)
+    $s.CfgLauncher = Test-CfgLauncher $d
+    $s.HasCfg = Test-Path -LiteralPath (Join-Path $d 'hotwire.cfg')
+    if ($s.CfgLauncher) { $s.LauncherVanilla = (Get-CfgValue $d 'hotwire.install_framework') -eq '0' }
+    else { $s.LauncherVanilla = $s.HasLauncher -and (Select-String -LiteralPath $launcher -SimpleMatch 'set "INSTALL_FRAMEWORK=0"' -Quiet) }
     $s.LauncherDeclined = Test-Declined $d 'launcher'
     $s.LauncherOurs = Test-Created $d $launcher
     $s.LauncherBranch = $null
-    if ($s.HasLauncher) {
+    if ($s.CfgLauncher) {
+        if ($s.HasCfg) { $s.LauncherBranch = Get-CfgValue $d 'hotwire.steam_branch'; if ($null -eq $s.LauncherBranch) { $s.LauncherBranch = 'public' } }
+    } elseif ($s.HasLauncher) {
         $m = [regex]::Match([System.IO.File]::ReadAllText($launcher), '(?m)^set "STEAM_BRANCH=([^"]*)"\r?$')
         if ($m.Success) { $s.LauncherBranch = $m.Groups[1].Value }
     }
     $s.LauncherBranchMismatch = $s.HasLauncher -and [bool]$s.ChosenBranch -and $null -ne $s.LauncherBranch -and $s.LauncherBranch -ne $s.ChosenBranch
     $s.LauncherRunning = $s.HasLauncher -and (Test-LauncherRunning $d)
     $s.LauncherMismatch = $s.HasLauncher -and (($s.OxideComplete -and $s.LauncherVanilla) -or (-not $s.HasOxide -and $s.OxideDeclined -and -not $s.LauncherVanilla))
+    # A launcher that reads hotwire.cfg, with no hotwire.cfg beside it, does not start.
+    $s.CfgMissing = $s.CfgLauncher -and -not $s.HasCfg
 
     $plugin = Join-Path $d 'oxide\plugins\Hotwire.cs'
     $s.HasPlugin = Test-Path -LiteralPath $plugin
@@ -1107,8 +1168,9 @@ function Show-InstallState($s, [string]$Title) {
         else { Write-Check no 'Start script' 'no hotwire.bat' }
     } elseif ($s.LauncherMismatch) {
         $what = if ($s.OxideComplete) { 'set for vanilla, but Oxide is installed' } else { 'will install Oxide on this vanilla server' }
-        $fix = if ($s.LauncherOurs) { 'install fixes it' } else { 'change INSTALL_FRAMEWORK in it' }
+        $fix = if ($s.LauncherOurs) { 'install fixes it' } elseif ($s.CfgLauncher) { 'change hotwire.install_framework in hotwire.cfg' } else { 'change INSTALL_FRAMEWORK in it' }
         Write-Check warn 'Start script' "hotwire.bat is $what -- $fix"
+    } elseif ($s.CfgMissing) { Write-Check fail 'Start script' 'hotwire.bat is here, but hotwire.cfg is not -- install writes it'
     } else { Write-Check ok 'Start script' $(if ($s.LauncherVanilla) { 'hotwire.bat (vanilla)' } else { 'hotwire.bat' }) }
     if ($s.LauncherBranchMismatch) { Write-Check warn 'Start script' "hotwire.bat updates '$($s.LauncherBranch)', not the chosen '$($s.ChosenBranch)'" }
     if ($s.LauncherRunning) { Write-Check warn 'Start script' 'hotwire.bat is running right now' }
@@ -1163,6 +1225,7 @@ function Get-InstallPlan($s) {
         & $add 'oxide' 'Oxide' $(if ($s.OxideComplete) { 'put it back on after the download' } elseif ($s.HasOxide) { 'finish installing it' } else { 'install it, or say no for a vanilla server' })
     }
     if (-not $s.HasLauncher -and -not $s.LauncherDeclined) { & $add 'launcher' 'Start script' 'install hotwire.bat, or say no to use your own' }
+    elseif ($s.CfgMissing) { & $add 'launcher' 'Start script' 'write hotwire.cfg, the settings hotwire.bat reads' }
     elseif (($s.LauncherMismatch -or $s.LauncherBranchMismatch) -and $s.LauncherOurs) { & $add 'launcher' 'Start script' 'bring hotwire.bat in line with this server' }
     if (-not $s.HasPlugin -and -not $s.PluginDeclined -and -not $s.OxideDeclined) { & $add 'plugin' 'Hotwire plugin' 'install it -- needs Oxide' }
     if (($s.HasLauncher -and $s.RconProblem) -or (-not $s.HasLauncher -and -not $s.LauncherDeclined)) {
@@ -1204,7 +1267,7 @@ function Show-InstallPlan($Plan, $s) {
 }
 
 function Show-Finish([string]$d, $s) {
-    $ready = $s.RustDone -and (($s.HasLauncher -and -not $s.RconProblem) -or (-not $s.HasLauncher -and $s.LauncherDeclined))
+    $ready = $s.RustDone -and (($s.HasLauncher -and -not $s.RconProblem -and -not $s.CfgMissing) -or (-not $s.HasLauncher -and $s.LauncherDeclined))
     if ($ready) {
         Write-Box @('A L L   S Y S T E M S   G O', '', 'This Rust server is ready to start.') 'Green'
     } else {
@@ -1215,8 +1278,13 @@ function Show-Finish([string]$d, $s) {
     Write-Host ""
     if ($s.HasLauncher) {
         Write-Host "  Next:" -ForegroundColor Cyan
-        Write-Host "    1. Open hotwire.bat in Notepad. At the top, in section 1, fill in SERVER_HOSTNAME and"
-        Write-Host "       SERVER_DESCRIPTION, and SERVER_MAXPLAYERS if you want. Each is explained beside it."
+        if ($s.CfgLauncher) {
+            Write-Host "    1. Open hotwire.cfg in Notepad. In section 1, fill in server.hostname and"
+            Write-Host "       server.description, and server.maxplayers if you want. Each is explained above it."
+        } else {
+            Write-Host "    1. Open hotwire.bat in Notepad. At the top, in section 1, fill in SERVER_HOSTNAME and"
+            Write-Host "       SERVER_DESCRIPTION, and SERVER_MAXPLAYERS if you want. Each is explained beside it."
+        }
         Write-Host "    2. Start the server: double-click hotwire.bat."
         Write-Host ""
         Write-Note "The first start takes several minutes while the map generates."
@@ -1611,55 +1679,40 @@ function Install-Oxide([string]$d) {
 }
 
 # ------------------------------------------------------------ 6. launcher --
-# Sets the lines hotwire.bat needs for this install -- ROOT, STEAMCMD and, for a vanilla server,
-# INSTALL_FRAMEWORK -- and returns the file with CRLF line endings. Returns $null when the text is not
-# the launcher this script knows: a changed default, an older launcher, or an error page.
-function Set-LauncherPaths([string]$Text, [string]$RootDir, [string]$SteamCmdExe, [bool]$Vanilla = $false, [string]$Branch = '', $Ports = $null, [string]$Seed = '') {
-    $rootLine = 'set "ROOT=C:\rustserver"'
-    # From 1.1.11 ROOT is the launcher's own folder, which is exactly right for a launcher written beside its
-    # server, and stays right when the folder is copied. That line is left as it is.
-    $ownFolderRoot = 'set "ROOT=%~dp0"'
-    $steamLine = 'set "STEAMCMD=C:\steamcmd\steamcmd.exe"'
-    $frameworkLine = 'set "INSTALL_FRAMEWORK=1"'
-    $branchLine = 'set "STEAM_BRANCH=public"'
-    $gameLine = 'set "SERVER_PORT=28015"'
-    $queryLine = 'set "SERVER_QUERYPORT=28017"'
-    $rconLine = 'set "RCON_PORT=28016"'
-    $seedLine = 'set "SERVER_SEED="'
-    $setBranch = $Branch -and $Branch -ne 'public'
-    $setPorts = $Ports -and -not ($Ports.Game -eq 28015 -and $Ports.Query -eq 28017 -and $Ports.Rcon -eq 28016)
-    $lines = ($Text -replace "`r`n", "`n") -split "`n"
-    $hasOwnFolderRoot = @($lines | Where-Object { $_ -eq $ownFolderRoot }).Count -eq 1
-    if (-not $hasOwnFolderRoot -and @($lines | Where-Object { $_ -eq $rootLine }).Count -ne 1) { return $null }
-    if ($setPorts) {
-        foreach ($line in @($gameLine, $queryLine, $rconLine)) { if (@($lines | Where-Object { $_ -eq $line }).Count -ne 1) { return $null } }
+# Sets one setting in this server's hotwire.cfg, on the terms install changes any file on: only a hotwire.cfg
+# install created, after a copy is kept; anyone else's gets the exact line to write. The launcher reads the file
+# again before every start, so it can change while the server runs.
+function Sync-CfgSetting([string]$d, [string]$Name, [string]$Value, [string]$Why) {
+    $cfg = Join-Path $d 'hotwire.cfg'
+    if (-not (Test-Path -LiteralPath $cfg)) { return }
+    if (-not (Test-Created $d $cfg)) {
+        Write-Warn $Why
+        Write-Note "hotwire.cfg was not created by install, so it is left alone. In it, set the line"
+        Write-Note "  $Name $Value"
+        return
     }
-    if (@($lines | Where-Object { $_ -eq $steamLine }).Count -ne 1) { return $null }
-    if ($Vanilla -and @($lines | Where-Object { $_ -eq $frameworkLine }).Count -ne 1) { return $null }
-    if ($setBranch -and @($lines | Where-Object { $_ -eq $branchLine }).Count -ne 1) { return $null }
-    if ($Seed -and @($lines | Where-Object { $_ -eq $seedLine }).Count -ne 1) { return $null }
-    $lines = $lines | ForEach-Object {
-        if ($_ -eq $rootLine) { "set `"ROOT=$RootDir`"" }
-        elseif ($setPorts -and $_ -eq $gameLine) { "set `"SERVER_PORT=$($Ports.Game)`"" }
-        elseif ($setPorts -and $_ -eq $queryLine) { "set `"SERVER_QUERYPORT=$($Ports.Query)`"" }
-        elseif ($setPorts -and $_ -eq $rconLine) { "set `"RCON_PORT=$($Ports.Rcon)`"" }
-        elseif ($_ -eq $steamLine) { "set `"STEAMCMD=$SteamCmdExe`"" }
-        elseif ($Vanilla -and $_ -eq $frameworkLine) { 'set "INSTALL_FRAMEWORK=0"' }
-        elseif ($setBranch -and $_ -eq $branchLine) { "set `"STEAM_BRANCH=$Branch`"" }
-        elseif ($Seed -and $_ -eq $seedLine) { "set `"SERVER_SEED=$Seed`"" }
-        else { $_ }
-    }
-    return ($lines -join "`r`n")
+    $backup = Backup-File $d $cfg 'hotwire.cfg'
+    Write-FileAtomic $cfg (Set-CfgText ([IO.File]::ReadAllText($cfg)) $Name $Value)
+    Write-Ok "${Why}: hotwire.cfg now has $Name $Value"
+    Add-Change "set $Name $Value in $cfg" "copy $backup back over it"
 }
 
-# Keeps hotwire.bat's INSTALL_FRAMEWORK in step with whether Oxide is installed. Only a hotwire.bat this
-# script created is changed, only while it is not running, and only after a copy is kept; anyone else's
-# gets the exact line to change.
+# Keeps the launcher's Oxide setting in step with whether Oxide is installed: hotwire.install_framework in
+# hotwire.cfg, or INSTALL_FRAMEWORK inside a hotwire.bat from before 1.1.16. Only a file this script created
+# is changed, and only after a copy is kept; anyone else's gets the exact line to change.
 function Sync-LauncherFramework([string]$d) {
     $launcher = Join-Path $d 'hotwire.bat'
     if (-not (Test-Path -LiteralPath $launcher)) { return }
     $oxide = (Test-Done $d 'oxide') -and (Test-Path -LiteralPath (Join-Path $d 'RustDedicated_Data\Managed\Oxide.Rust.dll'))
     $want = if ($oxide) { '1' } else { '0' }
+    if (Test-CfgLauncher $d) {
+        $have = Get-CfgValue $d 'hotwire.install_framework'
+        if (-not $have) { $have = '1' }
+        if ($have -eq $want) { return }
+        $why = if ($oxide) { 'Oxide is installed, so hotwire.bat should keep it updated' } else { 'this is a vanilla server, so hotwire.bat should not install Oxide' }
+        Sync-CfgSetting $d 'hotwire.install_framework' $want $why
+        return
+    }
     $lines = ([System.IO.File]::ReadAllText($launcher) -replace "`r`n", "`n") -split "`n"
     $current = @($lines | Where-Object { $_ -match '^set "INSTALL_FRAMEWORK=[01]"$' })
     if ($current.Count -ne 1) {
@@ -1696,6 +1749,12 @@ function Sync-LauncherBranch([string]$d) {
     $launcher = Join-Path $d 'hotwire.bat'
     $branch = Get-ChosenBranch $d
     if (-not $branch -or -not (Test-Path -LiteralPath $launcher)) { return }
+    if (Test-CfgLauncher $d) {
+        $have = Get-CfgValue $d 'hotwire.steam_branch'
+        if ($null -eq $have) { $have = 'public' }
+        if ($have -ne $branch) { Sync-CfgSetting $d 'hotwire.steam_branch' $branch "hotwire.bat should update the '$branch' branch chosen for this server" }
+        return
+    }
     $lines = ([System.IO.File]::ReadAllText($launcher) -replace "`r`n", "`n") -split "`n"
     $current = @($lines | Where-Object { $_ -match '^set "STEAM_BRANCH=[^"]*"$' })
     $wanted = "set `"STEAM_BRANCH=$branch`""
@@ -1750,9 +1809,15 @@ function Get-ExistingSaves([string]$d) {
 function Install-Launcher([string]$d) {
     Write-Step "Start script"
     $launcher = Join-Path $d 'hotwire.bat'
+    $cfg = Join-Path $d 'hotwire.cfg'
+    $hasLauncher = Test-Path -LiteralPath $launcher
 
-    if (Test-Path -LiteralPath $launcher) {
+    if ($hasLauncher -and -not ((Test-CfgLauncher $d) -and -not (Test-Path -LiteralPath $cfg))) {
         Write-Ok "hotwire.bat is already here -- kept"
+        if (-not (Test-CfgLauncher $d)) {
+            Write-Note "It keeps its settings inside itself. The start-script converter at https://afkpanel.com/get-started"
+            Write-Note "moves them into hotwire.cfg, which Hotwire 1.1.16 and later read."
+        }
         Sync-LauncherFramework $d
         Sync-LauncherBranch $d
         Save-Record $d 'launcher'
@@ -1763,80 +1828,97 @@ function Install-Launcher([string]$d) {
     # first update.
     $vanilla = -not ((Test-Done $d 'oxide') -and (Test-Path -LiteralPath (Join-Path $d 'RustDedicated_Data\Managed\Oxide.Rust.dll')))
     $steamCmdExe = Join-Path $SteamCmd 'steamcmd.exe'
-    $why = @(
-        "hotwire.bat is Hotwire's start script: it starts the server, brings it back when it stops,",
-        "and installs Rust updates. Every schedule in it ships switched off, so it cannot restart",
-        "anything by surprise.",
-        "",
-        "This downloads it from the public repository and sets it up for this install:",
-        "  ROOT              = $d",
-        "  STEAMCMD          = $steamCmdExe"
-    )
-    if ($vanilla) { $why += "  INSTALL_FRAMEWORK = 0     no Oxide here, so it runs a vanilla server" }
     $chosenBranch = Get-ChosenBranch $d
-    if ($chosenBranch -and $chosenBranch -ne 'public') { $why += "  STEAM_BRANCH      = $chosenBranch   the branch chosen for this server" }
+    if ($hasLauncher) {
+        $why = @(
+            "hotwire.bat is here, and it reads its settings from hotwire.cfg, which is missing.",
+            "",
+            "This writes hotwire.cfg for this server, from the list the launcher ships with:"
+        )
+    } else {
+        $why = @(
+            "hotwire.bat is Hotwire's start script: it starts the server, brings it back when it stops,",
+            "and installs Rust updates. Every schedule in it ships switched off, so it cannot restart",
+            "anything by surprise.",
+            "",
+            "This downloads it from the public repository, with hotwire.cfg, the settings it reads, set up",
+            "for this install:"
+        )
+    }
+    if ($steamCmdExe -ne 'C:\steamcmd\steamcmd.exe') { $why += "  hotwire.steamcmd           $steamCmdExe" }
+    if ($vanilla) { $why += "  hotwire.install_framework  0     no Oxide here, so it runs a vanilla server" }
+    if ($chosenBranch -and $chosenBranch -ne 'public') { $why += "  hotwire.steam_branch       $chosenBranch   the branch chosen for this server" }
     $saves = @(Get-ExistingSaves $d)
     $seed = ''
     if ($saves.Count -eq 0) {
         $seed = [string](New-MapSeed)
-        $why += "  SERVER_SEED       = $seed   a random map, picked once; restarts keep it"
+        $why += "  server.seed                $seed   a random map, picked once; restarts keep it"
     } else {
-        $why += "  SERVER_SEED       = left empty: this server already has a saved map, and a seed would start a new one"
+        $why += "  server.seed                left empty: this server already has a saved map, and a seed would start a new one"
     }
     $why += @("", "Say no to start the server with a script of your own instead.", "", "More: $($Docs['Hotwire (source)'])")
     Write-Why $why
 
-    if (-not (Confirm-Offer $d 'launcher' "Install hotwire.bat as the start script?")) {
+    if (-not (Confirm-Offer $d 'launcher' "Install hotwire.bat and hotwire.cfg?")) {
         Write-Note "Skipped: you will start the server your own way. The RCON password step is skipped"
         Write-Note "too, because your start script is what sets it."
         return
     }
 
-    # hotwire.bat runs with delayed expansion on. A ! or % in ROOT is eaten before the path is used,
-    # and a quote, caret or ampersand breaks the lines that use it. HW-10: an apostrophe used to close
-    # the PowerShell single-quoted literals the launcher builds paths in; those now go through
-    # environment variables, but the apostrophe is rejected here too so a setup-written ROOT never
-    # relies on that alone.
+    # hotwire.bat runs with delayed expansion on, from its own folder. A ! or % in that folder's path is
+    # eaten before the path is used, and a quote, caret or ampersand breaks the lines that use it. HW-10: an
+    # apostrophe used to close the PowerShell single-quoted literals the launcher builds paths in; those now
+    # go through environment variables, but the apostrophe is rejected here too.
     if ($d -match '[!%"^&'']') {
-        Stop-Politely "setting ROOT in hotwire.bat to $d" "the path contains one of ! % ' `" ^ &, which a .bat cannot use safely" `
+        Stop-Politely "installing hotwire.bat in $d" "the path contains one of ! % ' `" ^ &, which a .bat cannot use safely" `
             "install into a folder without those characters, for example C:\rustserver"
     }
 
     $ports = Select-ServerPorts $d
 
-    $download = "$launcher.hotwire-tmp"
-    [void](Invoke-Download $LauncherUrl $download 'the Hotwire launcher')
-    Confirm-DownloadHash $download 'hotwire.bat' 'the Hotwire launcher'
+    if (-not $hasLauncher) {
+        $download = "$launcher.hotwire-tmp"
+        [void](Invoke-Download $LauncherUrl $download 'the Hotwire launcher')
+        Confirm-DownloadHash $download 'hotwire.bat' 'the Hotwire launcher'
+        try { $text = [System.IO.File]::ReadAllText($download) }
+        finally { Remove-Item -LiteralPath $download -Force -ErrorAction SilentlyContinue }
+        if ($text -notmatch '(?m)^set "HOTWIRE_LAUNCHER_CAPABILITIES=[^"]*settings_file') {
+            Stop-Politely "checking the downloaded hotwire.bat" "it is not a launcher that reads hotwire.cfg" `
+                "nothing was written; download this setup script again, then run install again"
+        }
+        # GitHub serves it with LF line endings, which cmd.exe misreads in a .bat.
+        Write-FileAtomic $launcher (($text -replace "`r`n", "`n") -replace "`n", "`r`n")
+        Add-Created $d $launcher
+        Add-Change "created $launcher" "delete hotwire.bat"
+    }
+
+    # The list of settings, kept as hotwire.example.cfg, and this server's copy of it, hotwire.cfg.
+    $download = Join-Path $d 'hotwire.example.cfg.hotwire-tmp'
+    [void](Invoke-Download $CfgUrl $download 'the settings list')
+    Confirm-DownloadHash $download 'hotwire.example.cfg' 'the settings list'
     try { $text = [System.IO.File]::ReadAllText($download) }
     finally { Remove-Item -LiteralPath $download -Force -ErrorAction SilentlyContinue }
+    $example = Join-Path $d 'hotwire.example.cfg'
+    if (-not (Test-Path -LiteralPath $example)) { Write-FileAtomic $example (($text -replace "`r`n", "`n") -replace "`n", "`r`n") }
 
-    $edited = Set-LauncherPaths $text $d $steamCmdExe $vanilla (Get-ChosenBranch $d) $ports $seed
-    if ($null -eq $edited -and $seed) {
-        # A hotwire.bat from before SERVER_SEED existed: set up everything else, and say what that means.
-        $edited = Set-LauncherPaths $text $d $steamCmdExe $vanilla (Get-ChosenBranch $d) $ports
-        if ($null -ne $edited) {
-            Write-Warn "this hotwire.bat has no SERVER_SEED setting, so the server plays the game's default map, seed 1337"
-            $seed = ''
-        }
+    if ($steamCmdExe -ne 'C:\steamcmd\steamcmd.exe') { $text = Set-CfgText $text 'hotwire.steamcmd' $steamCmdExe }
+    if ($vanilla) { $text = Set-CfgText $text 'hotwire.install_framework' '0' }
+    if ($chosenBranch -and $chosenBranch -ne 'public') { $text = Set-CfgText $text 'hotwire.steam_branch' $chosenBranch }
+    if ($ports) {
+        $text = Set-CfgText $text 'server.port' ([string]$ports.Game)
+        $text = Set-CfgText $text 'server.queryport' ([string]$ports.Query)
+        $text = Set-CfgText $text 'rcon.port' ([string]$ports.Rcon)
     }
-    if ($null -eq $edited) {
-        Stop-Politely "setting up the downloaded hotwire.bat" "it does not contain the lines this script changes" `
-            "nothing was written; download launcher\hotwire.bat by hand from $($Docs['Hotwire (source)']) put it beside RustDedicated.exe and check STEAMCMD near the top"
-    }
-    Write-FileAtomic $launcher $edited
-    Add-Created $d $launcher
+    if ($seed) { $text = Set-CfgText $text 'server.seed' $seed }
+    Write-FileAtomic $cfg (($text -replace "`r`n", "`n") -replace "`n", "`r`n")
+    Add-Created $d $cfg
     if ($seed) {
         Write-Ok "the map is seed $seed, picked at random for this server"
-        Write-Note "To play a particular map instead, change SERVER_SEED in hotwire.bat BEFORE the first start."
+        Write-Note "To play a particular map instead, change server.seed in hotwire.cfg BEFORE the first start."
         Write-Note "Changing it after the server has been played starts a new map."
     }
-    if ($vanilla) {
-        Write-Ok "hotwire.bat written for a vanilla server, with ROOT and STEAMCMD set for this install"
-        Add-Change "created $launcher (ROOT, STEAMCMD, INSTALL_FRAMEWORK=0$(if ($seed) { ", SERVER_SEED=$seed" }))" "delete hotwire.bat"
-    } else {
-        Write-Ok "hotwire.bat written, with ROOT and STEAMCMD set for this install"
-        Add-Change "created $launcher (ROOT and STEAMCMD set$(if ($seed) { ", SERVER_SEED=$seed" }))" "delete hotwire.bat"
-    }
+    Write-Ok ("hotwire.cfg written" + $(if ($vanilla) { ' for a vanilla server' } else { '' }) + ", with this server's ports")
+    Add-Change "created $cfg (ports$(if ($seed) { ", server.seed $seed" })$(if ($vanilla) { ', hotwire.install_framework 0' }))" "delete hotwire.cfg"
     Save-Record $d 'launcher'
 }
 
@@ -1924,9 +2006,24 @@ function Test-RconPassword([string]$Password) {
     return $null
 }
 
-# What is wrong with the RCON password in secrets.bat, or $null when hotwire.bat will accept it. Reads
-# the last set "RCON_PASSWORD=..." line, the form the launcher and install both write.
+# The file the hotwire.bat here reads its RCON password from: hotwire-secrets.cfg from 1.1.16, secrets.bat before.
+function Get-SecretsName([string]$d) { if (Test-CfgLauncher $d) { return 'hotwire-secrets.cfg' } else { return 'secrets.bat' } }
+
+# What is wrong with the RCON password, or $null when hotwire.bat will accept it. From hotwire-secrets.cfg, the
+# last rcon.password line; from an older launcher's secrets.bat, the last set "RCON_PASSWORD=..." line.
 function Get-SecretsProblem([string]$d) {
+    if (Test-CfgLauncher $d) {
+        $f = Join-Path $d 'hotwire-secrets.cfg'
+        if (-not (Test-Path -LiteralPath $f)) { return 'there is no hotwire-secrets.cfg' }
+        try { $lines = [IO.File]::ReadAllLines($f) } catch { return 'hotwire-secrets.cfg could not be read by this account' }
+        $value = $null
+        foreach ($line in $lines) {
+            $m = [regex]::Match($line.Trim(), '^(?i:rcon\.password)(\s+(.*))?$')
+            if ($m.Success) { $value = $m.Groups[2].Value.Trim(); if ($value.Length -ge 2 -and $value.StartsWith('"') -and $value.EndsWith('"')) { $value = $value.Substring(1, $value.Length - 2) } }
+        }
+        if ($null -eq $value) { return 'hotwire-secrets.cfg has no rcon.password line' }
+        return (Test-RconPassword $value)
+    }
     $f = Join-Path $d 'secrets.bat'
     if (-not (Test-Path -LiteralPath $f)) { return 'there is no secrets.bat' }
     try { $text = [IO.File]::ReadAllText($f) } catch { return 'secrets.bat could not be read by this account' }
@@ -1944,7 +2041,8 @@ function Read-SecretText([string]$Prompt) {
 
 function Install-RconPassword([string]$d) {
     Write-Step "RCON password"
-    $secrets = Join-Path $d 'secrets.bat'
+    $name = Get-SecretsName $d
+    $secrets = Join-Path $d $name
     $replacing = $false
 
     if (-not (Test-Path -LiteralPath (Join-Path $d 'hotwire.bat'))) {
@@ -1955,11 +2053,11 @@ function Install-RconPassword([string]$d) {
     if (Test-Path -LiteralPath $secrets) {
         $problem = Get-SecretsProblem $d
         if (-not $problem) {
-            Write-Ok "secrets.bat is already here, and hotwire.bat will accept its password -- left as it is"
+            Write-Ok "$name is already here, and hotwire.bat will accept its password -- left as it is"
             Save-Record $d 'rcon'
             return
         }
-        Write-Bad "secrets.bat is here, but $problem -- hotwire.bat will not start the server"
+        Write-Bad "$name is here, but $problem -- hotwire.bat will not start the server"
         if (-not (Confirm-Step "Set a new RCON password in its place?")) {
             Write-Note "Left as it is. Fix $secrets before starting the server."
             return
@@ -1971,7 +2069,7 @@ function Install-RconPassword([string]$d) {
         "RCON is remote control of your server: anyone with this password can run commands on it,",
         "so treat it like this machine's administrator password.",
         "",
-        "hotwire.bat reads it from secrets.bat, beside it, and will not start the server if it is",
+        "hotwire.bat reads it from $name, beside it, and will not start the server if it is",
         "under 8 characters, is 'change_me', or contains a double quote.",
         "",
         "Press Enter and a strong one is made for you: 32 random letters and digits, shown once and",
@@ -1992,21 +2090,27 @@ function Install-RconPassword([string]$d) {
     }
 
     $previous = $null
-    if ($replacing) { $previous = Backup-File $d $secrets 'secrets.bat' -Secret }
-    $body = "@echo off`r`n" +
-        "REM The RCON password for this server. RCON is remote control of the machine: treat this`r`n" +
-        "REM like a root password. Never share this file, and never commit it anywhere.`r`n" +
-        "set `"RCON_PASSWORD=$password`"`r`n"
+    if ($replacing) { $previous = Backup-File $d $secrets $name -Secret }
+    if ($name -eq 'hotwire-secrets.cfg') {
+        $body = "# The RCON password for this server. RCON is remote control of the machine: treat this`r`n" +
+            "# like a root password. Never share this file, and never commit it anywhere.`r`n" +
+            "rcon.password `"$password`"`r`n"
+    } else {
+        $body = "@echo off`r`n" +
+            "REM The RCON password for this server. RCON is remote control of the machine: treat this`r`n" +
+            "REM like a root password. Never share this file, and never commit it anywhere.`r`n" +
+            "set `"RCON_PASSWORD=$password`"`r`n"
+    }
     try { Write-FileAtomic $secrets $body -Secret }
     catch {
         Remove-Item -LiteralPath "$secrets.hotwire-tmp" -Force -ErrorAction SilentlyContinue
-        Stop-Politely "writing secrets.bat, readable only by Administrators and you" "$($_.Exception.Message)" `
+        Stop-Politely "writing $name, readable only by Administrators and you" "$($_.Exception.Message)" `
             "right-click hotwire-setup.bat and choose 'Run as administrator', then run install again"
     }
     Add-Created $d $secrets
-    Write-Ok "secrets.bat written, readable only by Administrators and you"
+    Write-Ok "$name written, readable only by Administrators and you"
     if ($previous) { Add-Change "replaced $secrets (the RCON password)" "copy $previous back over it" }
-    else { Add-Change "created $secrets (the RCON password)" "delete secrets.bat; hotwire.bat will not start without one" }
+    else { Add-Change "created $secrets (the RCON password)" "delete $name; hotwire.bat will not start without one" }
     Write-Note "If the server will run under a different Windows account, give that account read access."
 
     if ($generated) {
@@ -2843,6 +2947,7 @@ function Invoke-Menu {
     }
     elseif ($rconProblem) {
         if (Test-Path -LiteralPath (Get-RecordFile $here)) { Write-Note "Suggested: 1 -- install walks you through setting the RCON password." }
+        elseif (Test-CfgLauncher $here) { Write-Note "Suggested: hotwire-secrets.cfg, beside hotwire.bat, needs a line reading: rcon.password `"your password`"" }
         else { Write-Note "Suggested: secrets.bat, beside hotwire.bat, needs a line reading: set `"RCON_PASSWORD=your password`"" }
     }
     elseif (-not $connected) { Write-Note "Suggested: 3, connect to Hotwire Panel." }

@@ -25,7 +25,26 @@ sit above a launcher `1.1.7`. Read the label, not the number.
 at the top of the file — it is a comment, not something it echoes, so read it
 rather than watch for it.
 
-## 1.1.16 — launcher (Windows) — unreleased
+## Setup 0.1.4 (Windows) and 0.2.4 (Linux) — 2026-09-29
+
+**Install writes hotwire.cfg.** The launcher it installs reads its settings from `hotwire.cfg`, so install
+downloads it as released and writes `hotwire.cfg` beside it, from the list the launcher ships with
+(`hotwire.example.cfg`, checked against its SHA-256 like the launcher and the plugin): this server's ports, a
+random map seed for a new server, the chosen Steam branch, `hotwire.install_framework 0` for a vanilla server, and
+on Windows `hotwire.steamcmd` when SteamCMD is not in `C:\steamcmd`.
+
+- The RCON password goes in `hotwire-secrets.cfg`.
+- Keeping Oxide and the branch in step now changes `hotwire.cfg`, and only one install wrote.
+- A launcher that reads `hotwire.cfg` with no `hotwire.cfg` beside it is found by the pre-flight, and install
+  writes one.
+- A launcher from before 1.1.16 or 1.1.2-linux, which keeps its settings inside itself, is left as it is: the
+  start-script converter at https://afkpanel.com/get-started moves its settings into `hotwire.cfg`.
+
+**The release has a Linux download for a server you already run.** `hotwire-linux.zip` holds `hotwire.sh`, the
+settings and hook examples and `Hotwire.cs`. The Windows zip now carries the settings and hook examples, and no
+longer `secrets.example.bat`.
+
+## 1.1.16 — launcher (Windows) — 2026-09-29
 
 **Your settings are in hotwire.cfg, and the launcher only reads them.** The Windows launcher now works as 1.1.2-linux
 does, from the same `hotwire.cfg`: `hotwire.bat` holds no settings, so replacing it with a newer release changes
@@ -50,7 +69,7 @@ nothing of yours.
   stops a start.
 - `launcher.json` lists the capability `settings_file`.
 
-## 1.1.2-linux — launcher (Linux) — unreleased
+## 1.1.2-linux — launcher (Linux) — 2026-09-29
 
 **Your settings are in hotwire.cfg, and the launcher only reads them.** `hotwire.sh` holds no settings any more:
 replace it with a newer release and nothing of yours changes.

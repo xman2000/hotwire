@@ -23,8 +23,8 @@ or removing anything defaults to no.
 5. It checks five things first, and changes nothing while it does:
    - is a Rust server installed in this folder, and which build
    - is the clock right (against Steam's servers, so it never contacts the panel)
-   - is Hotwire installed: `hotwire.bat` here, `Hotwire.cs` in `oxide\plugins`
-   - is the RCON password in `secrets.bat` one `hotwire.bat` will accept
+   - is Hotwire installed: `hotwire.bat` and `hotwire.cfg` here, `Hotwire.cs` in `oxide\plugins`
+   - is the RCON password in `hotwire-secrets.cfg` one `hotwire.bat` will accept
    - is it connected to Hotwire Panel, and as what
 6. Pick from the menu. It suggests the next step from what it found.
 
@@ -72,7 +72,7 @@ nothing broken, and running it again simply carries on.
   beside its destination and is then renamed over it. A rename is all-or-nothing, so you get the old
   file or the new one, never half of either. Leftover temporary files are deleted on the next run.
   That suffix is used by nothing else.
-- **Secrets are locked before they hold anything.** `secrets.bat` and the panel keys are restricted to
+- **Secrets are locked before they hold anything.** `hotwire-secrets.cfg` and the panel keys are restricted to
   Administrators and you while still empty, and so are their backups.
 - **A record, `hotwire\install.json`, says what is finished**, what you said no to, which files install
   created, the branch and ports chosen, and the folder it belongs to. The pre-flight reads it, so a second
@@ -83,16 +83,18 @@ nothing broken, and running it again simply carries on.
   stops and says how to stop it.
 - **A download is checked before it is used.** SteamCMD's zip must hold exactly `steamcmd.exe`. Oxide's
   must contain `Oxide.Rust.dll`, every file must sit inside `RustDedicated_Data`, and it must be the
-  Windows build. The start script and the plugin must be the files they claim to be.
+  Windows build. The start script, its settings list and the plugin must be the files they claim to be.
 - **Low disk space is a question, not a warning.** Under 15 GB free, the Rust download defaults to *no*.
 - **A mistyped panel code does not end the install.** The rest stays done; connect later from the menu.
 
 ## What it will never overwrite
 
 - **A Rust server it did not install.**
-- **An existing `hotwire.bat`, `Hotwire.cs` or valid `secrets.bat`.** They are kept as they are. The one
-  exception is a `hotwire.bat` that install created: its `INSTALL_FRAMEWORK` and `STEAM_BRANCH` lines are
-  kept in step with Oxide and the chosen branch, after a copy is saved, and never while it is running.
+- **An existing `hotwire.bat`, `hotwire.cfg`, `Hotwire.cs` or valid `hotwire-secrets.cfg`.** They are kept as
+  they are. The one exception is a `hotwire.cfg` that install created: its `hotwire.install_framework` and
+  `hotwire.steam_branch` lines are kept in step with Oxide and the chosen branch, after a copy is saved. A
+  `hotwire.bat` from before 1.1.16, which keeps its settings inside itself, is left as it is; the start-script
+  converter at https://afkpanel.com/get-started moves its settings into `hotwire.cfg`.
 - **The game's own files, without a copy.** Before Oxide first replaces anything, the originals go to
   `hotwire\backups\<time>-before-oxide\`.
 - **Anything in a SteamCMD folder that already exists.** Only `steamcmd.exe` is added, and you are asked
@@ -109,7 +111,7 @@ exact way to undo it. The last screen shows where that file is. In short:
 |---|---|
 | one server's firewall rules | the `Remove-NetFirewallRule -DisplayName '...'` lines in that server's `changes.log` (as Administrator). `-Group Hotwire` would remove **every** server's rules |
 | Oxide | copy the files from `hotwire\backups\*-before-oxide\` back into the server folder |
-| the start script, plugin or password | delete `hotwire.bat`, `oxide\plugins\Hotwire.cs` or `secrets.bat` |
+| the start script, plugin or password | delete `hotwire.bat` and `hotwire.cfg`, `oxide\plugins\Hotwire.cs` or `hotwire-secrets.cfg` |
 | connecting to the panel | `hotwire-setup.bat detach`, then revoke the keys in the panel |
 | everything | delete the server folder, and `C:\steamcmd` if no other server uses it |
 
@@ -148,11 +150,11 @@ It runs in four parts, and only the third one changes anything:
 | 1 | Windows, PowerShell 5.1, Administrator, memory, **the clock** | only if the clock is out and you say yes (`w32tm /resync`) |
 | 2 | Where the server goes (see above) | nothing yet |
 | 3 | SteamCMD into `C:\steamcmd`, where `hotwire.bat` looks for it | reuses one already there |
-| 4 | The Rust server, app 258550, about 12 GB. **Asks which branch first:** public (the game everyone plays), staging (Facepunch's test build), or a branch typed by name. The choice is kept, used for every download, and written into `hotwire.bat` as `STEAM_BRANCH` | the server folder |
+| 4 | The Rust server, app 258550, about 12 GB. **Asks which branch first:** public (the game everyone plays), staging (Facepunch's test build), or a branch typed by name. The choice is kept, used for every download, and written into `hotwire.cfg` as `hotwire.steam_branch` | the server folder |
 | 5 | Oxide, checked to be the Windows build and a real archive before it is unpacked. Defaults to yes; no leaves a vanilla server, and the start script is set up to stay vanilla | the server folder |
-| 6 | **Start script**: `hotwire.bat`, with its ports and `STEAMCMD` set, `INSTALL_FRAMEWORK=0` when there is no Oxide, the chosen `STEAM_BRANCH`, and Windows line endings. `ROOT` stays the file's own folder. Asks for ports first if none are chosen. Defaults to yes; no means you use your own start script, and step 8 is skipped | `hotwire.bat`; an existing one is left alone |
+| 6 | **Start script**: `hotwire.bat`, as released, and `hotwire.cfg`, the settings it reads, with this server's ports, `hotwire.install_framework 0` when there is no Oxide, the chosen `hotwire.steam_branch`, and `hotwire.steamcmd` when SteamCMD is not in `C:\steamcmd`. Keeps the list as `hotwire.example.cfg`. Asks for ports first if none are chosen. Defaults to yes; no means you use your own start script, and step 8 is skipped | `hotwire.bat`, `hotwire.cfg`; existing ones are left alone |
 | 7 | **Hotwire plugin**, asked separately, defaults to yes. Scheduled, announced restarts. Skipped without Oxide | `oxide\plugins\Hotwire.cs` |
-| 8 | **RCON password**, walked through: type your own (hidden, twice, checked against the launcher's rules), or press Enter for 32 random letters and digits, shown once and copied to the clipboard | `secrets.bat`, readable only by Administrators and you; an existing valid one is left alone, an invalid one replaced only if you say yes |
+| 8 | **RCON password**, walked through: type your own (hidden, twice, checked against the launcher's rules), or press Enter for 32 random letters and digits, shown once and copied to the clipboard | `hotwire-secrets.cfg`, readable only by Administrators and you; an existing valid one is left alone, an invalid one replaced only if you say yes |
 | 9 | **Windows Firewall**: opens this server's game and query ports, and its Rust+ port only if asked. Asks for ports first if none are chosen | rules named for the port and the server's folder, in the group `Hotwire` |
 | 10 | **Hotwire Panel**, asked last, defaults to yes. Yes runs `connect`; no changes nothing | only if yes: the files under *doctor and connect* |
 
@@ -162,15 +164,15 @@ that defaults to no, because leaving staging for public goes back to an older bu
 
 It never opens RCON, and warns if something else has. It never touches a Rust server it did not install:
 a folder with `RustDedicated.exe` and no `hotwire\install.json` is refused. It does not start the server.
-When it finishes, fill in `SERVER_HOSTNAME` and `SERVER_DESCRIPTION` in `hotwire.bat` and double-click it.
-Install writes a random `SERVER_SEED` into a new `hotwire.bat`, so the server gets its own map (Rust's default,
+When it finishes, fill in `server.hostname` and `server.description` in `hotwire.cfg` and double-click
+`hotwire.bat`. Install writes a random `server.seed` into a new `hotwire.cfg`, so the server gets its own map (Rust's default,
 1337, is the same for everyone); restarts keep it. A server that already has a save keeps its map and gets no
 seed.
 
 Stopped halfway? Run it again. From the server's folder it carries on there; from anywhere else it lists
 the servers it knows. SteamCMD resumes a partial download, and Oxide puts every file in place again.
 
-The numbers it uses: the port layout from `launcher/hotwire.bat` section 1 (game, RCON one above, query
+The numbers it uses: the port layout from `launcher/hotwire.example.cfg` (game, RCON one above, query
 two above); the Rust+ port, the larger of game and RCON plus 67, from
 [Rust+ Server](https://wiki.facepunch.com/rust/rust-companion-server); 15 GB disk and 12 GB RAM,
 warned about rather than enforced, from [Creating a server](https://wiki.facepunch.com/rust/Creating-a-server).

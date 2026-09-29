@@ -28,7 +28,7 @@
 #
 set -uo pipefail
 
-VERSION="0.2.3"
+VERSION="0.2.4"
 DEFAULT_PANEL="https://afkpanel.com"
 
 # ---------------------------------------------------------------- output ----
@@ -655,6 +655,7 @@ cmd_detach() {
 
 REPO_RAW="https://raw.githubusercontent.com/xman2000/hotwire/connect-and-report"
 LAUNCHER_URL="$REPO_RAW/launcher/hotwire.sh"
+CFG_URL="$REPO_RAW/launcher/hotwire.example.cfg"
 PLUGIN_URL="$REPO_RAW/src/Hotwire.cs"
 SETUP_URL="$REPO_RAW/setup/hotwire-setup.sh"
 GUIDE_URL="https://afkpanel.com/docs/install-linux"
@@ -664,14 +665,17 @@ OXIDE_ASSET="Oxide.Rust-linux.zip"
 STEAMCMD_BIN="/usr/games/steamcmd"
 RUST_APPID="258550"
 
-# SHA-256 of launcher/hotwire.sh and src/Hotwire.cs AS SERVED from the branch above (the git blob, LF):
+# SHA-256 of launcher/hotwire.sh, launcher/hotwire.example.cfg and src/Hotwire.cs AS SERVED from the branch
+# above (the git blob, LF):
 #     git show HEAD:launcher/hotwire.sh | sha256sum
+# tools/build-release.sh refuses to build a release while any of them is stale.
 # !! REGENERATED AT RELEASE TIME -- NO AUTOMATION EXISTS YET !! Whenever either file changes on that
 # branch, these change in the same commit (and so does $PinnedHashes in hotwire-setup.ps1 for Hotwire.cs),
 # or every install stops at a hash mismatch. Third-party downloads (SteamCMD from Ubuntu's archive, Oxide
 # from GitHub) are not pinned: Oxide is checked against the SHA-256 GitHub publishes for it instead.
-PIN_LAUNCHER="adc70b021f4e30d522ec50c0a6ddcc6cf6cdc7a2eb7445b4cfae04250f076137"
+PIN_LAUNCHER="833aeff7d87623ff12e6aae2d0e2b0d646695cc0669f184a15d2b5f6cab90dd2"
 PIN_PLUGIN="7d2176b47c664eae4a58bc792fb2147390d2aeb7f06c4b6c906cf11f6ba36675"
+PIN_CFG="322b099f00965a581ec8c8a1ece4d6205e1e6b78fd1a53fe14e7adeb96ebbecb"
 
 # Rust's own floor (wiki.facepunch.com/rust/Creating-a-server), warned about and never enforced. A small
 # test server runs on less, and refusing would be guessing at what the reader wants.
@@ -937,7 +941,7 @@ choose_ports() {
         PORT_GAME="$game"; PORT_RCON=$((game + 1)); PORT_QUERY=$((game + 2)); break
     done
     [ -n "${PORT_GAME:-}" ] || die "choosing ports for this server" "every set from 28015 to 28915 is in use" \
-        "set SERVER_PORT, SERVER_QUERYPORT and RCON_PORT in hotwire.sh by hand"
+        "set server.port, server.queryport and rcon.port in hotwire.cfg by hand"
     if [ "$PORT_GAME" != "28015" ]; then
         note "  Another server here already uses the usual ports, so this one gets its own:"
     fi
@@ -982,7 +986,11 @@ gather() {
     declined oxide && S[oxide_no]=1 || S[oxide_no]=0
     [ -f "$IROOT/hotwire.sh" ] && S[launcher]=1 || S[launcher]=0
     declined launcher && S[launcher_no]=1 || S[launcher_no]=0
-    S[vanilla]=0; [ "${S[launcher]}" = 1 ] && grep -qx 'INSTALL_FRAMEWORK="0"' "$IROOT/hotwire.sh" && S[vanilla]=1
+    S[vanilla]=0
+    if [ "${S[launcher]}" = 1 ]; then
+        if reads_cfg; then [ "$(cfg_get hotwire.install_framework)" = 0 ] && S[vanilla]=1
+        else grep -qx 'INSTALL_FRAMEWORK="0"' "$IROOT/hotwire.sh" && S[vanilla]=1; fi
+    fi
     [ -f "$IROOT/oxide/plugins/Hotwire.cs" ] && S[plugin]=1 || S[plugin]=0
     declined plugin && S[plugin_no]=1 || S[plugin_no]=0
     S[plugin_version]=""; [ "${S[plugin]}" = 1 ] && S[plugin_version]="$(grep -oE '\[Info\("Hotwire", *"[^"]*", *"[^"]+"\)\]' "$IROOT/oxide/plugins/Hotwire.cs" | grep -oE '"[0-9][^"]*"\)' | tr -d '")')"
@@ -1093,6 +1101,7 @@ plan() {
         PLAN+=("oxide|Oxide|$([ "${S[oxide]}" = 1 ] && echo 'finish installing it' || echo 'install it, or say no for a vanilla server')")
     fi
     [ "${S[launcher]}" = 0 ] && [ "${S[launcher_no]}" = 0 ] && PLAN+=("launcher|Start script|install hotwire.sh, or say no to use your own")
+    [ "${S[launcher]}" = 1 ] && reads_cfg && [ ! -f "$IROOT/hotwire.cfg" ] && PLAN+=("launcher|Start script|write hotwire.cfg, the settings hotwire.sh reads")
     { [ -n "${S[rcon]}" ] || { [ "${S[launcher]}" = 0 ] && [ "${S[launcher_no]}" = 0 ]; }; } \
         && PLAN+=("rcon|RCON password|$([ -n "${S[rcon]}" ] && echo "fix it: ${S[rcon]}" || echo 'set it, for hotwire.sh')")
     [ "${S[plugin]}" = 0 ] && [ "${S[plugin_no]}" = 0 ] && [ "${S[oxide_no]}" = 0 ] && PLAN+=("plugin|Hotwire plugin|install it -- needs Oxide")
@@ -1360,11 +1369,26 @@ step_oxide() {
 }
 
 # hotwire.sh installs Oxide on every update unless told the server is vanilla. When install wrote the
-# launcher, its INSTALL_FRAMEWORK follows Oxide; anyone else's launcher gets the line to change instead.
+# settings, hotwire.install_framework follows Oxide; anyone else's gets the line to change instead. A
+# launcher from before 1.1.2-linux keeps the setting inside itself, as INSTALL_FRAMEWORK.
 sync_launcher_framework() {
-    local l="$IROOT/hotwire.sh" want
+    local l="$IROOT/hotwire.sh" c="$IROOT/hotwire.cfg" want
     [ -f "$l" ] || return 0
     want=1; { done_step oxide && [ -f "$(oxide_dll)" ]; } || want=0
+    if reads_cfg; then
+        [ -f "$c" ] || return 0
+        [ "$(cfg_get hotwire.install_framework)" = "$want" ] && return 0
+        [ "$want" = 1 ] && [ -z "$(cfg_get hotwire.install_framework)" ] && return 0
+        if created "$c"; then
+            cp -p "$c" "$c.backup-$(date '+%Y%m%d-%H%M%S')"
+            cfg_set_file "$c" hotwire.install_framework "$want" || die "setting hotwire.install_framework in $c" "the write failed" "run install again"
+            own "$c"; ok "hotwire.cfg set to hotwire.install_framework $want"
+            change "set hotwire.install_framework $want in $c" "put back the .backup- copy beside it"
+        else
+            warn "hotwire.cfg is not one install wrote: set hotwire.install_framework $want in it yourself"
+        fi
+        return 0
+    fi
     grep -qx "INSTALL_FRAMEWORK=\"$want\"" "$l" && return 0
     if created "$l"; then
         cp -p "$l" "$l.backup-$(date '+%Y%m%d-%H%M%S')"
@@ -1379,63 +1403,107 @@ sync_launcher_framework() {
 # A saved map means the server has been played: a seed now would start a different map, which is a wipe.
 has_saves() { find "$IROOT/server" -type f \( -name '*.sav' -o -name '*.sav.*' -o -name '*.map' \) 2>/dev/null | grep -q .; }
 
-# Sets one KEY="value" line in the launcher's SETTINGS block. The line must appear exactly once, or
-# nothing is written: a launcher this script does not recognise is left for a person.
-set_setting() {  # set_setting <text> <KEY> <value>   -> prints the new text
-    local n; n="$(printf '%s\n' "$1" | grep -c "^$2=\"[^\"]*\"")"
-    [ "$n" = 1 ] || return 1
-    printf '%s\n' "$1" | KEY="$2" VAL="$3" awk '{ if (index($0, ENVIRON["KEY"] "=\"") == 1 && $0 ~ /^[A-Z_]+="[^"]*"/) { sub(/"[^"]*"/, "\"" ENVIRON["VAL"] "\"") } print }'
+# Whether the launcher here reads its settings from hotwire.cfg (1.1.2-linux and later) rather than
+# keeping them inside itself.
+reads_cfg() { grep -q '^HOTWIRE_LAUNCHER_CAPABILITIES=.*settings_file' "$IROOT/hotwire.sh" 2>/dev/null; }
+
+# A setting's value in hotwire.cfg, the last line that sets it, quotes taken off; empty when none does.
+cfg_get() {  # cfg_get <name>
+    [ -f "$IROOT/hotwire.cfg" ] || return 0
+    awk -v n="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')" '
+        { s = $0; sub(/\r$/, "", s); sub(/^[ \t]+/, "", s); split(s, f, /[ \t]+/)
+          if (tolower(f[1]) == n) { v = substr(s, length(f[1]) + 1); sub(/^[ \t]+/, "", v); sub(/[ \t]+$/, "", v); gsub(/^"|"$/, "", v); last = v } }
+        END { printf "%s", last }' "$IROOT/hotwire.cfg"
+}
+
+# Sets one setting in hotwire.cfg text, as the launcher's own cfg_set does: the line that sets it is
+# changed where it is, one that is off in the list (#name value) is switched on in its place, and
+# anything else is added at the end. The value goes in double quotes when it has spaces or is empty.
+cfg_set_text() {  # cfg_set_text <name> <value>   stdin -> stdout
+    local shown="$2"; if [ -z "$2" ] || [[ "$2" == *[[:space:]]* ]]; then shown="\"$2\""; fi
+    HW_NAME="$1" HW_LINE="$(printf '%-27s %s' "$1" "$shown")" awk '
+        BEGIN { ln = tolower(ENVIRON["HW_NAME"]); line = ENVIRON["HW_LINE"]; done = 0; off = 0 }
+        { rows[NR] = $0 }
+        !done {
+            s = $0; sub(/\r$/, "", s); sub(/^[ \t]+/, "", s)
+            split(s, f, /[ \t]+/)
+            if (tolower(f[1]) == ln) { done = NR }
+            else if (!off && substr(f[1], 1, 1) == "#" && tolower(substr(f[1], 2)) == ln) { off = NR }
+        }
+        END {
+            at = done ? done : off
+            for (i = 1; i <= NR; i++) print (i == at ? line : rows[i])
+            if (!at) print line
+        }'
+}
+cfg_set_file() {  # cfg_set_file <file> <name> <value>: written whole beside it, then moved into place
+    cfg_set_text "$2" "$3" < "$1" > "$1.hotwire-tmp" && chmod --reference="$1" "$1.hotwire-tmp" 2>/dev/null \
+        && [ -s "$1.hotwire-tmp" ] && mv -f "$1.hotwire-tmp" "$1" || { rm -f "$1.hotwire-tmp"; return 1; }
 }
 
 step_launcher() {
     step "Start script"
-    local l="$IROOT/hotwire.sh"
-    if [ -f "$l" ]; then ok "hotwire.sh is already here -- kept"; sync_launcher_framework; save_step launcher; return 0; fi
+    local l="$IROOT/hotwire.sh" c="$IROOT/hotwire.cfg"
+    if [ -f "$l" ] && { ! reads_cfg || [ -f "$c" ]; }; then
+        ok "hotwire.sh is already here -- kept"
+        reads_cfg || note "        It keeps its settings inside itself. The start-script converter at https://afkpanel.com/get-started moves them into hotwire.cfg."
+        sync_launcher_framework; save_step launcher; return 0
+    fi
     local vanilla=0; { done_step oxide && [ -f "$(oxide_dll)" ]; } || vanilla=1
     local seed=""; has_saves || seed="$(python3 -c 'import secrets; print(secrets.randbelow(2147483647) + 1)')"
-    why "hotwire.sh is Hotwire's start script: it starts the server, brings it back when it stops," \
-        "installs Rust and Oxide updates, and stops trying if the server crashes over and over. Every" \
-        "schedule ships switched off, so it cannot restart anything by surprise." "" \
-        "This downloads it from the public repository and sets it up for this server:" \
-        "  STEAM_BRANCH      = $(rec_get branch || true)" \
-        "  ports             = its own game, query and RCON ports (next)"
-    [ "$vanilla" = 1 ] && say "    INSTALL_FRAMEWORK = 0     no Oxide here, so it runs a vanilla server"
-    if [ -n "$seed" ]; then say "    SERVER_SEED       = $seed   a random map, picked once; restarts keep it"
-    else say "    SERVER_SEED       = left empty: this server already has a saved map, and a seed would start a new one"; fi
+    local branch; branch="$(rec_get branch || true)"; branch="${branch:-public}"
+    if [ -f "$l" ]; then
+        why "hotwire.sh is here, and it reads its settings from hotwire.cfg, which is missing." "" \
+            "This writes hotwire.cfg for this server, from the list the launcher ships with:"
+    else
+        why "hotwire.sh is Hotwire's start script: it starts the server, brings it back when it stops," \
+            "installs Rust and Oxide updates, and stops trying if the server crashes over and over. Every" \
+            "schedule ships switched off, so it cannot restart anything by surprise." "" \
+            "This downloads it from the public repository, with hotwire.cfg, the settings it reads, set up" \
+            "for this server:"
+    fi
+    say "    hotwire.steam_branch       $branch"
+    say "    ports                      its own game, query and RCON ports (next)"
+    [ "$vanilla" = 1 ] && say "    hotwire.install_framework  0     no Oxide here, so it runs a vanilla server"
+    if [ -n "$seed" ]; then say "    server.seed                $seed   a random map, picked once; restarts keep it"
+    else say "    server.seed                left empty: this server already has a saved map, and a seed would start a new one"; fi
     say ""
     note "  Say no to start the server with a script of your own instead."
     say ""
-    if ! offer launcher "Install hotwire.sh as the start script?"; then
+    if ! offer launcher "Install hotwire.sh and hotwire.cfg?"; then
         note "Skipped: you start the server your own way. The RCON password step is skipped too, because"
         note "your start script is what sets it."
         return 0
     fi
     choose_ports
 
-    local tmp="$l.hotwire-tmp" text
-    fetch "$LAUNCHER_URL" "$tmp" "the Hotwire launcher"
-    check_pin "$tmp" "$PIN_LAUNCHER" "the Hotwire launcher"
-    text="$(cat "$tmp")"; rm -f "$tmp"
-    local key val
-    for key in STEAM_BRANCH SERVER_PORT SERVER_QUERYPORT RCON_PORT INSTALL_FRAMEWORK SERVER_SEED; do
-        case "$key" in
-            STEAM_BRANCH)      val="$(rec_get branch)"; val="${val:-public}" ;;
-            SERVER_PORT)       val="$PORT_GAME" ;;
-            SERVER_QUERYPORT)  val="$PORT_QUERY" ;;
-            RCON_PORT)         val="$PORT_RCON" ;;
-            INSTALL_FRAMEWORK) val=$((1 - vanilla)) ;;
-            SERVER_SEED)       val="$seed" ;;
-        esac
-        text="$(set_setting "$text" "$key" "$val")" || die "setting $key in the downloaded hotwire.sh" \
-            "the line $key=\"...\" is not there exactly once" "nothing was written; please report this"
-    done
-    ( umask 022; printf '%s\n' "$text" > "$tmp" ) && chmod 755 "$tmp" && mv -f "$tmp" "$l" \
-        || die "writing $l" "the write failed" "check free space, then run install again"
-    own "$l"
-    rec_add created "$l"
-    ok "hotwire.sh written$([ "$vanilla" = 1 ] && printf ' for a vanilla server'), ports ${PORT_GAME}/${PORT_QUERY}/${PORT_RCON}"
-    [ -n "$seed" ] && { ok "the map is seed $seed, picked at random for this server"; note "        To play a particular map, change SERVER_SEED in hotwire.sh BEFORE the first start."; }
-    change "created $l (branch, ports$([ -n "$seed" ] && printf ', SERVER_SEED=%s' "$seed")$([ "$vanilla" = 1 ] && printf ', INSTALL_FRAMEWORK=0'))" "delete $l"
+    local tmp
+    if [ ! -f "$l" ]; then
+        tmp="$l.hotwire-tmp"
+        fetch "$LAUNCHER_URL" "$tmp" "the Hotwire launcher"
+        check_pin "$tmp" "$PIN_LAUNCHER" "the Hotwire launcher"
+        chmod 755 "$tmp" && mv -f "$tmp" "$l" || die "writing $l" "the write failed" "check free space, then run install again"
+        own "$l"; rec_add created "$l"
+        change "created $l" "delete $l"
+    fi
+
+    # The list of settings, kept as hotwire.example.cfg, and this server's copy of it, hotwire.cfg.
+    tmp="$IROOT/hotwire.example.cfg.hotwire-tmp"
+    fetch "$CFG_URL" "$tmp" "the settings list"
+    check_pin "$tmp" "$PIN_CFG" "the settings list"
+    local text; text="$(cat "$tmp")"
+    if [ -f "$IROOT/hotwire.example.cfg" ]; then rm -f "$tmp"; else mv -f "$tmp" "$IROOT/hotwire.example.cfg"; own "$IROOT/hotwire.example.cfg"; fi
+    [ "$branch" != public ] && text="$(printf '%s\n' "$text" | cfg_set_text hotwire.steam_branch "$branch")"
+    text="$(printf '%s\n' "$text" | cfg_set_text server.port "$PORT_GAME" | cfg_set_text server.queryport "$PORT_QUERY" | cfg_set_text rcon.port "$PORT_RCON")"
+    [ "$vanilla" = 1 ] && text="$(printf '%s\n' "$text" | cfg_set_text hotwire.install_framework 0)"
+    [ -n "$seed" ] && text="$(printf '%s\n' "$text" | cfg_set_text server.seed "$seed")"
+    ( umask 022; printf '%s\n' "$text" > "$c.hotwire-tmp" ) && chmod 644 "$c.hotwire-tmp" && mv -f "$c.hotwire-tmp" "$c" \
+        || { rm -f "$c.hotwire-tmp"; die "writing $c" "the write failed" "check free space, then run install again"; }
+    own "$c"
+    rec_add created "$c"
+    ok "hotwire.cfg written$([ "$vanilla" = 1 ] && printf ' for a vanilla server'), ports ${PORT_GAME}/${PORT_QUERY}/${PORT_RCON}"
+    [ -n "$seed" ] && { ok "the map is seed $seed, picked at random for this server"; note "        To play a particular map, change server.seed in hotwire.cfg BEFORE the first start."; }
+    change "created $c (branch, ports$([ -n "$seed" ] && printf ', server.seed %s' "$seed")$([ "$vanilla" = 1 ] && printf ', hotwire.install_framework 0'))" "delete $c"
     save_step launcher
 }
 
@@ -1453,9 +1521,22 @@ password_problem() {
     return 0
 }
 
-# Reads secrets.sh rather than running it: this script is root, and the file belongs to the server's user.
+# The file the launcher here reads its RCON password from: hotwire-secrets.cfg from 1.1.2-linux, secrets.sh before.
+secrets_name() { if reads_cfg; then printf 'hotwire-secrets.cfg'; else printf 'secrets.sh'; fi; }
+
+# Reads the secrets file rather than running it: this script is root, and the file belongs to the server's user.
 secrets_problem() {
     local f="$IROOT/secrets.sh" line val
+    if reads_cfg; then
+        f="$IROOT/hotwire-secrets.cfg"
+        [ -f "$f" ] || { printf 'there is no hotwire-secrets.cfg'; return; }
+        line="$(grep -iE '^[[:space:]]*rcon\.password([[:space:]]|$)' "$f" | tail -1 | tr -d '\r')"
+        [ -n "$line" ] || { printf 'hotwire-secrets.cfg has no rcon.password line'; return; }
+        val="$(printf '%s' "$line" | sed -E 's/^[[:space:]]*[^[:space:]]+[[:space:]]*//; s/[[:space:]]+$//')"
+        case "$val" in \"*\") val="${val#\"}"; val="${val%\"}" ;; esac
+        password_problem "$val"
+        return
+    fi
     [ -f "$f" ] || { printf 'there is no secrets.sh'; return; }
     line="$(grep -E '^[[:space:]]*RCON_PASSWORD=' "$f" | tail -1)"
     [ -n "$line" ] || { printf 'secrets.sh has no RCON_PASSWORD= line'; return; }
@@ -1477,17 +1558,18 @@ read_secret() {  # sets TTY_LINE, not echoed; in this shell for the same reason 
 
 step_rcon() {
     step "RCON password"
-    local f="$IROOT/secrets.sh" replacing=0 problem
+    local f="$IROOT/$(secrets_name)" name; name="$(secrets_name)"
+    local replacing=0 problem
     if [ ! -f "$IROOT/hotwire.sh" ]; then note "Skipped: there is no hotwire.sh, so your own start script sets the RCON password."; return 0; fi
     if [ -f "$f" ]; then
         problem="$(secrets_problem)"
-        if [ -z "$problem" ]; then ok "secrets.sh is already here, and hotwire.sh will accept its password -- left as it is"; save_step rcon; return 0; fi
-        bad "secrets.sh is here, but $problem -- hotwire.sh will not start the server"
+        if [ -z "$problem" ]; then ok "$name is already here, and hotwire.sh will accept its password -- left as it is"; save_step rcon; return 0; fi
+        bad "$name is here, but $problem -- hotwire.sh will not start the server"
         confirm "Set a new RCON password in its place?" || { note "Left as it is. Fix $f before starting the server."; return 0; }
         replacing=1
     fi
     why "RCON is remote control of your server: anyone with this password can run commands on it," \
-        "so treat it like this machine's root password. hotwire.sh reads it from secrets.sh, readable" \
+        "so treat it like this machine's root password. hotwire.sh reads it from $name, readable" \
         "only by $IUSER, and it never goes on a command line you type." "" \
         "Press Enter and a strong one is made for you: 32 random letters and digits, shown once." \
         "Or type your own -- it is not shown as you type, and you type it twice."
@@ -1506,11 +1588,15 @@ step_rcon() {
     local previous=""
     if [ "$replacing" = 1 ]; then previous="$f.backup-$(date '+%Y%m%d-%H%M%S')"; cp -p "$f" "$previous"; fi
     ( umask 077
-      printf '# The RCON password for this server. RCON is remote control of the machine: treat this\n# like a root password. Never share this file, and never commit it anywhere.\nRCON_PASSWORD='"'"'%s'"'"'\n' "$pw" > "$f.hotwire-tmp" ) \
+      if [ "$name" = hotwire-secrets.cfg ]; then
+          printf '# The RCON password for this server. RCON is remote control of the machine: treat this\n# like a root password. Never share this file, and never commit it anywhere.\nrcon.password "%s"\n' "$pw" > "$f.hotwire-tmp"
+      else
+          printf '# The RCON password for this server. RCON is remote control of the machine: treat this\n# like a root password. Never share this file, and never commit it anywhere.\nRCON_PASSWORD='"'"'%s'"'"'\n' "$pw" > "$f.hotwire-tmp"
+      fi ) \
         && chmod 600 "$f.hotwire-tmp" && chown "$IUSER:$IUSER" "$f.hotwire-tmp" && mv -f "$f.hotwire-tmp" "$f" \
         || { rm -f "$f.hotwire-tmp"; die "writing $f" "the write failed" "run install again"; }
     rec_add created "$f"
-    ok "secrets.sh written, readable only by $IUSER"
+    ok "$name written, readable only by $IUSER"
     if [ -n "$previous" ]; then change "replaced $f (the RCON password)" "copy $previous back over it"
     else change "created $f (the RCON password)" "delete it; hotwire.sh will not start without one"; fi
     if [ "$generated" = 1 ]; then
@@ -1653,9 +1739,15 @@ show_finish() {
     say ""
     if [ "${S[launcher]}" = 1 ]; then
         say "  ${C_BLD}Next:${C_OFF}"
-        say "    1. Name your server. Open hotwire.sh and fill in SERVER_HOSTNAME and SERVER_DESCRIPTION"
-        say "       (and SERVER_MAXPLAYERS if you want); each setting is explained beside it:"
-        say "         sudo -u $IUSER nano $IROOT/hotwire.sh"
+        if reads_cfg; then
+            say "    1. Name your server. Open hotwire.cfg and fill in server.hostname and server.description"
+            say "       (and server.maxplayers if you want); each setting is explained above it:"
+            say "         sudo -u $IUSER nano $IROOT/hotwire.cfg"
+        else
+            say "    1. Name your server. Open hotwire.sh and fill in SERVER_HOSTNAME and SERVER_DESCRIPTION"
+            say "       (and SERVER_MAXPLAYERS if you want); each setting is explained beside it:"
+            say "         sudo -u $IUSER nano $IROOT/hotwire.sh"
+        fi
         if [ "${S[service]}" = 1 ]; then
             say "    2. Start it:   sudo systemctl start ${S[unit]%.service}"
             say "       Watch it:   sudo journalctl -u ${S[unit]%.service} -f"
