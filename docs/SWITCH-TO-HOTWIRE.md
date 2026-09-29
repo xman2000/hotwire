@@ -18,6 +18,8 @@ and players stay as they are.
 3. Select **Download hotwire-settings.zip**. It holds `hotwire.cfg`, with your settings, and `hotwire-secrets.cfg`.
 4. Note the rows under **Not carried**. Each one names the line in your script and what to do with it.
 
+![The converter's result: the settings download, the settings carried, those not carried, and what the launcher does](https://afkpanel.com/images/docs/converter.webp)
+
 ## 2. Stop the server
 
 Stop the server and your old start script. Keep the old script: to go back, run it again.
