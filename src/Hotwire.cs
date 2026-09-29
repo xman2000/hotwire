@@ -17,7 +17,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Hotwire", "xman2000", "1.1.43")]
+    [Info("Hotwire", "xman2000", "1.1.44")]
     [Description("Scheduled restarts and updates. Announces, counts down, writes a flag, quits.")]
     internal class Hotwire : CovalencePlugin
     {
@@ -10084,11 +10084,15 @@ namespace Oxide.Plugins
         // "hotwire connect <code> [panel address]" connects this server to the
         // panel from the server console, RCON, or the in-game console of an
         // admin: the same code hotwire-setup asks for, without leaving the game.
-        // It connects the plugin only; the launcher is connected by setup. It
-        // uses the install id setup keeps in hotwire/install_id, and writes one
-        // there if there is none, so connecting either way adopts the same
-        // server in the panel rather than making a second. The code is good
-        // for one hour and one server, and is spent once it is used.
+        // It connects the plugin and the launcher, writing the same files setup
+        // writes (oxide/data/Hotwire/panel.json, hotwire/keys.json and
+        // hotwire/connect.json), so both ways give the same result: every
+        // connect replaces all of a server's keys, and a plugin-only connect
+        // left the launcher's key dead. It uses the install id setup keeps in
+        // hotwire/install_id, and writes one there if there is none, so
+        // connecting either way adopts the same server in the panel rather than
+        // making a second. The code is good for one hour and one server, and is
+        // spent once it is used.
 
         private const string DefaultPanelUrl = "https://afkpanel.com";
         private const string EnrollPath = "/api/v1/enroll";
@@ -10152,7 +10156,7 @@ namespace Oxide.Plugins
                 ["install_id"] = installId,
                 ["identity"] = name,
                 ["name"] = name,
-                ["components"] = new JArray("plugin")
+                ["components"] = new JArray("plugin", "script")
             }.ToString(Formatting.None);
 
             _connecting = true;
@@ -10206,21 +10210,60 @@ namespace Oxide.Plugins
 
             var path = PanelFile();
             Directory.CreateDirectory(Path.GetDirectoryName(path));
-            if (File.Exists(path))
-                File.Copy(path, path + ".backup-" + DateTime.UtcNow.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture), true);
-
-            var file = new JObject { ["key_id"] = keyId, ["secret"] = secret, ["panel_url"] = url, ["folder"] = root };
-            var tmp = path + ".tmp";
-            File.WriteAllText(tmp, file.ToString(Formatting.Indented) + "\n");
-            if (File.Exists(path)) File.Delete(path);
-            File.Move(tmp, path);
 
             var server = data["server"] as JObject;
+
+            // The launcher's key and the connection record first, the plugin's
+            // file last: panel.json is what starts reporting, so a connect that
+            // stops part-way leaves the plugin as it was. Setup writes the same
+            // three files, so hotwire-setup doctor and detach see this connect.
+            var script = keys.OfType<JObject>().FirstOrDefault(k => (string)k["component"] == "script");
+            var launcherConnected = false;
+            if (script != null && !string.IsNullOrWhiteSpace((string)script["key_id"]) && !string.IsNullOrWhiteSpace((string)script["secret"]))
+            {
+                var dir = Path.Combine(root, "hotwire");
+                Directory.CreateDirectory(dir);
+                WriteConnectFile(Path.Combine(dir, "keys.json"), new JObject { ["key_id"] = (string)script["key_id"], ["secret"] = (string)script["secret"] });
+                WriteConnectFile(Path.Combine(dir, "connect.json"), new JObject
+                {
+                    ["install_id"] = server == null ? null : server["install_id"],
+                    ["server_id"] = server == null ? null : server["id"],
+                    ["identity"] = server == null ? null : server["identity"],
+                    ["folder"] = root,
+                    ["panel_url"] = url,
+                    ["connected_at"] = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ", CultureInfo.InvariantCulture)
+                });
+                launcherConnected = true;
+            }
+
+            WriteConnectFile(path, new JObject { ["key_id"] = keyId, ["secret"] = secret, ["panel_url"] = url, ["folder"] = root });
+
             var adopted = server != null && server["adopted"] != null && server["adopted"].Type == JTokenType.Boolean && (bool)server["adopted"];
             player.Reply(adopted
                 ? "Reconnected to the server the panel already knew. Its history is kept, and its old keys no longer work."
                 : "Connected. This server appears in the panel within a minute.");
-            player.Reply("Only the plugin is connected. hotwire-setup connects the launcher, if you use it.");
+            if (!launcherConnected)
+                player.Reply("The panel sent no key for the launcher, so only the plugin is connected. hotwire-setup connect connects both.");
+        }
+
+        // Writes a connection file the way setup does: the old one kept as a
+        // .backup, the new one in full or not at all. An existing file is
+        // rewritten in place, so the owner-only permissions setup gave it stay;
+        // a new one takes the folder's defaults, as panel.json always has.
+        private static void WriteConnectFile(string path, JObject content)
+        {
+            var text = content.ToString(Formatting.Indented) + "\n";
+            if (File.Exists(path))
+            {
+                File.Copy(path, path + ".backup-" + DateTime.UtcNow.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture), true);
+                using (var stream = new FileStream(path, FileMode.Truncate, FileAccess.Write))
+                using (var writer = new StreamWriter(stream, new UTF8Encoding(false)))
+                    writer.Write(text);
+                return;
+            }
+            var tmp = path + ".tmp";
+            File.WriteAllText(tmp, text);
+            File.Move(tmp, path);
         }
 
         private static bool SameHost(string a, string b)

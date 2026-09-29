@@ -25,6 +25,21 @@ sit above a launcher `1.1.7`. Read the label, not the number.
 at the top of the file — it is a comment, not something it echoes, so read it
 rather than watch for it.
 
+## Plugin 1.1.44, Linux launcher 1.1.3, setup 0.1.5 (Windows) and 0.2.5 (Linux) — 2026-09-29
+
+**`hotwire connect` in the game connects the launcher too.** Both ways of connecting now give the same result.
+
+- Plugin 1.1.44: `hotwire connect <code>` asks the panel for the launcher's key as well as the plugin's, and
+  writes the same three files `hotwire-setup connect` writes: `oxide/data/Hotwire/panel.json`,
+  `hotwire/keys.json` and `hotwire/connect.json`. Before, it connected the plugin only, and because every
+  connect replaces all of a server's keys, running it after `hotwire-setup connect` left the launcher's key dead.
+  A file that already exists is rewritten in place, so owner-only permissions setup gave it are kept; a new one
+  takes the folder's default permissions, as `panel.json` always has.
+- Linux launcher 1.1.3: reads its key before every start instead of once, so a connect made while it runs takes
+  effect at the next restart, and it says so once. An unconnected server no longer repeats "Not connected" on
+  every restart.
+- Setup 0.1.5 and 0.2.5: pins match this release's plugin and Linux launcher.
+
 ## Setup 0.1.4 (Windows) and 0.2.4 (Linux) — 2026-09-29
 
 **Install writes hotwire.cfg.** The launcher it installs reads its settings from `hotwire.cfg`, so install

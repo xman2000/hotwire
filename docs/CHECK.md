@@ -20,7 +20,7 @@ Fix each problem it lists, then run it again until it lists none.
 | --- | --- |
 | `hotwire.cfg read: every line is a setting.` | No line was ignored |
 | `Options look right.` | Every setting name is in the file's own list |
-| `Rust build: installed <build>, public <build> -- current.` | The installed Rust matches Steam's (Windows) |
+| `Rust build: installed <build>, public <build> -- current.` | The installed Rust matches Steam's |
 | `a normal start would launch without updating.` | The next start skips SteamCMD and Oxide |
 | `a normal start would update here.` | The next start updates Rust and Oxide first |
 

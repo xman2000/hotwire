@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # ==[ H O T W I R E ]===================================================
-#  Hotwire launcher for Linux, version 1.1.2-linux (2026-09-28)
+#  Hotwire launcher for Linux, version 1.1.3-linux (2026-09-29)
 #  Built by xman2000 and Claude.  MIT License.
 #  https://github.com/xman2000/hotwire
 #
@@ -21,9 +21,9 @@
 #     offers a launcher-editing feature. Capabilities, not the version number,
 #     are what a feature is gated on; settings_file says the settings are read
 #     from hotwire.cfg.
-HOTWIRE_LAUNCHER_VERSION="1.1.2-linux"
+HOTWIRE_LAUNCHER_VERSION="1.1.3-linux"
 HOTWIRE_LAUNCHER_CAPABILITIES="supervise,update,framework_verify,crash_backstop,log_rotate,convar_persist,wipe,backup,settings_file"
-HOTWIRE_LAUNCHER_HASH="dd80f3f4c16fcd9fc19b88b5b940a090cdfb845017d5982bbdf11a9c4f0d1932"
+HOTWIRE_LAUNCHER_HASH="eb5894bfdfa8574c44306c6719d4caa1cf92cb5fc0241755d745220d6794bd59"
 
 # ======================================================================
 #  HOW THIS LAUNCHER WORKS
@@ -782,15 +782,27 @@ _sha256() { printf '%s' "$1" | openssl dgst -sha256 | sed 's/^.*= *//'; }
 _hmac()   { printf '%s' "$2" | openssl dgst -sha256 -hmac "$1" | sed 's/^.*= *//'; }
 _bool()   { [ "$1" = "1" ] && printf 'true' || printf 'false'; }
 
-REPORT_ENABLED=0; PANEL_URL=""; SCRIPT_KEY=""; SCRIPT_SECRET=""
+REPORT_ENABLED=0; PANEL_URL=""; SCRIPT_KEY=""; SCRIPT_SECRET=""; REPORT_STATE=""
+# Read again before every start, not once: a connect made while the launcher runs (hotwire-setup connect, or
+# "hotwire connect" in the game, which writes the same files) replaces the keys, and the old ones stop working.
+# It says so only when the state changes, so an unconnected server does not log it on every restart.
 init_reporting() {
     PANEL_URL="$(_json_str "$CONNECT_FILE" panel_url)"
     SCRIPT_KEY="$(_json_str "$KEYS_FILE" key_id)"
     SCRIPT_SECRET="$(_json_str "$KEYS_FILE" secret)"
+    local state
     if [ -n "$PANEL_URL" ] && [ -n "$SCRIPT_KEY" ] && [ -n "$SCRIPT_SECRET" ]; then
-        REPORT_ENABLED=1
+        REPORT_ENABLED=1; state="connected $SCRIPT_KEY"
     else
-        log "Not connected to a panel (no keys); the launcher will not report."
+        REPORT_ENABLED=0; state="none"
+    fi
+    if [ "$state" != "$REPORT_STATE" ]; then
+        if [ "$REPORT_ENABLED" = "1" ]; then
+            [ -n "$REPORT_STATE" ] && log "Connected to a panel; the launcher reports with its new key."
+        else
+            log "Not connected to a panel (no keys); the launcher will not report."
+        fi
+        REPORT_STATE="$state"
     fi
 }
 
@@ -1414,6 +1426,7 @@ per_launch_prep() {
     # the next restart without restarting the launcher.
     [ -n "${CONFIG_LOADED:-}" ] && config_reload
     CONFIG_LOADED=1
+    init_reporting
     decide_update_mode
     build_check
     update_decision
