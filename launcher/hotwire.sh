@@ -23,7 +23,7 @@
 #     from hotwire.cfg.
 HOTWIRE_LAUNCHER_VERSION="1.1.2-linux"
 HOTWIRE_LAUNCHER_CAPABILITIES="supervise,update,framework_verify,crash_backstop,log_rotate,convar_persist,wipe,backup,settings_file"
-HOTWIRE_LAUNCHER_HASH="a88556cf5a0274be4912d6607006391f48810c83d2d17eee3398743f7f023b0c"
+HOTWIRE_LAUNCHER_HASH="dd80f3f4c16fcd9fc19b88b5b940a090cdfb845017d5982bbdf11a9c4f0d1932"
 
 # ======================================================================
 #  HOW THIS LAUNCHER WORKS
@@ -298,7 +298,7 @@ load_config() {
         # The file's own list is every name above its OTHER CONVARS heading, on or
         # off (#name value): what the option check knows as spelled right. Names
         # added below it are the ones worth a second look.
-        [[ "$line" == '#  OTHER CONVARS'* ]] && listed=0
+        [[ "$line" == '#'*'OTHER CONVARS'* ]] && listed=0
         if [[ "$line" =~ ^#([A-Za-z][A-Za-z0-9_]*(\.[A-Za-z0-9_]+)+)[[:space:]] ]]; then
             [ "$listed" = 1 ] && known[${BASH_REMATCH[1],,}]=1; continue
         fi
@@ -318,6 +318,9 @@ load_config() {
                 else CFG_PROBLEMS+=("line $n: $name: $CFG_WHY; the default is used"); fi
                 continue
             fi
+            # For a launcher setting an empty value is its default, except the Steam branch, where empty means
+            # "let Steam keep the last one". A server convar's empty value is the game's default, as the file says.
+            if [ -z "$CFG_VALUE" ] && [ -n "${HW_SETTINGS[$lower]:-}" ] && [ "$kind" != word ]; then continue; fi
             staged[$var]="$CFG_VALUE"
             continue
         fi

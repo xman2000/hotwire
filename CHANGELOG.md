@@ -25,6 +25,31 @@ sit above a launcher `1.1.7`. Read the label, not the number.
 at the top of the file — it is a comment, not something it echoes, so read it
 rather than watch for it.
 
+## 1.1.16 — launcher (Windows) — unreleased
+
+**Your settings are in hotwire.cfg, and the launcher only reads them.** The Windows launcher now works as 1.1.2-linux
+does, from the same `hotwire.cfg`: `hotwire.bat` holds no settings, so replacing it with a newer release changes
+nothing of yours.
+
+- `hotwire.cfg` and `hotwire-secrets.cfg` are read by PowerShell, as data, with the same checks and the same rules
+  as on Linux: a line that is not a setting is ignored and named by `hotwire.bat check`; a bad save folder, seed,
+  world size, port or map URL stops the first start and keeps the last good settings on a later restart. The file
+  is read again before every restart.
+- The server is started from PowerShell with its arguments built there, so cmd never sees a value: a server name
+  can hold `& | < > % !` and anything but a double quote.
+- The RCON password moves to `hotwire-secrets.cfg`; `secrets.bat` is no longer read. It is not passed on in the
+  server's environment.
+- Your own commands go in `hotwire-before.bat` and `hotwire-after.bat`, each run in a cmd of its own; copy the
+  `.example` files. `HOOK_BEFORE`/`HOOK_AFTER` are gone.
+- Where Oxide comes from, the Steam app id and the flag names are fixed in the launcher, never settings. The
+  server's folder is always the launcher's own folder.
+- Wipes and permanent settings from the panel are written into `hotwire.cfg`, never into `hotwire.bat`. A request
+  can no longer change a `hotwire.` launcher setting, and one for a value the launcher reads itself must pass that
+  setting's check.
+- The option check warns about a convar name that is not in `hotwire.cfg`'s own list, as on Linux; it no longer
+  stops a start.
+- `launcher.json` lists the capability `settings_file`.
+
 ## 1.1.2-linux — launcher (Linux) — unreleased
 
 **Your settings are in hotwire.cfg, and the launcher only reads them.** `hotwire.sh` holds no settings any more:
@@ -49,6 +74,8 @@ replace it with a newer release and nothing of yours changes.
   `hotwire.` launcher setting, and a value the launcher reads itself (the save folder, ports) must pass its own check.
 - Backups keep a copy of `hotwire.cfg` (never the secrets file).
 - `launcher.json` lists the capability `settings_file`.
+- An empty value for a launcher setting means its default (the Steam branch excepted, where empty lets Steam keep
+  the last one), and the option check reads the file's OTHER CONVARS heading as it is written.
 
 ## 1.1.43 — plugin — 2026-09-28
 

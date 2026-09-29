@@ -2,125 +2,34 @@
 setlocal EnableDelayedExpansion
 
 REM ==[ H O T W I R E ]===================================================
-REM  Hotwire launcher for Windows, version 1.1.15 (2026-09-27)
+REM  Hotwire launcher for Windows, version 1.1.16 (2026-09-28)
 REM  Built by xman2000 and Claude.  MIT License.
 REM  https://github.com/xman2000/hotwire
 REM
-REM  Fill in section 1, then run "hotwire.bat check". How the launcher
-REM  works, and every other setting, comes after section 1.
-REM ======================================================================
-
-:hotwire_server_settings
-REM === HOTWIRE SETTINGS BEGIN ===========================================
-REM  1. YOUR SERVER
+REM  Your settings are in hotwire.cfg, beside this file, and the RCON
+REM  password is in hotwire-secrets.cfg. This file holds no settings:
+REM  replace it with a newer release and nothing of yours changes.
 REM
-REM     An empty value uses the game's default, shown in brackets.
-REM     In a value, write a percent sign as %%, and never use ! or a
-REM     double quote. | & < and > are safe here.
-REM     Every other convar is in section 3. The RCON password is in
-REM     secrets.bat.
+REM  Usage:
+REM    hotwire.bat          start (or resume) the supervised server
+REM    hotwire.bat check    check everything and report, but do not start
 REM ======================================================================
 
-REM ----------------------------------------------------------------------
-REM  1.1  THE SERVER
-REM ----------------------------------------------------------------------
-
-REM  +server.hostname [default: "My Untitled Rust Server"]
-REM  The name in the server browser.
-set "SERVER_HOSTNAME="
-
-REM  +server.description [default: "No server description has been provided."]
-REM  Shown with your server in the server browser. \n starts a new line.
-set "SERVER_DESCRIPTION="
-
-REM  +server.tags [default: UNKNOWN]
-REM  Browser filter tags, separated by commas, with no spaces. For example:
-REM    monthly,vanilla,NA
-REM  The tags the browser filters on:
-REM    wipe schedule   monthly, biweekly, weekly
-REM    ruleset         vanilla, softcore, hardcore, primitive, pve
-REM    style           roleplay, creative, minigame, training,
-REM                    battlefield, builds
-REM    region          a region tag, such as NA or EU
-set "SERVER_TAGS="
-
-REM  +server.maxplayers [default: 500]
-REM  Player slots.
-set "SERVER_MAXPLAYERS="
-
-REM  +server.identity [default: "my_server_identity"]
-REM  The folder under server\ that holds the map, blueprints and bans.
-REM  Short, lower case, no spaces. Changing it later starts a new, empty
-REM  server and leaves the old one on disk.
-set "SERVER_IDENTITY="
-
-REM  +server.seed [default: 1337]
-REM  The map. Any whole number from 0 to 2147483647. hotwire-setup picks a
-REM  random one for a new server. Changing it wipes the map.
-set "SERVER_SEED="
-
-REM  +server.worldsize [default: 4500]
-REM  Map width in meters, 1000 to 6000. Bigger maps boot slower and use
-REM  more memory. Changing it wipes the map.
-set "SERVER_WORLDSIZE="
-
-REM ----------------------------------------------------------------------
-REM  1.2  PORTS -- forward the game and query ports at your router, and
-REM       nothing else. Each server on this machine needs its own three.
-REM ----------------------------------------------------------------------
-
-REM  +server.port [default: 28015]
-REM  Game traffic, UDP.
-set "SERVER_PORT=28015"
-
-REM  +server.queryport [default: 0]
-REM  Server browser, UDP. If this is wrong the server runs but nobody can
-REM  see it. Do not use 27015, or anything from 27000 to 27030: that is
-REM  Steam's own range, and on a machine that also runs Steam the client
-REM  can take the port and hide your server from the browser.
-set "SERVER_QUERYPORT=28017"
-
-REM  +rcon.port [default: 0]
-REM  Remote console, TCP. Never forward this port. RCON is not encrypted:
-REM  the password crosses the network in plain text.
-set "RCON_PORT=28016"
-
-REM ----------------------------------------------------------------------
-REM  1.3  UPDATES
-REM ----------------------------------------------------------------------
-
-REM  When Rust and Oxide are updated.
-REM    auto      As hotwire while the Hotwire plugin has an update scheduled,
-REM              otherwise as always. The plugin says so in UPDATE.schedule,
-REM              which it keeps fresh; missing or over two hours old, this
-REM              start updates. Leave it on auto unless you have a reason.
-REM    always    Every start. Restarts take longer and the server is never
-REM              behind.
-REM    hotwire   When the plugin asks, when Steam has a newer build, when the
-REM              launcher cannot tell whether Steam has one, or after
-REM              MAX_DAYS_WITHOUT_UPDATE days (section 2). Restarts are quick.
-REM    off       Never. A flag file is left in place and the console says
-REM              so. For a server whose files are managed some other way.
-set "UPDATE_MODE=auto"
-
-REM === HOTWIRE SETTINGS END =============================================
-REM  Section 6b reads section 1 again before every start; this ends that.
-if "%~1"=="hotwire-reread-settings" exit /b 0
-
-REM  "hotwire.bat check" checks the settings and the option list, says
-REM  what is wrong, and exits without updating or starting the server. It
-REM  does ask Steam for the current build. Run it after editing a setting.
+REM  "hotwire.bat check" reads hotwire.cfg, says what is wrong, and exits
+REM  without updating or starting the server. It does ask Steam for the
+REM  current build. Run it after editing a setting.
 set "CHECK_ONLY="
 if /i "%~1"=="check" set "CHECK_ONLY=1"
 
 REM  Who this launcher is, for the plugin and the panel: written to
 REM  oxide\data\Hotwire\launcher.json before every start, with this file's
-REM  code hash (the HOTWIRE_LAUNCHER_HASH line at the very end). The plugin
+REM  code hash (the HOTWIRE_LAUNCHER_HASH line near the end). The plugin
 REM  works the hash out again from this file's bytes, so the panel offers a
 REM  wipe or a permanent setting only through a launcher that is unmodified
-REM  and says it can carry them out. Not settings; do not edit.
-set "HOTWIRE_LAUNCHER_VERSION=1.1.15"
-set "HOTWIRE_LAUNCHER_CAPABILITIES=supervise,update,framework_verify,crash_backstop,log_rotate,convar_persist,wipe"
+REM  and says it can carry them out. settings_file says the settings are
+REM  read from hotwire.cfg. Not settings; do not edit.
+set "HOTWIRE_LAUNCHER_VERSION=1.1.16"
+set "HOTWIRE_LAUNCHER_CAPABILITIES=supervise,update,framework_verify,crash_backstop,log_rotate,convar_persist,wipe,settings_file"
 
 REM ======================================================================
 REM  HOW THIS LAUNCHER WORKS
@@ -128,68 +37,79 @@ REM ======================================================================
 REM
 REM  REQUIREMENTS
 REM     Windows, steamcmd, and a Rust dedicated server. PowerShell and
-REM     curl are used for log rotation, date maths and downloads; both
-REM     ship with Windows 10 and later.
+REM     curl are used for reading the settings, date maths and downloads;
+REM     both ship with Windows 10 and later.
 REM
 REM     Nothing else. The plugin described below is optional and this file
 REM     works perfectly well without it.
 REM
 REM  SETUP
-REM     1.  Section 1: name the server, and check its ports.
-REM     2.  Copy secrets.example.bat to secrets.bat and set RCON_PASSWORD.
-REM     3.  Section 2: check STEAMCMD. ROOT is this file's own folder, so
-REM         keep hotwire.bat beside RustDedicated.exe.
-REM     4.  Section 3: enable any other options you need. Anything left
-REM         disabled uses the game's default.
-REM     5.  Run "hotwire.bat check" to have it read back what you set
-REM         and say what is wrong. It does not update or start the server.
-REM     6.  Run this file. Leave the window open.
+REM     1.  Copy hotwire.example.cfg to hotwire.cfg and fill in sections 1
+REM         and 2.
+REM     2.  Copy hotwire-secrets.example.cfg to hotwire-secrets.cfg and set
+REM         the RCON password.
+REM     3.  Keep hotwire.bat beside RustDedicated.exe: its own folder is the
+REM         server's.
+REM     4.  Run "hotwire.bat check", then run this file. Leave the window
+REM         open.
+REM
+REM  YOUR SETTINGS ARE DATA
+REM     hotwire.cfg and hotwire-secrets.cfg are read, one "name value" line
+REM     at a time, and never run: a line that is not a setting is ignored
+REM     and named by "hotwire.bat check". Values reach Rust as separate
+REM     arguments and cmd never sees them, so no character in a server name
+REM     can break anything. hotwire.cfg is read again before every start,
+REM     so an edit takes effect at the next restart. The start-script
+REM     converter on afkpanel.com makes a hotwire.cfg from an old start
+REM     script; it can never make code.
+REM
+REM  YOUR OWN COMMANDS
+REM     go in hotwire-before.bat (run before every start) and
+REM     hotwire-after.bat (run after an update), beside this file. Copy the
+REM     .example files to begin. A hook that fails is logged and the server
+REM     starts anyway; check mode runs no hook.
 REM
 REM  RUN LOOP
 REM     The script does not exit after starting the server. It waits for
 REM     the server process to end, then starts it again after
-REM     RESTART_DELAY seconds. Close the window to stop the server
+REM     hotwire.restart_delay seconds. Close the window to stop the server
 REM     permanently.
 REM
 REM  UPDATE MODES
-REM     Set UPDATE_MODE in section 1.
+REM     Set hotwire.update_mode in hotwire.cfg.
 REM
 REM     auto       The default. hotwire while the plugin has an update
-REM                scheduled (it keeps UPDATE.schedule fresh in ROOT),
-REM                otherwise always. Turning on an update schedule in the
-REM                plugin is all it takes.
+REM                scheduled (it keeps UPDATE.schedule fresh in the
+REM                server's folder), otherwise always. Turning on an
+REM                update schedule in the plugin is all it takes.
 REM
 REM     always     steamcmd and the mod framework run on every start, as
 REM                in most Rust launchers.
 REM
-REM     hotwire    steamcmd and the mod framework run when a flag file is
-REM                present in ROOT (UPDATE_FLAG or VALIDATE_FLAG, by default
-REM                UPDATE.flag and VALIDATE.flag), when Steam has a newer
-REM                build (UPDATE_ON_NEW_BUILD), when the launcher cannot
-REM                find out whether it has one, or when the backstop below
-REM                fires. Steam is asked afresh on every start, except
-REM                during a crash streak. A flag is deleted only once its
-REM                update completes: one flag, one update. Other restarts
-REM                just relaunch.
+REM     hotwire    steamcmd and the mod framework run when UPDATE.flag or
+REM                VALIDATE.flag is in the server's folder, when Steam has
+REM                a newer build (hotwire.update_on_new_build), when the
+REM                launcher cannot find out whether it has one, or when
+REM                the backstop below fires. A flag is deleted only once
+REM                its update completes: one flag, one update. Other
+REM                restarts just relaunch.
 REM
 REM     off        Never. A flag file is left in place and reported.
-REM
-REM     In always mode an unattended restart installs whatever build is
-REM     current at the time, with no operator present.
 REM
 REM     Create a flag by hand, in the server's folder:
 REM       New-Item -ItemType File UPDATE.flag
 REM
-REM     In hotwire mode, if MAX_DAYS_WITHOUT_UPDATE days pass without an
-REM     update, one runs regardless. Rust clients update themselves; a
-REM     server that does not eventually refuses every connection.
+REM     In hotwire mode, if hotwire.max_days_without_update days pass
+REM     without an update, one runs regardless. Rust clients update
+REM     themselves; a server that does not eventually refuses every
+REM     connection.
 REM
 REM  SEVERAL SERVERS ON ONE MACHINE
-REM     Give each its own folder, its own copy of this file and its own
-REM     ports (section 1). They may share one SteamCMD: only one of them
+REM     Give each its own folder, its own copy of this file and hotwire.cfg,
+REM     and its own ports. They may share one SteamCMD: only one of them
 REM     runs it at a time, and the others wait. Copying a whole server
-REM     folder is safe -- ROOT follows this file -- but give the copy
-REM     different ports before starting it.
+REM     folder is safe -- the launcher's folder is the server's -- but give
+REM     the copy different ports before starting it.
 REM
 REM  PLUGIN
 REM     Optional. See src\Hotwire.cs at the address above. It schedules
@@ -200,839 +120,56 @@ REM     update flags, WIPE.flag and CONVAR.request from the plugin, and
 REM     oxide\data\Hotwire\launcher.json from here. Neither half requires
 REM     the other.
 REM
-REM     The plugin needs Oxide/uMod. Its countdown bar is drawn through
-REM     AdvancedStatus, a paid plugin most servers will not have --
-REM     without it the countdown still runs and is announced in chat,
-REM     which is the normal case rather than a degraded one.
-REM
-REM  EDITING OPTIONS
-REM     One option per line. REM disables it, removing REM enables it:
-REM
-REM       REM   server.saveinterval -- Seconds between world saves.
-REM       REM   [int, default 600]
-REM       set "ARGS=!ARGS! +server.saveinterval 300"
-REM
-REM     Lines are independent. Disabling one cannot affect any other.
-REM
-REM  VALUES
-REM     Quote any value that contains a space.
-REM
-REM     Double a literal percent sign: write 20%% rather than 20%.
-REM
-REM     !ARGS! is required and is not a typo for %ARGS%. Delayed expansion
-REM     substitutes after cmd has parsed the line, so pipes, ampersands,
-REM     redirection arrows and carets already inside ARGS are never seen
-REM     by the parser.
-REM
-REM     A value typed straight into a set "ARGS=..." line is different: cmd
-REM     does read it, and the quotes around the value leave it outside the
-REM     line's own quotes. A | & < or > there splits the line into separate
-REM     commands, and the server never starts. So the name, description,
-REM     tags and player count have their own settings in section 1, where
-REM     those characters are safe. A web address with & in it needs ^& in
-REM     front of each &. Nowhere can a value contain ! or a double quote.
-REM
 REM  DEFAULTS
-REM     The defaults in sections 1 and 3 were read out of a Rust build, not
-REM     copied from documentation. Report any that disagree with the game.
-REM
-REM     Out of the box this launcher sets only what a server cannot run
-REM     without, or what has to agree with something outside the game --
-REM     the ports, which match the firewall. Everything else is the game's
-REM     own default until you choose otherwise. Facepunch picked those.
+REM     The defaults in hotwire.example.cfg were read out of a Rust build,
+REM     not copied from documentation. Out of the box this launcher sets
+REM     only what a server cannot run without, or what has to agree with
+REM     something outside the game -- the ports, which match the firewall.
+REM     Everything else is the game's own default until you choose
+REM     otherwise.
 REM ======================================================================
 
-
-REM === HOTWIRE SETTINGS BEGIN ===========================================
-REM  2. LAUNCHER SETTINGS
-REM
-REM     How the launcher behaves: where things are, updates, restarts and
-REM     logs. Sections 1, 2 and 3 are yours to edit and are left out of the
-REM     launcher's code hash, so changing a setting never marks the
-REM     launcher "modified" or turns off a panel feature.
-REM ======================================================================
-
-REM   Where the server is installed. steamcmd writes here. %~dp0 is the
-REM     folder this file is in, which is right when hotwire.bat sits beside
-REM     RustDedicated.exe, and stays right when that folder is copied. Name
-REM     a folder here only if this file is kept somewhere else.
+REM ------------------------------------------------ fixed, not settings ----
+REM  Where code comes from is never a setting: hotwire.cfg is data that
+REM  other tools may write, and data must never be able to say what gets
+REM  downloaded or run. The server's folder is this file's own folder, so a
+REM  copied server folder brings its launcher with it.
 set "ROOT=%~dp0"
-
-REM   Where steamcmd itself lives. Several servers may share one.
-set "STEAMCMD=C:\steamcmd\steamcmd.exe"
-
-REM   Several servers on one machine can share one SteamCMD, and only one of
-REM     them uses it at a time: the others wait, and say so. This is how many
-REM     minutes a start waits before giving up on updating this time and
-REM     starting the server as it is.
-set "STEAMCMD_WAIT_MINUTES=60"
-
-REM   Rust's Steam app id. Do not change this.
+if "!ROOT:~-1!"=="\" set "ROOT=!ROOT:~0,-1!"
 set "APPID=258550"
-
-REM   The Steam branch to install and update. public is the game everyone
-REM     plays. A test branch such as staging is named here instead. Steam
-REM     keeps using the last branch an install was on, so naming public is
-REM     also what brings a server back from a test branch -- which moves it
-REM     to public's build on the next update. Empty lets Steam choose, as
-REM     launchers before 1.1.10 did.
-set "STEAM_BRANCH=public"
-
-REM   UPDATE_MODE, when updates happen, is in section 1.
-
-REM   The names of the two flag files, in ROOT. The plugin writes them under
-REM     the names in its own config ("Update flag file name" and "Validate
-REM     flag file name"), so change both places or neither.
 set "UPDATE_FLAG=UPDATE.flag"
 set "VALIDATE_FLAG=VALIDATE.flag"
-
-REM   The wipe flag the plugin writes ("Wipe flag file name" in its config).
-REM     A wipe is a restart with this flag: between runs the launcher checks
-REM     it and writes the new seed and size into section 3.
 set "WIPE_FLAG=WIPE.flag"
-
-REM   hotwire mode only. If this many days pass with no update, one runs
-REM     anyway and says so in the console. Rust clients update themselves,
-REM     so a server that never does eventually refuses every connection. 0
-REM     disables the backstop.
-set "MAX_DAYS_WITHOUT_UPDATE=14"
-
-REM   Give up on steamcmd after this many tries and launch the install
-REM     already on disk. A stale build is a server; an infinite retry is
-REM     not.
-set "MAX_STEAM_TRIES=5"
-
-REM   Seconds to wait between steamcmd tries.
-set "STEAM_RETRY_SECONDS=60"
-
-REM   Keep the server log from each run. The server empties its log every
-REM     time it starts, so with this at 0 a restart destroys the log of
-REM     whatever went wrong before it. 1 keeps them.
-set "ROTATE_LOGS=1"
-
-REM   Rotated server logs to keep.
-set "LOG_KEEP=14"
-
-REM   Start the server again when it exits. 0 makes the launcher stop when
-REM     the server does, for something else that relaunches it.
-set "RESTART_ON_EXIT=1"
-
-REM   Seconds to wait before relaunching after the server exits. After
-REM     repeated crashes the wait grows; see CRASH_BACKOFF below.
-set "RESTART_DELAY=15"
-
-REM   A run shorter than this counts as a crash rather than a restart.
-REM     A Rust server takes minutes to boot, so anything under a minute
-REM     did not start -- bad convar, port already bound, corrupt save.
-set "CRASH_SECONDS=60"
-
-REM   Consecutive crashes before the launcher stops instead of looping
-REM     forever. Set to 0 to never stop.
-set "MAX_CRASH_STREAK=10"
-
-REM   After repeated crashes, wait longer between tries: 30s after the
-REM     second, then 60, 120 and 300. 0 always waits RESTART_DELAY.
-set "CRASH_BACKOFF=1"
-
-REM   Shortest RCON password the launcher will start with. Rust crashes on
-REM     boot with an empty one, and gives no reason, so this cannot be 0.
-set "RCON_PASSWORD_MIN=8"
-
-REM   Check the option list in section 3 before starting: a convar with no
-REM     value, set twice, a clashing port. Rust ignores all of those in
-REM     silence. 0 skips the check.
-set "CHECK_OPTIONS=1"
-
-REM   Ask Steam what the current Rust build is, and say on every start
-REM     whether this install is behind. Costs one steamcmd launch, so the
-REM     answer is cached for this many hours -- a daily restart pays for
-REM     it once a day, a crash loop never pays at all. 0 disables it.
-set "BUILD_CHECK_HOURS=6"
-
-REM   hotwire mode only. Update when Steam has a build newer than the one
-REM     installed, instead of waiting for MAX_DAYS_WITHOUT_UPDATE. A build
-REM     that has actually changed is a better reason than a calendar.
-REM     Needs BUILD_CHECK_HOURS above. 0 leaves the calendar in charge.
-set "UPDATE_ON_NEW_BUILD=1"
-
-REM   Install Oxide/uMod with the server, and put it back after every
-REM     update. 0 for a vanilla server: the framework is never downloaded
-REM     or extracted, and an update is complete once steamcmd is. Anything
-REM     other than 0 installs it, which is how every earlier version behaved.
-set "INSTALL_FRAMEWORK=1"
-
-REM   Skip re-extracting the framework when neither it nor the game has
-REM     changed. The extract writes over a working install, which is the
-REM     single riskiest thing this file does, so not doing it needlessly
-REM     is the point. 0 always extracts.
-set "SKIP_UNCHANGED_FRAMEWORK=1"
-
-REM   Where the framework's own version can be read. Any file carrying a
-REM     Windows file version works. If it is blank, missing, or carries no
-REM     version, the comparison cannot be made and the framework is
-REM     extracted as before -- the safe direction.
 set "FRAMEWORK_VERSION_FILE=%ROOT%\RustDedicated_Data\Managed\Oxide.Rust.dll"
-
-REM   Where that framework publishes its current version. Note this is the
-REM     assets host: umod.org/games/rust.json answers 301 to it.
 set "FRAMEWORK_FEED=https://assets.umod.org/games/rust.json"
-
-REM   Where the framework itself is downloaded. This answers with the Windows
-REM     build of Oxide for Rust.
 set "FRAMEWORK_URL=https://umod.org/games/rust/download"
-
-REM   Check the framework against the SHA-256 its publisher lists before
-REM     extracting it. With the default FRAMEWORK_URL above, the launcher asks
-REM     GitHub which file is Oxide's latest release and what its SHA-256 is,
-REM     downloads that file, and extracts it only if the two match. A file
-REM     that does not match is never extracted: the server starts on the
-REM     framework it already has, and the update is tried again at the next
-REM     restart. If GitHub cannot be asked, or FRAMEWORK_URL has been
-REM     changed, the download happens as before and the log says it was not
-REM     checked. 0 turns the check off.
-set "VERIFY_FRAMEWORK=1"
 set "FRAMEWORK_RELEASES=https://api.github.com/repos/OxideMod/Oxide.Rust/releases/latest"
 set "FRAMEWORK_ASSET=Oxide.Rust.zip"
-
-REM   Optional commands run before and after an update, for backups or
-REM     notifications. Leave empty to do nothing.
-set "HOOK_BEFORE="
-set "HOOK_AFTER="
-
 set "LOGFILE=%ROOT%\logs\server_log.txt"
 set "UPDATE_STAMP=%ROOT%\logs\last_update.txt"
-REM === HOTWIRE SETTINGS END =============================================
-
-REM  Section 3 is read before every start, from section 6b, so the
-REM  launcher steps over it here.
-goto :hotwire_options_end
-:hotwire_server_options
-REM === HOTWIRE SETTINGS BEGIN ===========================================
-REM  3. SERVER OPTIONS
-REM
-REM     One option per line. REM a line to switch it off; an option you do
-REM     not set uses the game's default, printed beside every one of them.
-REM
-REM     This is a curated list, not every convar Rust has. Most of them are
-REM     diagnostics and internal tuning that nobody sets when starting a
-REM     server, and listing those here would only bury these.
-REM ======================================================================
-
-set "ARGS="
-
-REM ----------------------------------------------------------------------
-REM  3.0  PROCESS
-REM ----------------------------------------------------------------------
-
-REM   Run headless, with no window and no renderer. Required on a server.
-set "ARGS=!ARGS! -batchmode -nographics"
-
-REM ----------------------------------------------------------------------
-REM  3.1  THE MAP
-REM
-REM     The save folder, seed and world size are set in section 1.
-REM     Changing the level, seed or world size starts a new map, which
-REM     wipes everything built on the old one. server.randomize_seed picks
-REM     a new seed on every start, so it belongs in a wipe script, never
-REM     here.
-REM ----------------------------------------------------------------------
-
-REM   From section 1.
-if defined SERVER_IDENTITY  set "ARGS=!ARGS! +server.identity "!SERVER_IDENTITY!""
-if defined SERVER_SEED      set "ARGS=!ARGS! +server.seed !SERVER_SEED!"
-if defined SERVER_WORLDSIZE set "ARGS=!ARGS! +server.worldsize !SERVER_WORLDSIZE!"
-
-REM   server.level -- Leave as-is for a generated map. For a custom map
-REM     use server.levelurl instead.
-REM   [string, default "Procedural Map"]
-set "ARGS=!ARGS! +server.level "Procedural Map""
-
-REM   server.levelurl -- Custom map URL. Replaces level, seed and
-REM     worldsize -- do not set both.
-REM   [string, default ""]
-REM set "ARGS=!ARGS! +server.levelurl VALUE"
-
-REM ----------------------------------------------------------------------
-REM  3.2  NETWORK
-REM
-REM     The three ports and the player count are set in section 1. Reserve
-REM     this machine's address in DHCP when you forward the ports: if the
-REM     lease moves, every forward breaks at once.
-REM ----------------------------------------------------------------------
-
-REM   From section 1.
-if defined SERVER_PORT       set "ARGS=!ARGS! +server.port !SERVER_PORT!"
-if defined SERVER_QUERYPORT  set "ARGS=!ARGS! +server.queryport !SERVER_QUERYPORT!"
-if defined RCON_PORT         set "ARGS=!ARGS! +rcon.port !RCON_PORT!"
-if defined SERVER_MAXPLAYERS set "ARGS=!ARGS! +server.maxplayers !SERVER_MAXPLAYERS!"
-
-REM   server.ip -- Bind address. Leave alone unless the machine is multi-
-REM     homed.
-REM   [string, default ""]
-REM set "ARGS=!ARGS! +server.ip VALUE"
-
-REM   server.playertimeout -- Seconds of silence before a client is
-REM     dropped.
-REM   [int, default 60]
-REM set "ARGS=!ARGS! +server.playertimeout VALUE"
-
-REM   server.rejoin_delay -- Seconds a kicked player waits before
-REM     rejoining.
-REM   [int, default 300]
-REM set "ARGS=!ARGS! +server.rejoin_delay VALUE"
-
-REM ----------------------------------------------------------------------
-REM  3.3  BROWSER LISTING
-REM
-REM     What people see before they join. The name, description and tags
-REM     are set in section 1.
-REM ----------------------------------------------------------------------
-
-REM   From section 1.
-if defined SERVER_HOSTNAME    set "ARGS=!ARGS! +server.hostname "!SERVER_HOSTNAME!""
-if defined SERVER_DESCRIPTION set "ARGS=!ARGS! +server.description "!SERVER_DESCRIPTION!""
-if defined SERVER_TAGS        set "ARGS=!ARGS! +server.tags "!SERVER_TAGS!""
-
-REM   server.headerimage -- 512x256 banner. Direct image URL, not a page
-REM     containing one.
-REM   [string, default ""]
-REM set "ARGS=!ARGS! +server.headerimage VALUE"
-
-REM   server.logoimage -- Server logo. Direct image URL.
-REM   [string, default ""]
-REM set "ARGS=!ARGS! +server.logoimage VALUE"
-
-REM   server.url -- Website link on the join screen.
-REM   [string, default ""]
-REM set "ARGS=!ARGS! +server.url VALUE"
-
-REM ----------------------------------------------------------------------
-REM  3.4  ADMIN AND RCON
-REM
-REM     RCON is remote code execution on this machine. The password
-REM     belongs in secrets.bat and nowhere else.
-REM ----------------------------------------------------------------------
-
-REM   rcon.password -- Read from secrets.bat. Never write a literal here.
-REM
-REM   Four quotes, not three. set "VAR=..." takes first quote to last, so
-REM   dropping one leaves ARGS holding an unterminated quote that
-REM   swallows every option appended after it. And !VAR! rather than
-REM   %VAR%: under delayed expansion a percent-expanded value is rescanned
-REM   for !, an exclamation-expanded one is not.
-REM   [?, default UNKNOWN]
-set "ARGS=!ARGS! +rcon.password "!RCON_PASSWORD!""
-
-REM   rcon.web -- 1 for WebSocket RCON, which is what current tools
-REM     expect.
-REM   [bool, default true]
-set "ARGS=!ARGS! +rcon.web 1"
-
-REM   rcon.ip -- Bind address for RCON. Leave alone unless multi-homed.
-REM   [string, default ""]
-REM set "ARGS=!ARGS! +rcon.ip VALUE"
-
-REM   server.printReportsToConsole -- Player reports appear in the
-REM     console.
-REM   [bool, default false]
-REM set "ARGS=!ARGS! +server.printReportsToConsole VALUE"
-
-REM ----------------------------------------------------------------------
-REM  3.5  SAVES AND LOGS
-REM
-REM     The save interval is how much progress a crash costs everybody,
-REM     which is why a scheduled restart should quit cleanly rather than
-REM     kill the process.
-REM ----------------------------------------------------------------------
-
-REM   server.saveinterval -- Seconds between world saves. Lower costs a
-REM     brief hitch more often.
-REM   [int, default 600]
-REM set "ARGS=!ARGS! +server.saveinterval VALUE"
-
-REM   server.saveBackupCount -- Rolling save backups kept on disk.
-REM   [int, default 2]
-REM set "ARGS=!ARGS! +server.saveBackupCount VALUE"
-
-REM   chat.serverlog -- Print chat to the console and log.
-REM   [bool, default true]
-REM set "ARGS=!ARGS! +chat.serverlog VALUE"
-
-REM ----------------------------------------------------------------------
-REM  3.6  PVE, PVP AND DAMAGE
-REM
-REM     server.pve is a blunt server-wide switch and turns off far more
-REM     than most people expect. Almost every PVE server uses a plugin
-REM     instead, which can make zones, times or teams behave differently.
-REM ----------------------------------------------------------------------
-
-REM   server.pve -- Server-wide PVE.
-REM   [bool, default false]
-REM set "ARGS=!ARGS! +server.pve VALUE"
-
-REM   server.pvp_ttk_global -- Time-to-kill multiplier. Above 1 means
-REM     players take longer to die.
-REM   [float, default 1.0]
-REM set "ARGS=!ARGS! +server.pvp_ttk_global VALUE"
-
-REM   server.bulletdamage -- Bullet damage multiplier.
-REM   [float, default 1.0]
-REM set "ARGS=!ARGS! +server.bulletdamage VALUE"
-
-REM   server.arrowdamage -- Arrow damage multiplier.
-REM   [float, default 1.0]
-REM set "ARGS=!ARGS! +server.arrowdamage VALUE"
-
-REM   server.radiation -- Radiation zones on or off.
-REM   [bool, default true]
-REM set "ARGS=!ARGS! +server.radiation VALUE"
-
-REM   server.stability -- Building stability. Off lets people build things
-REM     that could not stand up.
-REM   [bool, default true]
-REM set "ARGS=!ARGS! +server.stability VALUE"
-
-REM ----------------------------------------------------------------------
-REM  3.7  DEATH AND RESPAWN
-REM ----------------------------------------------------------------------
-
-REM   server.woundingenabled -- Players go down wounded instead of dying
-REM     outright.
-REM   [bool, default true]
-REM set "ARGS=!ARGS! +server.woundingenabled VALUE"
-
-REM   server.crawlingenabled -- Wounded players can crawl.
-REM   [bool, default true]
-REM set "ARGS=!ARGS! +server.crawlingenabled VALUE"
-
-REM   server.woundedrecoverchance -- Chance of getting back up without
-REM     help.
-REM   [float, default 0.2]
-REM set "ARGS=!ARGS! +server.woundedrecoverchance VALUE"
-
-REM   server.dropitems -- Drop your inventory on death.
-REM   [bool, default true]
-REM set "ARGS=!ARGS! +server.dropitems VALUE"
-
-REM   server.corpses -- Leave a lootable corpse.
-REM   [bool, default true]
-REM set "ARGS=!ARGS! +server.corpses VALUE"
-
-REM   server.respawnAtDeathPosition -- Respawn where you died.
-REM   [bool, default false]
-REM set "ARGS=!ARGS! +server.respawnAtDeathPosition VALUE"
-
-REM   server.respawnWithLoadout -- Respawn holding a kit.
-REM   [bool, default false]
-REM set "ARGS=!ARGS! +server.respawnWithLoadout VALUE"
-
-REM ----------------------------------------------------------------------
-REM  3.8  DESPAWN TIMES
-REM
-REM     Seconds. Raising these leaves more on the ground, which players
-REM     like and the entity count does not.
-REM ----------------------------------------------------------------------
-
-REM   server.itemdespawn -- Dropped items.
-REM   [float, default 300.0]
-REM set "ARGS=!ARGS! +server.itemdespawn VALUE"
-
-REM   server.itemdespawn_quick -- Low-value items, which go sooner.
-REM   [float, default 30.0]
-REM set "ARGS=!ARGS! +server.itemdespawn_quick VALUE"
-
-REM   server.corpsedespawn -- Player corpses.
-REM   [float, default 300.0]
-REM set "ARGS=!ARGS! +server.corpsedespawn VALUE"
-
-REM   server.npccorpsedespawn -- NPC corpses.
-REM   [float, default 600.0]
-REM set "ARGS=!ARGS! +server.npccorpsedespawn VALUE"
-
-REM   server.debrisdespawn -- Building debris after a raid.
-REM   [float, default 30.0]
-REM set "ARGS=!ARGS! +server.debrisdespawn VALUE"
-
-REM ----------------------------------------------------------------------
-REM  3.9  DECAY AND UPKEEP
-REM ----------------------------------------------------------------------
-
-REM   decay.scale -- Decay rate multiplier. 0 turns decay off entirely,
-REM     which many modded servers do.
-REM   [float, default 1.0]
-REM set "ARGS=!ARGS! +decay.scale VALUE"
-
-REM   decay.upkeep -- Whether tool cupboards consume upkeep at all.
-REM   [bool, default true]
-REM set "ARGS=!ARGS! +decay.upkeep VALUE"
-
-REM   decay.upkeep_grief_protection -- Minutes of grace after a cupboard
-REM     runs dry.
-REM   [float, default 1440.0]
-REM set "ARGS=!ARGS! +decay.upkeep_grief_protection VALUE"
-
-REM ----------------------------------------------------------------------
-REM  3.10  CHAT
-REM ----------------------------------------------------------------------
-
-REM   chat.enabled -- Chat on or off.
-REM   [bool, default true]
-REM set "ARGS=!ARGS! +chat.enabled VALUE"
-
-REM   chat.globalchat -- Everyone hears everyone, anywhere on the map. Off
-REM     leaves only local chat.
-REM   [bool, default true]
-REM set "ARGS=!ARGS! +chat.globalchat VALUE"
-
-REM   chat.localchat -- Proximity chat.
-REM   [bool, default false]
-REM set "ARGS=!ARGS! +chat.localchat VALUE"
-
-REM   chat.localChatRange -- Metres that proximity chat carries.
-REM   [float, default 100.0]
-REM set "ARGS=!ARGS! +chat.localChatRange VALUE"
-
-REM ----------------------------------------------------------------------
-REM  3.11  EVENTS
-REM
-REM     server.events is the master switch; the rest tune individual
-REM     events.
-REM ----------------------------------------------------------------------
-
-REM   server.events -- Timed world events on or off.
-REM   [bool, default true]
-REM set "ARGS=!ARGS! +server.events VALUE"
-
-REM   patrolhelicopter.lifetimeMinutes -- How long the patrol helicopter
-REM     stays before leaving.
-REM   [float, default 30.0]
-REM set "ARGS=!ARGS! +patrolhelicopter.lifetimeMinutes VALUE"
-
-REM   patrolhelicopter.guns -- How many guns it fires with.
-REM   [int, default 1]
-REM set "ARGS=!ARGS! +patrolhelicopter.guns VALUE"
-
-REM   patrolhelicopter.bulletDamageScale -- Its damage multiplier.
-REM   [float, default 1.0]
-REM set "ARGS=!ARGS! +patrolhelicopter.bulletDamageScale VALUE"
-
-REM   cargoship.event_enabled -- Cargo ship on or off.
-REM   [bool, default true]
-REM set "ARGS=!ARGS! +cargoship.event_enabled VALUE"
-
-REM   cargoship.event_duration_minutes -- How long it stays.
-REM   [float, default 50.0]
-REM set "ARGS=!ARGS! +cargoship.event_duration_minutes VALUE"
-
-REM   halloween.enabled -- Halloween event.
-REM   [bool, default false]
-REM set "ARGS=!ARGS! +halloween.enabled VALUE"
-
-REM   xmas.enabled -- Christmas event.
-REM   [bool, default false]
-REM set "ARGS=!ARGS! +xmas.enabled VALUE"
-
-REM ----------------------------------------------------------------------
-REM  3.12  SPAWNS AND POPULATIONS
-REM
-REM     Populations are per square kilometre, so a bigger map means more
-REM     animals at the same number. The spawn rates and densities scale
-REM     the whole system at once and go a long way; change them in small
-REM     steps.
-REM ----------------------------------------------------------------------
-
-REM   spawn.max_rate -- Upper bound on spawn rate.
-REM   [float, default 1.0]
-REM set "ARGS=!ARGS! +spawn.max_rate VALUE"
-
-REM   spawn.min_rate -- Lower bound on spawn rate.
-REM   [float, default 0.5]
-REM set "ARGS=!ARGS! +spawn.min_rate VALUE"
-
-REM   spawn.max_density -- Upper bound on spawn density.
-REM   [float, default 1.0]
-REM set "ARGS=!ARGS! +spawn.max_density VALUE"
-
-REM   spawn.min_density -- Lower bound on spawn density.
-REM   [float, default 0.5]
-REM set "ARGS=!ARGS! +spawn.min_density VALUE"
-
-REM   spawn.player_scale -- How strongly nearby players suppress spawns.
-REM   [float, default 2.0]
-REM set "ARGS=!ARGS! +spawn.player_scale VALUE"
-
-REM   bear.Population -- Bears.
-REM   [float, default 2.0]
-REM set "ARGS=!ARGS! +bear.Population VALUE"
-
-REM   polarbear.Population -- Polar bears.
-REM   [float, default 1.0]
-REM set "ARGS=!ARGS! +polarbear.Population VALUE"
-
-REM   boar.Population -- Boar.
-REM   [float, default 5.0]
-REM set "ARGS=!ARGS! +boar.Population VALUE"
-
-REM   stag.Population -- Stags.
-REM   [float, default 3.0]
-REM set "ARGS=!ARGS! +stag.Population VALUE"
-
-REM   chicken.Population -- Chickens.
-REM   [float, default 3.0]
-REM set "ARGS=!ARGS! +chicken.Population VALUE"
-
-REM   wolf2.Population -- Wolves. The class really is Wolf2; Rust replaced
-REM     the original.
-REM   [float, default 2.0]
-REM set "ARGS=!ARGS! +wolf2.Population VALUE"
-
-REM   ridablehorse.Population -- Horses. Note the spelling: ridable, one
-REM     e.
-REM   [float, default 2.0]
-REM set "ARGS=!ARGS! +ridablehorse.Population VALUE"
-
-REM ----------------------------------------------------------------------
-REM  3.13  IDLE KICK
-REM ----------------------------------------------------------------------
-
-REM   server.idlekick -- Minutes of idling before a kick.
-REM   [int, default 30]
-REM set "ARGS=!ARGS! +server.idlekick VALUE"
-
-REM   server.idlekickmode -- 0 never, 1 only when the server is full, 2
-REM     always.
-REM   [int, default 1]
-REM set "ARGS=!ARGS! +server.idlekickmode VALUE"
-
-REM ----------------------------------------------------------------------
-REM  3.14  RUST+ COMPANION APP
-REM
-REM     Rust+ needs its own port forward, which is almost always why it
-REM     does not work.
-REM ----------------------------------------------------------------------
-
-REM   app.port -- Rust+ port, TCP. 0 derives server.port + 68, so 28083
-REM     here.
-REM   [int, default UNKNOWN]
-REM set "ARGS=!ARGS! +app.port VALUE"
-
-REM   app.listenip -- Bind address for Rust+.
-REM   [string, default ""]
-REM set "ARGS=!ARGS! +app.listenip VALUE"
-
-REM ----------------------------------------------------------------------
-REM  3.15  PERFORMANCE
-REM
-REM     Leave this alone unless you are chasing a problem you have
-REM     actually measured. Raising the tick rate is the most common thing
-REM     people try and the least likely to help: it multiplies CPU cost
-REM     and does nothing for a server that was not CPU-bound to begin
-REM     with.
-REM ----------------------------------------------------------------------
-
-REM   server.tickrate -- Server ticks per second.
-REM   [int, default 10]
-REM set "ARGS=!ARGS! +server.tickrate VALUE"
-
-REM === HOTWIRE SETTINGS END =============================================
-exit /b 0
-:hotwire_options_end
-
+set "HOOK_BEFORE=%ROOT%\hotwire-before.bat"
+set "HOOK_AFTER=%ROOT%\hotwire-after.bat"
+set "HOTWIRE_SELF=%~f0"
+
+REM  The PowerShell at the end of this file reads the settings, writes a
+REM  wipe or a permanent convar into hotwire.cfg, and starts the server.
+REM  This line hands it everything from its #HOTWIRE-PS line down, with
+REM  HOTWIRE_MODE saying which part to run. It holds no double quote,
+REM  percent sign or exclamation mark, so cmd passes it through unchanged.
+set "HW_PS=$t=[IO.File]::ReadAllText($env:HOTWIRE_SELF,[Text.Encoding]::GetEncoding(28591)); $i=$t.LastIndexOf('#'+'HOTWIRE-PS'); if($i -ge 0){ Invoke-Expression $t.Substring($i) } else { exit 9 }"
 
 REM  Consecutive crashes. Set here rather than at :start so it survives
 REM  the loop, which is the whole point of counting it.
 set /a CRASH_STREAK=0
 
-
-REM ======================================================================
-REM  4. CHECKING THE LAUNCHER SETTINGS
-REM
-REM     Section 2 is numbers and paths, and a wrong one there fails a long
-REM     way from where it was typed. LOG_KEEP=0 makes the log cull delete
-REM     every rotated log rather than none. A trailing backslash on ROOT
-REM     turns +force_install_dir "C:\rustserver\" into a quoted string
-REM     steamcmd never closes. A misspelled UPDATE_MODE silently selects
-REM     the mode you did not want, because anything that is not "always"
-REM     is treated as "hotwire".
-REM ======================================================================
-
-set "CFGBAD="
-
-REM  A trailing backslash escapes the closing quote of every path we
-REM  hand to another program. Take it off rather than complain about it.
-if "!ROOT:~-1!"=="\" set "ROOT=!ROOT:~0,-1!"
-if "!STEAMCMD:~-1!"=="\" set "STEAMCMD=!STEAMCMD:~0,-1!"
-
-if not defined ROOT (
-    echo [%date% %time%] ROOT is empty. Set it in section 2.
-    set "CFGBAD=1"
-)
-
-REM  A copied server folder whose hotwire.bat names the original's folder
-REM  in ROOT would, started from the copy, update and run the ORIGINAL
-REM  server. So a ROOT that is not this file's own folder, and holds a
-REM  hotwire.bat of its own, is refused. ROOT=%~dp0 never trips this.
-set "HW_HERE=%~dp0"
-if "!HW_HERE:~-1!"=="\" set "HW_HERE=!HW_HERE:~0,-1!"
-if defined ROOT if /i not "!ROOT!"=="!HW_HERE!" if exist "!ROOT!\hotwire.bat" (
-    echo [%date% %time%] ROOT is set to !ROOT!, which has a hotwire.bat of its own.
-    echo [%date% %time%] This hotwire.bat is in !HW_HERE!. Started from here it
-    echo [%date% %time%] would update and run the server over there instead.
-    echo [%date% %time%] If this folder is a copy, set ROOT to %%~dp0 in section 2.
-    set "CFGBAD=1"
-)
-
-if /i not "%UPDATE_MODE%"=="auto" if /i not "%UPDATE_MODE%"=="always" if /i not "%UPDATE_MODE%"=="hotwire" if /i not "%UPDATE_MODE%"=="off" (
-    echo [%date% %time%] UPDATE_MODE is [%UPDATE_MODE%]. It must be exactly
-    echo [%date% %time%] "auto", "always", "hotwire" or "off" -- anything
-    echo [%date% %time%] else is treated as hotwire, which is probably not
-    echo [%date% %time%] what you meant.
-    set "CFGBAD=1"
-)
-
-if not defined UPDATE_FLAG (
-    echo [%date% %time%] UPDATE_FLAG is empty. It names the update flag file.
-    set "CFGBAD=1"
-)
-if not defined VALIDATE_FLAG (
-    echo [%date% %time%] VALIDATE_FLAG is empty. It names the validate flag file.
-    set "CFGBAD=1"
-)
-
-REM  The branch named in messages. Empty means Steam chooses, which for a
-REM  fresh install is public.
-set "BRANCH_NAME=%STEAM_BRANCH%"
-if not defined BRANCH_NAME set "BRANCH_NAME=public"
-
-REM  Numeric test with no echo and no pipe. Digits are the delimiters,
-REM  so an all-digit value produces no tokens and the inner loop never
-REM  runs; one non-digit produces a token and clears the flag. An empty
-REM  value produces no tokens either, so it is ruled out first.
-for %%V in (MAX_DAYS_WITHOUT_UPDATE MAX_STEAM_TRIES STEAM_RETRY_SECONDS STEAMCMD_WAIT_MINUTES LOG_KEEP RESTART_DELAY CRASH_SECONDS MAX_CRASH_STREAK RCON_PASSWORD_MIN) do (
-    set "CFGVAL=!%%V!"
-    set "CFGNUM=1"
-    if not defined CFGVAL set "CFGNUM="
-    for /f "delims=0123456789" %%X in ("!CFGVAL!") do set "CFGNUM="
-    if not defined CFGNUM (
-        echo [%date% %time%] %%V must be a whole number. It is [!CFGVAL!].
-        set "CFGBAD=1"
-    )
-)
-
-REM  Skip 0 keeps nothing back, so the cull would remove every rotated
-REM  log including the one just written.
-if "%LOG_KEEP%"=="0" (
-    echo [%date% %time%] LOG_KEEP is 0, which would delete every rotated
-    echo [%date% %time%] log rather than keep none. Use 1 or more.
-    set "CFGBAD=1"
-)
-
-if "%MAX_STEAM_TRIES%"=="0" (
-    echo [%date% %time%] MAX_STEAM_TRIES is 0, so steamcmd would never run.
-    set "CFGBAD=1"
-)
-
-if "%RCON_PASSWORD_MIN%"=="0" (
-    echo [%date% %time%] RCON_PASSWORD_MIN is 0, which would allow an empty
-    echo [%date% %time%] password. Rust crashes on boot with one. Use 1 or more.
-    set "CFGBAD=1"
-)
-
-if defined CFGBAD (
-    echo [%date% %time%] ================================================
-    echo [%date% %time%] Section 1 or 2 has a setting that cannot work.
-    echo [%date% %time%] Not starting. Fix the lines named above.
-    echo [%date% %time%] ================================================
-    pause & exit /b 1
-)
-
-
-REM ======================================================================
-REM  5. SECRETS
-REM
-REM     Copy secrets.example.bat to secrets.bat and set RCON_PASSWORD
-REM     there. secrets.bat is gitignored. This launcher will not start
-REM     without it, and refuses a password that is empty, shorter than
-REM     RCON_PASSWORD_MIN, still the example value, or has a double quote in
-REM     it. Write a percent sign as %%.
-REM ======================================================================
-
-set "SECRETS=%~dp0secrets.bat"
-
-if not exist "%SECRETS%" (
-    echo [%date% %time%] MISSING %SECRETS%
-    echo Copy secrets.example.bat to secrets.bat and set RCON_PASSWORD.
-    pause & exit /b 1
-)
-REM  Read with delayed expansion OFF. A password containing ! is eaten
-REM  at the moment secrets.bat SETS it, not where it is used, because
-REM  the called file is parsed by this same cmd. Turning expansion off
-REM  around the call is the only place that can be fixed; the for loop
-REM  then carries the value back across the scope boundary intact,
-REM  because the block was parsed while expansion was still off.
-setlocal DisableDelayedExpansion
-call "%SECRETS%"
-if not defined RCON_PASSWORD (
-    endlocal
-    echo [%date% %time%] secrets.bat did not set RCON_PASSWORD.
-    pause & exit /b 1
-)
-for /f "delims=" %%P in ("%RCON_PASSWORD%") do (
-    endlocal
-    set "RCON_PASSWORD=%%P"
-)
-if not defined RCON_PASSWORD (
-    echo [%date% %time%] The RCON password did not survive being read.
-    echo [%date% %time%] A leading semicolon or a double quote in it will
-    echo [%date% %time%] do that. Change the password; do not quote it.
-    pause & exit /b 1
-)
-
-REM  Everything above proves the password exists. This proves it is
-REM  plausible, which is a different question and the one that bites.
-REM
-REM  A two-character leftover in a secrets file went through as
-REM  +rcon.password "xx" and the server died in Bootstrap.Init_Tier0 with
-REM  "String cannot be of zero length", naming nothing and pointing
-REM  nowhere. Rust redacts the password out of its own logged command
-REM  line, so an empty or absurd value makes that redaction throw before
-REM  anything else runs. Hours went into that. The launcher knows which
-REM  file the value came from and the engine never will, so the check
-REM  belongs here.
-REM
-REM  Asked in PowerShell rather than with batch string slicing, because
-REM  the value is untrusted text: a quote or a caret in it would break
-REM  the very comparison meant to catch a bad password.
-set "PWCHECK="
-for /f %%R in ('powershell -NoProfile -Command "$p=$env:RCON_PASSWORD; if (-not $p) {'EMPTY'} elseif ($p.Length -lt %RCON_PASSWORD_MIN%) {'SHORT'} elseif ($p -eq 'change_me') {'EXAMPLE'} elseif ($p.Contains([char]34)) {'QUOTE'} else {'OK'}"') do set "PWCHECK=%%R"
-if not defined PWCHECK set "PWCHECK=OK"
-
-if not "!PWCHECK!"=="OK" (
-    echo [%date% %time%] ================================================
-    if "!PWCHECK!"=="EMPTY"   echo [%date% %time%] The RCON password is empty.
-    if "!PWCHECK!"=="SHORT"   echo [%date% %time%] The RCON password is under %RCON_PASSWORD_MIN% characters.
-    if "!PWCHECK!"=="EXAMPLE" echo [%date% %time%] The RCON password is still the example value.
-    if "!PWCHECK!"=="QUOTE"   echo [%date% %time%] The RCON password contains a double quote.
-    echo [%date% %time%] Fix it in:
-    echo [%date% %time%]   %SECRETS%
-    echo [%date% %time%] The line should read, with one pair of quotes
-    echo [%date% %time%] around the whole assignment:
-    echo [%date% %time%]   set "RCON_PASSWORD=your password here"
-    echo [%date% %time%] RCON is remote code execution on this machine.
-    echo [%date% %time%] Not starting -- the server would have crashed in
-    echo [%date% %time%] Bootstrap.Init_Tier0 without telling you why.
-    echo [%date% %time%] ================================================
-    pause & exit /b 1
-)
-
-REM  The other opaque failure: a wrong ROOT. Every convar would be fine
-REM  and the server simply would not be there.
+REM  The other opaque failure: a server that is not here. Every setting
+REM  would be fine and the server simply would not start.
 if not exist "%ROOT%\RustDedicated.exe" (
     echo [%date% %time%] ================================================
     echo [%date% %time%] No RustDedicated.exe in:
     echo [%date% %time%]   %ROOT%
-    echo [%date% %time%] ROOT is set at the top of this file and is wrong,
-    echo [%date% %time%] or the install is incomplete.
+    echo [%date% %time%] Keep hotwire.bat beside RustDedicated.exe, or the
+    echo [%date% %time%] install is incomplete.
     echo [%date% %time%] ================================================
     pause & exit /b 1
 )
@@ -1045,14 +182,41 @@ if not exist "%ROOT%\logs" (
     echo [%date% %time%] The rotated logs and the update backstop stamp
     echo [%date% %time%] both live there. Without it a crash leaves no
     echo [%date% %time%] log to read and the backstop never fires.
-    echo [%date% %time%] Check permissions on ROOT.
+    echo [%date% %time%] Check permissions on the server's folder.
     echo [%date% %time%] ================================================
     pause & exit /b 1
 )
 
+REM  The first read of hotwire.cfg decides whether this launcher starts at
+REM  all: a missing file, or a bad save folder, map or port, stops here
+REM  with the reason. Later reads keep the last good settings instead.
+set "HOTWIRE_FIRST=1"
 
 
 :start
+
+REM ======================================================================
+REM  5. READING hotwire.cfg AND hotwire-secrets.cfg
+REM
+REM     Machinery. PowerShell reads both files as data and checks every
+REM     line. cmd is handed only the launcher's own settings, each checked
+REM     to be a number, a word or a path with nothing cmd reads as syntax.
+REM     The server's settings and the RCON password never pass through
+REM     cmd: PowerShell keeps them for the start, in section 8.
+REM ======================================================================
+call :hotwire_load
+if defined HOTWIRE_FIRST if not "!HW_LOAD!"=="ok" (
+    if not defined HW_LOAD echo [%date% %time%] The settings could not be read: PowerShell did not answer.
+    echo [%date% %time%] Not starting.
+    pause & exit /b 1
+)
+set "HOTWIRE_FIRST="
+
+REM  The branch named in messages. Empty means Steam chooses, which for a
+REM  fresh install is public.
+set "BRANCH_NAME=%STEAM_BRANCH%"
+if not defined BRANCH_NAME set "BRANCH_NAME=public"
+
 
 REM  Who decides updates on this pass. auto follows the Hotwire plugin: while
 REM  it has an update scheduled it keeps UPDATE.schedule in the server's
@@ -1065,26 +229,27 @@ set "UPDATE_EFFECTIVE=always"
 set "HOTWIRE_MARKER=%ROOT%\UPDATE.schedule"
 for /f %%m in ('powershell -NoProfile -NonInteractive -Command "$f=$env:HOTWIRE_MARKER; if((Test-Path -LiteralPath $f) -and (((Get-Date)-(Get-Item -LiteralPath $f).LastWriteTime).TotalHours -lt 2)){'fresh'}else{'none'}"') do if "%%m"=="fresh" set "UPDATE_EFFECTIVE=hotwire"
 set "HOTWIRE_MARKER="
-if /i "!UPDATE_EFFECTIVE!"=="hotwire" echo [%date% %time%] UPDATE_MODE is auto: the Hotwire plugin schedules updates.
-if /i "!UPDATE_EFFECTIVE!"=="always" echo [%date% %time%] UPDATE_MODE is auto: no update schedule from the Hotwire plugin.
+if /i "!UPDATE_EFFECTIVE!"=="hotwire" echo [%date% %time%] hotwire.update_mode is auto: the Hotwire plugin schedules updates.
+if /i "!UPDATE_EFFECTIVE!"=="always" echo [%date% %time%] hotwire.update_mode is auto: no update schedule from the Hotwire plugin.
 :updatemodeknown
 
 REM ======================================================================
 REM  6a. WHAT BUILD IS OUT THERE
 REM
-REM     Machinery. Nothing here is a setting -- those are in section 2.
+REM     Machinery. Nothing here is a setting -- those are in hotwire.cfg.
 REM
 REM     Steam knows the current Rust build, and steamapps\appmanifest tells
 REM     us which one is installed. Comparing the two answers the question
 REM     that actually matters on patch day -- am I behind, and is it worth
 REM     the downtime -- without installing anything.
 REM
-REM     One steamcmd launch, so the answer is cached for BUILD_CHECK_HOURS.
+REM     One steamcmd launch, so the answer is cached for
+REM     hotwire.build_check_hours.
 REM     A daily restart pays for it once a day; a crash loop, which relaunches
 REM     every few seconds, never pays at all.
 REM
 REM     Note the walk in the script: buildid appears under every depot as
-REM     well, so it looks for branches, then STEAM_BRANCH inside it, then buildid
+REM     well, so it looks for branches, then the branch inside it, then buildid
 REM     inside that. Taking the first buildid in the file reads a depot's
 REM     and silently compares the wrong numbers.
 REM
@@ -1170,7 +335,7 @@ if not defined INSTALLED_BUILD (
     echo [%date% %time%] Rust build: installed !INSTALLED_BUILD!, !BRANCH_NAME! !PUBLIC_BUILD! -- this
     echo [%date% %time%] server is on a newer build than Steam's !BRANCH_NAME! branch, so it
     echo [%date% %time%] is on another branch, such as staging. The next update
-    echo [%date% %time%] moves it to !BRANCH_NAME!, as STEAM_BRANCH in section 2 says.
+    echo [%date% %time%] moves it to !BRANCH_NAME!, as hotwire.steam_branch says.
 ) else (
     echo [%date% %time%] ================================================
     echo [%date% %time%] Rust build: installed !INSTALLED_BUILD!
@@ -1184,7 +349,7 @@ if not defined INSTALLED_BUILD (
     if /i "!UPDATE_EFFECTIVE!"=="off" set "HW_NEWER=off"
     if /i "!UPDATE_EFFECTIVE!"=="hotwire" if not "%UPDATE_ON_NEW_BUILD%"=="1" set "HW_NEWER=flag"
     if "!HW_NEWER!"=="updates" echo [%date% %time%] A normal start updates it before launching.
-    if "!HW_NEWER!"=="off" echo [%date% %time%] UPDATE_MODE is off, so this launcher does not update it.
+    if "!HW_NEWER!"=="off" echo [%date% %time%] hotwire.update_mode is off, so this launcher does not update it.
     if "!HW_NEWER!"=="flag" echo [%date% %time%] Create %UPDATE_FLAG% in %ROOT% to update on the next start.
     set "HW_NEWER="
     echo [%date% %time%] ================================================
@@ -1196,8 +361,7 @@ if not defined INSTALLED_BUILD (
 REM ======================================================================
 REM  6. UPDATE OR RESTART
 REM
-REM     The two flag files, named by UPDATE_FLAG and VALIDATE_FLAG in
-REM     section 2, and what each one costs:
+REM     The two flag files, and what each one costs:
 REM
 REM     UPDATE.flag     app_update, then the mod framework, then launch.
 REM     VALIDATE.flag   The same, plus validate, which re-checksums the
@@ -1205,7 +369,8 @@ REM                     whole install. Slow. Weekly at most, or after a
 REM                     crash.
 REM
 REM     Anything can create one: you, a scheduled task, or the plugin when
-REM     a scheduled update comes due. UPDATE_MODE=off leaves them unread.
+REM     a scheduled update comes due. hotwire.update_mode off leaves them
+REM     unread.
 REM
 REM       New-Item -ItemType File UPDATE.flag     (in the server's folder)
 REM ======================================================================
@@ -1214,7 +379,7 @@ set "DO_UPDATE=0"
 set "DO_VALIDATE=0"
 
 if /i "!UPDATE_EFFECTIVE!"=="off" (
-    echo [%date% %time%] UPDATE_MODE is off -- not updating.
+    echo [%date% %time%] hotwire.update_mode is off -- not updating.
     if exist "%ROOT%\%UPDATE_FLAG%" echo [%date% %time%] %UPDATE_FLAG% is being left in place, not acted on.
     if exist "%ROOT%\%VALIDATE_FLAG%" echo [%date% %time%] %VALIDATE_FLAG% is being left in place, not acted on.
     goto :updatedecided
@@ -1222,7 +387,7 @@ if /i "!UPDATE_EFFECTIVE!"=="off" (
 
 if /i "!UPDATE_EFFECTIVE!"=="always" (
     set "DO_UPDATE=1"
-    echo [%date% %time%] UPDATE_MODE is %UPDATE_MODE% -- updating before launch.
+    echo [%date% %time%] hotwire.update_mode is %UPDATE_MODE% -- updating before launch.
 )
 
 if exist "%ROOT%\%UPDATE_FLAG%" (
@@ -1284,8 +449,9 @@ if !DAYS_SINCE_UPDATE! GEQ %MAX_DAYS_WITHOUT_UPDATE% (
     echo [%date% %time%] ================================================
     echo [%date% %time%] No update in !DAYS_SINCE_UPDATE! days. Updating anyway.
     echo [%date% %time%] A server that never updates stops being joinable
-    echo [%date% %time%] once the clients move on. Set UPDATE_MODE=always,
-    echo [%date% %time%] or schedule updates, to stop seeing this.
+    echo [%date% %time%] once the clients move on. Set hotwire.update_mode
+    echo [%date% %time%] always in hotwire.cfg, or schedule updates, to stop
+    echo [%date% %time%] seeing this.
     echo [%date% %time%] ================================================
 )
 
@@ -1297,8 +463,16 @@ if defined CHECK_ONLY if "%DO_UPDATE%"=="1" echo [%date% %time%] check mode -- a
 if defined CHECK_ONLY if "%DO_UPDATE%"=="0" echo [%date% %time%] check mode -- a normal start would launch without updating.
 if defined CHECK_ONLY set "DO_UPDATE=0"
 
-REM  check mode runs nothing on your behalf, hooks included.
-if not defined CHECK_ONLY if defined HOOK_BEFORE call %HOOK_BEFORE%
+REM  hotwire-before.bat runs on every real start, before any update, in a
+REM  cmd of its own: whatever it does to its variables, or an exit in it,
+REM  stays there. A failure is said and the start carries on. check mode
+REM  runs nothing on your behalf, hooks included.
+if defined CHECK_ONLY goto :hookbeforedone
+if not exist "%HOOK_BEFORE%" goto :hookbeforedone
+echo [%date% %time%] Running the before-start hook (hotwire-before.bat)...
+cmd /d /c call "%HOOK_BEFORE%"
+if errorlevel 1 echo [%date% %time%] hotwire-before.bat exited non-zero; carrying on.
+:hookbeforedone
 
 if "%DO_UPDATE%"=="0" (
     if not defined CHECK_ONLY echo [%date% %time%] Plain restart -- skipping steamcmd and framework.
@@ -1313,7 +487,8 @@ REM  SteamCMD, and nothing says two runs of it at once are safe, so the run
 REM  first holds hotwire-steamcmd.lock beside steamcmd.exe, opened unshared.
 REM  Windows lets go of an open file when its process ends, however it ends,
 REM  so a crash can never leave the lock stuck. hotwire-setup takes the same
-REM  lock. Waiting longer than STEAMCMD_WAIT_MINUTES counts as a failed try.
+REM  lock. Waiting longer than hotwire.steamcmd_wait_minutes counts as a
+REM  failed try.
 REM  The arguments are assembled in PowerShell from the environment, so a
 REM  folder name never passes through cmd's parser on the way.
 set "PSSTEAM="
@@ -1363,12 +538,12 @@ goto steamupdate
 echo [%date% %time%] Giving up on steamcmd. Launching what we have.
 
 :framework
-REM  Oxide/uMod. INSTALL_FRAMEWORK=0 in section 2 skips it for a vanilla server.
+REM  Oxide/uMod. hotwire.install_framework 0 skips it for a vanilla server.
 REM  -f makes curl fail on an HTTP error instead of saving the error page,
 REM  which would otherwise be force-extracted over a working install.
 set "FRAMEWORK_OK=0"
 if "%INSTALL_FRAMEWORK%"=="0" (
-    echo [%date% %time%] Vanilla server: INSTALL_FRAMEWORK is 0, so no framework.
+    echo [%date% %time%] Vanilla server: hotwire.install_framework is 0, so no framework.
     set "FRAMEWORK_OK=1"
     goto :frameworkdone
 )
@@ -1440,7 +615,7 @@ REM  HW-9: the framework (uMod / Oxide) is third-party and its version changes
 REM  with every Rust release, so there is no hash of ours to pin it against.
 REM  GitHub publishes a SHA-256 for every release file, and uMod's download
 REM  link redirects to that same file, so the launcher checks the download
-REM  against it (VERIFY_FRAMEWORK). That proves the file is the one GitHub
+REM  against it (hotwire.verify_framework). That proves the file is the one GitHub
 REM  holds for the release, not who built it: both come from GitHub. When the
 REM  check cannot be made, the download is unverified, as it always was, and
 REM  the log says so rather than staying silent. setup pins the first-party
@@ -1453,10 +628,6 @@ set "FW_SHA="
 set "FW_TAG="
 set "FW_CHECK=0"
 if "%VERIFY_FRAMEWORK%"=="0" goto :fwfetch
-if /i not "%FRAMEWORK_URL%"=="https://umod.org/games/rust/download" (
-    echo [%date% %time%] FRAMEWORK_URL has been changed, so its download cannot be checked.
-    goto :fwfetch
-)
 set "FW_CHECK=1"
 set "HOTWIRE_FWREL=%FRAMEWORK_RELEASES%"
 set "HOTWIRE_FWASSET=%FRAMEWORK_ASSET%"
@@ -1583,7 +754,7 @@ if "!UPDATE_OK!"=="1" if exist "%ROOT%\%UPDATE_FLAG%" (
     echo [%date% %time%] WARNING: %UPDATE_FLAG% is still present after a
     echo [%date% %time%] successful update. It could not be deleted, so
     echo [%date% %time%] every restart from now will update. Check the
-    echo [%date% %time%] permissions on ROOT.
+    echo [%date% %time%] permissions on the server's folder.
 )
 if "!UPDATE_OK!"=="1" if exist "%ROOT%\%VALIDATE_FLAG%" (
     echo [%date% %time%] WARNING: %VALIDATE_FLAG% is still present after a
@@ -1597,157 +768,40 @@ if "!UPDATE_OK!"=="1" if not exist "%UPDATE_STAMP%" (
     echo [%date% %time%] no update has ever happened.
 )
 
-if defined HOOK_AFTER call %HOOK_AFTER%
+REM  hotwire-after.bat runs after an update attempt, whether or not it
+REM  worked, in a cmd of its own like the before-start hook.
+if not exist "%HOOK_AFTER%" goto :hookafterdone
+echo [%date% %time%] Running the after-update hook (hotwire-after.bat)...
+cmd /d /c call "%HOOK_AFTER%"
+if errorlevel 1 echo [%date% %time%] hotwire-after.bat exited non-zero; carrying on.
+:hookafterdone
+
 
 
 REM ======================================================================
 :buildargs
 REM ======================================================================
-REM  6b. WIPES AND PERMANENT SETTINGS, AND READING SECTIONS 1 AND 3
+REM  6b. WIPES AND PERMANENT SETTINGS
 REM
 REM     Machinery. The plugin leaves WIPE.flag or CONVAR.request here when
 REM     the panel asks for a wipe or a permanent convar. Between runs is the
 REM     safe moment: the PowerShell at the end of this file checks every
-REM     value and writes it into section 1 or 3. Check mode changes nothing.
-REM
-REM     cmd reads a running batch file by byte position, and an edit to
-REM     section 1 moves every byte after it. So once PowerShell has written
-REM     the file, the next thing cmd does is jump to a label: cmd finds a
-REM     label by searching the text, so it picks up at the right line of
-REM     the edited file. The same block is read in memory before it runs,
-REM     which is why the jump sits inside it.
-REM
-REM     Sections 1 and 3 are then read again, at every start, so the
-REM     server always starts with what the file says now.
+REM     value and writes it into hotwire.cfg, which is then read again so
+REM     this start uses it. Check mode changes nothing.
 REM ======================================================================
+if defined CHECK_ONLY goto :editsdone
 set "HOTWIRE_EDITS="
 if exist "%ROOT%\%WIPE_FLAG%" set "HOTWIRE_EDITS=1"
 if exist "%ROOT%\CONVAR.request" set "HOTWIRE_EDITS=1"
-if defined CHECK_ONLY set "HOTWIRE_EDITS="
-set "HOTWIRE_SELF=%~f0"
-set "HOTWIRE_ROOT=%ROOT%"
-set "HOTWIRE_WIPEFLAG=%WIPE_FLAG%"
-if defined HOTWIRE_EDITS (
-    powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "$t=[IO.File]::ReadAllText($env:HOTWIRE_SELF,[Text.Encoding]::GetEncoding(28591)); $i=$t.LastIndexOf('#'+'HOTWIRE-EDITS'); if($i -ge 0){ Invoke-Expression $t.Substring($i) }"
-    goto :hotwire_settings_written
-)
-:hotwire_settings_written
+if not defined HOTWIRE_EDITS goto :editsdone
 set "HOTWIRE_EDITS="
-call :hotwire_server_settings hotwire-reread-settings
-call :hotwire_server_options
-
-REM ======================================================================
-REM  7. CHECKING THE OPTION LIST
-REM
-REM     Machinery. Nothing in this section is a setting.
-REM
-REM     Rust ignores a convar it does not recognize, and accepts an empty
-REM     value for one it does. Both fail in silence. The second took a
-REM     server down for an afternoon: an empty rcon.password reached
-REM     Bootstrap.Init_Tier0, which redacts the password out of its own
-REM     logged command line and threw "String cannot be of zero length",
-REM     naming no file, no convar and no cause. The launcher is the last
-REM     place that still knows which line the value came from, so the
-REM     check belongs here.
-REM
-REM     What it catches: a convar with no value, an empty value, a value
-REM     that is still an unexpanded variable, the same convar set twice,
-REM     a name with no dot in it, an unbalanced quote, a port that is not
-REM     a number or is out of range or collides with another port, and a
-REM     server.identity that cannot be a folder name.
-REM
-REM     Written in PowerShell because the checks need a real tokenizer,
-REM     and assembled one line at a time so it stays readable. The script
-REM     contains no double quote, percent sign or exclamation mark, so
-REM     nothing in it can be mangled on the way through cmd; where those
-REM     three characters are needed they are built with [char].
-REM
-REM     ARGS reaches it through the environment rather than the command
-REM     line, because it is full of quotes and pipes by design. Not
-REM     through a file: ARGS carries the RCON password, and a file would
-REM     put it on disk where a backup running at the same moment could
-REM     pick it up. RCON_PASSWORD is already in this process environment,
-REM     so this adds no exposure that was not there.
-REM ======================================================================
-
-if "%CHECK_OPTIONS%"=="0" (
-    echo [%date% %time%] CHECK_OPTIONS is 0 -- the option list is not checked.
-    set "ARGCHECK=0"
-    goto :optionschecked
-)
-
-set "HOTWIRE_ARGS=!ARGS!"
-
-set "PSCHK="
-set "PSCHK=!PSCHK!$Q=[char]34; $PC=[char]37; $EX=[char]33; "
-set "PSCHK=!PSCHK!$p=@(); $s=[string]$env:HOTWIRE_ARGS; "
-set "PSCHK=!PSCHK!$t=@(); $c=[Text.StringBuilder]::new(); $q=$false; $st=$false; "
-set "PSCHK=!PSCHK!foreach($ch in $s.ToCharArray()){ if($ch -eq $Q){ $q=-not $q; $st=$true } elseif((($ch -eq [char]32) -or ($ch -eq [char]9) -or ($ch -eq [char]13) -or ($ch -eq [char]10)) -and (-not $q)){ if($st -or ($c.Length -gt 0)){ $t+=$c.ToString(); $c.Clear() | Out-Null; $st=$false } } else { $c.Append($ch) | Out-Null; $st=$true } } "
-set "PSCHK=!PSCHK!if($st -or ($c.Length -gt 0)){ $t+=$c.ToString() } "
-set "PSCHK=!PSCHK!if($q){ $p+=[string]('unbalanced quote in the option list') } "
-set "PSCHK=!PSCHK!$seen=@{}; $val=@{}; $i=0; "
-set "PSCHK=!PSCHK!while($i -lt $t.Count){ $x=[string]$t[$i]; "
-set "PSCHK=!PSCHK! if($x.StartsWith([string][char]43)){ $n=$x.Substring(1); "
-set "PSCHK=!PSCHK!  if($n.Length -eq 0){ $p+=[string]('a bare plus with no convar after it'); $i++; continue } "
-set "PSCHK=!PSCHK!  if(-not $n.Contains([string][char]46)){ $p+=[string]::Concat($n,[string](' is not a convar name; it needs a dot, and Rust ignores unknown convars in silence')) } "
-set "PSCHK=!PSCHK!  if(($i+1) -ge $t.Count){ $p+=[string]::Concat($n,[string](' has no value; it is the last thing on the line')); $i++; continue } "
-set "PSCHK=!PSCHK!  $v=[string]$t[$i+1]; "
-set "PSCHK=!PSCHK!  if($v.StartsWith([string][char]43) -or ($v.StartsWith([string][char]45) -and ($v -notmatch [string]('^-?\d+(\.\d+)?$')))){ $p+=[string]::Concat($n,[string](' has no value; the next thing is '),$v); $i++; continue } "
-set "PSCHK=!PSCHK!  if($v.Length -eq 0){ $p+=[string]::Concat($n,[string](' is set to an empty value')) } "
-set "PSCHK=!PSCHK!  if(($n -ne [string]('rcon.password')) -and (($v -match [string]::Concat($PC,'[A-Za-z_][A-Za-z0-9_]*',$PC)) -or ($v -match [string]::Concat($EX,'[A-Za-z_][A-Za-z0-9_]*',$EX)))){ $p+=[string]::Concat($n,[string](' still contains an unexpanded variable: '),$v) } "
-set "PSCHK=!PSCHK!  if($seen.ContainsKey($n)){ $p+=[string]::Concat($n,[string](' is set twice; whichever line is last wins, silently')) } "
-set "PSCHK=!PSCHK!  $seen[$n]=1; $val[$n]=$v; $i+=2; continue } "
-set "PSCHK=!PSCHK! $i++ } "
-set "PSCHK=!PSCHK!$ports=@([string]('server.port'),[string]('server.queryport'),[string]('rcon.port'),[string]('app.port')); "
-set "PSCHK=!PSCHK!$pn=@{}; "
-set "PSCHK=!PSCHK!foreach($k in $ports){ if($val.ContainsKey($k)){ $v=[string]$val[$k]; "
-set "PSCHK=!PSCHK!  if($v -notmatch [string]('^\d+$')){ $p+=[string]::Concat($k,[string](' is '),$v,[string](', which is not a number')) } "
-set "PSCHK=!PSCHK!  elseif(([int]$v -lt 1) -or ([int]$v -gt 65535)){ $p+=[string]::Concat($k,[string](' is '),$v,[string]('; a port must be 1-65535')) } "
-set "PSCHK=!PSCHK!  else { $pn[$k]=[int]$v } } } "
-set "PSCHK=!PSCHK!foreach($a in $pn.Keys){ foreach($b in $pn.Keys){ if(([string]::CompareOrdinal($a,$b) -lt 0) -and ($pn[$a] -eq $pn[$b])){ $p+=[string]::Concat($a,[string](' and '),$b,[string](' are both '),[string]$pn[$a],[string]('; they must differ')) } } } "
-set "PSCHK=!PSCHK!if($val.ContainsKey([string]('server.identity'))){ $v=[string]$val[[string]('server.identity')]; "
-set "PSCHK=!PSCHK! $bad=[char[]]@([char]92,[char]47,[char]58,[char]42,[char]63,[char]34,[char]60,[char]62,[char]124); "
-set "PSCHK=!PSCHK! if($v.Length -eq 0){ $p+=[string]('server.identity is empty; it names the save folder') } "
-set "PSCHK=!PSCHK! elseif($v.IndexOfAny($bad) -ge 0){ $p+=[string]::Concat([string]('server.identity is '),$v,[string]('; it names a folder, so no path characters')) } } "
-set "PSCHK=!PSCHK!if($val.ContainsKey([string]('server.seed'))){ $v=[string]$val[[string]('server.seed')]; $sn=[long]0; "
-set "PSCHK=!PSCHK! if((-not [long]::TryParse($v,[ref]$sn)) -or ($sn -lt 0) -or ($sn -gt 2147483647)){ $p+=[string]::Concat([string]('server.seed is '),$v,[string]('; it must be a whole number from 0 to 2147483647')) } } "
-set "PSCHK=!PSCHK!foreach($m in $p){ Write-Output ([string]::Concat([string]('  '),$m)) } "
-set "PSCHK=!PSCHK!if($p.Count -gt 0){ exit 2 } else { exit 0 } "
-
-powershell -NoProfile -NonInteractive -Command "!PSCHK!"
-set "ARGCHECK=!errorlevel!"
-set "HOTWIRE_ARGS="
-
-:optionschecked
-REM  Exactly 2 means the check ran and found problems. 0 means it ran
-REM  and found none. ANYTHING ELSE means the check itself did not run --
-REM  9009 for no PowerShell, 1 for an error inside the script.
-REM
-REM  Those are separated on purpose. If this script is ever wrong, it
-REM  exits 1, and treating that as "problems found" would refuse to start
-REM  a server whose settings are perfectly fine. A diagnostic that breaks
-REM  must cost the diagnostic and nothing else.
-if "!ARGCHECK!"=="2" (
-    echo [%date% %time%] ================================================
-    echo [%date% %time%] The option list has problems, listed above.
-    echo [%date% %time%] Not starting. They are set in section 3.
-    echo [%date% %time%] ================================================
-    pause & exit /b 1
-)
-
-if not "!ARGCHECK!"=="0" (
-    echo [%date% %time%] Option check did not run ^(exit !ARGCHECK!^).
-    echo [%date% %time%] Continuing without it.
-)
+call :hotwire_ps edits
+set "HOTWIRE_QUIET=1"
+call :hotwire_load
+set "HOTWIRE_QUIET="
+:editsdone
 
 if defined CHECK_ONLY (
-    if "%CHECK_OPTIONS%"=="0" (
-        echo [%date% %time%] Settings checked. The option list was not: CHECK_OPTIONS is 0.
-    ) else if not "!ARGCHECK!"=="0" (
-        echo [%date% %time%] Settings checked. The option list check could not run -- see above.
-    ) else (
-        echo [%date% %time%] Settings and option list checked. No problems.
-    )
     echo [%date% %time%] check mode -- not starting the server.
     exit /b 0
 )
@@ -1761,8 +815,8 @@ REM  Rotate the log. -logfile TRUNCATES on every start, so without this a
 REM  restart destroys the log of whatever went wrong before it.
 REM
 REM  That was true of a crash loop too, which is the case it most needed
-REM  to be false for. Rotation culled to LOG_KEEP every pass, and a server
-REM  dying on boot loops every 15 seconds, so about three and a half
+REM  to be false for. Rotation culled to hotwire.log_keep every pass, and a
+REM  server dying on boot loops every 15 seconds, so about three and a half
 REM  minutes later the log holding the actual failure had been culled away
 REM  and fourteen identical near-empty ones were left in its place.
 REM
@@ -1801,7 +855,9 @@ REM  timestamp.
 set "RUN_START=0"
 for /f %%t in ('powershell -NoProfile -Command "[int]((Get-Date).ToUniversalTime() - (Get-Date '1970-01-01')).TotalSeconds"') do set "RUN_START=%%t"
 
-"%ROOT%\RustDedicated.exe" !ARGS! -logfile "!LOGFILE!"
+REM  PowerShell starts RustDedicated.exe with the argument list from the
+REM  last good read of hotwire.cfg, and waits for it to exit.
+call :hotwire_ps launch
 
 set "RUN_END=0"
 for /f %%t in ('powershell -NoProfile -Command "[int]((Get-Date).ToUniversalTime() - (Get-Date '1970-01-01')).TotalSeconds"') do set "RUN_END=%%t"
@@ -1815,15 +871,16 @@ if !RUN_SECONDS! LSS %CRASH_SECONDS% (
 )
 
 if "%RESTART_ON_EXIT%"=="0" (
-    echo [%date% %time%] Server exited after !RUN_SECONDS!s. RESTART_ON_EXIT is 0 -- not relaunching.
+    echo [%date% %time%] Server exited after !RUN_SECONDS!s. hotwire.restart_on_exit is 0 -- not relaunching.
     exit /b 0
 )
 
 if not "%MAX_CRASH_STREAK%"=="0" if !CRASH_STREAK! GEQ %MAX_CRASH_STREAK% goto crashstop
 
 REM  Back off, so a permanently broken config does not relaunch four
-REM  times a minute forever -- and does not run HOOK_BEFORE that often
-REM  either, which for anyone hooking a backup in is the expensive part.
+REM  times a minute forever -- and does not run hotwire-before.bat that
+REM  often either, which for anyone hooking a backup in is the expensive
+REM  part.
 set "DELAY=%RESTART_DELAY%"
 if not "%CRASH_BACKOFF%"=="0" if !CRASH_STREAK! GEQ 2 set "DELAY=30"
 if not "%CRASH_BACKOFF%"=="0" if !CRASH_STREAK! GEQ 3 set "DELAY=60"
@@ -1854,254 +911,536 @@ echo [%date% %time%]
 echo [%date% %time%] The log from the first crash is kept as
 echo [%date% %time%]   %ROOT%\logs\server_crash_*.txt
 echo [%date% %time%] and is the one worth reading. Usual causes: a bad
-echo [%date% %time%] convar in section 3, a port already in use, or a
+echo [%date% %time%] setting in hotwire.cfg, a port already in use, or a
 echo [%date% %time%] corrupt save. On a machine with more than one server,
-echo [%date% %time%] check each has its own ports in section 1 -- two
+echo [%date% %time%] check each has its own ports in hotwire.cfg -- two
 echo [%date% %time%] servers on the same port is exactly this. Another copy
 echo [%date% %time%] of this launcher already running would do it too.
 echo [%date% %time%]
-echo [%date% %time%] Set MAX_CRASH_STREAK=0 to loop forever instead.
+echo [%date% %time%] Set hotwire.max_crash_streak 0 in hotwire.cfg to loop
+echo [%date% %time%] forever instead.
 echo [%date% %time%] ====================================================
 pause
 exit /b 1
 
+
+REM ======================================================================
+REM  THE CALLS INTO POWERSHELL
+REM ======================================================================
+
+REM  :hotwire_load reads the settings. PowerShell prints what it has to say
+REM  on stderr, straight to this window, and hands cmd its settings on
+REM  stdout as HWSET NAME=value lines, the last one HW_LOAD: ok, fatal (a
+REM  first read that must stop) or kept (a later read that failed, so the
+REM  last good settings stay).
+:hotwire_load
+set "HW_LOAD="
+set "HOTWIRE_MODE=load"
+set "HOTWIRE_ROOT=%ROOT%"
+for /f "usebackq delims=" %%L in (`powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "!HW_PS!"`) do (
+    set "HW_LINE=%%L"
+    if "!HW_LINE:~0,6!"=="HWSET " for /f "tokens=1,* delims==" %%A in ("!HW_LINE:~6!") do set "%%A=%%B"
+)
+set "HW_LINE="
+set "HOTWIRE_MODE="
+exit /b 0
+
+REM  :hotwire_ps <edits|launch> runs one part, and returns its exit code.
+:hotwire_ps
+set "HOTWIRE_MODE=%~1"
+set "HOTWIRE_ROOT=%ROOT%"
+powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "!HW_PS!"
+set "HW_EXIT=!errorlevel!"
+set "HOTWIRE_MODE="
+exit /b !HW_EXIT!
+
 REM ======================================================================
 REM  THE LAUNCHER'S CODE HASH, AND ITS POWERSHELL
 REM
-REM     Never run by cmd: the line above exits. The hash is stamped at
-REM     release by tools/launcher-hash.sh; section 6b hands everything from
-REM     the #HOTWIRE-EDITS line down to PowerShell, so it is written as
-REM     ordinary PowerShell rather than through cmd's quoting rules.
+REM     Never run by cmd: every path above ends before this. The hash is
+REM     stamped at release by tools/launcher-hash.sh; the calls above hand
+REM     everything from the #HOTWIRE-PS line down to PowerShell, so it is
+REM     written as ordinary PowerShell rather than through cmd's quoting
+REM     rules.
 REM ======================================================================
-HOTWIRE_LAUNCHER_HASH="4ca21852c431bc8a5cc37670d17f561513f4a19280ded3bb659d13ee8aa91fb6"
+exit /b 0
+HOTWIRE_LAUNCHER_HASH="f16b6558149ed906e1e867bd00dce893c7ecdfc994ac03a9fdb9ccd33a6bb697"
 
-#HOTWIRE-EDITS
-# Wipes and permanent convars, for hotwire.bat (capabilities: wipe, convar_persist).
+#HOTWIRE-PS
+# hotwire.bat's PowerShell. cmd hands everything from the line above down to PowerShell, and HOTWIRE_MODE says
+# which part to run:
+#   load    read hotwire.cfg and hotwire-secrets.cfg, check every line, hand cmd the launcher's own settings,
+#           and keep the server's argument list for the start
+#   edits   carry out a wipe or a permanent convar the plugin asked for, by writing hotwire.cfg
+#   launch  start RustDedicated.exe with that argument list, and wait for it
 #
-# The plugin asks; this decides. The plugin leaves WIPE.flag (a new seed, size and what to do with
-# blueprints) or CONVAR.request (one "<convar> <value>" per line) in the server's folder, and the
-# launcher's pre-launch step runs this between server runs. Every value is checked again here before
-# anything is written or deleted: those files are requests, not commands.
-#
-# It edits only this file's sections 1 and 3, between their settings markers. cmd reads a running
-# batch file by byte position, so the step that runs this jumps to a label as soon as it returns: cmd
-# finds a label by searching the text, and carries on from the right line of the edited file. What is
-# written is a typed setting, never a command: a value that cmd would treat as syntax is refused, so a
-# forged request cannot put a command into a file this machine runs. Windows PowerShell 5.1, ASCII only.
+# The settings are read as data, one line at a time, and never run. A line is a name, spaces, then a value; a
+# value with spaces is in double quotes and holds none inside; no control characters. Each value is checked for
+# what it sets before it is used: a line that fails is ignored and named by check, and the default stays. The
+# few settings a wrong default would turn into a different server -- the save folder, the map and the ports --
+# are not defaulted: a bad one stops the first start, and on a later restart the last good settings are kept.
+# The rules are hotwire.sh's, line for line. Windows PowerShell 5.1, ASCII only.
 $ErrorActionPreference = 'Stop'
-$self = $env:HOTWIRE_SELF
 $root = $env:HOTWIRE_ROOT
-$wipeName = $env:HOTWIRE_WIPEFLAG
-if (-not $wipeName) { $wipeName = 'WIPE.flag' }
+$cfg = Join-Path $root 'hotwire.cfg'
+$secretsCfg = Join-Path $root 'hotwire-secrets.cfg'
+$argsFile = Join-Path $root 'hotwire\launch-args.json'
 
-function Say([string]$message) { Write-Output ('[' + (Get-Date -Format 'yyyy-MM-dd HH:mm:ss') + '] ' + $message) }
+# Everything said goes to stderr: in load mode stdout carries the settings to cmd.
+function Say([string]$message) { [Console]::Error.WriteLine('[' + (Get-Date -Format 'yyyy-MM-dd HH:mm:ss') + '] ' + $message) }
+function Rule { [Console]::Error.WriteLine('========================================================') }
 
-# Read and written byte for byte (Latin-1 maps each byte to one character and back), so every line this does
-# not change stays exactly as it was, whatever its encoding. What this writes is plain ASCII.
-$bytes = [Text.Encoding]::GetEncoding(28591)
-$text = [IO.File]::ReadAllText($self, $bytes)
-$eol = "`n"
-if ($text.Contains("`r`n")) { $eol = "`r`n" }
-$lines = New-Object 'System.Collections.Generic.List[string]'
-foreach ($l in ($text -split "`r?`n")) { $lines.Add($l) }
+# hotwire.<name> -> variable, kind, default. cmd reads these, so every kind here is checked to hold nothing cmd
+# treats as syntax.
+$hwSettings = @{
+    'hotwire.update_mode'              = @('UPDATE_MODE', 'mode', 'auto')
+    'hotwire.steamcmd'                 = @('STEAMCMD', 'steamcmd', 'C:\steamcmd\steamcmd.exe')
+    'hotwire.steam_branch'             = @('STEAM_BRANCH', 'word', 'public')
+    'hotwire.max_days_without_update'  = @('MAX_DAYS_WITHOUT_UPDATE', 'int', '14')
+    'hotwire.update_on_new_build'      = @('UPDATE_ON_NEW_BUILD', 'bool', '1')
+    'hotwire.build_check_hours'        = @('BUILD_CHECK_HOURS', 'int', '6')
+    'hotwire.steam_tries'              = @('MAX_STEAM_TRIES', 'int1', '5')
+    'hotwire.steam_retry_seconds'      = @('STEAM_RETRY_SECONDS', 'int', '60')
+    'hotwire.steamcmd_wait_minutes'    = @('STEAMCMD_WAIT_MINUTES', 'int', '60')
+    'hotwire.install_framework'        = @('INSTALL_FRAMEWORK', 'bool', '1')
+    'hotwire.skip_unchanged_framework' = @('SKIP_UNCHANGED_FRAMEWORK', 'bool', '1')
+    'hotwire.verify_framework'         = @('VERIFY_FRAMEWORK', 'bool', '1')
+    'hotwire.restart_on_exit'          = @('RESTART_ON_EXIT', 'bool', '1')
+    'hotwire.restart_delay'            = @('RESTART_DELAY', 'int', '15')
+    'hotwire.crash_seconds'            = @('CRASH_SECONDS', 'int', '60')
+    'hotwire.max_crash_streak'         = @('MAX_CRASH_STREAK', 'int', '10')
+    'hotwire.crash_backoff'            = @('CRASH_BACKOFF', 'bool', '1')
+    'hotwire.rotate_logs'              = @('ROTATE_LOGS', 'bool', '1')
+    'hotwire.log_keep'                 = @('LOG_KEEP', 'int1', '14')
+    'hotwire.rcon_password_min'        = @('RCON_PASSWORD_MIN', 'int1', '8')
+    'hotwire.check_options'            = @('CHECK_OPTIONS', 'bool', '1')
+    'hotwire.backups'                  = @('BACKUPS', 'bool', '1')
+}
+# Rust convars the launcher itself reads -> kind, default.
+$cvSettings = @{
+    'server.hostname'    = @('text', '')
+    'server.description' = @('text', '')
+    'server.tags'        = @('tags', '')
+    'server.maxplayers'  = @('int', '')
+    'server.identity'    = @('identity', '')
+    'server.seed'        = @('seed', '')
+    'server.worldsize'   = @('worldsize', '')
+    'server.port'        = @('port', '28015')
+    'server.queryport'   = @('port', '28017')
+    'rcon.port'          = @('port', '28016')
+    'server.level'       = @('text', 'Procedural Map')
+    'server.levelurl'    = @('url', '')
+    'rcon.web'           = @('bool', '1')
+}
+# The settings that turn into a different server when defaulted.
+$criticalKinds = @('identity', 'seed', 'worldsize', 'port', 'url')
 
-# Sections 1 and 3: each from the settings marker after its label to its end marker. Nothing outside is
-# touched. The markers are built in pieces: written whole, these lines would read as settings markers
-# themselves, and the code hash would skip this code instead of covering it.
-$beginMarker = '=== HOTWIRE SETTINGS ' + 'BEGIN ==='
-$endMarker = '=== HOTWIRE SETTINGS ' + 'END ==='
-function FindBlock([string]$label) {
-    $open = -1; $seen = $false
-    for ($i = 0; $i -lt $lines.Count; $i++) {
-        if ($lines[$i] -eq $label) { $seen = $true; continue }
-        if ($seen -and $open -lt 0 -and $lines[$i].Contains($beginMarker)) { $open = $i; continue }
-        if ($open -ge 0 -and $lines[$i].Contains($endMarker)) { return @($open, $i) }
+# One line -> @{ Name; Value } or @{ Why }.
+function Read-CfgLine([string]$line) {
+    $m = [regex]::Match($line, '^([A-Za-z][A-Za-z0-9_]*(\.[A-Za-z0-9_]+)+)(\s+(.*))?$')
+    if (-not $m.Success) { return @{ Why = 'not a setting: a name, a space, then a value' } }
+    $v = $m.Groups[4].Value.TrimEnd()
+    if ($v.StartsWith('"')) {
+        $q = [regex]::Match($v, '^"([^"]*)"$')
+        if (-not $q.Success) { return @{ Why = 'a quoted value must start and end with a double quote, and hold none inside' } }
+        $v = $q.Groups[1].Value
+    } elseif ($v -match '\s') { return @{ Why = 'a value with spaces must be in double quotes' } }
+    elseif ($v.Contains('"')) { return @{ Why = 'a double quote inside the value' } }
+    if ($v -match '[\x00-\x1F\x7F]') { return @{ Why = 'a control character in the value' } }
+    if ($v.Length -gt 1024) { return @{ Why = 'longer than 1024 characters' } }
+    return @{ Name = $m.Groups[1].Value; Value = $v }
+}
+
+# '' when the value may be used, or why not. An empty value always passes: it means the default.
+function Test-CfgValue([string]$kind, [string]$v) {
+    if ($v -eq '') { return '' }
+    switch ($kind) {
+        'int'       { if ($v -cnotmatch '^[0-9]{1,9}$') { return 'must be a whole number' } }
+        'int1'      { if ($v -cnotmatch '^[0-9]{1,9}$' -or [long]$v -lt 1) { return 'must be a whole number of 1 or more' } }
+        'bool'      { if ($v -cnotmatch '^[01]$') { return 'must be 0 or 1' } }
+        'mode'      { if ($v -cnotmatch '^(auto|always|hotwire|off)$') { return 'must be auto, always, hotwire or off' } }
+        'word'      { if ($v -cnotmatch '^[A-Za-z0-9_.-]+$') { return 'letters, digits, _ . - only' } }
+        'steamcmd'  { if ($v -cnotmatch '^[A-Za-z]:\\[^"%!^&|<>]*\\steamcmd\.exe$') { return 'must be a full path to steamcmd.exe, with none of " % ! ^ & | < > in it' } }
+        'text'      { }
+        'tags'      { if ($v -cnotmatch '^[A-Za-z0-9,_-]+$') { return 'tags separated by commas, with no spaces' } }
+        'identity'  { if ($v -cnotmatch '^[A-Za-z0-9_-]{1,64}$') { return 'letters, digits, _ and - only: it names a folder' } }
+        'seed'      { if ($v -cnotmatch '^[0-9]{1,10}$' -or [long]$v -gt 2147483647) { return 'must be a whole number from 0 to 2147483647' } }
+        'worldsize' { if ($v -cnotmatch '^[0-9]{4}$' -or [int]$v -lt 1000 -or [int]$v -gt 6000) { return 'must be a whole number from 1000 to 6000' } }
+        'port'      { if ($v -cnotmatch '^[0-9]{1,5}$' -or [int]$v -lt 1 -or [int]$v -gt 65535) { return 'must be a port number from 1 to 65535' } }
+        'url'       { if ($v -cnotmatch '^https?://\S+$') { return 'must be an http:// or https:// address' } }
+        default     { return ('unknown kind ' + $kind) }
     }
-    return @(-1, -1)
-}
-$top = FindBlock (':hotwire_server' + '_settings')
-$topStart = $top[0]; $topFinish = $top[1]
-$options = FindBlock (':hotwire_server' + '_options')
-$start = $options[0]; $finish = $options[1]
-if ($topStart -lt 0 -or $start -lt 0) {
-    Say 'Section 1 or 3 has lost its settings markers, so no wipe or convar change can be written. Starting unchanged.'
-    exit 0
-}
-
-# Section 3's lines that match.
-function InBlock([string]$pattern) {
-    $found = @()
-    for ($i = $start + 1; $i -lt $finish; $i++) { if ($lines[$i] -match $pattern) { $found += $i } }
-    return ,$found
-}
-
-# Section 1's lines that match. Section 1 lies before section 3, so an insertion into section 3 never moves it.
-function InTop([string]$pattern) {
-    $found = @()
-    for ($i = $topStart + 1; $i -lt $topFinish; $i++) { if ($lines[$i] -match $pattern) { $found += $i } }
-    return ,$found
-}
-
-# The plain-value settings of section 1, where | & < > are safe.
-$variables = @{ 'server.hostname' = 'SERVER_HOSTNAME'; 'server.description' = 'SERVER_DESCRIPTION'; 'server.tags' = 'SERVER_TAGS'; 'server.maxplayers' = 'SERVER_MAXPLAYERS'; 'server.identity' = 'SERVER_IDENTITY'; 'server.seed' = 'SERVER_SEED'; 'server.worldsize' = 'SERVER_WORLDSIZE'; 'server.port' = 'SERVER_PORT'; 'server.queryport' = 'SERVER_QUERYPORT'; 'rcon.port' = 'RCON_PORT' }
-
-# Returns '' when done, or why not.
-function SetVariable([string]$name, [string]$value) {
-    if ($value -match '["^]' -or $value -match '[^\x20-\x7E]') { return 'the value has a character a batch file cannot hold here' }
-    $written = $value.Replace('%', '%%').Replace('!', '^!')
-    $found = InTop ('^set "' + $name + '=[^"]*"$')
-    if ($found.Count -ne 1) { return ('section 1 has no single ' + $name + ' line') }
-    $lines[$found[0]] = 'set "' + $name + '=' + $written + '"'
     return ''
 }
 
-# A section 1 value as the launcher reads it: ^! is !, %% is %.
-function VariableValue([string]$name) {
-    $found = InTop ('^set "' + $name + '=[^"]*"$')
-    if ($found.Count -ne 1) { return '' }
-    $m = [regex]::Match($lines[$found[0]], '^set "[A-Z_]+=([^"]*)"$')
-    return $m.Groups[1].Value.Replace('^!', '!').Replace('%%', '%')
+# hotwire.cfg -> what it sets, and every line that was not used.
+function Read-Config {
+    $r = @{
+        Missing = $false; Values = @{}; Extra = [ordered]@{}; Known = @{}
+        Problems = New-Object 'System.Collections.Generic.List[string]'
+        Fatal = New-Object 'System.Collections.Generic.List[string]'
+        Unknown = New-Object 'System.Collections.Generic.List[string]'
+    }
+    if (-not (Test-Path -LiteralPath $cfg -PathType Leaf)) { $r.Missing = $true; $r.Fatal.Add('hotwire.cfg is missing'); return $r }
+    $n = 0; $listed = $true
+    foreach ($raw in [IO.File]::ReadAllLines($cfg)) {
+        $n++
+        $line = $raw.TrimStart()
+        # The file's own list is every name above its OTHER CONVARS heading, on or off (#name value): what the option
+        # check knows as spelled right. Names added below it are the ones worth a second look.
+        if ($line.StartsWith('#') -and $line.Contains('OTHER CONVARS')) { $listed = $false }
+        $off = [regex]::Match($line, '^#([A-Za-z][A-Za-z0-9_]*(\.[A-Za-z0-9_]+)+)\s')
+        if ($off.Success) { if ($listed) { $r.Known[$off.Groups[1].Value.ToLowerInvariant()] = 1 }; continue }
+        if ($line -eq '' -or $line.StartsWith('#')) { continue }
+        $p = Read-CfgLine $line
+        if ($p.Why) { $r.Problems.Add('line ' + $n + ': ' + $p.Why); continue }
+        $name = $p.Name; $lower = $name.ToLowerInvariant()
+        if ($listed) { $r.Known[$lower] = 1 }
+        if ($lower -eq 'rcon.password') { $r.Problems.Add('line ' + $n + ': rcon.password: belongs in hotwire-secrets.cfg, never here; ignored'); continue }
+        $kind = $null
+        if ($hwSettings.ContainsKey($lower)) { $kind = $hwSettings[$lower][1] } elseif ($cvSettings.ContainsKey($lower)) { $kind = $cvSettings[$lower][0] }
+        if ($kind) {
+            $why = Test-CfgValue $kind $p.Value
+            if ($why) {
+                if ($criticalKinds -contains $kind) { $r.Fatal.Add('line ' + $n + ': ' + $name + ': ' + $why) }
+                else { $r.Problems.Add('line ' + $n + ': ' + $name + ': ' + $why + '; the default is used') }
+                continue
+            }
+            $r.Values[$lower] = $p.Value
+            continue
+        }
+        if ($lower.StartsWith('hotwire.')) { $r.Problems.Add('line ' + $n + ': ' + $name + ': not a launcher setting; ignored'); continue }
+        # Any other Rust convar, passed through as it is. Empty means the default.
+        if ($p.Value -eq '') { continue }
+        $r.Extra[$lower] = @($name, $p.Value)
+    }
+    foreach ($k in $r.Extra.Keys) { if (-not $r.Known.ContainsKey($k)) { $r.Unknown.Add($r.Extra[$k][0]) } }
+    return $r
 }
 
-function SetOption([string]$convar, [string]$value) {
-    if ($value -match '["%!^&|<>]' -or $value -match '[^\x20-\x7E]') { return 'the value has a character cmd reads as syntax (" % ! ^ & | < >) or is not plain ASCII' }
-    $word = $value
-    if ($value -match '\s') { $word = '"' + $value + '"' }
-    $escaped = [regex]::Escape($convar)
-    $active = InBlock ('^set "ARGS=!ARGS! \+' + $escaped + ' ')
-    if ($active.Count -gt 1) { return ('it is set on more than one line in section 3') }
-    if ($active.Count -eq 1) {
-        $m = [regex]::Match($lines[$active[0]], '^set "ARGS=!ARGS! \+(\S+) ')
-        $lines[$active[0]] = 'set "ARGS=!ARGS! +' + $m.Groups[1].Value + ' ' + $word + '"'
-        return ''
+# A launcher setting as it is used: the file's value, or the default. For a number, a switch or a path an empty
+# value is the default too; for the Steam branch empty means "let Steam keep the last one".
+function Get-HwValue($r, [string]$key) {
+    $spec = $hwSettings[$key]
+    if ($r.Values.ContainsKey($key)) {
+        $v = [string]$r.Values[$key]
+        if ($v -ne '' -or $spec[1] -eq 'word') { return $v }
     }
-    $listed = InBlock ('^REM set "ARGS=!ARGS! \+' + $escaped + ' VALUE"$')
-    if ($listed.Count -eq 1) {
-        $m = [regex]::Match($lines[$listed[0]], '\+(\S+) VALUE"$')
-        $lines[$listed[0]] = 'set "ARGS=!ARGS! +' + $m.Groups[1].Value + ' ' + $word + '"'
-        return ''
-    }
-    # Not in the list: a managed line of its own, just above the end of section 3, replacing an earlier one.
-    $marker = 'REM hotwire-managed: ' + $convar
-    for ($i = $finish - 1; $i -gt $start; $i--) {
-        if ($lines[$i] -eq $marker) { $lines.RemoveAt($i + 1); $lines.RemoveAt($i); $script:finish -= 2 }
-    }
-    $lines.Insert($finish, $marker)
-    $lines.Insert($finish + 1, 'set "ARGS=!ARGS! +' + $convar + ' ' + $word + '"')
-    $script:finish += 2
-    return ''
+    return $spec[2]
 }
 
-$changed = $false
-$wipe = $null
-$convarLog = @()
+# A server setting as it is used: the file's value, even empty (the game's default), or the launcher's default.
+function Get-CvValue($r, [string]$key) {
+    if ($r.Values.ContainsKey($key)) { return [string]$r.Values[$key] }
+    return $cvSettings[$key][1]
+}
 
-# ---- Wipe ------------------------------------------------------------------------------------------
-$flag = Join-Path $root $wipeName
-$result = Join-Path $root 'WIPE.result'
-$cycleFile = Join-Path $root 'hotwire\wipe-cycle'
-if (Test-Path -LiteralPath $flag) {
-    $w = @{}
-    foreach ($l in [IO.File]::ReadAllLines($flag)) {
-        $parts = $l.Trim().Split(' ', 2)
-        if ($parts.Count -eq 2 -and -not $w.ContainsKey($parts[0])) { $w[$parts[0]] = $parts[1].Trim() }
+# hotwire-secrets.cfg -> @{ Password; Why }. Read as data, like hotwire.cfg; only rcon.password is taken from it.
+function Read-Secret([int]$minimum) {
+    if (-not (Test-Path -LiteralPath $secretsCfg -PathType Leaf)) {
+        return @{ Why = 'No hotwire-secrets.cfg beside the launcher. Copy hotwire-secrets.example.cfg to hotwire-secrets.cfg and set rcon.password.' }
     }
-    $seed = [string]$w['seed']; $size = [string]$w['size']; $bp = [string]$w['blueprints']; $cycle = [string]$w['cycle']; $expires = [string]$w['expires']
-    if (-not $bp) { $bp = 'keep' }
-    $done = ''
-    if ($cycle -and (Test-Path -LiteralPath $cycleFile)) { $done = ([IO.File]::ReadAllText($cycleFile)).Trim() }
-    $now = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
-    $why = ''
-    if ($cycle -and $done -eq $cycle) {
-        Remove-Item -LiteralPath $flag -Force
-        Say ('Wipe for cycle ' + $cycle + ' already done; ignoring the flag.')
-    } elseif ($expires -match '^\d+$' -and [long]$expires -lt $now) {
-        Remove-Item -LiteralPath $flag -Force
-        Say 'The wipe flag has expired; ignoring it. Starting unchanged.'
-    } else {
-        if ($seed -notmatch '^\d{1,10}$' -or [long]$seed -gt 2147483647) { $why = 'seed is not a whole number from 0 to 2147483647' }
-        elseif ($size -and ($size -notmatch '^\d{1,5}$' -or [int]$size -lt 1000 -or [int]$size -gt 6000)) { $why = 'size is not a whole number from 1000 to 6000' }
-        elseif ('keep', 'rename', 'delete' -notcontains $bp) { $why = 'blueprints must be keep, rename or delete' }
-        if (-not $why) { $why = SetVariable 'SERVER_SEED' $seed }
-        if (-not $why -and $size) { $why = SetVariable 'SERVER_WORLDSIZE' $size }
-        if ($why) {
-            Say ('Wipe CANCELLED: ' + $why + '. Starting unchanged.')
-            [IO.File]::WriteAllText($result, 'cancelled: ' + $why + "`n")
-            Remove-Item -LiteralPath $flag -Force
-            # Nothing is kept from a cancelled wipe: re-read the file so a half-made change is not written.
-            $lines.Clear(); foreach ($l in ($text -split "`r?`n")) { $lines.Add($l) }
+    $n = 0; $password = ''
+    foreach ($raw in [IO.File]::ReadAllLines($secretsCfg)) {
+        $n++
+        $line = $raw.TrimStart()
+        if ($line -eq '' -or $line.StartsWith('#')) { continue }
+        $p = Read-CfgLine $line
+        if ($p.Why) { Say ('hotwire-secrets.cfg line ' + $n + ': ' + $p.Why + '; ignored.'); continue }
+        if ($p.Name.ToLowerInvariant() -eq 'rcon.password') { $password = $p.Value }
+        else { Say ('hotwire-secrets.cfg line ' + $n + ': ' + $p.Name + ': only rcon.password belongs here; ignored.') }
+    }
+    if ($password -eq '') { return @{ Why = 'hotwire-secrets.cfg does not set rcon.password.' } }
+    if ($password -eq 'change_me') { return @{ Why = "rcon.password is still the example 'change_me'. Set a real one in hotwire-secrets.cfg." } }
+    if ($password.Length -lt $minimum) { return @{ Why = ('rcon.password is shorter than hotwire.rcon_password_min (' + $minimum + ').') } }
+    return @{ Password = $password }
+}
+
+# The server's argument list, without the password and the log file, which the start adds.
+function Get-ServerArgs($r) {
+    $a = New-Object 'System.Collections.Generic.List[string]'
+    $a.Add('-batchmode'); $a.Add('-nographics')
+    $add = { param($name, $value) if ($value -ne '') { $a.Add('+' + $name); $a.Add($value) } }
+    & $add 'server.identity' (Get-CvValue $r 'server.identity')
+    $levelUrl = Get-CvValue $r 'server.levelurl'
+    if ($levelUrl -ne '') { & $add 'server.levelurl' $levelUrl }
+    else {
+        & $add 'server.level' (Get-CvValue $r 'server.level')
+        & $add 'server.seed' (Get-CvValue $r 'server.seed')
+        & $add 'server.worldsize' (Get-CvValue $r 'server.worldsize')
+    }
+    foreach ($k in 'server.port', 'server.queryport', 'rcon.port', 'server.maxplayers', 'server.hostname', 'server.description', 'server.tags', 'rcon.web') {
+        & $add $k (Get-CvValue $r $k)
+    }
+    foreach ($k in $r.Extra.Keys) { & $add $r.Extra[$k][0] $r.Extra[$k][1] }
+    return ,$a
+}
+
+# One argument as Windows programs split a command line: quoted when it has a space, with backslashes doubled
+# only where they come before a quote.
+function Format-Arg([string]$arg) {
+    if ($arg -ne '' -and $arg -notmatch '[\s"]') { return $arg }
+    $out = New-Object Text.StringBuilder
+    [void]$out.Append('"'); $slashes = 0
+    foreach ($ch in $arg.ToCharArray()) {
+        if ($ch -eq '\') { $slashes++; continue }
+        if ($ch -eq '"') { [void]$out.Append('\' * ($slashes * 2 + 1)); [void]$out.Append('"') }
+        else { [void]$out.Append('\' * $slashes); [void]$out.Append($ch) }
+        $slashes = 0
+    }
+    [void]$out.Append('\' * ($slashes * 2)); [void]$out.Append('"')
+    return $out.ToString()
+}
+
+# ---- load ----------------------------------------------------------------------------------------------------
+function Invoke-Load {
+    $first = $env:HOTWIRE_FIRST -eq '1'
+    $quiet = $env:HOTWIRE_QUIET -eq '1'
+    $r = Read-Config
+    if ($r.Fatal.Count -gt 0) {
+        if ($first) {
+            Rule
+            if ($r.Missing) {
+                Say ('No hotwire.cfg beside the launcher (' + $cfg + ').')
+                Say '  A new server: copy hotwire.example.cfg to hotwire.cfg and fill in sections 1 and 2.'
+                Say '  A server you already run: the start-script converter at https://afkpanel.com/get-started'
+                Say '  makes one from your old start script.'
+                Say '  Hotwire does not start without it: on the defaults it would open an empty save folder,'
+                Say '  which looks like a wipe.'
+            } else {
+                Say 'hotwire.cfg has settings that would change which server this is, so it does not start:'
+                foreach ($f in $r.Fatal) { Say ('  ' + $f) }
+            }
+            Rule
+            Write-Output 'HWSET HW_LOAD=fatal'
         } else {
-            $changed = $true
-            $identity = VariableValue 'SERVER_IDENTITY'
-            if (-not $identity) { $identity = 'my_server_identity' }
-            $wipe = @{ seed = $seed; size = $size; bp = $bp; cycle = $cycle; flag = $flag; identity = $identity }
+            Rule
+            Say 'hotwire.cfg changed and is not usable now; starting with the settings from the last start:'
+            foreach ($f in $r.Fatal) { Say ('  ' + $f) }
+            Rule
+            Write-Output 'HWSET HW_LOAD=kept'
         }
+        return
     }
+
+    $minimum = [int](Get-HwValue $r 'hotwire.rcon_password_min')
+    $secret = Read-Secret $minimum
+    if ($secret.Why) {
+        Rule
+        if ($first) { Say $secret.Why; Rule; Write-Output 'HWSET HW_LOAD=fatal'; return }
+        Say ($secret.Why + ' Starting with the settings from the last start.'); Rule
+        Write-Output 'HWSET HW_LOAD=kept'
+        return
+    }
+
+    if (-not $quiet) {
+        if ($first -or $env:CHECK_ONLY) {
+            if ($r.Problems.Count -eq 0) { Say 'hotwire.cfg read: every line is a setting.' }
+            else {
+                Say ('hotwire.cfg: ' + $r.Problems.Count + ' line(s) not used:')
+                foreach ($p in $r.Problems) { Say ('  ' + $p) }
+            }
+        } elseif ($r.Problems.Count -gt 0) {
+            Say ('hotwire.cfg: ' + $r.Problems.Count + ' line(s) not used; hotwire.bat check lists them.')
+        }
+        # The option check: a convar name that is not in hotwire.cfg's own list is probably misspelled. A warning,
+        # never a stop: Rust ignores a name it does not know, and the list is not every convar Rust has.
+        if ((Get-HwValue $r 'hotwire.check_options') -eq '0') { Say 'Option check skipped (hotwire.check_options 0).' }
+        elseif ($r.Unknown.Count -eq 0) { Say 'Options look right.' }
+        else { foreach ($u in $r.Unknown) { Say ($u + " is not in hotwire.cfg's list of convars. Is it spelled right?") } }
+    }
+
+    # The argument list for the start. Check mode changes nothing, this file included.
+    if (-not $env:CHECK_ONLY) {
+        $folder = Split-Path -Parent $argsFile
+        if (-not (Test-Path -LiteralPath $folder)) { [void](New-Item -ItemType Directory -Force -Path $folder) }
+        [IO.File]::WriteAllText($argsFile, (ConvertTo-Json -InputObject ([string[]](Get-ServerArgs $r)) -Compress))
+    }
+    foreach ($key in $hwSettings.Keys) { Write-Output ('HWSET ' + $hwSettings[$key][0] + '=' + (Get-HwValue $r $key)) }
+    # The password stays in this process's environment, where the old launcher kept it too, in base64 so cmd
+    # handles only letters, digits, + / and =.
+    Write-Output ('HWSET HOTWIRE_RCON64=' + [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($secret.Password)))
+    Write-Output 'HWSET HW_LOAD=ok'
 }
 
-# ---- Permanent convars -----------------------------------------------------------------------------
-$request = Join-Path $root 'CONVAR.request'
-if (Test-Path -LiteralPath $request) {
-    foreach ($l in [IO.File]::ReadAllLines($request)) {
-        if (-not $l.Trim()) { continue }
-        $parts = $l.Split(' ', 2)
-        $name = $parts[0]; $value = ''
-        if ($parts.Count -eq 2) { $value = $parts[1] }
-        $why = ''
-        if ($name -cnotmatch '^[a-z][a-z0-9]*(\.[a-z0-9_]+)+$') { $why = 'not a dotted convar name' }
-        elseif ('server.seed', 'server.worldsize', 'server.level', 'server.levelurl' -contains $name) { $why = 'map-defining, belongs to wipe not the convar editor' }
-        elseif ($name -eq 'rcon.password') { $why = 'a secret, never set through the panel' }
-        elseif (-not $value -or $value -match '[\x00-\x1F\x7F]') { $why = 'missing or non-printable value' }
-        elseif ($variables.ContainsKey($name)) { $why = SetVariable $variables[$name] $value }
-        else { $why = SetOption $name $value }
-        if ($why) { $convarLog += ('reject ' + $name + ' : ' + $why) }
-        else { $convarLog += ('applied ' + $name + ' ' + $value); $changed = $true }
-    }
-}
-
-# ---- Write, then act on it -------------------------------------------------------------------------
-if ($changed) {
+# ---- edits ---------------------------------------------------------------------------------------------------
+# Set-CfgValues: write settings into hotwire.cfg in one pass. The line that sets each is changed where it is; a
+# setting that is off in the list (#name value) is switched on in its place; anything else is added at the end.
+# A value is written in double quotes when it has spaces or is empty. The caller has already checked every name
+# and value; a double quote or a control character never reaches here. The file is written whole beside the old
+# one and swapped into place, keeping its permissions. Returns $true when written.
+function Set-CfgValues([object[]]$pairs) {
     try {
-        [IO.File]::WriteAllText($self, ($lines -join $eol), $bytes)
+        if (-not (Test-Path -LiteralPath $cfg -PathType Leaf)) { return $false }
+        $bytes = [IO.File]::ReadAllBytes($cfg)
+        $bom = $bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF
+        $text = (New-Object Text.UTF8Encoding($false)).GetString($bytes)
+        if ($bom) { $text = $text.Substring(1) }
+        $eol = "`n"; if ($text.Contains("`r`n")) { $eol = "`r`n" }
+        $lines = New-Object 'System.Collections.Generic.List[string]'
+        foreach ($l in ($text -split "`r?`n")) { $lines.Add($l) }
+        foreach ($pair in $pairs) {
+            $name = [string]$pair[0]; $value = [string]$pair[1]; $want = $name.ToLowerInvariant()
+            $shown = $value; if ($value -eq '' -or $value -match '\s') { $shown = '"' + $value + '"' }
+            $new = '{0,-27} {1}' -f $name, $shown
+            $done = -1; $off = -1
+            for ($i = 0; $i -lt $lines.Count; $i++) {
+                $first = ($lines[$i].TrimStart() -split '[ \t]+')[0]
+                if ($first.ToLowerInvariant() -eq $want) { $done = $i; break }
+                if ($off -lt 0 -and $first.StartsWith('#') -and $first.Substring(1).ToLowerInvariant() -eq $want) { $off = $i }
+            }
+            $at = $done; if ($at -lt 0) { $at = $off }
+            if ($at -ge 0) { $lines[$at] = $new }
+            elseif ($lines.Count -gt 0 -and $lines[$lines.Count - 1] -eq '') { $lines.Insert($lines.Count - 1, $new) }
+            else { $lines.Add($new) }
+        }
+        $out = [string]::Join($eol, $lines)
+        $tmp = Join-Path $root ('.hotwire.cfg.' + [Guid]::NewGuid().ToString('N'))
+        [IO.File]::WriteAllText($tmp, $out, (New-Object Text.UTF8Encoding($bom)))
+        # [NullString]::Value, because PowerShell hands a .NET string parameter '' for $null.
+        [IO.File]::Replace($tmp, $cfg, [NullString]::Value)
+        return $true
     } catch {
-        Say ('Could not write the launcher file (' + $_.Exception.Message + '). No wipe or convar change was made; starting unchanged.')
-        if ($wipe) { [IO.File]::WriteAllText($result, "cancelled: could not write the launcher file`n"); Remove-Item -LiteralPath $flag -Force }
-        if (Test-Path -LiteralPath $request) { [IO.File]::WriteAllText((Join-Path $root 'CONVAR.result'), "reject all : could not write the launcher file`n"); Remove-Item -LiteralPath $request -Force }
-        exit 0
+        if ($tmp -and (Test-Path -LiteralPath $tmp)) { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
+        Say ('Could not write hotwire.cfg: ' + $_.Exception.Message)
+        return $false
     }
 }
 
-if ($wipe) {
-    # Blueprints, in the save folder. Matched by pattern: the version in the name changes between builds.
-    # player.tokens.db and everything else is left alone.
-    $count = 0
-    $folder = Join-Path $root ('server\' + $wipe.identity)
-    if ($wipe.bp -ne 'keep' -and (Test-Path -LiteralPath $folder)) {
-        $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
-        foreach ($f in @(Get-ChildItem -LiteralPath $folder -Filter 'player.blueprints.*.db' -File)) {
-            if ($wipe.bp -eq 'delete') { Remove-Item -LiteralPath $f.FullName -Force }
-            else { Rename-Item -LiteralPath $f.FullName -NewName ($f.Name + '.wiped-' + $stamp) }
-            $count++
+function Invoke-Edits {
+    $wipeName = $env:WIPE_FLAG; if (-not $wipeName) { $wipeName = 'WIPE.flag' }
+
+    # ---- Wipe (capability: wipe) -------------------------------------------------------------------------
+    # A wipe is a restart with a flag. The new seed (and size) is written into hotwire.cfg, Rust finds no save by
+    # that name and generates a new world, and the old save is left on disk. Every value is checked here before
+    # anything is written or deleted, a stale flag or one already carried out never fires, and if the seed cannot
+    # be written the wipe is cancelled and the server starts unchanged.
+    $flag = Join-Path $root $wipeName
+    $result = Join-Path $root 'WIPE.result'
+    $cycleFile = Join-Path $root 'hotwire\wipe-cycle'
+    if (Test-Path -LiteralPath $flag) {
+        $w = @{}
+        foreach ($l in [IO.File]::ReadAllLines($flag)) {
+            $parts = $l.Trim().Split(' ', 2)
+            if ($parts.Count -eq 2 -and -not $w.ContainsKey($parts[0])) { $w[$parts[0]] = $parts[1].Trim() }
+        }
+        $seed = [string]$w['seed']; $size = [string]$w['size']; $bp = [string]$w['blueprints']; $cycle = [string]$w['cycle']; $expires = [string]$w['expires']
+        if (-not $bp) { $bp = 'keep' }
+        $done = ''
+        if ($cycle -and (Test-Path -LiteralPath $cycleFile)) { $done = ([IO.File]::ReadAllText($cycleFile)).Trim() }
+        $now = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+        $why = ''
+        if ($cycle -and $done -eq $cycle) {
+            Remove-Item -LiteralPath $flag -Force
+            Say ('Wipe for cycle ' + $cycle + ' already done; ignoring the flag.')
+        } elseif ($expires -match '^\d+$' -and [long]$expires -lt $now) {
+            Remove-Item -LiteralPath $flag -Force
+            Say 'The wipe flag has expired; ignoring it. Starting unchanged.'
+        } else {
+            if ($seed -notmatch '^\d{1,10}$' -or [long]$seed -gt 2147483647) { $why = 'seed is not a whole number from 0 to 2147483647' }
+            elseif ($size -and ($size -notmatch '^\d{1,5}$' -or [int]$size -lt 1000 -or [int]$size -gt 6000)) { $why = 'size is not a whole number from 1000 to 6000' }
+            elseif ('keep', 'rename', 'delete' -notcontains $bp) { $why = 'blueprints must be keep, rename or delete' }
+            if (-not $why) {
+                $pairs = @(, @('server.seed', $seed))
+                if ($size) { $pairs += , @('server.worldsize', $size) }
+                if (-not (Set-CfgValues $pairs)) { $why = 'could not write the new seed' }
+            }
+            if ($why) {
+                Rule; Say ('Wipe CANCELLED: ' + $why + '. Starting unchanged.'); Rule
+                [IO.File]::WriteAllText($result, 'cancelled: ' + $why + "`n")
+                Remove-Item -LiteralPath $flag -Force
+            } else {
+                # Blueprints, in the save folder. Matched by pattern: the version in the name changes between builds.
+                # player.tokens.db and everything else is left alone.
+                $identity = [string](Read-Config).Values['server.identity']
+                if (-not $identity) { $identity = 'my_server_identity' }
+                $count = 0
+                $folder = Join-Path $root ('server\' + $identity)
+                if ($bp -ne 'keep' -and (Test-Path -LiteralPath $folder)) {
+                    $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
+                    foreach ($f in @(Get-ChildItem -LiteralPath $folder -Filter 'player.blueprints.*.db' -File)) {
+                        if ($bp -eq 'delete') { Remove-Item -LiteralPath $f.FullName -Force }
+                        else { Rename-Item -LiteralPath $f.FullName -NewName ($f.Name + '.wiped-' + $stamp) }
+                        $count++
+                    }
+                }
+                # The cycle is recorded and the flag cleared last, so a crash part-way re-runs the wipe safely.
+                if ($cycle) {
+                    [void](New-Item -ItemType Directory -Force -Path (Split-Path -Parent $cycleFile))
+                    [IO.File]::WriteAllText($cycleFile, $cycle)
+                }
+                Remove-Item -LiteralPath $flag -Force
+                $sizeText = 'unchanged'; if ($size) { $sizeText = $size }
+                $bpText = 'kept'; if ($bp -ne 'keep') { $bpText = $bp + ' (' + $count + ' file(s))' }
+                [IO.File]::WriteAllText($result, 'applied: seed ' + $seed + ' size ' + $sizeText + ' blueprints ' + $bpText + "`n")
+                Say ('Wipe applied: seed ' + $seed + ', size ' + $sizeText + ', blueprints ' + $bpText + '. The new world generates on this start; the old save is left on disk.')
+            }
         }
     }
-    # The cycle is recorded and the flag cleared last, so a crash part-way re-runs the wipe safely.
-    if ($wipe.cycle) {
-        [void](New-Item -ItemType Directory -Force -Path (Split-Path -Parent $cycleFile))
-        [IO.File]::WriteAllText($cycleFile, $wipe.cycle)
+
+    # ---- Permanent convars (capability: convar_persist) -----------------------------------------------------
+    # CONVAR.request holds one "<convar> <value>" per line. It is a typed set, never a console passthrough: the
+    # name must be a dotted convar and the value carries no double quote or control character. The map-defining
+    # convars and rcon.password are refused (they belong to wipe and the secrets file), hotwire.* is refused (the
+    # launcher's own settings are the admin's), and a convar the launcher reads itself must pass that setting's
+    # own check.
+    $request = Join-Path $root 'CONVAR.request'
+    if (Test-Path -LiteralPath $request) {
+        $log = New-Object 'System.Collections.Generic.List[string]'
+        foreach ($l in [IO.File]::ReadAllLines($request)) {
+            if ($l -eq '') { continue }
+            $parts = $l.Split(' ', 2)
+            $name = $parts[0]; $value = $null
+            if ($parts.Count -eq 2) { $value = $parts[1] }
+            $why = ''
+            if ($name -cnotmatch '^[a-z][a-z0-9]*(\.[a-z0-9_]+)+$') { $why = 'not a dotted convar name' }
+            elseif ($name.StartsWith('hotwire.')) { $why = 'a launcher setting, never set through the panel' }
+            elseif ('server.seed', 'server.worldsize', 'server.level', 'server.levelurl' -contains $name) { $why = 'map-defining, belongs to wipe not the convar editor' }
+            elseif ($name -eq 'rcon.password') { $why = 'a secret, never set through the panel' }
+            elseif ($null -eq $value -or $value -match '[\x00-\x1F\x7F]') { $why = 'missing or non-printable value' }
+            elseif ($value.Contains('"')) { $why = 'value has a double quote' }
+            elseif ($value.Length -gt 1024) { $why = 'value longer than 1024 characters' }
+            elseif ($cvSettings.ContainsKey($name)) { $why = Test-CfgValue $cvSettings[$name][0] $value }
+            if (-not $why -and -not (Set-CfgValues @(, @($name, $value)))) { $why = 'could not write settings' }
+            if ($why) { $log.Add('reject ' + $name + ' : ' + $why) } else { $log.Add('applied ' + $name + ' ' + $value) }
+        }
+        [IO.File]::WriteAllText((Join-Path $root 'CONVAR.result'), (($log -join "`n") + "`n"))
+        Remove-Item -LiteralPath $request -Force
+        $applied = @($log | Where-Object { $_.StartsWith('applied ') }).Count
+        Say ('Convar persist: applied ' + $applied + ', rejected ' + ($log.Count - $applied) + ' (details in CONVAR.result).')
     }
-    Remove-Item -LiteralPath $wipe.flag -Force
-    $sizeText = 'unchanged'
-    if ($wipe.size) { $sizeText = $wipe.size }
-    $bpText = 'kept'
-    if ($wipe.bp -ne 'keep') { $bpText = $wipe.bp + ' (' + $count + ' file(s))' }
-    [IO.File]::WriteAllText($result, 'applied: seed ' + $wipe.seed + ' size ' + $sizeText + ' blueprints ' + $bpText + "`n")
-    Say ('Wipe applied: seed ' + $wipe.seed + ', size ' + $sizeText + ', blueprints ' + $bpText + '. The new world generates on this start; the old save is left on disk.')
 }
 
-if (Test-Path -LiteralPath $request) {
-    [IO.File]::WriteAllText((Join-Path $root 'CONVAR.result'), (($convarLog -join "`n") + "`n"))
-    Remove-Item -LiteralPath $request -Force
-    $applied = @($convarLog | Where-Object { $_.StartsWith('applied ') }).Count
-    Say ('Convar persist: applied ' + $applied + ', rejected ' + ($convarLog.Count - $applied) + ' (details in CONVAR.result).')
+# ---- launch --------------------------------------------------------------------------------------------------
+# The arguments reach RustDedicated.exe as one command line built here, never through cmd, so no character in a
+# value can become a command.
+function Invoke-Launch {
+    $list = New-Object 'System.Collections.Generic.List[string]'
+    foreach ($a in (ConvertFrom-Json ([IO.File]::ReadAllText($argsFile)))) { $list.Add([string]$a) }
+    $password = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String([string]$env:HOTWIRE_RCON64))
+    $list.Add('+rcon.password'); $list.Add($password)
+    $list.Add('-logfile'); $list.Add([string]$env:LOGFILE)
+    $psi = New-Object Diagnostics.ProcessStartInfo
+    $psi.FileName = Join-Path $root 'RustDedicated.exe'
+    $psi.Arguments = [string]::Join(' ', @($list | ForEach-Object { Format-Arg $_ }))
+    $psi.WorkingDirectory = $root
+    $psi.UseShellExecute = $false
+    # The server does not need the password in its environment: it has it on its command line.
+    [void]$psi.EnvironmentVariables.Remove('HOTWIRE_RCON64')
+    $p = [Diagnostics.Process]::Start($psi)
+    $p.WaitForExit()
+    exit $p.ExitCode
+}
+
+try {
+    switch ($env:HOTWIRE_MODE) {
+        'load'   { Invoke-Load }
+        'edits'  { Invoke-Edits }
+        'launch' { Invoke-Launch }
+        default  { Say ('Unknown HOTWIRE_MODE ' + $env:HOTWIRE_MODE); exit 2 }
+    }
+} catch {
+    Say ('hotwire.bat (' + $env:HOTWIRE_MODE + '): ' + $_.Exception.Message)
+    exit 1
 }
 exit 0

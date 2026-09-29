@@ -1,6 +1,8 @@
 # The RCON password lives here. Never committed.
 launcher/secrets.bat
 secrets.bat
+hotwire-secrets.cfg
+launcher/hotwire-secrets.cfg
 *.secret
 .env
 
