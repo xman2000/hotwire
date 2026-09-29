@@ -17,7 +17,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Hotwire", "xman2000", "1.1.44")]
+    [Info("Hotwire", "xman2000", "1.1.45")]
     [Description("Scheduled restarts and updates. Announces, counts down, writes a flag, quits.")]
     internal class Hotwire : CovalencePlugin
     {
@@ -2211,6 +2211,15 @@ namespace Oxide.Plugins
         private string _panelProblem;
         private bool _panelReporting;
         private bool _panelBusy;
+        // The request that is out, for the stall watchdog: Oxide times out only the wait for the answer, so a request
+        // stuck while connecting never calls back, and without this every report would stop behind it.
+        private int _panelRequestSeq;
+        private DateTime _panelBusySince;
+        private DateTime _panelBusyDeadline;
+        private string _panelBusyWhat;
+        private DateTime _heartbeatAcceptedAt = DateTime.MinValue;
+        private DateTime _panelTickAt = DateTime.MinValue;
+        private const int PanelStallGraceSeconds = 40;
         private int _panelFailures;
         private DateTime _panelNextAttempt = DateTime.MinValue;
 
@@ -2290,8 +2299,10 @@ namespace Oxide.Plugins
             try
             {
                 if (!_config.Panel.Enabled) return;
+                _panelTickAt = DateTime.UtcNow;
 
                 RefreshPanelLink();
+                if (_panelBusy && DateTime.UtcNow > _panelBusyDeadline) PanelStalled();
                 // The log's spool fills whether or not the panel can be reached.
                 try { TickLogSpool(); }
                 catch (Exception ex) { PrintWarning($"Panel: the log spool could not be updated this tick ({ex.Message})."); }
@@ -2589,10 +2600,16 @@ namespace Oxide.Plugins
             if (signedResponse) headers["X-Hotwire-Signed-Response"] = "1";
             if (body != null) headers["Content-Type"] = "application/json";
 
+            var seq = ++_panelRequestSeq;
             _panelBusy = true;
+            _panelBusySince = DateTime.UtcNow;
+            _panelBusyDeadline = _panelBusySince.AddSeconds(timeoutSeconds + PanelStallGraceSeconds);
+            _panelBusyWhat = method + " " + path;
             var verb = method == "POST" ? Oxide.Core.Libraries.RequestMethod.POST : Oxide.Core.Libraries.RequestMethod.GET;
             webrequest.Enqueue(link.Url + path, body, (code, response) =>
             {
+                // Given up on by the watchdog: the queue has moved on, so a late answer changes nothing.
+                if (seq != _panelRequestSeq) return;
                 _panelBusy = false;
                 _panelLastCode = code;
                 try
@@ -2636,6 +2653,55 @@ namespace Oxide.Plugins
                     PanelProblem($"the panel's answer could not be used: {ex.Message}");
                 }
             }, this, verb, headers, timeoutSeconds);
+        }
+
+        // A request that never called back. Counted as a failure like any other, so the usual backoff and the
+        // "Reporting to the panel again." line follow; the warning says what was stuck and whether Oxide's own queue
+        // was moving, which tells a stuck connection (queue empty) from Oxide not starting requests (queue waiting).
+        private void PanelStalled()
+        {
+            var waited = (int)(DateTime.UtcNow - _panelBusySince).TotalSeconds;
+            int queued;
+            try { queued = webrequest.GetQueueLength(); } catch { queued = -1; }
+            var queue = queued < 0 ? "Oxide's web request queue could not be read"
+                : queued == 0 ? "Oxide's web request queue is empty"
+                : $"{queued} other web request(s) are waiting in Oxide's queue";
+
+            _panelRequestSeq++;
+            _panelBusy = false;
+            PanelProblem($"no answer from the panel to {_panelBusyWhat} after {waited}s ({queue}). " +
+                         "The request was given up and reporting carries on. The server is unaffected.");
+        }
+
+        // The panel line of `hotwire check`. The stored line is written when something happens, and a stall is
+        // nothing happening, so "reporting" is checked against the clock: no heartbeat accepted for three intervals
+        // (two minutes at least) is not reporting, whatever the last event said.
+        private string PanelStateNow()
+        {
+            if (_panelState.StartsWith("NOT REPORTING", StringComparison.Ordinal) || _heartbeatAcceptedAt == DateTime.MinValue)
+                return _panelState;
+            if ((DateTime.UtcNow - _heartbeatAcceptedAt).TotalSeconds <= Math.Max(120, 3 * HeartbeatInterval()))
+                return _panelState;
+
+            var waiting = _panelBusy
+                ? $"; waiting {(int)(DateTime.UtcNow - _panelBusySince).TotalSeconds}s for an answer to {_panelBusyWhat}"
+                : "";
+            return $"NOT REPORTING -- no heartbeat accepted since {_heartbeatAcceptedAt.ToLocalTime():HH:mm:ss}{waiting}";
+        }
+
+        // What the sending loop is doing right now, for `hotwire check`: the request that is out and how long it has
+        // waited, when the loop last ran, and Oxide's web request queue. A stall shows here as a long wait (a request
+        // that never answered), an old tick (the loop stopped), or a growing queue (Oxide is not starting requests).
+        private string PanelTransportState()
+        {
+            var now = DateTime.UtcNow;
+            var request = _panelBusy
+                ? $"waiting {(int)(now - _panelBusySince).TotalSeconds}s for an answer to {_panelBusyWhat}"
+                : "idle";
+            var tick = _panelTickAt == DateTime.MinValue ? "never" : $"{(int)(now - _panelTickAt).TotalSeconds}s ago";
+            string queue;
+            try { queue = webrequest.GetQueueLength().ToString(CultureInfo.InvariantCulture); } catch { queue = "unreadable"; }
+            return $"{request}; last run {tick}; Oxide web queue {queue}";
         }
 
         private void PanelFailed(int code, string response)
@@ -3034,6 +3100,7 @@ namespace Oxide.Plugins
                     Puts("The panel accepted a heartbeat. This server is reporting.");
                 _panelReporting = true;
                 _panelState = $"reporting to {_panel.Url} (last heartbeat accepted {DateTime.Now:HH:mm:ss})";
+                _heartbeatAcceptedAt = DateTime.UtcNow;
 
                 // Back after a gap: the panel is confirming this server, so help it along.
                 if (_missedHeartbeats >= MissedHeartbeatsBeforeQuick)
@@ -9761,7 +9828,8 @@ namespace Oxide.Plugins
             else
                 lines.Add("  framework    : checks off");
 
-            lines.Add($"  panel        : {_panelState}");
+            lines.Add($"  panel        : {PanelStateNow()}");
+            if (_config.Panel.Enabled) lines.Add($"  transport    : {PanelTransportState()}");
             if (_panel != null)
             {
                 lines.Add($"  plugins sent : {_inventoryState}");

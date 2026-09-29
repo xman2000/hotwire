@@ -657,7 +657,11 @@ Answers the questions you would otherwise spend a real restart to answer:
 - Schedule counts, what is next, the countdown shape, how many entries the
   DST guard is holding, whether a status plugin is present, and whether the
   framework check is on.
-- **Whether it is reporting to a panel**, and if not, why not; when the plugin
+- **Whether it is reporting to a panel**, and if not, why not. It reads
+  `NOT REPORTING` when no heartbeat has been accepted for three heartbeat
+  intervals (two minutes at least), with the time of the last one. The
+  `transport` line under it shows the request that is out and how long it has
+  waited, when the reporting loop last ran, and Oxide's web request queue. When the plugin
   list was last sent, when commands and the ban list were last checked, and
   whether the map is being reported, and the player data sharing level in
   force.

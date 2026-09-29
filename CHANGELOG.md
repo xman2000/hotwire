@@ -25,6 +25,21 @@ sit above a launcher `1.1.7`. Read the label, not the number.
 at the top of the file — it is a comment, not something it echoes, so read it
 rather than watch for it.
 
+## Plugin 1.1.45, setup 0.1.6 (Windows) and 0.2.6 (Linux) — 2026-09-29
+
+**Reporting can no longer stop without saying so.**
+
+- Plugin 1.1.45: a request to the panel that never gets an answer is given up after its timeout plus 40 seconds,
+  and reporting carries on. Oxide times out only the wait for an answer, not connecting and sending, so a
+  request stuck while connecting never called back, and every report queued behind it stopped until the plugin
+  was reloaded. The warning names the stuck request, how long it waited, and whether Oxide's web request queue
+  was moving.
+- `hotwire check` says `NOT REPORTING -- no heartbeat accepted since <time>` once no heartbeat has been accepted
+  for three heartbeat intervals (two minutes at least). Before, it kept showing the last success as `reporting`.
+- `hotwire check` has a `transport` line: the request that is out and how long it has waited, when the
+  reporting loop last ran, and how many requests are waiting in Oxide's queue.
+- Setup 0.1.6 and 0.2.6: pins match this plugin.
+
 ## Plugin 1.1.44, Linux launcher 1.1.3, setup 0.1.5 (Windows) and 0.2.5 (Linux) — 2026-09-29
 
 **`hotwire connect` in the game connects the launcher too.** Both ways of connecting now give the same result.
