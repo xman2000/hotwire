@@ -25,6 +25,23 @@ sit above a launcher `1.1.7`. Read the label, not the number.
 at the top of the file — it is a comment, not something it echoes, so read it
 rather than watch for it.
 
+## Plugin 1.1.46, launchers 1.1.17 (Windows) and 1.1.4-linux, setup 0.1.7 and 0.2.7 — 2026-09-30
+
+**Wipes on the schedule, and the forced wipe that waits for Facepunch.**
+
+- A third list, `Wipes`, beside restarts and updates. A wipe entry restarts the server on a new map: its seed and size
+  are chosen in advance (a random seed is drawn when the entry is saved and again after each wipe), blueprints are
+  kept, renamed or deleted, and the stopped server is backed up first. A wipe entry always updates too.
+- A **forced wipe** ignores its own time: it arms on the first Thursday of the month at 19:00 Europe/London, restarts
+  with an update, and the launcher applies the new seed only in a start whose update changed the installed build.
+  Until then the old world boots and the plugin tries again every 30 minutes (`Forced wipe: try again every this many
+  minutes`) for six hours (`Forced wipe: give up this many hours after the release moment`), then stops and says so,
+  or wipes anyway if the entry says to. `WIPE.flag` carries `forced 1` and `armed_build`; `WIPE.result` gains
+  `deferred`, and the plugin reads the result back on boot.
+- Both launchers understand the forced flag (Linux 1.1.4, Windows 1.1.17). The Linux launcher takes the before-wipe
+  backup only once the build is known to have changed, not on every try.
+- Entries are managed from the panel's Schedule tab; `hotwire list` shows them in game.
+
 ## Plugin 1.1.45, setup 0.1.6 (Windows) and 0.2.6 (Linux) — 2026-09-29
 
 **Reporting can no longer stop without saying so.**

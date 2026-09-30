@@ -17,7 +17,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Hotwire", "xman2000", "1.1.45")]
+    [Info("Hotwire", "xman2000", "1.1.46")]
     [Description("Scheduled restarts and updates. Announces, counts down, writes a flag, quits.")]
     internal class Hotwire : CovalencePlugin
     {
@@ -83,6 +83,13 @@ namespace Oxide.Plugins
                     Enabled = false
                 }
             };
+
+            // Wipes: a new map on a schedule, and the monthly forced wipe tied to
+            // Facepunch's update. Empty by default; the panel adds entries. A wipe
+            // entry always updates too: the map is new anyway, so installing a
+            // pending build in the same restart costs nothing and saves a second one.
+            [JsonProperty("Wipes", ObjectCreationHandling = ObjectCreationHandling.Replace)]
+            public List<WipeEntry> Wipes = new List<WipeEntry>();
 
             [JsonProperty("Countdown")]
             public CountdownSettings Countdown = new CountdownSettings();
@@ -319,6 +326,7 @@ namespace Oxide.Plugins
 
             [JsonIgnore] public virtual bool IsUpdate => false;
             [JsonIgnore] public virtual bool IsValidate => false;
+            [JsonIgnore] public virtual bool IsWipe => false;
 
             // Stable across reordering, so the fired-recently guard survives
             // someone rearranging the config. It deliberately includes the
@@ -327,11 +335,46 @@ namespace Oxide.Plugins
             [JsonIgnore]
             public string Key => string.Join("|", new[]
             {
-                IsValidate ? "validate" : IsUpdate ? "update" : "restart",
+                IsWipe ? "wipe" : IsValidate ? "validate" : IsUpdate ? "update" : "restart",
                 Time ?? "", Repeat ?? "",
                 Days == null ? "" : string.Join(",", Days.ToArray()),
                 Ordinal ?? "", DayOfMonth.ToString(), IntervalDays.ToString(), Date ?? ""
             });
+        }
+
+        // A wipe on the schedule. Seed and size are the next world's, chosen in
+        // advance so the panel can show the map before it exists; the plugin draws
+        // a fresh random seed after each wipe fires. A forced wipe ignores Time and
+        // Repeat: it arms on the first Thursday of the month at 19:00 Europe/London
+        // (Facepunch's release moment) and the launcher applies it only in a start
+        // whose update changed the installed build -- otherwise it boots the old
+        // world and the plugin tries again every few minutes until the window ends.
+        private class WipeEntry : ScheduleEntry
+        {
+            [JsonProperty("Seed")]
+            public string Seed = "";
+
+            [JsonProperty("Size")]
+            public string Size = "";
+
+            // keep | rename | delete, as the panel's wipe.
+            [JsonProperty("Blueprints")]
+            public string Blueprints = "keep";
+
+            [JsonProperty("Backup first")]
+            public bool Backup = true;
+
+            [JsonProperty("Forced wipe (tied to the monthly update)")]
+            public bool Forced = false;
+
+            // When the update never arrives inside the window: wipe anyway at its
+            // end (true), or stop and say so (false, the safe default -- a wipe
+            // before the update means players get two).
+            [JsonProperty("Wipe anyway when no update arrives")]
+            public bool WipeAnyway = false;
+
+            [JsonIgnore] public override bool IsUpdate => true;
+            [JsonIgnore] public override bool IsWipe => true;
         }
 
         private class UpdateEntry : ScheduleEntry
@@ -498,6 +541,16 @@ namespace Oxide.Plugins
             [JsonProperty("Refuse to fire the same entry twice within this many hours")]
             public double MinimumHoursBetweenSameEntry = 20.0;
 
+            // A forced wipe that found no new build tries again this often, each
+            // try an announced restart, until the window below closes.
+            [JsonProperty("Forced wipe: try again every this many minutes")]
+            public int ForcedWipeRetryMinutes = 30;
+
+            // Measured from the release moment (19:00 Europe/London). After it the
+            // plugin stops trying and reports that no update arrived.
+            [JsonProperty("Forced wipe: give up this many hours after the release moment")]
+            public double ForcedWipeWindowHours = 6.0;
+
             // "Hotwire" means nothing to a player. This is the name they see
             // in chat, and it should be something they can act on. The old
             // "Chat prefix" key is gone rather than renamed, so servers that
@@ -552,6 +605,7 @@ namespace Oxide.Plugins
 
             if (_config.Restarts == null) { _config.Restarts = new List<ScheduleEntry>(); repaired.Add("Restarts"); }
             if (_config.Updates == null) { _config.Updates = new List<UpdateEntry>(); repaired.Add("Updates"); }
+            if (_config.Wipes == null) { _config.Wipes = new List<WipeEntry>(); repaired.Add("Wipes"); }
             if (_config.Countdown == null) { _config.Countdown = new CountdownSettings(); repaired.Add("Countdown"); }
             if (_config.Framework == null) { _config.Framework = new FrameworkSettings(); repaired.Add("Framework update check"); }
             if (_config.General == null) { _config.General = new GeneralSettings(); repaired.Add("General"); }
@@ -567,6 +621,8 @@ namespace Oxide.Plugins
             // A null entry inside a list -- a stray comma, usually.
             if (_config.Restarts.RemoveAll(e => e == null) > 0) repaired.Add("an empty entry in Restarts");
             if (_config.Updates.RemoveAll(e => e == null) > 0) repaired.Add("an empty entry in Updates");
+            if (_config.Wipes.RemoveAll(e => e == null) > 0) repaired.Add("an empty entry in Wipes");
+            foreach (var w in _config.Wipes) NormalizeWipeEntry(w);
 
             foreach (var entry in AllEntries())
                 if (entry.Days == null) entry.Days = new List<string>();
@@ -636,6 +692,13 @@ namespace Oxide.Plugins
         private string _wipeCycle = "";
         private bool _wipeBackup;
         private bool _wipeBackupByLauncher;
+        private bool _wipeForced;
+        private string _wipeArmedBuild;
+        private DateTime? _wipeWindowEndUtc;
+        private WipePending _wipePending;        // the wipe the launcher has been handed and has not yet applied
+        private WipePending _wipePendingDraft;   // becomes _wipePending when the flag is written
+        private DateTime? _wipeRetryAt;
+        private JObject _lastWipeResult;
         private string _countdownKey = "";
         private readonly HashSet<int> _announced = new HashSet<int>();
 
@@ -696,6 +759,7 @@ namespace Oxide.Plugins
                            "Set \"Server root\" in the config. Restarts still work; updates will not.");
 
             ValidateSchedule();
+            ResumeWipeState();
 
             // Descending, so the tick can stop at the first point it crosses.
             _config.Countdown.AnnounceAt = _config.Countdown.AnnounceAt
@@ -835,6 +899,24 @@ namespace Oxide.Plugins
         // Returns null when the entry is usable.
         private static Problem ValidationError(ScheduleEntry e)
         {
+            if (e.IsWipe)
+            {
+                var w = (WipeEntry)e;
+                var seed = (w.Seed ?? "").Trim();
+                long seedN;
+                if (seed.Length > 0 && (!Regex.IsMatch(seed, "^[0-9]{1,10}$") || !long.TryParse(seed, out seedN) || seedN < 1 || seedN > 2147483647))
+                    return new Problem("ErrBadSeed", w.Seed);
+                var size = (w.Size ?? "").Trim();
+                int sizeN;
+                if (size.Length > 0 && (!int.TryParse(size, out sizeN) || sizeN < 1000 || sizeN > 6000))
+                    return new Problem("ErrBadSize", w.Size);
+                var bp = (w.Blueprints ?? "").Trim().ToLowerInvariant();
+                if (bp != "keep" && bp != "rename" && bp != "delete")
+                    return new Problem("ErrBadBlueprints", w.Blueprints);
+                // A forced wipe keeps Facepunch's clock, not the server's: only the zone can be wrong.
+                if (w.Forced) return LondonZone() == null ? new Problem("ErrNoLondonZone") : null;
+            }
+
             if (ParseTime(e.Time) == null)
                 return new Problem("ErrBadTime", e.Time);
 
@@ -905,6 +987,7 @@ namespace Oxide.Plugins
         {
             foreach (var e in _config.Restarts) yield return e;
             foreach (var e in _config.Updates) yield return e;
+            foreach (var e in _config.Wipes) yield return e;
         }
 
         private void Scan()
@@ -915,12 +998,17 @@ namespace Oxide.Plugins
             var now = DateTime.Now;
             var start = Math.Max(10, _config.Countdown.StartSeconds);
 
+            // A forced wipe waiting for the update comes before the lists: its retry
+            // is a short announced restart, not a scheduled entry.
+            if (ScanWipeRetry(now)) return;
+
             ScheduleEntry best = null;
             DateTime bestTarget = DateTime.MaxValue;
 
             foreach (var e in AllEntries())
             {
                 if (!e.Enabled) continue;
+                if (e.IsWipe && WipeBlocker((WipeEntry)e) != null) continue;
                 var next = NextOccurrence(e, now);
                 if (next == null) continue;
                 if ((next.Value - now).TotalSeconds > start) continue;
@@ -950,13 +1038,16 @@ namespace Oxide.Plugins
             }
 
             if (best != null)
+            {
                 BeginCountdown(bestTarget, best.IsUpdate, best.IsValidate, best, best.Key);
+                if (best.IsWipe) ArmWipeFrom((WipeEntry)best, bestTarget, retry: false);
+            }
         }
 
         private static int Rank(ScheduleEntry e)
         {
             if (e == null) return -1;
-            return e.IsValidate ? 2 : e.IsUpdate ? 1 : 0;
+            return e.IsWipe ? 3 : e.IsValidate ? 2 : e.IsUpdate ? 1 : 0;
         }
 
         private bool FiredRecently(string key, DateTime now)
@@ -1011,6 +1102,7 @@ namespace Oxide.Plugins
         // misplace at a month or year boundary.
         private static DateTime? NextOccurrence(ScheduleEntry e, DateTime now)
         {
+            if (e.IsWipe && ((WipeEntry)e).Forced) return ForcedWipeNext(now);
             var time = ParseTime(e.Time);
             if (time == null) return null;
             if (ValidationError(e) != null) return null;
@@ -1338,7 +1430,8 @@ namespace Oxide.Plugins
 
         private string Describe(ScheduleEntry e, string user)
         {
-            var kind = T(e.IsValidate ? "KindValidate" : e.IsUpdate ? "KindUpdate" : "KindRestart", user);
+            var kind = T(KindKey(e), user);
+            if (e.IsWipe && ((WipeEntry)e).Forced) return T("ForcedWipeDescription", user);
             return T("EntryDescription", user, kind, DescribeRecurrence(e, user), e.Time);
         }
 
@@ -1382,6 +1475,298 @@ namespace Oxide.Plugins
                 .Select(d => DayName(d, user))
                 .ToArray();
             return days.Length == 0 ? T("DayListEmpty", user) : string.Join(", ", days);
+        }
+
+        #endregion
+
+        #region Scheduled and forced wipes
+
+        // What the launcher has been handed and has not yet applied: written when
+        // the flag is, read back on boot, so a retry survives the restart it is.
+        private class WipePending
+        {
+            public string EntryId = "";
+            public string Cycle = "";
+            public bool Forced;
+            public string ArmedBuild = "";
+            public DateTime ArmedAtUtc;
+            public DateTime WindowEndUtc;
+            public int Attempts;
+            public DateTime LastAttemptUtc;
+            public string Seed = "";
+            public string Size = "";
+        }
+
+        private const string WipePendingFile = "Hotwire/wipe_pending";
+        private const string WipeResultFile = "WIPE.result";
+
+        private static string DrawSeed()
+        {
+            var bytes = new byte[4];
+            using (var rng = RandomNumberGenerator.Create()) rng.GetBytes(bytes);
+            var n = (BitConverter.ToUInt32(bytes, 0) % 2147483647u) + 1u;
+            return n.ToString(CultureInfo.InvariantCulture);
+        }
+
+        // A forced entry keeps Facepunch's clock, so its stored time and repeat are
+        // pinned to what they mean, whatever the panel or a hand edit wrote.
+        private static void NormalizeWipeEntry(WipeEntry w)
+        {
+            if (w == null) return;
+            w.Blueprints = string.IsNullOrWhiteSpace(w.Blueprints) ? "keep" : w.Blueprints.Trim().ToLowerInvariant();
+            if (!w.Forced) return;
+            w.Time = "19:00";
+            w.Repeat = RepeatMonthlyWeekday;
+            w.Ordinal = "First";
+            w.Days = new List<string> { "Thursday" };
+        }
+
+        private static TimeZoneInfo LondonZone()
+        {
+            foreach (var id in new[] { "Europe/London", "GMT Standard Time" })
+            {
+                try { return TimeZoneInfo.FindSystemTimeZoneById(id); } catch { }
+            }
+            return null;
+        }
+
+        // The next first Thursday at 19:00 Europe/London, on the server's local clock.
+        private static DateTime? ForcedWipeNext(DateTime nowLocal)
+        {
+            var zone = LondonZone();
+            if (zone == null) return null;
+            var nowLondon = TimeZoneInfo.ConvertTime(DateTime.SpecifyKind(nowLocal, DateTimeKind.Unspecified), TimeZoneInfo.Local, zone);
+            for (var m = 0; m < 3; m++)
+            {
+                var first = new DateTime(nowLondon.Year, nowLondon.Month, 1).AddMonths(m);
+                var thursday = first.AddDays(((int)DayOfWeek.Thursday - (int)first.DayOfWeek + 7) % 7).AddHours(19);
+                if (thursday <= nowLondon) continue;
+                var local = TimeZoneInfo.ConvertTime(DateTime.SpecifyKind(thursday, DateTimeKind.Unspecified), zone, TimeZoneInfo.Local);
+                return DateTime.SpecifyKind(local, DateTimeKind.Local);
+            }
+            return null;
+        }
+
+        // Why a wipe entry cannot run on this server, in words, or null.
+        private string WipeBlocker(WipeEntry w)
+        {
+            return LauncherCan("wipe") ? null : T("ErrLauncherCannotWipe", null);
+        }
+
+        private WipeEntry FindWipeEntry(string id)
+        {
+            foreach (var w in _config.Wipes) if (w.Id == id) return w;
+            return null;
+        }
+
+        // The countdown for a wipe entry has begun: hand the launcher this entry's
+        // values when it ends. A retry keeps the cycle and the armed build of the
+        // first attempt, so the launcher's guard and its comparison hold across it.
+        private void ArmWipeFrom(WipeEntry e, DateTime target, bool retry)
+        {
+            var nowUtc = DateTime.UtcNow;
+            var pending = retry && _wipePending != null ? _wipePending : null;
+            _wipeSeed = string.IsNullOrWhiteSpace(e.Seed) ? DrawSeed() : e.Seed.Trim();
+            if (pending != null && !string.IsNullOrEmpty(pending.Seed)) _wipeSeed = pending.Seed;
+            if (string.IsNullOrWhiteSpace(e.Seed)) { e.Seed = _wipeSeed; SaveConfig(); }
+            _wipeSize = pending != null ? pending.Size : (e.Size ?? "").Trim();
+            _wipeBlueprints = string.IsNullOrWhiteSpace(e.Blueprints) ? "keep" : e.Blueprints.Trim().ToLowerInvariant();
+            _wipeBackup = e.Backup;
+            _wipeForced = e.Forced;
+            _wipeArmedBuild = pending != null ? pending.ArmedBuild : (e.Forced ? (InstalledBuildId() ?? "") : null);
+            var armedAt = pending != null ? pending.ArmedAtUtc : target.ToUniversalTime();
+            _wipeWindowEndUtc = e.Forced ? (DateTime?)armedAt.AddHours(Math.Max(0.5, _config.General.ForcedWipeWindowHours)) : null;
+            _wipeCycle = pending != null ? pending.Cycle
+                : e.Forced ? $"forced-{e.Id}-{target:yyyyMM}" : $"wipe-{e.Id}-{target:yyyyMMdd}";
+            _countdownIsWipe = true;
+            _wipePendingDraft = new WipePending
+            {
+                EntryId = e.Id, Cycle = _wipeCycle, Forced = e.Forced, ArmedBuild = _wipeArmedBuild ?? "",
+                ArmedAtUtc = armedAt, WindowEndUtc = _wipeWindowEndUtc ?? nowUtc.AddHours(2),
+                Attempts = (pending != null ? pending.Attempts : 0) + 1, LastAttemptUtc = nowUtc,
+                Seed = _wipeSeed, Size = _wipeSize
+            };
+            Puts(e.Forced
+                ? $"Forced wipe armed (attempt {_wipePendingDraft.Attempts}): seed {_wipeSeed}{(_wipeSize.Length > 0 ? ", size " + _wipeSize : "")}, applied only if the update changes the build (installed {_wipeArmedBuild}); window closes {_wipeWindowEndUtc:yyyy-MM-dd HH:mm} UTC."
+                : $"Scheduled wipe: seed {_wipeSeed}{(_wipeSize.Length > 0 ? ", size " + _wipeSize : "")}, blueprints {_wipeBlueprints}.");
+        }
+
+        // A forced wipe the launcher deferred: try again when it is time, with a
+        // short announced restart, until the window closes.
+        private bool ScanWipeRetry(DateTime now)
+        {
+            if (_wipePending == null || !_wipePending.Forced || _wipeRetryAt == null || now < _wipeRetryAt.Value) return false;
+            _wipeRetryAt = null;
+            var e = FindWipeEntry(_wipePending.EntryId);
+            if (e == null || !e.Enabled) { ClearWipePending("its entry is gone or disabled"); return false; }
+            if (DateTime.UtcNow >= _wipePending.WindowEndUtc) { GiveUpWipe(e); return _countdownActive; }
+            var target = now.AddSeconds(Math.Max(300, _config.Panel.MinimumRestartSeconds));
+            BeginCountdown(target, true, false, e, "wiperetry:" + e.Id);
+            ArmWipeFrom(e, target, retry: true);
+            return true;
+        }
+
+        private void GiveUpWipe(WipeEntry e)
+        {
+            var closed = _wipePending.WindowEndUtc;
+            if (e.WipeAnyway)
+            {
+                // The admin's choice: the calendar wins over the update. A plain wipe, no build comparison.
+                Puts($"Forced wipe: no new build by {closed:yyyy-MM-dd HH:mm} UTC; wiping anyway, as this entry says.");
+                var target = DateTime.Now.AddSeconds(Math.Max(300, _config.Panel.MinimumRestartSeconds));
+                BeginCountdown(target, true, false, e, "wipeanyway:" + e.Id);
+                ArmWipeFrom(e, target, retry: true);
+                _wipeForced = false; _wipeArmedBuild = null; _wipeWindowEndUtc = null;
+                if (_wipePendingDraft != null) { _wipePendingDraft.Forced = false; _wipePendingDraft.ArmedBuild = ""; }
+                return;
+            }
+            PrintWarning($"Forced wipe: no new build arrived by {closed:yyyy-MM-dd HH:mm} UTC after {_wipePending.Attempts} attempt(s). Giving up; the map is unchanged.");
+            _lastWipeResult = new JObject
+            {
+                ["result"] = "gave_up",
+                ["text"] = $"no new build by {closed:yyyy-MM-dd HH:mm} UTC after {_wipePending.Attempts} attempt(s)",
+                ["cycle"] = _wipePending.Cycle,
+                ["at"] = DateTime.UtcNow.ToString("yyyy'-'MM'-'dd'T'HH':'mm':'ss'Z'", CultureInfo.InvariantCulture)
+            };
+            ClearWipePending(null);
+            RemoveWipeFlag();
+        }
+
+        private void ClearWipePending(string why)
+        {
+            if (why != null) Puts($"Pending wipe cleared: {why}.");
+            _wipePending = null;
+            _wipeRetryAt = null;
+            try
+            {
+                var file = Path.Combine(Interface.Oxide.DataDirectory, WipePendingFile + ".json");
+                if (File.Exists(file)) File.Delete(file);
+            }
+            catch { }
+            _scheduleCheckDue = DateTime.MinValue;
+        }
+
+        private void SaveWipePending()
+        {
+            try { Interface.Oxide.DataFileSystem.WriteObject(WipePendingFile, _wipePending); }
+            catch (Exception ex) { PrintWarning($"Could not persist the pending wipe: {ex.Message}"); }
+        }
+
+        private void RemoveWipeFlag()
+        {
+            try
+            {
+                var root = ServerRoot();
+                if (root == null) return;
+                var path = Path.Combine(root, _config.General.WipeFlag);
+                if (File.Exists(path)) File.Delete(path);
+            }
+            catch (Exception ex) { PrintWarning($"Could not remove the wipe flag: {ex.Message}"); }
+        }
+
+        private JObject WipePendingState()
+        {
+            var p = _wipePending;
+            if (p == null) return null;
+            long pSeed; int pSize;
+            return new JObject
+            {
+                ["cycle"] = p.Cycle,
+                ["forced"] = p.Forced,
+                ["armed_build"] = p.ArmedBuild,
+                ["armed_at"] = p.ArmedAtUtc.ToString("yyyy'-'MM'-'dd'T'HH':'mm':'ss'Z'", CultureInfo.InvariantCulture),
+                ["window_ends_at"] = p.WindowEndUtc.ToString("yyyy'-'MM'-'dd'T'HH':'mm':'ss'Z'", CultureInfo.InvariantCulture),
+                ["attempts"] = p.Attempts,
+                ["next_try_at"] = _wipeRetryAt == null ? null : _wipeRetryAt.Value.ToUniversalTime().ToString("yyyy'-'MM'-'dd'T'HH':'mm':'ss'Z'", CultureInfo.InvariantCulture),
+                ["seed"] = long.TryParse(p.Seed ?? "", NumberStyles.Integer, CultureInfo.InvariantCulture, out pSeed) ? (JToken)pSeed : null,
+                ["size"] = int.TryParse(p.Size ?? "", NumberStyles.Integer, CultureInfo.InvariantCulture, out pSize) ? (JToken)pSize : null
+            };
+        }
+
+        // On boot: what the launcher did with the wipe it was handed, and what to
+        // do next. WIPE.result is consumed here so it is read once.
+        private void ResumeWipeState()
+        {
+            try
+            {
+                var root = ServerRoot();
+                string resultText = null; DateTime resultAt = DateTime.UtcNow;
+                if (root != null)
+                {
+                    var path = Path.Combine(root, WipeResultFile);
+                    if (File.Exists(path))
+                    {
+                        resultText = (File.ReadAllText(path) ?? "").Trim();
+                        resultAt = File.GetLastWriteTimeUtc(path);
+                        try { File.Delete(path); } catch { }
+                    }
+                }
+                if (!string.IsNullOrEmpty(resultText))
+                {
+                    var word = resultText.Split(':')[0].Trim().ToLowerInvariant();
+                    _lastWipeResult = new JObject
+                    {
+                        ["result"] = word,
+                        ["text"] = resultText.Length > 300 ? resultText.Substring(0, 300) : resultText,
+                        ["at"] = resultAt.ToString("yyyy'-'MM'-'dd'T'HH':'mm':'ss'Z'", CultureInfo.InvariantCulture)
+                    };
+                    Puts($"Launcher wipe result: {resultText}");
+                }
+
+                try { _wipePending = Interface.Oxide.DataFileSystem.ReadObject<WipePending>(WipePendingFile); } catch { _wipePending = null; }
+                if (_wipePending == null || string.IsNullOrEmpty(_wipePending.Cycle)) { _wipePending = null; return; }
+                if (_lastWipeResult != null) _lastWipeResult["cycle"] = _wipePending.Cycle;
+
+                string launcherCycle = null;
+                try
+                {
+                    if (root != null)
+                    {
+                        var cycleFile = Path.Combine(Path.Combine(root, "hotwire"), "wipe-cycle");
+                        if (File.Exists(cycleFile)) launcherCycle = (File.ReadAllText(cycleFile) ?? "").Trim();
+                    }
+                }
+                catch { }
+
+                var word2 = _lastWipeResult == null ? null : (string)_lastWipeResult["result"];
+                var e = FindWipeEntry(_wipePending.EntryId);
+                if (word2 == "applied" || launcherCycle == _wipePending.Cycle)
+                {
+                    Puts($"Wipe {_wipePending.Cycle} applied by the launcher (seed {_wipePending.Seed}).");
+                    if (e != null)
+                    {
+                        // The next map is always known: a fresh seed for next time, unless the admin sets one.
+                        e.Seed = DrawSeed();
+                        SaveConfig();
+                    }
+                    ClearWipePending(null);
+                    return;
+                }
+                if (word2 == "cancelled")
+                {
+                    PrintWarning($"The launcher cancelled wipe {_wipePending.Cycle}: {_lastWipeResult["text"]}");
+                    ClearWipePending(null);
+                    return;
+                }
+                if (!_wipePending.Forced)
+                {
+                    PrintWarning($"Wipe {_wipePending.Cycle} was handed to the launcher and no result came back; it is not retried.");
+                    ClearWipePending(null);
+                    return;
+                }
+                // Forced and deferred (or no word from the launcher): try again inside the window.
+                var retryMinutes = Math.Max(5, _config.General.ForcedWipeRetryMinutes);
+                var dueUtc = _wipePending.LastAttemptUtc.AddMinutes(retryMinutes);
+                var earliest = DateTime.UtcNow.AddSeconds(90);
+                _wipeRetryAt = (dueUtc > earliest ? dueUtc : earliest).ToLocalTime();
+                Puts(DateTime.UtcNow >= _wipePending.WindowEndUtc
+                    ? $"Forced wipe {_wipePending.Cycle}: the window has closed; deciding at the next scan."
+                    : $"Forced wipe {_wipePending.Cycle}: no new build yet ({word2 ?? "no result"}); next try at {_wipeRetryAt:HH:mm} (attempt {_wipePending.Attempts + 1}).");
+            }
+            catch (Exception ex)
+            {
+                PrintWarning($"Could not resume the wipe state: {ex.Message}");
+            }
         }
 
         #endregion
@@ -1481,6 +1866,7 @@ namespace Oxide.Plugins
             _countdownIsUpdate = false;
             _countdownIsValidate = false;
             _countdownIsWipe = false;
+            _wipePendingDraft = null;
             _announced.Clear();
             RemoveBars();
 
@@ -1543,6 +1929,7 @@ namespace Oxide.Plugins
                     catch (Exception ex) { PrintWarning($"server.backup failed before the wipe: {ex.Message}. Continuing."); }
                 }
                 WriteWipeFlag();
+                if (_wipePendingDraft != null) { _wipePending = _wipePendingDraft; _wipePendingDraft = null; SaveWipePending(); }
             }
 
             Broadcast("Now", u => new object[] { KindWord(u) });
@@ -1628,7 +2015,11 @@ namespace Oxide.Plugins
                 PrintError("The wipe flag file name is empty. Restarting without wiping.");
                 return;
             }
-            var expires = DateTimeOffset.UtcNow.AddHours(2).ToUnixTimeSeconds();
+            // A forced wipe's flag lives until its window closes: the launcher leaves it in place when the build has
+            // not changed, and any start inside the window that installs a new build applies it.
+            var expires = _wipeForced && _wipeWindowEndUtc != null
+                ? new DateTimeOffset(_wipeWindowEndUtc.Value, TimeSpan.Zero).ToUnixTimeSeconds()
+                : DateTimeOffset.UtcNow.AddHours(2).ToUnixTimeSeconds();
             var body = new StringBuilder();
             body.Append("seed ").Append(_wipeSeed).Append('\n');
             if (!string.IsNullOrEmpty(_wipeSize)) body.Append("size ").Append(_wipeSize).Append('\n');
@@ -1636,6 +2027,11 @@ namespace Oxide.Plugins
             body.Append("cycle ").Append(_wipeCycle).Append('\n');
             body.Append("expires ").Append(expires).Append('\n');
             if (_wipeBackupByLauncher) body.Append("backup 1").Append('\n');
+            if (_wipeForced)
+            {
+                body.Append("forced 1").Append('\n');
+                body.Append("armed_build ").Append(_wipeArmedBuild ?? "").Append('\n');
+            }
             var path = Path.Combine(root, name);
             try
             {
@@ -1751,9 +2147,15 @@ namespace Oxide.Plugins
         // to prevent. Pass null for console output.
         private string KindWord(string user)
         {
-            return T(_countdownIsValidate ? "KindValidate"
+            return T(_countdownIsWipe ? "KindWipe"
+                   : _countdownIsValidate ? "KindValidate"
                    : _countdownIsUpdate ? "KindUpdate"
                    : "KindRestart", user);
+        }
+
+        private static string KindKey(ScheduleEntry e)
+        {
+            return e.IsWipe ? "KindWipe" : e.IsValidate ? "KindValidate" : e.IsUpdate ? "KindUpdate" : "KindRestart";
         }
 
         // Rounded UP, and that is the whole point.
@@ -4485,6 +4887,20 @@ namespace Oxide.Plugins
                 ["enabled"] = e.Enabled
             };
             if (e is UpdateEntry) o["validate"] = ((UpdateEntry)e).Validate;
+            if (e is WipeEntry)
+            {
+                var w = (WipeEntry)e;
+                // Numbers on the wire, as kind: world sends them: a nine-digit seed as a string reads as an identity
+                // number to the panel's scrubber. Empty is null.
+                long seedN; int sizeN;
+                o["seed"] = long.TryParse((w.Seed ?? "").Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out seedN) ? (JToken)seedN : null;
+                o["size"] = int.TryParse((w.Size ?? "").Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out sizeN) ? (JToken)sizeN : null;
+                o["blueprints"] = w.Blueprints ?? "keep";
+                o["backup"] = w.Backup;
+                o["forced"] = w.Forced;
+                o["wipe_anyway"] = w.WipeAnyway;
+                if (w.Forced) o["clock"] = "Europe/London";
+            }
             return o;
         }
 
@@ -4495,6 +4911,7 @@ namespace Oxide.Plugins
             var all = new JArray();
             foreach (var e in _config.Restarts) all.Add(EntryState(e, "restarts"));
             foreach (var e in _config.Updates) all.Add(EntryState(e, "updates"));
+            foreach (var e in _config.Wipes) all.Add(EntryState(e, "wipes"));
             return "sha256:" + Sha256Hex(JsonConvert.SerializeObject(all, Formatting.None));
         }
 
@@ -4511,10 +4928,13 @@ namespace Oxide.Plugins
                     try { description = Describe(e, null); } catch { description = null; }
                     o["description"] = description;
                     var problem = ValidationError(e);
-                    o["problem"] = problem == null ? null : Text(problem, null);
+                    var problemText = problem == null ? null : Text(problem, null);
+                    if (problemText == null && e.IsWipe) problemText = WipeBlocker((WipeEntry)e);
+                    o["problem"] = problemText;
                     DateTime? next = null;
-                    if (e.Enabled && problem == null) { try { next = NextOccurrence(e, now); } catch { next = null; } }
+                    if (e.Enabled && problemText == null) { try { next = NextOccurrence(e, now); } catch { next = null; } }
                     o["next_at"] = next == null ? null : next.Value.ToUniversalTime().ToString("yyyy'-'MM'-'dd'T'HH':'mm':'ss'Z'", CultureInfo.InvariantCulture);
+                    if (e.IsWipe && _wipePending != null && _wipePending.EntryId == e.Id) o["armed"] = WipePendingState();
                     return o;
                 };
 
@@ -4524,6 +4944,15 @@ namespace Oxide.Plugins
                     ["timezone"] = TimeZoneInfo.Local.Id,
                     ["restarts"] = new JArray(_config.Restarts.Select(e => (object)row(e, "restarts")).ToArray()),
                     ["updates"] = new JArray(_config.Updates.Select(e => (object)row(e, "updates")).ToArray()),
+                    ["wipes"] = new JArray(_config.Wipes.Select(e => (object)row(e, "wipes")).ToArray()),
+                    ["forced_wipe"] = new JObject
+                    {
+                        ["clock"] = "Europe/London",
+                        ["time"] = "19:00",
+                        ["retry_minutes"] = Math.Max(5, _config.General.ForcedWipeRetryMinutes),
+                        ["window_hours"] = Math.Max(0.5, _config.General.ForcedWipeWindowHours)
+                    },
+                    ["last_wipe"] = _lastWipeResult,
                     ["countdown"] = new JObject
                     {
                         ["start_seconds"] = _config.Countdown.StartSeconds,
@@ -4589,12 +5018,14 @@ namespace Oxide.Plugins
             if (verb == "schedule.add")
             {
                 var listName = ((string)args["list"] ?? "").ToLowerInvariant();
-                if (listName != "restarts" && listName != "updates") { status = "refused"; result = "list must be restarts or updates"; return; }
+                if (listName != "restarts" && listName != "updates" && listName != "wipes") { status = "refused"; result = "list must be restarts, updates or wipes"; return; }
                 string problem;
-                var entry = BuildEntry(null, listName == "updates", args["entry"] as JObject, out problem);
+                var entry = BuildEntry(null, listName, args["entry"] as JObject, out problem);
                 if (entry == null) { status = "refused"; result = problem; return; }
                 entry.Id = NewEntryId();
-                if (listName == "updates") _config.Updates.Add((UpdateEntry)entry); else _config.Restarts.Add(entry);
+                if (listName == "updates") _config.Updates.Add((UpdateEntry)entry);
+                else if (listName == "wipes") _config.Wipes.Add((WipeEntry)entry);
+                else _config.Restarts.Add(entry);
                 SaveConfig();
                 _scheduleCheckDue = DateTime.MinValue;
                 status = "done"; result = "added: " + Describe(entry, null);
@@ -4604,9 +5035,11 @@ namespace Oxide.Plugins
 
             var id = ((string)args["id"] ?? "").Trim();
             ScheduleEntry target = null;
-            var inUpdates = false;
+            var inList = "restarts";
             foreach (var e in _config.Restarts) if (e.Id == id) target = e;
-            foreach (var e in _config.Updates) if (e.Id == id) { target = e; inUpdates = true; }
+            foreach (var e in _config.Updates) if (e.Id == id) { target = e; inList = "updates"; }
+            foreach (var e in _config.Wipes) if (e.Id == id) { target = e; inList = "wipes"; }
+            var inUpdates = inList == "updates";
             if (id.Length == 0 || target == null) { status = "refused"; result = "there is no schedule entry with that id here"; return; }
 
             switch (verb)
@@ -4614,7 +5047,7 @@ namespace Oxide.Plugins
                 case "schedule.update":
                 {
                     string problem;
-                    var draft = BuildEntry(target, inUpdates, args["entry"] as JObject, out problem);
+                    var draft = BuildEntry(target, inList, args["entry"] as JObject, out problem);
                     if (draft == null) { status = "refused"; result = problem; return; }
                     CancelCountdownFor(target, "the panel");
                     target.Time = draft.Time;
@@ -4627,18 +5060,28 @@ namespace Oxide.Plugins
                     target.Date = draft.Date;
                     target.Enabled = draft.Enabled;
                     if (target is UpdateEntry && draft is UpdateEntry) ((UpdateEntry)target).Validate = ((UpdateEntry)draft).Validate;
+                    if (target is WipeEntry && draft is WipeEntry)
+                    {
+                        var tw = (WipeEntry)target; var dw = (WipeEntry)draft;
+                        tw.Seed = dw.Seed; tw.Size = dw.Size; tw.Blueprints = dw.Blueprints; tw.Backup = dw.Backup;
+                        tw.Forced = dw.Forced; tw.WipeAnyway = dw.WipeAnyway;
+                        NormalizeWipeEntry(tw);
+                    }
                     status = "done"; result = "changed: " + Describe(target, null);
                     break;
                 }
                 case "schedule.remove":
                     CancelCountdownFor(target, "the panel");
-                    if (inUpdates) _config.Updates.Remove((UpdateEntry)target); else _config.Restarts.Remove(target);
+                    if (inUpdates) _config.Updates.Remove((UpdateEntry)target);
+                    else if (inList == "wipes") { _config.Wipes.Remove((WipeEntry)target); if (_wipePending != null && _wipePending.EntryId == target.Id) ClearWipePending("the entry was removed"); }
+                    else _config.Restarts.Remove(target);
                     status = "done"; result = "removed: " + Describe(target, null);
                     break;
                 case "schedule.enable":
                 {
                     var problem = ValidationError(target);
                     if (problem != null) { status = "refused"; result = "it cannot be enabled: " + Text(problem, null); return; }
+                    if (target.IsWipe && WipeBlocker((WipeEntry)target) != null) { status = "refused"; result = "it cannot be enabled: " + WipeBlocker((WipeEntry)target); return; }
                     target.Enabled = true;
                     status = "done"; result = "enabled: " + Describe(target, null);
                     break;
@@ -4659,12 +5102,14 @@ namespace Oxide.Plugins
         // A checked copy of an entry with the given fields applied, or null and
         // why not. Each field is validated the way the chat commands validate
         // it, then the whole entry by ValidationError.
-        private ScheduleEntry BuildEntry(ScheduleEntry from, bool isUpdate, JObject fields, out string problem)
+        private ScheduleEntry BuildEntry(ScheduleEntry from, string listName, JObject fields, out string problem)
         {
             problem = null;
             if (fields == null) { problem = "no entry was given"; return null; }
 
-            ScheduleEntry draft = isUpdate ? new UpdateEntry() : new ScheduleEntry();
+            var isUpdate = listName == "updates";
+            var isWipe = listName == "wipes";
+            ScheduleEntry draft = isUpdate ? new UpdateEntry() : isWipe ? (ScheduleEntry)new WipeEntry() : new ScheduleEntry();
             if (from != null)
             {
                 draft.Time = from.Time; draft.Repeat = from.Repeat;
@@ -4672,6 +5117,11 @@ namespace Oxide.Plugins
                 draft.Ordinal = from.Ordinal; draft.DayOfMonth = from.DayOfMonth; draft.IntervalDays = from.IntervalDays;
                 draft.AnchorDate = from.AnchorDate; draft.Date = from.Date; draft.Enabled = from.Enabled;
                 if (isUpdate && from is UpdateEntry) ((UpdateEntry)draft).Validate = ((UpdateEntry)from).Validate;
+                if (isWipe && from is WipeEntry)
+                {
+                    var fw = (WipeEntry)from; var dw = (WipeEntry)draft;
+                    dw.Seed = fw.Seed; dw.Size = fw.Size; dw.Blueprints = fw.Blueprints; dw.Backup = fw.Backup; dw.Forced = fw.Forced; dw.WipeAnyway = fw.WipeAnyway;
+                }
             }
             else
             {
@@ -4730,6 +5180,19 @@ namespace Oxide.Plugins
             }
             if (fields["enabled"] != null) draft.Enabled = BoolArg(fields, "enabled");
             if (isUpdate && fields["validate"] != null) ((UpdateEntry)draft).Validate = BoolArg(fields, "validate");
+            if (isWipe)
+            {
+                var w = (WipeEntry)draft;
+                if (fields["seed"] != null) w.Seed = ((string)fields["seed"] ?? "").Trim();
+                if (fields["size"] != null) w.Size = ((string)fields["size"] ?? "").Trim();
+                if (fields["blueprints"] != null) w.Blueprints = ((string)fields["blueprints"] ?? "keep").Trim().ToLowerInvariant();
+                if (fields["backup"] != null) w.Backup = BoolArg(fields, "backup");
+                if (fields["forced"] != null) w.Forced = BoolArg(fields, "forced");
+                if (fields["wipe_anyway"] != null) w.WipeAnyway = BoolArg(fields, "wipe_anyway");
+                // A wipe always has a next map: an empty seed is drawn here, so the panel can show it.
+                if (string.IsNullOrWhiteSpace(w.Seed)) w.Seed = DrawSeed();
+                NormalizeWipeEntry(w);
+            }
 
             var invalid = ValidationError(draft);
             if (invalid != null) { problem = Text(invalid, null); return null; }
@@ -4925,6 +5388,10 @@ namespace Oxide.Plugins
                     _wipeBlueprints = bp;
                     _wipeCycle = cycle;
                     _wipeBackup = args["backup"] == null ? _config.Backups.BeforeWipe : BoolArg(args, "backup");   // default: the config's "Back up before a wipe"
+                    _wipeForced = false;
+                    _wipeArmedBuild = null;
+                    _wipeWindowEndUtc = null;
+                    _wipePendingDraft = null;
 
                     var askedW = 0;
                     var delayW = args["delay"];
@@ -9257,9 +9724,7 @@ namespace Oxide.Plugins
             // reassurance that let a disabled entry restart a server.
             var next = problem == null && entry.Enabled ? NextOccurrence(entry, DateTime.Now) : null;
 
-            var kind = T(entry.IsValidate ? "KindValidate"
-                       : entry.IsUpdate ? "KindUpdate"
-                       : "KindRestart", player.Id);
+            var kind = T(KindKey(entry), player.Id);
             var recurrence = Normalize(entry.Repeat) == RepeatOnce
                 ? T("RecurOnceShort", player.Id)
                 : DescribeRecurrence(entry, player.Id);
@@ -9694,7 +10159,7 @@ namespace Oxide.Plugins
             }
 
             if (best == null) return null;
-            var kind = T(best.IsValidate ? "KindValidate" : best.IsUpdate ? "KindUpdate" : "KindRestart", user);
+            var kind = T(KindKey(best), user);
             return T("NextEntry", user, kind, DescribeRecurrence(best, user), Stamp(bestTarget, user));
         }
 
@@ -9870,6 +10335,8 @@ namespace Oxide.Plugins
                 lines.Add(DescribeRow("restart", i, _config.Restarts[i], player.Id));
             for (var i = 0; i < _config.Updates.Count; i++)
                 lines.Add(DescribeRow("update", i, _config.Updates[i], player.Id));
+            for (var i = 0; i < _config.Wipes.Count; i++)
+                lines.Add(DescribeRow("wipe", i, _config.Wipes[i], player.Id));
 
             if (lines.Count == 0)
             {
@@ -10464,6 +10931,9 @@ namespace Oxide.Plugins
                 // Without the "and restart", for lines that already say it.
                 ["KindUpdateShort"] = "update",
                 ["KindValidateShort"] = "validate",
+                ["KindWipe"] = "wipe (new map) and restart",
+                ["KindWipeShort"] = "wipe",
+                ["ForcedWipeDescription"] = "wipe (new map) on the first Thursday of the month, when the update arrives (19:00 Europe/London)",
                 ["ReasonFramework"] = "framework {0}",
 
                 ["CountdownStart"] = "Scheduled {0} in {1}. The server will save before it goes down.",
@@ -10576,6 +11046,11 @@ namespace Oxide.Plugins
                 // accepted words, they arrive as an argument so the list can
                 // never drift out of step with the parser.
                 ["ErrBadTime"] = "\"{0}\" is not a valid time. Use HH:mm, such as 05:00.",
+                ["ErrBadSeed"] = "\"{0}\" is not a seed. Use a whole number from 1 to 2147483647, or leave it empty for a random one.",
+                ["ErrBadSize"] = "\"{0}\" is not a world size. Use 1000-6000, or leave it empty to keep the current size.",
+                ["ErrBadBlueprints"] = "\"{0}\" is not a blueprint action. Use keep, rename or delete.",
+                ["ErrNoLondonZone"] = "This machine has no Europe/London time zone, so the forced wipe's release moment cannot be worked out.",
+                ["ErrLauncherCannotWipe"] = "The launcher on this server cannot wipe: it needs the Hotwire launcher, unmodified, with the wipe capability.",
                 ["ErrBadDate"] = "\"{0}\" is not a valid date. Use yyyy-MM-dd.",
                 ["ErrNoDays"] = "No days are selected.",
                 ["ErrNoDaysGiven"] = "No days were given.",

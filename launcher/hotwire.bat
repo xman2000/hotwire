@@ -28,7 +28,7 @@ REM  works the hash out again from this file's bytes, so the panel offers a
 REM  wipe or a permanent setting only through a launcher that is unmodified
 REM  and says it can carry them out. settings_file says the settings are
 REM  read from hotwire.cfg. Not settings; do not edit.
-set "HOTWIRE_LAUNCHER_VERSION=1.1.16"
+set "HOTWIRE_LAUNCHER_VERSION=1.1.17"
 set "HOTWIRE_LAUNCHER_CAPABILITIES=supervise,update,framework_verify,crash_backstop,log_rotate,convar_persist,wipe,settings_file"
 
 REM ======================================================================
@@ -964,7 +964,7 @@ REM     written as ordinary PowerShell rather than through cmd's quoting
 REM     rules.
 REM ======================================================================
 exit /b 0
-HOTWIRE_LAUNCHER_HASH="f16b6558149ed906e1e867bd00dce893c7ecdfc994ac03a9fdb9ccd33a6bb697"
+HOTWIRE_LAUNCHER_HASH="cec9fc12c871d6e87db1df6eda0a8a390095dcc5f7458a566fbef1bc8ee9b8b1"
 
 #HOTWIRE-PS
 # hotwire.bat's PowerShell. cmd hands everything from the line above down to PowerShell, and HOTWIRE_MODE says
@@ -1307,6 +1307,32 @@ function Set-CfgValues([object[]]$pairs) {
     }
 }
 
+# True when a forced wipe must wait: the installed build is unreadable, or it is the build the wipe was armed on
+# (no update yet). Writes WIPE.result so the plugin knows to try again.
+function Test-ForcedWipeWaits {
+    param([string]$armedBuild, [string]$cycle, [string]$result)
+    $appid = $env:APPID; if (-not $appid) { $appid = '258550' }
+    $acf = Join-Path $root ('steamapps\appmanifest_' + $appid + '.acf')
+    $installed = ''
+    if (Test-Path -LiteralPath $acf) {
+        $q = [char]34
+        $m = [regex]::Match([IO.File]::ReadAllText($acf), $q + 'buildid' + $q + '\s+' + $q + '(\d+)' + $q)
+        if ($m.Success) { $installed = $m.Groups[1].Value }
+    }
+    if (-not $installed) {
+        Say ('Forced wipe (cycle ' + $cycle + '): the installed build cannot be read, so the wipe waits. Starting unchanged.')
+        [IO.File]::WriteAllText($result, "deferred: installed build unknown`n")
+        return $true
+    }
+    if ($armedBuild -and $installed -eq $armedBuild) {
+        Say ('Forced wipe (cycle ' + $cycle + '): still build ' + $installed + ', no update yet. Starting the old world; the wipe waits.')
+        [IO.File]::WriteAllText($result, 'deferred: no new build (installed ' + $installed + ")`n")
+        return $true
+    }
+    Say ('Forced wipe (cycle ' + $cycle + '): build ' + $armedBuild + ' -> ' + $installed + ', the update arrived.')
+    return $false
+}
+
 function Invoke-Edits {
     $wipeName = $env:WIPE_FLAG; if (-not $wipeName) { $wipeName = 'WIPE.flag' }
 
@@ -1325,6 +1351,7 @@ function Invoke-Edits {
             if ($parts.Count -eq 2 -and -not $w.ContainsKey($parts[0])) { $w[$parts[0]] = $parts[1].Trim() }
         }
         $seed = [string]$w['seed']; $size = [string]$w['size']; $bp = [string]$w['blueprints']; $cycle = [string]$w['cycle']; $expires = [string]$w['expires']
+        $forced = [string]$w['forced']; $armedBuild = [string]$w['armed_build']
         if (-not $bp) { $bp = 'keep' }
         $done = ''
         if ($cycle -and (Test-Path -LiteralPath $cycleFile)) { $done = ([IO.File]::ReadAllText($cycleFile)).Trim() }
@@ -1336,6 +1363,9 @@ function Invoke-Edits {
         } elseif ($expires -match '^\d+$' -and [long]$expires -lt $now) {
             Remove-Item -LiteralPath $flag -Force
             Say 'The wipe flag has expired; ignoring it. Starting unchanged.'
+        } elseif ($forced -eq '1' -and (Test-ForcedWipeWaits $armedBuild $cycle $result)) {
+            # A forced wipe rides the monthly update: applied only in a start whose update changed the installed
+            # build. The flag stays for the next start inside its window; the plugin tries again.
         } else {
             if ($seed -notmatch '^\d{1,10}$' -or [long]$seed -gt 2147483647) { $why = 'seed is not a whole number from 0 to 2147483647' }
             elseif ($size -and ($size -notmatch '^\d{1,5}$' -or [int]$size -lt 1000 -or [int]$size -gt 6000)) { $why = 'size is not a whole number from 1000 to 6000' }

@@ -21,9 +21,9 @@
 #     offers a launcher-editing feature. Capabilities, not the version number,
 #     are what a feature is gated on; settings_file says the settings are read
 #     from hotwire.cfg.
-HOTWIRE_LAUNCHER_VERSION="1.1.3-linux"
+HOTWIRE_LAUNCHER_VERSION="1.1.4-linux"
 HOTWIRE_LAUNCHER_CAPABILITIES="supervise,update,framework_verify,crash_backstop,log_rotate,convar_persist,wipe,backup,settings_file"
-HOTWIRE_LAUNCHER_HASH="eb5894bfdfa8574c44306c6719d4caa1cf92cb5fc0241755d745220d6794bd59"
+HOTWIRE_LAUNCHER_HASH="655af7dd1ac95c8fa878fb4d4c0090591e794d94f6164ec23c3c537351494a95"
 
 # ======================================================================
 #  HOW THIS LAUNCHER WORKS
@@ -934,11 +934,14 @@ apply_wipe() {
     local flag="$ROOT/$WIPE_FLAG"
     [ -f "$flag" ] || return 0
     local seed size bp cycle expires now
+    local forced armed_build
     seed="$(grep -m1  '^seed '       "$flag" | awk '{print $2}')"
     size="$(grep -m1  '^size '       "$flag" | awk '{print $2}')"
     bp="$(grep -m1    '^blueprints ' "$flag" | awk '{print $2}')"
     cycle="$(grep -m1 '^cycle '      "$flag" | awk '{print $2}')"
     expires="$(grep -m1 '^expires '  "$flag" | awk '{print $2}')"
+    forced="$(grep -m1 '^forced '    "$flag" | awk '{print $2}')"
+    armed_build="$(grep -m1 '^armed_build ' "$flag" | awk '{print $2}')"
     now="$(date +%s)"
     [ -z "$bp" ] && bp="keep"
 
@@ -964,6 +967,29 @@ apply_wipe() {
         printf 'cancelled: %s\n' "$why" > "$WIPE_RESULT" 2>/dev/null || true
         rm -f "$flag"
         return 0
+    fi
+
+    # A forced wipe rides the monthly update: it is applied only in a start whose
+    # update changed the installed build. Otherwise the old world boots, the flag
+    # stays for the next start inside its window, and the plugin tries again.
+    if [ "$forced" = "1" ]; then
+        read_installed_build
+        if [ -z "$INSTALLED_BUILD" ]; then
+            warn "Forced wipe (cycle ${cycle:-none}): the installed build cannot be read, so the wipe waits. Booting unchanged."
+            printf 'deferred: installed build unknown\n' > "$WIPE_RESULT" 2>/dev/null || true
+            return 0
+        fi
+        if [ -n "$armed_build" ] && [ "$INSTALLED_BUILD" = "$armed_build" ]; then
+            log "Forced wipe (cycle ${cycle:-none}): still build $INSTALLED_BUILD, no update yet. Booting the old world; the wipe waits."
+            printf 'deferred: no new build (installed %s)\n' "$INSTALLED_BUILD" > "$WIPE_RESULT" 2>/dev/null || true
+            return 0
+        fi
+        log "Forced wipe (cycle ${cycle:-none}): build ${armed_build:-unknown} -> $INSTALLED_BUILD, the update arrived."
+        # The before-wipe backup was held back until this was known (backup_before_launch).
+        if [ "$BACKUPS" = "1" ] && grep -q '^backup 1' "$flag" 2>/dev/null; then
+            log "Backing up the stopped server before the wipe..."
+            backup_archive "before_wipe" "$(date -u +%Y%m%dT%H%M%SZ)-before_wipe" "" "" "" "" "" || true
+        fi
     fi
 
     rule; log "Wiping (cycle ${cycle:-none}): new seed $seed${size:+, size $size}, blueprints: $bp."
@@ -1389,7 +1415,9 @@ backup_watch_stop() {  # a backup in progress gets up to five minutes to finish
 backup_before_launch() {
     [ "$BACKUPS" = "1" ] || return 0
     local trigger="" flag="$ROOT/$WIPE_FLAG"
-    if [ -f "$flag" ] && grep -q '^backup 1' "$flag" 2>/dev/null; then
+    # A forced wipe may not happen this start (no new build yet), so its backup is
+    # taken in apply_wipe once that is known, not here on every try.
+    if [ -f "$flag" ] && grep -q '^backup 1' "$flag" 2>/dev/null && ! grep -q '^forced 1' "$flag" 2>/dev/null; then
         local cycle expires
         cycle="$(grep -m1 '^cycle ' "$flag" | awk '{print $2}')"; expires="$(grep -m1 '^expires ' "$flag" | awk '{print $2}')"
         if { [ -z "$cycle" ] || [ "$(cat "$WIPE_STATE" 2>/dev/null)" != "$cycle" ]; } && { [ -z "$expires" ] || [ "$expires" -ge "$(date +%s)" ] 2>/dev/null; }; then
