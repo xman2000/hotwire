@@ -1039,8 +1039,8 @@ namespace Oxide.Plugins
 
             if (best != null)
             {
-                BeginCountdown(bestTarget, best.IsUpdate, best.IsValidate, best, best.Key);
                 if (best.IsWipe) ArmWipeFrom((WipeEntry)best, bestTarget, retry: false);
+                BeginCountdown(bestTarget, best.IsUpdate, best.IsValidate, best, best.Key);
             }
         }
 
@@ -1601,8 +1601,8 @@ namespace Oxide.Plugins
             if (e == null || !e.Enabled) { ClearWipePending("its entry is gone or disabled"); return false; }
             if (DateTime.UtcNow >= _wipePending.WindowEndUtc) { GiveUpWipe(e); return _countdownActive; }
             var target = now.AddSeconds(Math.Max(300, _config.Panel.MinimumRestartSeconds));
-            BeginCountdown(target, true, false, e, "wiperetry:" + e.Id);
             ArmWipeFrom(e, target, retry: true);
+            BeginCountdown(target, true, false, e, "wiperetry:" + e.Id);
             return true;
         }
 
@@ -1614,10 +1614,10 @@ namespace Oxide.Plugins
                 // The admin's choice: the calendar wins over the update. A plain wipe, no build comparison.
                 Puts($"Forced wipe: no new build by {closed:yyyy-MM-dd HH:mm} UTC; wiping anyway, as this entry says.");
                 var target = DateTime.Now.AddSeconds(Math.Max(300, _config.Panel.MinimumRestartSeconds));
-                BeginCountdown(target, true, false, e, "wipeanyway:" + e.Id);
                 ArmWipeFrom(e, target, retry: true);
                 _wipeForced = false; _wipeArmedBuild = null; _wipeWindowEndUtc = null;
                 if (_wipePendingDraft != null) { _wipePendingDraft.Forced = false; _wipePendingDraft.ArmedBuild = ""; }
+                BeginCountdown(target, true, false, e, "wipeanyway:" + e.Id);
                 return;
             }
             PrintWarning($"Forced wipe: no new build arrived by {closed:yyyy-MM-dd HH:mm} UTC after {_wipePending.Attempts} attempt(s). Giving up; the map is unchanged.");
@@ -1782,7 +1782,9 @@ namespace Oxide.Plugins
             _countdownEntry = entry;
             _countdownIsUpdate = isUpdate;
             _countdownIsValidate = isValidate;
-            _countdownIsWipe = false;   // a wipe countdown sets this true after this call
+            // A wipe entry arms itself (ArmWipeFrom) before this call, so the first announcement already says "wipe";
+            // the panel's wipe verb sets the flag after it instead.
+            _countdownIsWipe = _wipePendingDraft != null;
             _countdownKey = key;
             _announced.Clear();
 
