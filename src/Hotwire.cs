@@ -17,7 +17,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Hotwire", "xman2000", "1.1.46")]
+    [Info("Hotwire", "xman2000", "1.1.47")]
     [Description("Scheduled restarts and updates. Announces, counts down, writes a flag, quits.")]
     internal class Hotwire : CovalencePlugin
     {
@@ -373,6 +373,11 @@ namespace Oxide.Plugins
             [JsonProperty("Wipe anyway when no update arrives")]
             public bool WipeAnyway = false;
 
+            // A forced wipe never starts before the release moment (19:00 London) unless this is on: then it starts as
+            // soon as AFKPanel's release check says the new build and its Oxide are both out.
+            [JsonProperty("Wipe as soon as the update is out (before 19:00 London)")]
+            public bool WipeEarly = false;
+
             [JsonIgnore] public override bool IsUpdate => true;
             [JsonIgnore] public override bool IsWipe => true;
         }
@@ -551,6 +556,12 @@ namespace Oxide.Plugins
             [JsonProperty("Forced wipe: give up this many hours after the release moment")]
             public double ForcedWipeWindowHours = 6.0;
 
+            // A forced wipe waits for AFKPanel's release check (the new Rust build and the Oxide made for it). When
+            // AFKPanel has said nothing about the release for this long after the release moment, the plugin goes
+            // without it: it restarts with an update and the launcher compares builds, as it always could.
+            [JsonProperty("Forced wipe: go without AFKPanel's release check after this many minutes of silence")]
+            public int ForcedWipeGateWaitMinutes = 30;
+
             // "Hotwire" means nothing to a player. This is the name they see
             // in chat, and it should be something they can act on. The old
             // "Chat prefix" key is gone rather than renamed, so servers that
@@ -697,6 +708,15 @@ namespace Oxide.Plugins
         private DateTime? _wipeWindowEndUtc;
         private WipePending _wipePending;        // the wipe the launcher has been handed and has not yet applied
         private WipePending _wipePendingDraft;   // becomes _wipePending when the flag is written
+
+        // AFKPanel's release check, as last heard on the commands poll: Steam's public build, when Steam moved to it, the
+        // newest Oxide and whether it was published after that move. Null until heard.
+        private string _gateBuild;
+        private DateTime? _gateBuildAtUtc;
+        private string _gateOxide;
+        private bool _gateReady;
+        private DateTime? _gateHeardUtc;
+        private string _gateSaid = "";   // the last waiting line logged, so a wait is said once, not every scan
         private DateTime? _wipeRetryAt;
         private JObject _lastWipeResult;
         private string _countdownKey = "";
@@ -1002,6 +1022,9 @@ namespace Oxide.Plugins
             // is a short announced restart, not a scheduled entry.
             if (ScanWipeRetry(now)) return;
 
+            // A forced wipe waits for the release itself (AFKPanel's release check), not only for the clock.
+            if (ScanForcedWipes(now, start)) return;
+
             ScheduleEntry best = null;
             DateTime bestTarget = DateTime.MaxValue;
 
@@ -1009,6 +1032,7 @@ namespace Oxide.Plugins
             {
                 if (!e.Enabled) continue;
                 if (e.IsWipe && WipeBlocker((WipeEntry)e) != null) continue;
+                if (e.IsWipe && ((WipeEntry)e).Forced) continue;   // ScanForcedWipes decides these
                 var next = NextOccurrence(e, now);
                 if (next == null) continue;
                 if ((next.Value - now).TotalSeconds > start) continue;
@@ -1562,8 +1586,10 @@ namespace Oxide.Plugins
         // The countdown for a wipe entry has begun: hand the launcher this entry's
         // values when it ends. A retry keeps the cycle and the armed build of the
         // first attempt, so the launcher's guard and its comparison hold across it.
-        private void ArmWipeFrom(WipeEntry e, DateTime target, bool retry)
+        private void ArmWipeFrom(WipeEntry e, DateTime target, bool retry, DateTime? releaseLocal = null, bool? forcedOverride = null)
         {
+            // A forced entry handed over as a plain wipe (its build is already installed, or wipe anyway) is not compared.
+            var forced = forcedOverride ?? e.Forced;
             var nowUtc = DateTime.UtcNow;
             var pending = retry && _wipePending != null ? _wipePending : null;
             _wipeSeed = string.IsNullOrWhiteSpace(e.Seed) ? DrawSeed() : e.Seed.Trim();
@@ -1572,21 +1598,21 @@ namespace Oxide.Plugins
             _wipeSize = pending != null ? pending.Size : (e.Size ?? "").Trim();
             _wipeBlueprints = string.IsNullOrWhiteSpace(e.Blueprints) ? "keep" : e.Blueprints.Trim().ToLowerInvariant();
             _wipeBackup = e.Backup;
-            _wipeForced = e.Forced;
-            _wipeArmedBuild = pending != null ? pending.ArmedBuild : (e.Forced ? (InstalledBuildId() ?? "") : null);
-            var armedAt = pending != null ? pending.ArmedAtUtc : target.ToUniversalTime();
-            _wipeWindowEndUtc = e.Forced ? (DateTime?)armedAt.AddHours(Math.Max(0.5, _config.General.ForcedWipeWindowHours)) : null;
+            _wipeForced = forced;
+            _wipeArmedBuild = pending != null ? pending.ArmedBuild : (forced ? (InstalledBuildId() ?? "") : null);
+            var armedAt = pending != null ? pending.ArmedAtUtc : (releaseLocal ?? target).ToUniversalTime();
+            _wipeWindowEndUtc = forced ? (DateTime?)armedAt.AddHours(Math.Max(0.5, _config.General.ForcedWipeWindowHours)) : null;
             _wipeCycle = pending != null ? pending.Cycle
-                : e.Forced ? $"forced-{e.Id}-{target:yyyyMM}" : $"wipe-{e.Id}-{target:yyyyMMdd}";
+                : e.Forced ? $"forced-{e.Id}-{(releaseLocal ?? target):yyyyMM}" : $"wipe-{e.Id}-{target:yyyyMMdd}";
             _countdownIsWipe = true;
             _wipePendingDraft = new WipePending
             {
-                EntryId = e.Id, Cycle = _wipeCycle, Forced = e.Forced, ArmedBuild = _wipeArmedBuild ?? "",
+                EntryId = e.Id, Cycle = _wipeCycle, Forced = forced, ArmedBuild = _wipeArmedBuild ?? "",
                 ArmedAtUtc = armedAt, WindowEndUtc = _wipeWindowEndUtc ?? nowUtc.AddHours(2),
                 Attempts = (pending != null ? pending.Attempts : 0) + 1, LastAttemptUtc = nowUtc,
                 Seed = _wipeSeed, Size = _wipeSize
             };
-            Puts(e.Forced
+            Puts(forced
                 ? $"Forced wipe armed (attempt {_wipePendingDraft.Attempts}): seed {_wipeSeed}{(_wipeSize.Length > 0 ? ", size " + _wipeSize : "")}, applied only if the update changes the build (installed {_wipeArmedBuild}); window closes {_wipeWindowEndUtc:yyyy-MM-dd HH:mm} UTC."
                 : $"Scheduled wipe: seed {_wipeSeed}{(_wipeSize.Length > 0 ? ", size " + _wipeSize : "")}, blueprints {_wipeBlueprints}.");
         }
@@ -1767,6 +1793,205 @@ namespace Oxide.Plugins
             {
                 PrintWarning($"Could not resume the wipe state: {ex.Message}");
             }
+        }
+
+        // ------------------------------------------------- the release gate
+
+        private static DateTime? GateTime(JToken t)
+        {
+            if (t == null) return null;
+            if (t.Type == JTokenType.Date) return ((DateTime)t).ToUniversalTime();
+            DateTime d;
+            return DateTime.TryParse((string)t ?? "", CultureInfo.InvariantCulture,
+                DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out d) ? (DateTime?)d : null;
+        }
+
+        // The panel's release check rides on the commands poll. Absent means the panel said nothing about the release
+        // this time (an older panel, or its own fetch of Steam or GitHub failed); the last answer then ages out.
+        private void HearReleaseGate(JObject release)
+        {
+            if (release == null) return;
+            var build = (string)release["build"];
+            var at = GateTime(release["build_at"]);
+            if (string.IsNullOrEmpty(build) || !Regex.IsMatch(build, "^[0-9]{1,12}$") || at == null) return;
+            _gateBuild = build;
+            _gateBuildAtUtc = at;
+            _gateOxide = ((string)release["oxide"] ?? "");
+            if (_gateOxide.Length > 32) _gateOxide = _gateOxide.Substring(0, 32);
+            _gateReady = release["ready"] != null && release["ready"].Type == JTokenType.Boolean && (bool)release["ready"];
+            _gateHeardUtc = DateTime.UtcNow;
+        }
+
+        private JObject GateReport()
+        {
+            if (_gateHeardUtc == null) return null;
+            return new JObject
+            {
+                ["heard_at"] = _gateHeardUtc.Value.ToString("yyyy'-'MM'-'dd'T'HH':'mm':'ss'Z'", CultureInfo.InvariantCulture),
+                ["build"] = _gateBuild,
+                ["build_at"] = _gateBuildAtUtc?.ToString("yyyy'-'MM'-'dd'T'HH':'mm':'ss'Z'", CultureInfo.InvariantCulture),
+                ["oxide"] = _gateOxide,
+                ["ready"] = _gateReady
+            };
+        }
+
+        // Whether this plugin can hear the panel's release check at all: it polls commands only when connected, when
+        // the config accepts commands and when the account's plan includes them. One that cannot hear never waits for it.
+        private bool CanHearGate() => _panel != null && _config.Panel.AcceptCommands && PolicyAllowsCommands();
+
+        // This month's release moment, while its cycle is open: from six hours before (so the early option can act on
+        // an early release) until the window closes. Null outside it, or with no London zone on the machine.
+        private DateTime? ForcedCycleMoment(DateTime nowLocal)
+        {
+            var zone = LondonZone();
+            if (zone == null) return null;
+            var nowLondon = TimeZoneInfo.ConvertTime(DateTime.SpecifyKind(nowLocal, DateTimeKind.Unspecified), TimeZoneInfo.Local, zone);
+            var first = new DateTime(nowLondon.Year, nowLondon.Month, 1);
+            var thursday = first.AddDays(((int)DayOfWeek.Thursday - (int)first.DayOfWeek + 7) % 7).AddHours(19);
+            var release = DateTime.SpecifyKind(TimeZoneInfo.ConvertTime(DateTime.SpecifyKind(thursday, DateTimeKind.Unspecified), zone, TimeZoneInfo.Local), DateTimeKind.Local);
+            var windowHours = Math.Max(0.5, _config.General.ForcedWipeWindowHours);
+            if (nowLocal < release.AddHours(-6) || nowLocal >= release.AddHours(windowHours)) return null;
+            return release;
+        }
+
+        // Done for this cycle: its countdown fired, a wipe it handed over is still being retried, or the launcher has
+        // already carried out this cycle's wipe.
+        private bool ForcedCycleDone(WipeEntry e, DateTime releaseLocal)
+        {
+            if (_wipePending != null && _wipePending.EntryId == e.Id) return true;
+            DateTime fired;
+            if (_lastFired.TryGetValue(e.Key, out fired) && fired >= releaseLocal.AddHours(-6)) return true;
+            try
+            {
+                var root = ServerRoot();
+                if (root != null)
+                {
+                    var cycleFile = Path.Combine(Path.Combine(root, "hotwire"), "wipe-cycle");
+                    if (File.Exists(cycleFile) && (File.ReadAllText(cycleFile) ?? "").Trim() == $"forced-{e.Id}-{releaseLocal:yyyyMM}") return true;
+                }
+            }
+            catch { }
+            return false;
+        }
+
+        // The gate is open for this cycle when the panel's answer is fresh, says ready, and Steam moved to its build on
+        // this release day (twelve hours either side of the moment's eve), so last month's pair never opens it.
+        private bool GateOpenFor(DateTime releaseLocal)
+        {
+            if (_gateHeardUtc == null || DateTime.UtcNow - _gateHeardUtc.Value > TimeSpan.FromMinutes(10)) return false;
+            if (!_gateReady || _gateBuildAtUtc == null) return false;
+            return _gateBuildAtUtc.Value >= releaseLocal.ToUniversalTime().AddHours(-12);
+        }
+
+        // What the report shows as a forced entry's next time: the release moment while its cycle waits, else the next.
+        private DateTime? ForcedNextFor(WipeEntry e, DateTime now)
+        {
+            var release = ForcedCycleMoment(now);
+            if (release != null && !ForcedCycleDone(e, release.Value)) return release;
+            return ForcedWipeNext(now);
+        }
+
+        private void SayGate(string line)
+        {
+            if (line == _gateSaid) return;
+            _gateSaid = line;
+            Puts(line);
+        }
+
+        // Forced wipes, each scan: wait for the release, then count down and hand the launcher the wipe.
+        private bool ScanForcedWipes(DateTime now, int start)
+        {
+            foreach (var e in _config.Wipes)
+            {
+                if (!e.Enabled || !e.Forced || WipeBlocker(e) != null) continue;
+                var release = ForcedCycleMoment(now);
+                if (release == null || ForcedCycleDone(e, release.Value)) continue;
+                var r = release.Value;
+                var shortWait = Math.Max(300, _config.Panel.MinimumRestartSeconds);
+                var installed = InstalledBuildId();
+
+                if (!CanHearGate())
+                {
+                    // No release check to wait for: the clock and the launcher's build comparison, as before 1.1.47.
+                    if (now < r && (r - now).TotalSeconds > start) continue;
+                    var at = now < r ? r : now.AddSeconds(shortWait);
+                    Puts("Forced wipe: this server does not hear AFKPanel's release check, so the launcher's build comparison decides.");
+                    ArmWipeFrom(e, at, retry: false, releaseLocal: r);
+                    BeginCountdown(at, true, false, e, e.Key);
+                    return true;
+                }
+
+                if (GateOpenFor(r))
+                {
+                    DateTime target;
+                    if (now < r && !e.WipeEarly)
+                    {
+                        if ((r - now).TotalSeconds > start) { SayGate($"Forced wipe: the update is out (Rust {_gateBuild}, Oxide {_gateOxide}); counting down to the release moment."); continue; }
+                        target = r;
+                    }
+                    else target = now.AddSeconds(shortWait);
+
+                    // The new build already installed (a restart took it first) leaves nothing to compare: the launcher wipes
+                    // on the next start, as for a scheduled wipe.
+                    var already = installed != null && installed == _gateBuild;
+                    Puts(already
+                        ? $"Forced wipe: AFKPanel's release check is open and build {installed} is already installed; wiping on the next start without waiting for a change."
+                        : $"Forced wipe: AFKPanel's release check is open (Rust {_gateBuild}, Oxide {_gateOxide}); installed {installed ?? "unknown"}.");
+                    ArmWipeFrom(e, target, retry: false, releaseLocal: r, forcedOverride: already ? false : (bool?)null);
+                    BeginCountdown(target, true, false, e, e.Key);
+                    return true;
+                }
+
+                if (now < r)
+                {
+                    SayGate(_gateHeardUtc == null
+                        ? "Forced wipe: waiting for the release; nothing heard from AFKPanel's release check yet."
+                        : $"Forced wipe: waiting for the release; AFKPanel last saw Rust {_gateBuild} (public since {_gateBuildAtUtc:yyyy-MM-dd HH:mm} UTC), Oxide {_gateOxide}, {(_gateReady ? "ready" : "not ready")}.");
+                    continue;
+                }
+
+                var waitMinutes = Math.Max(0, _config.General.ForcedWipeGateWaitMinutes);
+                var silent = _gateHeardUtc == null || DateTime.UtcNow - _gateHeardUtc.Value >= TimeSpan.FromMinutes(waitMinutes);
+                if (silent && now >= r.AddMinutes(waitMinutes))
+                {
+                    // AFKPanel has said nothing about the release: go without it, as before 1.1.47.
+                    var at = now.AddSeconds(shortWait);
+                    Puts($"Forced wipe: nothing from AFKPanel's release check for {waitMinutes} minutes; going without it. The launcher's build comparison decides.");
+                    ArmWipeFrom(e, at, retry: false, releaseLocal: r);
+                    BeginCountdown(at, true, false, e, e.Key);
+                    return true;
+                }
+
+                var windowEnd = r.AddHours(Math.Max(0.5, _config.General.ForcedWipeWindowHours));
+                if (now >= windowEnd.AddMinutes(-1))
+                {
+                    if (e.WipeAnyway)
+                    {
+                        var at = now.AddSeconds(shortWait);
+                        Puts("Forced wipe: the release never opened inside the window; wiping anyway, as this entry says.");
+                        ArmWipeFrom(e, at, retry: false, releaseLocal: r, forcedOverride: false);
+                        BeginCountdown(at, true, false, e, e.Key);
+                        return true;
+                    }
+                    PrintWarning($"Forced wipe: the release never opened by {windowEnd:yyyy-MM-dd HH:mm}. Giving up; the map is unchanged.");
+                    _lastWipeResult = new JObject
+                    {
+                        ["result"] = "gave_up",
+                        ["text"] = $"the release never opened by {windowEnd.ToUniversalTime():yyyy-MM-dd HH:mm} UTC",
+                        ["cycle"] = $"forced-{e.Id}-{r:yyyyMM}",
+                        ["at"] = DateTime.UtcNow.ToString("yyyy'-'MM'-'dd'T'HH':'mm':'ss'Z'", CultureInfo.InvariantCulture)
+                    };
+                    _lastFired[e.Key] = now;
+                    try { Interface.Oxide.DataFileSystem.WriteObject(LastFiredFile, _lastFired); } catch { }
+                    _scheduleCheckDue = DateTime.MinValue;
+                    continue;
+                }
+
+                SayGate(_gateHeardUtc == null
+                    ? "Forced wipe: the release moment has passed; waiting for AFKPanel's release check."
+                    : $"Forced wipe: the release moment has passed; waiting for the update (AFKPanel last saw Rust {_gateBuild}, Oxide {_gateOxide}, {(_gateReady ? "ready" : "not ready")}).");
+            }
+            return false;
         }
 
         #endregion
@@ -4901,6 +5126,7 @@ namespace Oxide.Plugins
                 o["backup"] = w.Backup;
                 o["forced"] = w.Forced;
                 o["wipe_anyway"] = w.WipeAnyway;
+                o["wipe_early"] = w.WipeEarly;
                 if (w.Forced) o["clock"] = "Europe/London";
             }
             return o;
@@ -4934,7 +5160,7 @@ namespace Oxide.Plugins
                     if (problemText == null && e.IsWipe) problemText = WipeBlocker((WipeEntry)e);
                     o["problem"] = problemText;
                     DateTime? next = null;
-                    if (e.Enabled && problemText == null) { try { next = NextOccurrence(e, now); } catch { next = null; } }
+                    if (e.Enabled && problemText == null) { try { next = e.IsWipe && ((WipeEntry)e).Forced ? ForcedNextFor((WipeEntry)e, now) : NextOccurrence(e, now); } catch { next = null; } }
                     o["next_at"] = next == null ? null : next.Value.ToUniversalTime().ToString("yyyy'-'MM'-'dd'T'HH':'mm':'ss'Z'", CultureInfo.InvariantCulture);
                     if (e.IsWipe && _wipePending != null && _wipePending.EntryId == e.Id) o["armed"] = WipePendingState();
                     return o;
@@ -4952,7 +5178,9 @@ namespace Oxide.Plugins
                         ["clock"] = "Europe/London",
                         ["time"] = "19:00",
                         ["retry_minutes"] = Math.Max(5, _config.General.ForcedWipeRetryMinutes),
-                        ["window_hours"] = Math.Max(0.5, _config.General.ForcedWipeWindowHours)
+                        ["window_hours"] = Math.Max(0.5, _config.General.ForcedWipeWindowHours),
+                        ["gate_wait_minutes"] = Math.Max(0, _config.General.ForcedWipeGateWaitMinutes),
+                        ["gate"] = GateReport()
                     },
                     ["last_wipe"] = _lastWipeResult,
                     ["countdown"] = new JObject
@@ -5066,7 +5294,7 @@ namespace Oxide.Plugins
                     {
                         var tw = (WipeEntry)target; var dw = (WipeEntry)draft;
                         tw.Seed = dw.Seed; tw.Size = dw.Size; tw.Blueprints = dw.Blueprints; tw.Backup = dw.Backup;
-                        tw.Forced = dw.Forced; tw.WipeAnyway = dw.WipeAnyway;
+                        tw.Forced = dw.Forced; tw.WipeAnyway = dw.WipeAnyway; tw.WipeEarly = dw.WipeEarly;
                         NormalizeWipeEntry(tw);
                     }
                     status = "done"; result = "changed: " + Describe(target, null);
@@ -5122,7 +5350,7 @@ namespace Oxide.Plugins
                 if (isWipe && from is WipeEntry)
                 {
                     var fw = (WipeEntry)from; var dw = (WipeEntry)draft;
-                    dw.Seed = fw.Seed; dw.Size = fw.Size; dw.Blueprints = fw.Blueprints; dw.Backup = fw.Backup; dw.Forced = fw.Forced; dw.WipeAnyway = fw.WipeAnyway;
+                    dw.Seed = fw.Seed; dw.Size = fw.Size; dw.Blueprints = fw.Blueprints; dw.Backup = fw.Backup; dw.Forced = fw.Forced; dw.WipeAnyway = fw.WipeAnyway; dw.WipeEarly = fw.WipeEarly;
                 }
             }
             else
@@ -5191,6 +5419,7 @@ namespace Oxide.Plugins
                 if (fields["backup"] != null) w.Backup = BoolArg(fields, "backup");
                 if (fields["forced"] != null) w.Forced = BoolArg(fields, "forced");
                 if (fields["wipe_anyway"] != null) w.WipeAnyway = BoolArg(fields, "wipe_anyway");
+                if (fields["wipe_early"] != null) w.WipeEarly = BoolArg(fields, "wipe_early");
                 // A wipe always has a next map: an empty seed is drawn here, so the panel can show it.
                 if (string.IsNullOrWhiteSpace(w.Seed)) w.Seed = DrawSeed();
                 NormalizeWipeEntry(w);
@@ -5208,7 +5437,9 @@ namespace Oxide.Plugins
             _commandsDue = DateTime.UtcNow.AddSeconds(CommandInterval());
             PanelRequest("GET", PanelCommandsPath, null, response =>
             {
-                var commands = PanelData(response)["commands"] as JArray;
+                var data = PanelData(response);
+                HearReleaseGate(data["release"] as JObject);
+                var commands = data["commands"] as JArray;
                 _commandsState = $"checked {DateTime.Now:HH:mm:ss}";
                 if (commands == null) return;
                 foreach (var c in commands.OfType<JObject>()) ReceiveCommand(c);

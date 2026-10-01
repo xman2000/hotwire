@@ -25,6 +25,22 @@ sit above a launcher `1.1.7`. Read the label, not the number.
 at the top of the file — it is a comment, not something it echoes, so read it
 rather than watch for it.
 
+## Plugin 1.1.47, setup 0.1.8 (Windows) and 0.2.8 (Linux) — 2026-10-01
+
+**A forced wipe waits for the release itself.**
+
+- A forced wipe now waits for AFKPanel's release check: the new Rust build on Steam and an Oxide release published
+  after it. It never starts before 19:00 London unless the new entry option `Wipe as soon as the update is out
+  (before 19:00 London)` is on, and once 19:00 has passed it counts down 5 minutes. A restart that installed the new
+  build first no longer costs the month's wipe: the plugin sees the build is already installed and wipes without
+  waiting for a change.
+- Without word from AFKPanel for `Forced wipe: go without AFKPanel's release check after this many minutes of
+  silence` (30) after 19:00, or on a server that cannot hear it (not connected, or commands turned off), the forced
+  wipe behaves as in 1.1.46: a restart with an update, and the launcher's build comparison decides.
+- While it waits, the plugin says what AFKPanel last reported, and the schedule report shows the release moment as the
+  entry's next time.
+- Launchers unchanged.
+
 ## Plugin 1.1.46, launchers 1.1.17 (Windows) and 1.1.4-linux, setup 0.1.7 and 0.2.7 — 2026-09-30
 
 **Wipes on the schedule, and the forced wipe that waits for Facepunch.**

@@ -95,25 +95,30 @@ A wipe is a restart that also leaves the launcher `WIPE.flag` with the next map'
 | `Backup first` | Back up the stopped server before the wipe: by the launcher where it can, by Rust's `server.backup` otherwise | `true` |
 | `Forced wipe (tied to the monthly update)` | Follow Facepunch's monthly update instead of `Time` and `Repeat` | `false` |
 | `Wipe anyway when no update arrives` | Forced wipes only: wipe at the end of the window even if no update came | `false` |
+| `Wipe as soon as the update is out (before 19:00 London)` | Forced wipes only: start as soon as AFKPanel's release check opens, even before 19:00 London | `false` |
 
 ```json
 "Wipes": [
   { "Repeat": "MonthlyWeekday", "Ordinal": "First", "Days": [ "Thursday" ],
     "Seed": "1847362", "Size": "4000", "Blueprints": "keep", "Backup first": true,
     "Forced wipe (tied to the monthly update)": true,
-    "Wipe anyway when no update arrives": false, "Enabled": true }
+    "Wipe anyway when no update arrives": false,
+    "Wipe as soon as the update is out (before 19:00 London)": false, "Enabled": true }
 ]
 ```
 
 | Kind | Fires | The launcher |
 | --- | --- | --- |
 | Scheduled (`Forced wipe` false) | On `Time` and `Repeat` | Writes the seed and size into `hotwire.cfg`, deals with the blueprints, records the wipe's cycle id, starts the server |
-| Forced (`Forced wipe` true) | The first Thursday of the month at 19:00 Europe/London, whatever the machine's zone. The plugin restarts with an update. | Applies the wipe only if the update changed the installed build. Otherwise it starts the old map, writes `WIPE.result` `deferred`, and the plugin tries again. |
+| Forced (`Forced wipe` true) | The first Thursday of the month, once AFKPanel's release check is open: the new Rust build is on Steam and an Oxide release was published after it. Never before 19:00 Europe/London, whatever the machine's zone, unless `Wipe as soon as the update is out` is `true`. Once 19:00 has passed, after a 5-minute countdown. The plugin restarts with an update. | Applies the wipe only if the update changed the installed build. Otherwise it starts the old map, writes `WIPE.result` `deferred`, and the plugin tries again. When the new build is already installed, the plugin hands over a plain wipe and the launcher applies it without comparing. |
 
 | Rule | Value |
 | --- | --- |
 | Retry, forced wipe | Every `Forced wipe: try again every this many minutes` (30), each a 5-minute announced restart |
 | Window, forced wipe | `Forced wipe: give up this many hours after the release moment` (6). After it the plugin stops and reports that no update arrived, or wipes once if `Wipe anyway` is `true`. |
+| No word from AFKPanel, forced wipe | `Forced wipe: go without AFKPanel's release check after this many minutes of silence` (30) after 19:00 London. The plugin then restarts with an update and the launcher's build comparison decides. |
+| Release check | Requires Hotwire 1.1.47 or later, connected to AFKPanel, with `Accept commands from the panel` on. A server that cannot hear it restarts at 19:00 London and the launcher's build comparison decides. |
+| `hotwire.update_mode off` | The launcher does not update, so a forced wipe applies only if the new build is already installed; otherwise it gives up at the end of the window |
 | A wipe entry | Always updates too |
 | Same minute as an update | The wipe wins |
 | Rust+ pairings (`player.tokens.db`) | Never touched |
@@ -180,6 +185,7 @@ Off by default. On, the plugin polls the release feed and, when a new Oxide rele
   "Refuse to fire the same entry twice within this many hours": 20.0,
   "Forced wipe: try again every this many minutes": 30,
   "Forced wipe: give up this many hours after the release moment": 6.0,
+  "Forced wipe: go without AFKPanel's release check after this many minutes of silence": 30,
   "Name shown in chat announcements": "Server Manager",
   "Name color (hex)": "#e0995e"
 }
@@ -192,6 +198,7 @@ Off by default. On, the plugin polls the release feed and, when a new Oxide rele
 | `Refuse to fire the same entry twice within this many hours` | The clock-change guard. `0` turns it off. Set it below the gap only if you schedule one entry twice a day. |
 | `Forced wipe: try again every this many minutes` | See Wipes |
 | `Forced wipe: give up this many hours after the release moment` | See Wipes |
+| `Forced wipe: go without AFKPanel's release check after this many minutes of silence` | See Wipes |
 | `Name shown in chat announcements` | The name players see: *Server Manager: Scheduled restart in 4 minutes*. Empty drops the prefix. |
 | `Name color (hex)` | The name's colour. Empty drops the markup. |
 
