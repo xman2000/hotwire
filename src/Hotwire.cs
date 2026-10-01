@@ -17,7 +17,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Hotwire", "xman2000", "1.1.47")]
+    [Info("Hotwire", "xman2000", "1.1.48")]
     [Description("Scheduled restarts and updates. Announces, counts down, writes a flag, quits.")]
     internal class Hotwire : CovalencePlugin
     {
@@ -378,6 +378,17 @@ namespace Oxide.Plugins
             [JsonProperty("Wipe as soon as the update is out (before 19:00 London)")]
             public bool WipeEarly = false;
 
+            // A random world size: Size holds the next map's size, drawn from this range when the entry is saved and
+            // again after each wipe, as the seed is.
+            [JsonProperty("Random size after each wipe")]
+            public bool RandomSize = false;
+
+            [JsonProperty("Random size: smallest")]
+            public int RandomSizeMin = 3500;
+
+            [JsonProperty("Random size: largest")]
+            public int RandomSizeMax = 4500;
+
             [JsonIgnore] public override bool IsUpdate => true;
             [JsonIgnore] public override bool IsWipe => true;
         }
@@ -562,6 +573,11 @@ namespace Oxide.Plugins
             [JsonProperty("Forced wipe: go without AFKPanel's release check after this many minutes of silence")]
             public int ForcedWipeGateWaitMinutes = 30;
 
+            // Set once the plugin has given this server its default forced wipe (off), so one the admin deletes
+            // stays deleted.
+            [JsonProperty("Default forced wipe added")]
+            public bool DefaultForcedWipeAdded = false;
+
             // "Hotwire" means nothing to a player. This is the name they see
             // in chat, and it should be something they can act on. The old
             // "Chat prefix" key is gone rather than renamed, so servers that
@@ -634,6 +650,21 @@ namespace Oxide.Plugins
             if (_config.Updates.RemoveAll(e => e == null) > 0) repaired.Add("an empty entry in Updates");
             if (_config.Wipes.RemoveAll(e => e == null) > 0) repaired.Add("an empty entry in Wipes");
             foreach (var w in _config.Wipes) NormalizeWipeEntry(w);
+
+            // Every server gets a forced wipe to a random seed and size, switched off: most admins want exactly this,
+            // and turning it on is one switch. Added once; deleting it is respected.
+            if (!_config.General.DefaultForcedWipeAdded)
+            {
+                if (!_config.Wipes.Any(w => w.Forced))
+                {
+                    var d = new WipeEntry { Forced = true, Enabled = false, RandomSize = true, Blueprints = "keep", Backup = true, Seed = DrawSeed() };
+                    d.Size = DrawSize(d);
+                    NormalizeWipeEntry(d);
+                    _config.Wipes.Add(d);
+                    Puts("Added the default forced wipe (a random seed and size on the first Thursday), switched off. Turn it on in AFKPanel's Schedule tab or in this config.");
+                }
+                _config.General.DefaultForcedWipeAdded = true;
+            }
 
             foreach (var entry in AllEntries())
                 if (entry.Days == null) entry.Days = new List<string>();
@@ -930,6 +961,8 @@ namespace Oxide.Plugins
                 int sizeN;
                 if (size.Length > 0 && (!int.TryParse(size, out sizeN) || sizeN < 1000 || sizeN > 6000))
                     return new Problem("ErrBadSize", w.Size);
+                if (w.RandomSize && (w.RandomSizeMin < 1000 || w.RandomSizeMax > 6000 || w.RandomSizeMin > w.RandomSizeMax))
+                    return new Problem("ErrBadSizeRange", w.RandomSizeMin, w.RandomSizeMax);
                 var bp = (w.Blueprints ?? "").Trim().ToLowerInvariant();
                 if (bp != "keep" && bp != "rename" && bp != "delete")
                     return new Problem("ErrBadBlueprints", w.Blueprints);
@@ -1524,6 +1557,15 @@ namespace Oxide.Plugins
         private const string WipePendingFile = "Hotwire/wipe_pending";
         private const string WipeResultFile = "WIPE.result";
 
+        private static string DrawSize(WipeEntry w)
+        {
+            var lo = Math.Max(1000, Math.Min(w.RandomSizeMin, w.RandomSizeMax));
+            var hi = Math.Min(6000, Math.Max(w.RandomSizeMin, w.RandomSizeMax));
+            var bytes = new byte[4];
+            using (var rng = RandomNumberGenerator.Create()) rng.GetBytes(bytes);
+            return (lo + (int)(BitConverter.ToUInt32(bytes, 0) % (uint)(hi - lo + 1))).ToString(CultureInfo.InvariantCulture);
+        }
+
         private static string DrawSeed()
         {
             var bytes = new byte[4];
@@ -1763,6 +1805,7 @@ namespace Oxide.Plugins
                     {
                         // The next map is always known: a fresh seed for next time, unless the admin sets one.
                         e.Seed = DrawSeed();
+                        if (e.RandomSize) e.Size = DrawSize(e);
                         SaveConfig();
                     }
                     ClearWipePending(null);
@@ -5127,6 +5170,9 @@ namespace Oxide.Plugins
                 o["forced"] = w.Forced;
                 o["wipe_anyway"] = w.WipeAnyway;
                 o["wipe_early"] = w.WipeEarly;
+                o["random_size"] = w.RandomSize;
+                o["random_size_min"] = w.RandomSizeMin;
+                o["random_size_max"] = w.RandomSizeMax;
                 if (w.Forced) o["clock"] = "Europe/London";
             }
             return o;
@@ -5295,6 +5341,7 @@ namespace Oxide.Plugins
                         var tw = (WipeEntry)target; var dw = (WipeEntry)draft;
                         tw.Seed = dw.Seed; tw.Size = dw.Size; tw.Blueprints = dw.Blueprints; tw.Backup = dw.Backup;
                         tw.Forced = dw.Forced; tw.WipeAnyway = dw.WipeAnyway; tw.WipeEarly = dw.WipeEarly;
+                        tw.RandomSize = dw.RandomSize; tw.RandomSizeMin = dw.RandomSizeMin; tw.RandomSizeMax = dw.RandomSizeMax;
                         NormalizeWipeEntry(tw);
                     }
                     status = "done"; result = "changed: " + Describe(target, null);
@@ -5351,6 +5398,7 @@ namespace Oxide.Plugins
                 {
                     var fw = (WipeEntry)from; var dw = (WipeEntry)draft;
                     dw.Seed = fw.Seed; dw.Size = fw.Size; dw.Blueprints = fw.Blueprints; dw.Backup = fw.Backup; dw.Forced = fw.Forced; dw.WipeAnyway = fw.WipeAnyway; dw.WipeEarly = fw.WipeEarly;
+                    dw.RandomSize = fw.RandomSize; dw.RandomSizeMin = fw.RandomSizeMin; dw.RandomSizeMax = fw.RandomSizeMax;
                 }
             }
             else
@@ -5420,8 +5468,18 @@ namespace Oxide.Plugins
                 if (fields["forced"] != null) w.Forced = BoolArg(fields, "forced");
                 if (fields["wipe_anyway"] != null) w.WipeAnyway = BoolArg(fields, "wipe_anyway");
                 if (fields["wipe_early"] != null) w.WipeEarly = BoolArg(fields, "wipe_early");
-                // A wipe always has a next map: an empty seed is drawn here, so the panel can show it.
+                if (fields["random_size"] != null) w.RandomSize = BoolArg(fields, "random_size");
+                int rangeN;
+                if (fields["random_size_min"] != null && int.TryParse(((string)fields["random_size_min"] ?? "").Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out rangeN)) w.RandomSizeMin = rangeN;
+                if (fields["random_size_max"] != null && int.TryParse(((string)fields["random_size_max"] ?? "").Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out rangeN)) w.RandomSizeMax = rangeN;
+                // A wipe always has a next map: an empty seed is drawn here, and a random size, so the panel can show it.
                 if (string.IsNullOrWhiteSpace(w.Seed)) w.Seed = DrawSeed();
+                // A random size is drawn again only when there is none yet or the range no longer holds it, so editing
+                // another field keeps the next map the panel already shows.
+                int nextSize;
+                if (w.RandomSize && w.RandomSizeMin >= 1000 && w.RandomSizeMax <= 6000 && w.RandomSizeMin <= w.RandomSizeMax
+                    && (!int.TryParse((w.Size ?? "").Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out nextSize)
+                        || nextSize < w.RandomSizeMin || nextSize > w.RandomSizeMax)) w.Size = DrawSize(w);
                 NormalizeWipeEntry(w);
             }
 
@@ -11281,6 +11339,7 @@ namespace Oxide.Plugins
                 ["ErrBadTime"] = "\"{0}\" is not a valid time. Use HH:mm, such as 05:00.",
                 ["ErrBadSeed"] = "\"{0}\" is not a seed. Use a whole number from 1 to 2147483647, or leave it empty for a random one.",
                 ["ErrBadSize"] = "\"{0}\" is not a world size. Use 1000-6000, or leave it empty to keep the current size.",
+                ["ErrBadSizeRange"] = "A random size from {0} to {1} is not a range inside 1000-6000, smallest first.",
                 ["ErrBadBlueprints"] = "\"{0}\" is not a blueprint action. Use keep, rename or delete.",
                 ["ErrNoLondonZone"] = "This machine has no Europe/London time zone, so the forced wipe's release moment cannot be worked out.",
                 ["ErrLauncherCannotWipe"] = "The launcher on this server cannot wipe: it needs the Hotwire launcher, unmodified, with the wipe capability.",

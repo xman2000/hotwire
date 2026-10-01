@@ -25,7 +25,19 @@ sit above a launcher `1.1.7`. Read the label, not the number.
 at the top of the file — it is a comment, not something it echoes, so read it
 rather than watch for it.
 
-## Plugin 1.1.47, setup 0.1.8 (Windows) and 0.2.8 (Linux) — 2026-10-01
+## Plugin 1.1.48, setup 0.1.8 (Windows) and 0.2.8 (Linux) — 2026-10-01
+
+**Every server gets a forced wipe, switched off, and a wipe can pick a random world size.**
+
+- On load, a server with no forced wipe gets one: a random seed and a random size between 3500 and 4500, blueprints kept,
+  backed up first, **switched off**. Turn it on in AFKPanel's Schedule tab or in the config. It is added once; delete it
+  and it stays deleted (`Default forced wipe added`).
+- A wipe entry can draw its world size at random: `Random size after each wipe`, `Random size: smallest`,
+  `Random size: largest`. `Size` holds the next map's size, drawn when the entry is saved and again after each wipe, as
+  the seed is.
+- Launchers unchanged.
+
+## Plugin 1.1.47 — 2026-10-01 (released together with 1.1.48)
 
 **A forced wipe waits for the release itself.**
 

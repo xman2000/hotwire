@@ -85,7 +85,7 @@ An entry added with `hotwire add` is on at once. An entry added from the menu's 
 
 Requires the Hotwire launcher, unmodified: Windows 1.1.17 or later, Linux 1.1.4 or later. On a start script, or a modified or older launcher, a wipe entry is reported with that problem and never fires.
 
-A wipe is a restart that also leaves the launcher `WIPE.flag` with the next map's seed. The entry has the recurrence fields above and these:
+A wipe is a restart that also leaves the launcher `WIPE.flag` with the next map's seed. Every server starts with one forced wipe, switched off, with a random seed and a random size between 3500 and 4500; it is added once, and a deleted one is not added back. The entry has the recurrence fields above and these:
 
 | Field | Meaning | Default |
 | --- | --- | --- |
@@ -96,6 +96,8 @@ A wipe is a restart that also leaves the launcher `WIPE.flag` with the next map'
 | `Forced wipe (tied to the monthly update)` | Follow Facepunch's monthly update instead of `Time` and `Repeat` | `false` |
 | `Wipe anyway when no update arrives` | Forced wipes only: wipe at the end of the window even if no update came | `false` |
 | `Wipe as soon as the update is out (before 19:00 London)` | Forced wipes only: start as soon as AFKPanel's release check opens, even before 19:00 London | `false` |
+| `Random size after each wipe` | Draw `Size` from the range below when the entry is saved and again after each wipe | `false` |
+| `Random size: smallest`, `Random size: largest` | The range, 1000 to 6000, smallest first | 3500, 4500 |
 
 ```json
 "Wipes": [
@@ -186,6 +188,7 @@ Off by default. On, the plugin polls the release feed and, when a new Oxide rele
   "Forced wipe: try again every this many minutes": 30,
   "Forced wipe: give up this many hours after the release moment": 6.0,
   "Forced wipe: go without AFKPanel's release check after this many minutes of silence": 30,
+  "Default forced wipe added": true,
   "Name shown in chat announcements": "Server Manager",
   "Name color (hex)": "#e0995e"
 }
@@ -199,6 +202,7 @@ Off by default. On, the plugin polls the release feed and, when a new Oxide rele
 | `Forced wipe: try again every this many minutes` | See Wipes |
 | `Forced wipe: give up this many hours after the release moment` | See Wipes |
 | `Forced wipe: go without AFKPanel's release check after this many minutes of silence` | See Wipes |
+| `Default forced wipe added` | Set once the plugin has added the default forced wipe. `false` adds it again on the next load if the server has no forced wipe. |
 | `Name shown in chat announcements` | The name players see: *Server Manager: Scheduled restart in 4 minutes*. Empty drops the prefix. |
 | `Name color (hex)` | The name's colour. Empty drops the markup. |
 
