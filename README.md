@@ -28,6 +28,7 @@ Hotwire schedules restarts, updates and wipes for a Rust dedicated server. It an
 | Rust server | Any current build, with Oxide (uMod) |
 | Machine | Windows 10 or later, or Ubuntu 22.04 or later |
 | Updates and wipes | The Hotwire launcher. The plugin alone restarts only. |
+| Restarts that install updates | A restart installs a new Rust build or Oxide release when AFKPanel says one is out, and is a plain restart otherwise. Without AFKPanel it installs whatever the launcher finds. |
 
 ## Install the plugin
 

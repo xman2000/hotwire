@@ -17,7 +17,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Hotwire", "xman2000", "1.1.48")]
+    [Info("Hotwire", "xman2000", "1.1.49")]
     [Description("Scheduled restarts and updates. Announces, counts down, writes a flag, quits.")]
     internal class Hotwire : CovalencePlugin
     {
@@ -328,6 +328,13 @@ namespace Oxide.Plugins
             [JsonIgnore] public virtual bool IsValidate => false;
             [JsonIgnore] public virtual bool IsWipe => false;
 
+            // A restart installs a new Rust build or Oxide release when AFKPanel says one is out, and also when AFKPanel
+            // cannot say: doubt costs one update, never a server left on an old build. Saved for restart entries only.
+            [JsonProperty("Install updates if available")]
+            public bool InstallUpdates = true;
+
+            public bool ShouldSerializeInstallUpdates() => !IsUpdate && !IsWipe;
+
             // Stable across reordering, so the fired-recently guard survives
             // someone rearranging the config. It deliberately includes the
             // recurrence: editing an entry's schedule should clear its history
@@ -578,6 +585,10 @@ namespace Oxide.Plugins
             [JsonProperty("Default forced wipe added")]
             public bool DefaultForcedWipeAdded = false;
 
+            // Set once the update entries have become restarts that install updates (1.1.49), so it happens once.
+            [JsonProperty("Update entries merged into restarts")]
+            public bool UpdatesMergedIntoRestarts = false;
+
             // "Hotwire" means nothing to a player. This is the name they see
             // in chat, and it should be something they can act on. The old
             // "Chat prefix" key is gone rather than renamed, so servers that
@@ -650,6 +661,26 @@ namespace Oxide.Plugins
             if (_config.Updates.RemoveAll(e => e == null) > 0) repaired.Add("an empty entry in Updates");
             if (_config.Wipes.RemoveAll(e => e == null) > 0) repaired.Add("an empty entry in Wipes");
             foreach (var w in _config.Wipes) NormalizeWipeEntry(w);
+
+            // Update entries become restarts that install updates if available: one list, and an update only when there
+            // is something to install. A validating entry stays an update entry, which still works.
+            if (!_config.General.UpdatesMergedIntoRestarts)
+            {
+                var moved = 0;
+                foreach (var u in _config.Updates.Where(u => !u.Validate).ToList())
+                {
+                    _config.Restarts.Add(new ScheduleEntry
+                    {
+                        Id = u.Id, Time = u.Time, Repeat = u.Repeat, Days = u.Days == null ? new List<string>() : new List<string>(u.Days),
+                        Ordinal = u.Ordinal, DayOfMonth = u.DayOfMonth, IntervalDays = u.IntervalDays, AnchorDate = u.AnchorDate,
+                        Date = u.Date, Enabled = u.Enabled, InstallUpdates = true
+                    });
+                    _config.Updates.Remove(u);
+                    moved++;
+                }
+                if (moved > 0) Puts($"Moved {moved} update entr{(moved == 1 ? "y" : "ies")} into the restarts, set to install updates if available.");
+                _config.General.UpdatesMergedIntoRestarts = true;
+            }
 
             // Every server gets a forced wipe to a random seed and size, switched off: most admins want exactly this,
             // and turning it on is one switch. Added once; deleting it is respected.
@@ -747,7 +778,12 @@ namespace Oxide.Plugins
         private string _gateOxide;
         private bool _gateReady;
         private DateTime? _gateHeardUtc;
-        private string _gateSaid = "";   // the last waiting line logged, so a wait is said once, not every scan
+        private string _gateSaid = "";
+
+        // AFKPanel's answer for this server: is a newer Rust build (on its own branch) or Oxide release out? Null until heard.
+        private bool _updRust;
+        private bool _updOxide;
+        private DateTime? _updHeardUtc;   // the last waiting line logged, so a wait is said once, not every scan
         private DateTime? _wipeRetryAt;
         private JObject _lastWipeResult;
         private string _countdownKey = "";
@@ -1097,7 +1133,14 @@ namespace Oxide.Plugins
             if (best != null)
             {
                 if (best.IsWipe) ArmWipeFrom((WipeEntry)best, bestTarget, retry: false);
-                BeginCountdown(bestTarget, best.IsUpdate, best.IsValidate, best, best.Key);
+                var isUpdate = best.IsUpdate;
+                if (!best.IsUpdate && !best.IsWipe)
+                {
+                    string why;
+                    isUpdate = RestartInstallsUpdates(best, out why);
+                    if (best.InstallUpdates) Puts($"Restart {(isUpdate ? "with an update" : "only")}: {why}.");
+                }
+                BeginCountdown(bestTarget, isUpdate, best.IsValidate, best, best.Key);
             }
         }
 
@@ -1878,6 +1921,32 @@ namespace Oxide.Plugins
             };
         }
 
+        private void HearServerUpdates(JObject updates)
+        {
+            if (updates == null) return;
+            var rust = updates["rust"]; var oxide = updates["oxide"];
+            if (rust == null || oxide == null || rust.Type != JTokenType.Boolean || oxide.Type != JTokenType.Boolean) return;
+            _updRust = (bool)rust;
+            _updOxide = (bool)oxide;
+            _updHeardUtc = DateTime.UtcNow;
+        }
+
+        // Whether a restart entry's countdown is an update: only when it installs updates, and then unless AFKPanel said in
+        // the last ten minutes that nothing is new. No answer, or an old one, means update.
+        private bool RestartInstallsUpdates(ScheduleEntry e, out string why)
+        {
+            if (!e.InstallUpdates) { why = "this restart does not install updates"; return false; }
+            var fresh = _updHeardUtc != null && DateTime.UtcNow - _updHeardUtc.Value <= TimeSpan.FromMinutes(10);
+            if (!fresh) { why = "AFKPanel has not said whether anything is new, so it updates"; return true; }
+            if (_updRust || _updOxide)
+            {
+                why = "AFKPanel says " + (_updRust && _updOxide ? "a Rust build and an Oxide release are" : _updRust ? "a Rust build is" : "an Oxide release is") + " out";
+                return true;
+            }
+            why = "AFKPanel says nothing new is out";
+            return false;
+        }
+
         // Whether this plugin can hear the panel's release check at all: it polls commands only when connected, when
         // the config accepts commands and when the account's plan includes them. One that cannot hear never waits for it.
         private bool CanHearGate() => _panel != null && _config.Panel.AcceptCommands && PolicyAllowsCommands();
@@ -2362,6 +2431,8 @@ namespace Oxide.Plugins
 
                 var now = DateTime.Now;
                 var active = _config.Framework != null && _config.Framework.Enabled;
+                if (!active && _config.Restarts != null)
+                    active = _config.Restarts.Any(e => e != null && e.Enabled && e.InstallUpdates && ValidationError(e) == null);
                 if (!active && _config.Updates != null)
                 {
                     foreach (var e in _config.Updates)
@@ -5157,6 +5228,7 @@ namespace Oxide.Plugins
                 ["enabled"] = e.Enabled
             };
             if (e is UpdateEntry) o["validate"] = ((UpdateEntry)e).Validate;
+            if (!e.IsUpdate && !e.IsWipe) o["install_updates"] = e.InstallUpdates;
             if (e is WipeEntry)
             {
                 var w = (WipeEntry)e;
@@ -5336,6 +5408,7 @@ namespace Oxide.Plugins
                     target.Date = draft.Date;
                     target.Enabled = draft.Enabled;
                     if (target is UpdateEntry && draft is UpdateEntry) ((UpdateEntry)target).Validate = ((UpdateEntry)draft).Validate;
+                    if (!target.IsUpdate && !target.IsWipe) target.InstallUpdates = draft.InstallUpdates;
                     if (target is WipeEntry && draft is WipeEntry)
                     {
                         var tw = (WipeEntry)target; var dw = (WipeEntry)draft;
@@ -5394,6 +5467,7 @@ namespace Oxide.Plugins
                 draft.Ordinal = from.Ordinal; draft.DayOfMonth = from.DayOfMonth; draft.IntervalDays = from.IntervalDays;
                 draft.AnchorDate = from.AnchorDate; draft.Date = from.Date; draft.Enabled = from.Enabled;
                 if (isUpdate && from is UpdateEntry) ((UpdateEntry)draft).Validate = ((UpdateEntry)from).Validate;
+                draft.InstallUpdates = from.InstallUpdates;
                 if (isWipe && from is WipeEntry)
                 {
                     var fw = (WipeEntry)from; var dw = (WipeEntry)draft;
@@ -5458,6 +5532,7 @@ namespace Oxide.Plugins
             }
             if (fields["enabled"] != null) draft.Enabled = BoolArg(fields, "enabled");
             if (isUpdate && fields["validate"] != null) ((UpdateEntry)draft).Validate = BoolArg(fields, "validate");
+            if (!isUpdate && !isWipe && fields["install_updates"] != null) draft.InstallUpdates = BoolArg(fields, "install_updates");
             if (isWipe)
             {
                 var w = (WipeEntry)draft;
@@ -5497,6 +5572,7 @@ namespace Oxide.Plugins
             {
                 var data = PanelData(response);
                 HearReleaseGate(data["release"] as JObject);
+                HearServerUpdates(data["updates"] as JObject);
                 var commands = data["commands"] as JArray;
                 _commandsState = $"checked {DateTime.Now:HH:mm:ss}";
                 if (commands == null) return;

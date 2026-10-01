@@ -25,6 +25,18 @@ sit above a launcher `1.1.7`. Read the label, not the number.
 at the top of the file — it is a comment, not something it echoes, so read it
 rather than watch for it.
 
+## Plugin 1.1.49, setup 0.1.9 (Windows) and 0.2.9 (Linux) — 2026-10-01
+
+**A restart installs updates only when there is something to install.**
+
+- Restart entries gain `Install updates if available`, on by default. The plugin asks AFKPanel (on the poll it already
+  makes) whether a newer Rust build for the server's branch or a newer Oxide is out. Something new, or no answer: the
+  restart updates. Nothing new: a plain restart. The countdown says which.
+- Update entries move into the restarts once, set to install updates; a validating update entry stays an update entry.
+- `UPDATE.schedule` follows restarts that install updates, so a launcher on `update_mode auto` keeps following the
+  plugin.
+- Launchers unchanged.
+
 ## Plugin 1.1.48, setup 0.1.8 (Windows) and 0.2.8 (Linux) — 2026-10-01
 
 **Every server gets a forced wipe, switched off, and a wipe can pick a random world size.**

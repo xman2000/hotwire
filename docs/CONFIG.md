@@ -11,11 +11,13 @@ The plugin's settings are in `oxide/config/Hotwire.json`, in the server folder. 
 
 ## Restarts and updates
 
-Two of the three lists. A restart relaunches the server. An update also leaves the launcher `UPDATE.flag`, so the next start installs the current Rust build and the Oxide that matches it. The third list, wipes, is below.
+Two of the three lists. A restart relaunches the server, and with `Install updates if available` (on by default) it also installs a new Rust build or Oxide release when AFKPanel says one is out, or when AFKPanel cannot say. An update entry always leaves the launcher `UPDATE.flag`, so the next start installs the current Rust build and the Oxide that matches it. The third list, wipes, is below.
+
+From 1.1.49 the plugin moves its update entries into the restarts once, set to install updates if available; a validating update entry stays where it is. `hotwire add update` still adds an update entry.
 
 ```json
 "Restarts": [
-  { "Time": "05:00", "Repeat": "Daily", "Enabled": true }
+  { "Time": "05:00", "Repeat": "Daily", "Enabled": true, "Install updates if available": true }
 ],
 "Updates": [
   { "Time": "20:00", "Repeat": "MonthlyWeekday", "Ordinal": "First",
@@ -59,7 +61,8 @@ Only the fields the chosen `Repeat` reads are used; the others keep their values
 | `Fifth` | Not offered. `Last` covers it in every month. |
 | A `DayOfMonth` the month lacks | Skipped that month, not moved. The plugin warns at load. |
 | Two entries on the same minute | A wipe wins over an update; an update wins over a restart |
-| `UPDATE.schedule` | While an update entry or the framework check is on, the plugin keeps this file in the server folder and rewrites it every 15 minutes. A launcher on `hotwire.update_mode auto` follows the schedule while the file is under 2 hours old, and updates on every start otherwise. |
+| `Install updates if available` | Restart entries only. On: the restart installs updates when AFKPanel said in the last ten minutes that a newer Rust build (on the server's own branch) or Oxide is out, or when AFKPanel has said nothing; off, or nothing new: a plain restart. Decided when the countdown starts. |
+| `UPDATE.schedule` | While a restart that installs updates, an update entry or the framework check is on, the plugin keeps this file in the server folder and rewrites it every 15 minutes. A launcher on `hotwire.update_mode auto` follows the schedule while the file is under 2 hours old, and updates on every start otherwise. |
 
 ### From chat
 
