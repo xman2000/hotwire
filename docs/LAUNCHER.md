@@ -29,6 +29,7 @@ The launcher's settings, and the default when `hotwire.cfg` leaves one out:
 | `hotwire.update_mode` | `auto` | See Update modes |
 | `hotwire.steamcmd` | Windows `C:\steamcmd\steamcmd.exe`; Linux `/usr/games/steamcmd` | SteamCMD. Several servers may share one. |
 | `hotwire.steamcmd_wait_minutes` | `60` | How long to wait for another server's SteamCMD run before starting as is |
+| `hotwire.forced_wipe_steam_minutes` | `15` | Linux 1.1.6 and later: when a forced wipe waits on the update, keep trying SteamCMD this long before starting what is on disk. `0` = only `hotwire.steam_tries` |
 | `hotwire.steam_branch` | `public` | The Steam branch. Empty lets Steam keep the install on its current branch. |
 | `hotwire.max_days_without_update` | `14` | `hotwire` mode's backstop. `0` turns it off. |
 | `hotwire.update_on_new_build` | `1` | `hotwire` mode updates when Steam's build is ahead |
@@ -93,6 +94,7 @@ A wipe comes from the plugin as `WIPE.flag`, one `key value` per line: the new s
 | The seed cannot be written | The wipe is cancelled and the server starts unchanged |
 | An expired flag, or a cycle already recorded | Ignored |
 | The outcome | Written to `WIPE.result` for the plugin to read |
+| A forced wipe waiting on the update (Linux 1.1.6) | SteamCMD is tried for up to `hotwire.forced_wipe_steam_minutes` (15) before the server starts on what is on disk |
 | A forced wipe (`forced 1` and the build the plugin armed on) | Applied only if the update changed the installed build. Otherwise the flag stays, the old map starts, and `WIPE.result` says `deferred`, so the plugin tries again. |
 | The before-wipe backup (Linux) | Taken only once the build is known to have changed, not on every try |
 | A modified launcher | The plugin checks the launcher's code hash before it writes a flag, and offers no wipe for a modified one |

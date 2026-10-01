@@ -17,7 +17,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Hotwire", "xman2000", "1.1.49")]
+    [Info("Hotwire", "xman2000", "1.1.50")]
     [Description("Scheduled restarts and updates. Announces, counts down, writes a flag, quits.")]
     internal class Hotwire : CovalencePlugin
     {
@@ -569,6 +569,12 @@ namespace Oxide.Plugins
             [JsonProperty("Forced wipe: try again every this many minutes")]
             public int ForcedWipeRetryMinutes = 30;
 
+            // With AFKPanel's release check open, a deferral means the update did not install the new build: retry after
+            // these many minutes from the boot that found it, the last one repeating. The server cannot take players on
+            // the old build anyway, so the first tries come quickly. "try again every" above is the pace without AFKPanel.
+            [JsonProperty("Forced wipe: after a failed update, retry after these many minutes", ObjectCreationHandling = ObjectCreationHandling.Replace)]
+            public List<int> ForcedWipeRetryDelays = new List<int> { 5, 10, 20, 30 };
+
             // Measured from the release moment (19:00 Europe/London). After it the
             // plugin stops trying and reports that no update arrived.
             [JsonProperty("Forced wipe: give up this many hours after the release moment")]
@@ -779,6 +785,7 @@ namespace Oxide.Plugins
         private bool _gateReady;
         private DateTime? _gateHeardUtc;
         private string _gateSaid = "";
+        private DateTime? _gateOpenedUtc;   // the first scan this cycle that found the release check open
 
         // AFKPanel's answer for this server: is a newer Rust build (on its own branch) or Oxide release out? Null until heard.
         private bool _updRust;
@@ -1595,6 +1602,9 @@ namespace Oxide.Plugins
             public DateTime LastAttemptUtc;
             public string Seed = "";
             public string Size = "";
+            // Armed through AFKPanel's release check: the build it named, so a retry knows whether the update landed.
+            public bool Gated;
+            public string GateBuild = "";
         }
 
         private const string WipePendingFile = "Hotwire/wipe_pending";
@@ -1671,7 +1681,7 @@ namespace Oxide.Plugins
         // The countdown for a wipe entry has begun: hand the launcher this entry's
         // values when it ends. A retry keeps the cycle and the armed build of the
         // first attempt, so the launcher's guard and its comparison hold across it.
-        private void ArmWipeFrom(WipeEntry e, DateTime target, bool retry, DateTime? releaseLocal = null, bool? forcedOverride = null)
+        private void ArmWipeFrom(WipeEntry e, DateTime target, bool retry, DateTime? releaseLocal = null, bool? forcedOverride = null, DateTime? windowStartUtc = null, string gateBuild = null)
         {
             // A forced entry handed over as a plain wipe (its build is already installed, or wipe anyway) is not compared.
             var forced = forcedOverride ?? e.Forced;
@@ -1685,7 +1695,7 @@ namespace Oxide.Plugins
             _wipeBackup = e.Backup;
             _wipeForced = forced;
             _wipeArmedBuild = pending != null ? pending.ArmedBuild : (forced ? (InstalledBuildId() ?? "") : null);
-            var armedAt = pending != null ? pending.ArmedAtUtc : (releaseLocal ?? target).ToUniversalTime();
+            var armedAt = pending != null ? pending.ArmedAtUtc : (windowStartUtc ?? (releaseLocal ?? target).ToUniversalTime());
             _wipeWindowEndUtc = forced ? (DateTime?)armedAt.AddHours(Math.Max(0.5, _config.General.ForcedWipeWindowHours)) : null;
             _wipeCycle = pending != null ? pending.Cycle
                 : e.Forced ? $"forced-{e.Id}-{(releaseLocal ?? target):yyyyMM}" : $"wipe-{e.Id}-{target:yyyyMMdd}";
@@ -1694,8 +1704,11 @@ namespace Oxide.Plugins
             {
                 EntryId = e.Id, Cycle = _wipeCycle, Forced = forced, ArmedBuild = _wipeArmedBuild ?? "",
                 ArmedAtUtc = armedAt, WindowEndUtc = _wipeWindowEndUtc ?? nowUtc.AddHours(2),
-                Attempts = (pending != null ? pending.Attempts : 0) + 1, LastAttemptUtc = nowUtc,
-                Seed = _wipeSeed, Size = _wipeSize
+                // The attempt is the restart, not the countdown before it: the next try is measured from there.
+                Attempts = (pending != null ? pending.Attempts : 0) + 1, LastAttemptUtc = target.ToUniversalTime(),
+                Seed = _wipeSeed, Size = _wipeSize,
+                Gated = pending != null ? pending.Gated : gateBuild != null,
+                GateBuild = pending != null ? pending.GateBuild : (gateBuild ?? "")
             };
             Puts(forced
                 ? $"Forced wipe armed (attempt {_wipePendingDraft.Attempts}): seed {_wipeSeed}{(_wipeSize.Length > 0 ? ", size " + _wipeSize : "")}, applied only if the update changes the build (installed {_wipeArmedBuild}); window closes {_wipeWindowEndUtc:yyyy-MM-dd HH:mm} UTC."
@@ -1712,6 +1725,19 @@ namespace Oxide.Plugins
             if (e == null || !e.Enabled) { ClearWipePending("its entry is gone or disabled"); return false; }
             if (DateTime.UtcNow >= _wipePending.WindowEndUtc) { GiveUpWipe(e); return _countdownActive; }
             var target = now.AddSeconds(Math.Max(300, _config.Panel.MinimumRestartSeconds));
+            if (_wipePending.Gated && !string.IsNullOrEmpty(_wipePending.GateBuild))
+            {
+                var installed = InstalledBuildId();
+                if (installed != null && installed == _wipePending.GateBuild)
+                {
+                    // The build is in now (a restart took it): nothing left to compare, a plain wipe.
+                    Puts($"Forced wipe {_wipePending.Cycle}: build {installed} is installed now; wiping on the next start without waiting for a change.");
+                    ArmWipeFrom(e, target, retry: true, forcedOverride: false);
+                    BeginCountdown(target, true, false, e, "wiperetry:" + e.Id);
+                    return true;
+                }
+                Puts($"Forced wipe {_wipePending.Cycle}: the update has not installed Rust {_wipePending.GateBuild} yet (installed {installed ?? "unknown"}); trying again (attempt {_wipePending.Attempts + 1}).");
+            }
             ArmWipeFrom(e, target, retry: true);
             BeginCountdown(target, true, false, e, "wiperetry:" + e.Id);
             return true;
@@ -1788,6 +1814,7 @@ namespace Oxide.Plugins
                 ["armed_at"] = p.ArmedAtUtc.ToString("yyyy'-'MM'-'dd'T'HH':'mm':'ss'Z'", CultureInfo.InvariantCulture),
                 ["window_ends_at"] = p.WindowEndUtc.ToString("yyyy'-'MM'-'dd'T'HH':'mm':'ss'Z'", CultureInfo.InvariantCulture),
                 ["attempts"] = p.Attempts,
+                ["gate_build"] = string.IsNullOrEmpty(p.GateBuild) ? null : p.GateBuild,
                 ["next_try_at"] = _wipeRetryAt == null ? null : _wipeRetryAt.Value.ToUniversalTime().ToString("yyyy'-'MM'-'dd'T'HH':'mm':'ss'Z'", CultureInfo.InvariantCulture),
                 ["seed"] = long.TryParse(p.Seed ?? "", NumberStyles.Integer, CultureInfo.InvariantCulture, out pSeed) ? (JToken)pSeed : null,
                 ["size"] = int.TryParse(p.Size ?? "", NumberStyles.Integer, CultureInfo.InvariantCulture, out pSize) ? (JToken)pSize : null
@@ -1866,14 +1893,25 @@ namespace Oxide.Plugins
                     ClearWipePending(null);
                     return;
                 }
-                // Forced and deferred (or no word from the launcher): try again inside the window.
-                var retryMinutes = Math.Max(5, _config.General.ForcedWipeRetryMinutes);
-                var dueUtc = _wipePending.LastAttemptUtc.AddMinutes(retryMinutes);
+                // Forced and deferred (or no word from the launcher): try again inside the window. Armed through AFKPanel's
+                // release check, the new build was out and the update did not install it: back off from this boot, quickly
+                // at first. Without it, the old pace from the last restart.
                 var earliest = DateTime.UtcNow.AddSeconds(90);
+                DateTime dueUtc;
+                if (_wipePending.Gated)
+                {
+                    var delays = _config.General.ForcedWipeRetryDelays != null && _config.General.ForcedWipeRetryDelays.Count > 0
+                        ? _config.General.ForcedWipeRetryDelays : new List<int> { 30 };
+                    var delay = delays[Math.Min(Math.Max(0, _wipePending.Attempts - 1), delays.Count - 1)];
+                    dueUtc = DateTime.UtcNow.AddMinutes(Math.Max(1, delay));
+                }
+                else dueUtc = _wipePending.LastAttemptUtc.AddMinutes(Math.Max(5, _config.General.ForcedWipeRetryMinutes));
                 _wipeRetryAt = (dueUtc > earliest ? dueUtc : earliest).ToLocalTime();
                 Puts(DateTime.UtcNow >= _wipePending.WindowEndUtc
                     ? $"Forced wipe {_wipePending.Cycle}: the window has closed; deciding at the next scan."
-                    : $"Forced wipe {_wipePending.Cycle}: no new build yet ({word2 ?? "no result"}); next try at {_wipeRetryAt:HH:mm} (attempt {_wipePending.Attempts + 1}).");
+                    : _wipePending.Gated
+                        ? $"Forced wipe {_wipePending.Cycle}: the update did not install Rust {_wipePending.GateBuild} ({word2 ?? "no result"}); next try at {_wipeRetryAt:HH:mm} (attempt {_wipePending.Attempts + 1})."
+                        : $"Forced wipe {_wipePending.Cycle}: no new build yet ({word2 ?? "no result"}); next try at {_wipeRetryAt:HH:mm} (attempt {_wipePending.Attempts + 1}).");
             }
             catch (Exception ex)
             {
@@ -2035,6 +2073,7 @@ namespace Oxide.Plugins
 
                 if (GateOpenFor(r))
                 {
+                    if (_gateOpenedUtc == null || _gateOpenedUtc.Value < r.ToUniversalTime().AddHours(-12)) _gateOpenedUtc = DateTime.UtcNow;
                     DateTime target;
                     if (now < r && !e.WipeEarly)
                     {
@@ -2049,7 +2088,8 @@ namespace Oxide.Plugins
                     Puts(already
                         ? $"Forced wipe: AFKPanel's release check is open and build {installed} is already installed; wiping on the next start without waiting for a change."
                         : $"Forced wipe: AFKPanel's release check is open (Rust {_gateBuild}, Oxide {_gateOxide}); installed {installed ?? "unknown"}.");
-                    ArmWipeFrom(e, target, retry: false, releaseLocal: r, forcedOverride: already ? false : (bool?)null);
+                    ArmWipeFrom(e, target, retry: false, releaseLocal: r, forcedOverride: already ? false : (bool?)null,
+                        windowStartUtc: _gateOpenedUtc, gateBuild: _gateBuild);
                     BeginCountdown(target, true, false, e, e.Key);
                     return true;
                 }

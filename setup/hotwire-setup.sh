@@ -28,7 +28,7 @@
 #
 set -uo pipefail
 
-VERSION="0.2.10"
+VERSION="0.2.11"
 DEFAULT_PANEL="https://afkpanel.com"
 
 # ---------------------------------------------------------------- output ----
@@ -673,9 +673,9 @@ RUST_APPID="258550"
 # branch, these change in the same commit (and so does $PinnedHashes in hotwire-setup.ps1 for Hotwire.cs),
 # or every install stops at a hash mismatch. Third-party downloads (SteamCMD from Ubuntu's archive, Oxide
 # from GitHub) are not pinned: Oxide is checked against the SHA-256 GitHub publishes for it instead.
-PIN_LAUNCHER="f21c0961ce351cb09a06069c8079a0dd337db2ccc2a284ef05273100d01d2132"
-PIN_PLUGIN="453ccff15715de9eb155ffbb7dcf8eac64120c14f3e94e4910a93e4e5a5eac15"
-PIN_CFG="322b099f00965a581ec8c8a1ece4d6205e1e6b78fd1a53fe14e7adeb96ebbecb"
+PIN_LAUNCHER="d3998bc83aae69940d779e69d69158134e80103e315a728ad01f0d72228e5cb5"
+PIN_PLUGIN="028ebcd420b1e9c7e384eea8d91183132583126ad02a59356331a6229b1c82c6"
+PIN_CFG="2f2f5bc59773e1b210d013e83de923b7d364908f7e79c6cfa61067006e8945a0"
 
 # Rust's own floor (wiki.facepunch.com/rust/Creating-a-server), warned about and never enforced. A small
 # test server runs on less, and refusing would be guessing at what the reader wants.

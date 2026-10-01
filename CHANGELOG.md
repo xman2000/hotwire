@@ -25,6 +25,20 @@ sit above a launcher `1.1.7`. Read the label, not the number.
 at the top of the file — it is a comment, not something it echoes, so read it
 rather than watch for it.
 
+## Plugin 1.1.50, launcher 1.1.6-linux, setup 0.1.10 (Windows) and 0.2.11 (Linux) — 2026-10-01
+
+**A forced wipe whose update failed tries again as soon as it makes sense, not on a timer.**
+
+- With AFKPanel's release check open, a deferred forced wipe means the new build was out and the update did not install
+  it. The plugin tries again 5, 10 and 20 minutes after the boot that found it, then every 30 (`Forced wipe: after a
+  failed update, retry after these many minutes`), and wipes without comparing as soon as the new build is installed.
+  The old build cannot take players once their game has updated, so the first tries come quickly.
+- The six-hour window counts from when AFKPanel's release check opened, so a late release keeps all six hours.
+- Without AFKPanel the old pace stays (`Forced wipe: try again every this many minutes`), now counted from the restart
+  rather than from the start of its countdown, so the first retry no longer comes minutes after the first restart.
+- Linux launcher 1.1.6: when a forced wipe waits on the update, SteamCMD is tried for up to
+  `hotwire.forced_wipe_steam_minutes` (15) before the server starts on what it has. Windows launcher unchanged.
+
 ## Launcher 1.1.5-linux, setup 0.2.10 (Linux) — 2026-10-01
 
 **Oxide goes back on after every update that rewrote the game.**

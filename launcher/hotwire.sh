@@ -21,9 +21,9 @@
 #     offers a launcher-editing feature. Capabilities, not the version number,
 #     are what a feature is gated on; settings_file says the settings are read
 #     from hotwire.cfg.
-HOTWIRE_LAUNCHER_VERSION="1.1.5-linux"
+HOTWIRE_LAUNCHER_VERSION="1.1.6-linux"
 HOTWIRE_LAUNCHER_CAPABILITIES="supervise,update,framework_verify,crash_backstop,log_rotate,convar_persist,wipe,backup,settings_file"
-HOTWIRE_LAUNCHER_HASH="0dc6ab7afadcc6757d90b7218dc961502b9c0bca80403fa13e6a574892e99b95"
+HOTWIRE_LAUNCHER_HASH="cce0247d95492c465cefcda0b017a94f793cccc3e2b04619c5645eded4ed9a14"
 
 # ======================================================================
 #  HOW THIS LAUNCHER WORKS
@@ -96,7 +96,7 @@ set_defaults() {
     SERVER_LEVEL="Procedural Map"; SERVER_LEVELURL=""; RCON_WEB="1"
     UPDATE_MODE="auto"
     STEAMCMD="/usr/games/steamcmd"; STEAM_BRANCH="public"
-    MAX_DAYS_WITHOUT_UPDATE="14"; MAX_STEAM_TRIES="5"; STEAM_RETRY_SECONDS="60"; STEAMCMD_WAIT_MINUTES="60"
+    MAX_DAYS_WITHOUT_UPDATE="14"; MAX_STEAM_TRIES="5"; STEAM_RETRY_SECONDS="60"; STEAMCMD_WAIT_MINUTES="60"; FORCED_WIPE_STEAM_MINUTES="15"
     BUILD_CHECK_HOURS="6"; UPDATE_ON_NEW_BUILD="1"
     INSTALL_FRAMEWORK="1"; SKIP_UNCHANGED_FRAMEWORK="1"; VERIFY_FRAMEWORK="1"
     RESTART_ON_EXIT="1"; RESTART_DELAY="15"; CRASH_SECONDS="60"; MAX_CRASH_STREAK="10"; CRASH_BACKOFF="1"
@@ -196,6 +196,7 @@ declare -A HW_SETTINGS=(
     [hotwire.steam_tries]="MAX_STEAM_TRIES int1"
     [hotwire.steam_retry_seconds]="STEAM_RETRY_SECONDS int"
     [hotwire.steamcmd_wait_minutes]="STEAMCMD_WAIT_MINUTES int"
+    [hotwire.forced_wipe_steam_minutes]="FORCED_WIPE_STEAM_MINUTES int"
     [hotwire.install_framework]="INSTALL_FRAMEWORK bool"
     [hotwire.skip_unchanged_framework]="SKIP_UNCHANGED_FRAMEWORK bool"
     [hotwire.verify_framework]="VERIFY_FRAMEWORK bool"
@@ -575,8 +576,24 @@ update_decision() {
 # Section 6-steam -- run steamcmd under a blocking lock with a deadline.
 # ======================================================================
 STEAM_OK=0
+# A forced wipe waits on this update: WIPE.flag says forced, its cycle is not done and it has not expired.
+forced_wipe_waiting() {
+    local flag="$ROOT/$WIPE_FLAG" cycle expires
+    [ -f "$flag" ] && grep -q '^forced 1' "$flag" 2>/dev/null || return 1
+    cycle="$(grep -m1 '^cycle ' "$flag" | awk '{print $2}')"; expires="$(grep -m1 '^expires ' "$flag" | awk '{print $2}')"
+    [ -n "$cycle" ] && [ "$(cat "$WIPE_STATE" 2>/dev/null)" = "$cycle" ] && return 1
+    [ -n "$expires" ] && [ "$expires" -lt "$(date +%s)" ] 2>/dev/null && return 1
+    return 0
+}
 steam_update() {
     STEAM_OK=0
+    # A forced wipe rides this update, and the old build cannot take players once their game has updated: keep trying
+    # for hotwire.forced_wipe_steam_minutes before starting what is on disk (the server always starts in the end).
+    local deadline=0
+    if [ "${FORCED_WIPE_STEAM_MINUTES:-0}" -gt 0 ] 2>/dev/null && forced_wipe_waiting; then
+        deadline=$(( $(date +%s) + FORCED_WIPE_STEAM_MINUTES * 60 ))
+        log "A forced wipe waits on this update: trying SteamCMD for up to $FORCED_WIPE_STEAM_MINUTES min if it fails."
+    fi
     local args=( +force_install_dir "$ROOT" +login anonymous +app_update "$APPID" )
     [ -n "$STEAM_BRANCH" ] && args+=( -beta "$STEAM_BRANCH" )
     [ "$DO_VALIDATE" = "1" ] && args+=( validate )
@@ -585,7 +602,11 @@ steam_update() {
     local tries=0
     while :; do
         tries=$((tries+1))
-        log "steamcmd update, attempt $tries of $MAX_STEAM_TRIES..."
+        if [ "$deadline" -gt 0 ] && [ "$tries" -gt "$MAX_STEAM_TRIES" ]; then
+            log "steamcmd update, attempt $tries (a forced wipe waits: trying until $(date -d "@$deadline" +%H:%M))..."
+        else
+            log "steamcmd update, attempt $tries of $MAX_STEAM_TRIES..."
+        fi
         # Blocking lock, but bounded by STEAMCMD_WAIT_MINUTES so a stuck sibling
         # never holds this server down: past the deadline we start what we have.
         exec 8>"$STEAM_LOCK" || { warn "Could not open the steamcmd lock."; return 0; }
@@ -599,7 +620,7 @@ steam_update() {
             warn "Waited $STEAMCMD_WAIT_MINUTES min for another server's steamcmd; starting with what is on disk."
             return 0
         fi
-        if [ "$tries" -ge "$MAX_STEAM_TRIES" ]; then
+        if [ "$tries" -ge "$MAX_STEAM_TRIES" ] && [ "$(date +%s)" -ge "$deadline" ]; then
             warn "steamcmd gave up after $tries attempts; launching what we have."
             return 0
         fi

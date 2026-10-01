@@ -119,8 +119,8 @@ A wipe is a restart that also leaves the launcher `WIPE.flag` with the next map'
 
 | Rule | Value |
 | --- | --- |
-| Retry, forced wipe | Every `Forced wipe: try again every this many minutes` (30), each a 5-minute announced restart |
-| Window, forced wipe | `Forced wipe: give up this many hours after the release moment` (6). After it the plugin stops and reports that no update arrived, or wipes once if `Wipe anyway` is `true`. |
+| Retry, forced wipe | With AFKPanel's release check open, a deferral means the update did not install the new build: the plugin tries again after `Forced wipe: after a failed update, retry after these many minutes` (5, 10, 20, then 30), counted from the boot that found it, each a 5-minute announced restart. As soon as the new build is installed it wipes without comparing. Without AFKPanel: every `Forced wipe: try again every this many minutes` (30) from the last restart. |
+| Window, forced wipe | `Forced wipe: give up this many hours after the release moment` (6), counted from when AFKPanel's release check opened, or from 19:00 London without it. After it the plugin stops and reports that no update arrived, or wipes once if `Wipe anyway` is `true`. |
 | No word from AFKPanel, forced wipe | `Forced wipe: go without AFKPanel's release check after this many minutes of silence` (30) after 19:00 London. The plugin then restarts with an update and the launcher's build comparison decides. |
 | Release check | Requires Hotwire 1.1.47 or later, connected to AFKPanel, with `Accept commands from the panel` on. A server that cannot hear it restarts at 19:00 London and the launcher's build comparison decides. |
 | `hotwire.update_mode off` | The launcher does not update, so a forced wipe applies only if the new build is already installed; otherwise it gives up at the end of the window |
@@ -189,6 +189,7 @@ Off by default. On, the plugin polls the release feed and, when a new Oxide rele
   "Wipe flag file name": "WIPE.flag",
   "Refuse to fire the same entry twice within this many hours": 20.0,
   "Forced wipe: try again every this many minutes": 30,
+  "Forced wipe: after a failed update, retry after these many minutes": [ 5, 10, 20, 30 ],
   "Forced wipe: give up this many hours after the release moment": 6.0,
   "Forced wipe: go without AFKPanel's release check after this many minutes of silence": 30,
   "Default forced wipe added": true,
@@ -203,6 +204,7 @@ Off by default. On, the plugin polls the release feed and, when a new Oxide rele
 | `Update flag file name`, `Validate flag file name`, `Wipe flag file name` | The files the launcher watches for. Change them only if your launcher watches for different names. |
 | `Refuse to fire the same entry twice within this many hours` | The clock-change guard. `0` turns it off. Set it below the gap only if you schedule one entry twice a day. |
 | `Forced wipe: try again every this many minutes` | See Wipes |
+| `Forced wipe: after a failed update, retry after these many minutes` | See Wipes. The last value repeats. |
 | `Forced wipe: give up this many hours after the release moment` | See Wipes |
 | `Forced wipe: go without AFKPanel's release check after this many minutes of silence` | See Wipes |
 | `Default forced wipe added` | Set once the plugin has added the default forced wipe. `false` adds it again on the next load if the server has no forced wipe. |
