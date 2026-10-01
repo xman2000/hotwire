@@ -1,8 +1,8 @@
 # Hotwire
 
-Scheduled restarts and updates for a Rust server. Announces, counts down, kicks with a reason, saves, and quits — and where you want it, separates "restart" from "install a new build".
+Scheduled restarts, updates and wipes for a Rust server. Announces, counts down, kicks with a reason, saves, and quits — and where you want it, separates "restart" from "install a new build" from "start a new map".
 
-Windows. MIT.
+Windows and Linux. MIT.
 
 ## What it is for
 
@@ -12,7 +12,7 @@ Hotwire holds the schedule and, when a restart is *also* meant to be an update, 
 
 Without such a launcher the plugin is still a complete restart scheduler. The flag is simply written and ignored.
 
-A matching Windows launcher ships alongside it. See **The launcher** below.
+Matching launchers for Windows and Linux ship alongside it. See **The launcher** below.
 
 ## Six ways to say when
 
@@ -25,7 +25,18 @@ A matching Windows launcher ships alongside it. See **The launcher** below.
 
 Ordinal weekdays exist because Rust force wipes on the first Thursday of the month, which is the update most admins actually want to schedule.
 
-Restarts and updates are two separate lists. If one of each falls on the same minute, the update wins.
+Restarts, updates and wipes are three separate lists. If two fall on the same minute, a wipe wins over an update, and an update over a restart.
+
+## Wipes
+
+A wipe is a restart that starts a new map: the plugin counts down as for any restart, then leaves the launcher a flag with the new seed (and size), and the launcher writes them into `hotwire.cfg` before it starts the server. The old save stays on disk. Blueprints are kept, renamed aside, or deleted, as the entry says; Rust+ pairings are never touched. The seed for the next map is chosen when the entry is saved, so it is known in advance, and a fresh one is drawn after each wipe.
+
+Two kinds of entry:
+
+- **A scheduled wipe** runs on the schedule's own clock, with the same six ways to say when: every Thursday at 18:00, every 14 days, the first Thursday of the month.
+- **A forced wipe** follows Facepunch's monthly update instead of a clock of its own. It arms on the first Thursday of the month at 19:00 London time, restarts with an update, and the launcher applies the new seed **only in a start whose update changed the installed build**. Until then the old world boots and the plugin tries again every 30 minutes, for six hours; then it stops and says so, or wipes anyway if the entry says to. The map is never wiped before the update that would have wiped it, and never twice.
+
+Wipe entries are added and changed from AFKPanel, which asks for the server's name before it sends one; `hotwire list` shows them in game. A wipe needs the Hotwire launcher, unmodified: a start script cannot carry one out, and the plugin says so rather than quitting for nothing.
 
 ## Announcing
 
@@ -41,9 +52,9 @@ Announcements go out under a configurable name — **"Server Manager"** by defau
 
 Where **AdvancedStatus** is installed, the countdown also renders as a HUD bar. It is entirely optional and is not distributed through uMod, so it cannot be listed as a formal dependency — install it or do not. Without it the countdown still runs and is announced in chat, which is the normal case rather than a degraded one, and `hotwire check` reports which state you are in.
 
-## Reporting to a panel (optional)
+## Reporting to AFKPanel (optional)
 
-Once a server is connected to a Hotwire panel with `hotwire-setup connect`, the plugin:
+Once a server is connected to AFKPanel with `hotwire-setup connect`, the plugin:
 
 - **sends a signed heartbeat** every 30 seconds: player count, max players, average FPS, CPU, memory, entities, network and the join queue, uptime, and the Oxide, protocol and Rust build versions. That is what shows the server as up.
 - **sends the plugin list** when it changes: each plugin's name, author and version, its file's hash and size, whether it loaded, and Oxide's error if it did not. The files themselves never leave the machine.
@@ -53,7 +64,7 @@ Once a server is connected to a Hotwire panel with `hotwire-setup connect`, the 
 - **learns what the account's plan uses** from the panel's report policy, and sends no more than that. A plan that shows only warnings and errors from the log gets only those, with a count of the lines left behind; a plan that cannot send commands or enforce bans is not asked for them; and the heartbeat and plugin time can be spaced out. A server beyond the plan's server limit can be told to send only its heartbeat until the account can use it again. The policy only ever sends less than the config allows, never more. Until the panel has answered, or if its answer cannot be read, everything the config allows is sent, as before. Reports that cannot be sent again (boot reports, player events, command answers) are kept on disk while the panel cannot be reached, or while the policy asks the server to hold them, for up to 30 days and 50 MB, and sent later a few seconds apart.
 - **sends each plugin's server time every minute**: how long Oxide timed each plugin's hooks, timers and commands, and the memory they allocated, so the panel can show which plugin is costing the server its frames.
 - **at the "identified" sharing level only, sends who is online, when players join and leave, and chat**, with card numbers and SSNs masked first. Below that level only the player count is sent. Each has its own switch in the config.
-- **reports the restart and update schedule** and lets the panel change it: add, edit, enable, disable and remove entries, run an announced restart or update now, and cancel a countdown. Changes go through the same checks as the chat commands, and one made against a schedule that has since changed in game is refused rather than overwriting it.
+- **reports the restart, update and wipe schedule** and lets the panel change it: add, edit, enable, disable and remove entries, run an announced restart or update now, and cancel a countdown. Changes go through the same checks as the chat commands, and one made against a schedule that has since changed in game is refused rather than overwriting it.
 - **reports the map**: the seed, world size, custom map address and last wipe, and the map image Rust renders for the Rust+ app, so the panel can show it, and the map markers other plugins place (zones, event circles and their labels, such as Flashpoint's PVP zones). Never players, shops or bases. These are read from the game by name while it runs, so a Rust update that moves one switches the map off with a warning, never the rest of the plugin.
 
 - **Nothing is sent unless the server was connected.** Connecting writes `oxide/data/Hotwire/panel.json`; without that file the plugin says so once in console and sends nothing. `hotwire-setup detach` removes it, and reporting stops without a reload.
@@ -111,7 +122,7 @@ Chat or console, and `hw` works as a short form. Bare `hotwire` is `status`.
 
 - **`hotwire status`** — `hotwire.status` — what is next, or what is counting down
 - **`hotwire menu`** — `hotwire.status` — the in-game panel
-- **`hotwire list`** — `hotwire.status` — every entry with its index and next occurrence
+- **`hotwire list`** — `hotwire.status` — every entry in all three lists with its index and next occurrence
 - **`hotwire check`** — `hotwire.status` — diagnostics: where the flag goes, whether that is really the server root, the clock, the DST guard, the status bar
 - **`hotwire now`** — `hotwire.restart` — start a countdown now
 - **`hotwire cancel`** — `hotwire.cancel` — stop the one that is running
@@ -133,6 +144,8 @@ hotwire disable <restart|update> <index>
 ```
 
 `hotwire now` with no seconds uses the configured countdown length, which is an hour by default. Pass a number if you mean sooner.
+
+`add`, `set`, `remove`, `enable` and `disable` take restarts and updates. Wipe entries are made and changed from AFKPanel.
 
 **An entry added with `hotwire add` is enabled immediately.** You typed the whole rule, so it is taken as meant. An entry added from the menu's `+ Restart` button starts disabled instead — that one is a blank form, not an instruction.
 
@@ -158,7 +171,7 @@ The pattern words are English on every server. They are typed, not read, and a p
 
 ## Localization
 
-Every string a player can see is a lang key, and sentences take their parts as `{0}` arguments rather than being concatenated, so word order is the translator's to choose. 153 keys in `oxide/lang/en/Hotwire.json`, including weekday names and ordinals.
+Every string a player can see is a lang key, and sentences take their parts as `{0}` arguments rather than being concatenated, so word order is the translator's to choose. The keys are in `oxide/lang/en/Hotwire.json`, including weekday names and ordinals.
 
 Lang files are written once and never rewritten. If you upgrade from a version before 1.1.0, delete the file to pick up the full set.
 
@@ -197,6 +210,7 @@ Written on first load with **every entry disabled**. The file stays hand-editabl
       "Enabled": false
     }
   ],
+  "Wipes": [],
   "Countdown": {
     "Start the countdown this many seconds before": 3600,
     "Announce when this many seconds remain": [
@@ -217,6 +231,8 @@ Written on first load with **every entry disabled**. The file stays hand-editabl
     "Update flag file name": "UPDATE.flag",
     "Validate flag file name": "VALIDATE.flag",
     "Refuse to fire the same entry twice within this many hours": 20.0,
+    "Forced wipe: try again every this many minutes": 30,
+    "Forced wipe: give up this many hours after the release moment": 6.0,
     "Name shown in chat announcements": "Server Manager",
     "Name color (hex)": "#e0995e"
   },
@@ -249,7 +265,7 @@ Every field, with its reasoning, is in [`docs/CONFIG.md`](docs/CONFIG.md).
 
 ## The launcher
 
-The other half of the project, and the half that consumes the flag: a Windows batch launcher that starts the server, relaunches it when it exits, and — in `hotwire` mode — updates only for a flag file the plugin writes, a newer Steam build, or a backstop after 14 days quiet, while `off` never updates. Out of the box it leaves the game's own defaults alone, and several servers can share one machine. Every option in it is one independent line you can comment out without breaking the launch, and every default printed beside an option was read out of a real Rust build rather than copied from a guide.
+The other half of the project, and the half that consumes the flags: `hotwire.bat` for Windows and `hotwire.sh` for Linux. Each starts the server, relaunches it when it exits, and — in `hotwire` mode — updates only for a flag file the plugin writes, a newer Steam build, or a backstop after 14 days quiet, while `off` never updates. A wipe flag has it write the new seed into `hotwire.cfg` before the start; a forced wipe's only when the update changed the build. Out of the box it leaves the game's own defaults alone, and several servers can share one machine. Every option in it is one independent line you can comment out without breaking the launch, and every default printed beside an option was read out of a real Rust build rather than copied from a guide.
 
 You do not need it. The plugin restarts a server perfectly well on its own, and the launcher runs perfectly well without the plugin.
 
@@ -257,7 +273,7 @@ Full documentation: [`docs/LAUNCHER.md`](docs/LAUNCHER.md).
 
 ## What it does not do
 
-Wipe. Manage maps. Restart on a schedule someone else owns — it does not know about your events, and will restart on top of one.
+Wipe a custom (`levelurl`) map, or clean up old saves. Restart on a schedule someone else owns — it does not know about your events, and will restart on top of one.
 
 ## Layout
 
@@ -268,8 +284,18 @@ launcher/hotwire.sh             the launcher for Linux
 launcher/hotwire.example.cfg    every setting both launchers read; copy to hotwire.cfg
 launcher/hotwire-secrets.example.cfg   copy to hotwire-secrets.cfg for the RCON password; never committed
 launcher/hotwire-*.example.*    your own commands before a start and after an update
+setup/hotwire-setup.ps1         Windows: install a server, connect it, check it
+setup/hotwire-setup.sh          Linux: the same
 CHANGELOG.md                    what is in this release, and what is not
+docs/INSTALL-WINDOWS.md         a server from nothing, on Windows
+docs/INSTALL-LINUX.md           a server from nothing, on Ubuntu
+docs/SWITCH-TO-HOTWIRE.md       a server you already run
+docs/PLUGIN.md                  add, update or remove the plugin
 docs/LAUNCHER.md                the launcher in full
+docs/HOTWIRE-CFG.md             the settings file
+docs/RCON-PASSWORD.md           the secrets file
+docs/CHECK.md                   what `check` says and what to do about it
+docs/HOOKS.md                   your own scripts before a start and after an update
 docs/CONFIG.md                  every config field, command and permission
 docs/GAME-API.md                what has been verified against a real build
 tools/convars.py                maintenance tooling; you never need to run it

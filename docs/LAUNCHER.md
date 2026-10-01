@@ -288,6 +288,21 @@ readable. Under a scheduled task with no console that means it waits rather
 than exits, which is the correct state — stopped and visible — but is worth
 knowing before you wrap this in a service.
 
+## Wipes
+
+A wipe comes from the plugin as `WIPE.flag`, one `key value` per line: the new seed, a size if it changes, what to do
+with blueprints, a cycle id and an expiry. Between runs the launcher validates every value as a plain number or one of
+the allowed words, writes `server.seed` (and `server.worldsize`) into `hotwire.cfg`, renames or deletes the
+`player.blueprints.*.db` files as asked (never `player.tokens.db`, the Rust+ pairings), records the cycle id so the same
+wipe can never run twice, and clears the flag. If the seed cannot be written, the wipe is cancelled and the server starts
+unchanged: a half-wipe is worse than none. The outcome is written to `WIPE.result` for the plugin to read.
+
+A **forced wipe** carries `forced 1` and the build that was installed when it was armed. After its update the launcher
+compares the installed build with that one: changed, the wipe is applied; unchanged, the flag is left in place, the old
+world starts, and `WIPE.result` says `deferred`, so the plugin tries again later. On Linux the before-wipe backup is
+taken only once the build is known to have changed, not on every try. The launcher only applies a wipe when it is the
+unmodified Hotwire launcher: the plugin checks its code hash before it writes the flag.
+
 ## What it does not do
 
 Diagnose the crash for you; it only keeps the log that explains it. Start the server when Windows starts.

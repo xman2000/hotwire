@@ -74,8 +74,8 @@ convenience over the same file, never the only way in.
 
 ## Restarts and Updates
 
-Two lists. A restart relaunches the server; an update also writes a
-flag file the launcher acts on.
+Two of the three lists. A restart relaunches the server; an update also writes a
+flag file the launcher acts on. The third, **Wipes**, is below.
 
 ```json
 "Restarts": [
@@ -179,6 +179,57 @@ updates to this schedule while the file is under two hours old, and updates
 on every start otherwise, so a schedule that is off, or a plugin that has
 stopped running, never leaves the server on an old build.
 
+## Wipes
+
+A wipe is a restart that also hands the launcher a new seed. The entry has the
+same recurrence fields as a restart, and these:
+
+| Field | Meaning |
+|---|---|
+| `Seed` | the next map's seed, 1–2147483647. Empty: a random one is drawn and saved when the entry is saved, and again after each wipe, so the next map is always known in advance |
+| `Size` | the next map's size, 1000–6000; empty keeps the current size |
+| `Blueprints` | `keep`, `rename` (kept aside on disk as `player.blueprints.*.db.wiped-<date>`) or `delete` |
+| `Backup first` | back up the stopped server before the wipe (the launcher, where it can; Rust's `server.backup` otherwise) |
+| `Forced wipe (tied to the monthly update)` | see below |
+| `Wipe anyway when no update arrives` | forced wipes only; see below |
+
+```json
+"Wipes": [
+  { "Repeat": "MonthlyWeekday", "Ordinal": "First", "Days": [ "Thursday" ],
+    "Seed": "1847362", "Size": "4000", "Blueprints": "keep", "Backup first": true,
+    "Forced wipe (tied to the monthly update)": true,
+    "Wipe anyway when no update arrives": false, "Enabled": true }
+]
+```
+
+**A scheduled wipe** (`Forced wipe` false) fires on its `Time` and `Repeat` like
+a restart: the plugin counts down, writes `WIPE.flag` with the seed, size,
+blueprint action and a per-wipe cycle id, and quits. The launcher validates
+every value, writes the seed and size into `hotwire.cfg`, deals with the
+blueprints, records the cycle so a crash cannot wipe twice, and starts. If the
+seed cannot be written it cancels and boots unchanged.
+
+**A forced wipe** (`Forced wipe` true) ignores its `Time` and `Repeat`: they are
+pinned to the first Thursday of the month at 19:00 Europe/London, Facepunch's
+release moment, whatever the server's own zone. At that moment the plugin
+restarts with an update and writes the flag with `forced 1` and the build that
+was installed when it armed. The launcher, after its update, compares: a
+changed build applies the wipe; an unchanged one leaves the flag, boots the old
+world and writes `WIPE.result` `deferred`. The plugin reads that on boot and
+tries again every `Forced wipe: try again every this many minutes` (30), each
+try a five-minute announced restart, until `Forced wipe: give up this many
+hours after the release moment` (6) has passed. Then it stops and reports that
+no update arrived, or, with `Wipe anyway` true, wipes once regardless.
+
+A wipe entry always updates too: the map is new anyway, so a pending build is
+installed in the same restart. A wipe outranks an update on the same minute.
+
+Wipe entries need the Hotwire launcher, unmodified, with the `wipe` capability
+(Windows 1.1.17, Linux 1.1.4 and later for forced wipes); on a start script, or
+a modified or older launcher, the entry is reported with that problem and never
+fires. They are added and changed from AFKPanel, which asks for the server's
+name first; `hotwire list` shows them in game.
+
 ## Countdown
 
 ```json
@@ -269,11 +320,16 @@ to.
   "Update flag file name": "UPDATE.flag",
   "Validate flag file name": "VALIDATE.flag",
   "Refuse to fire the same entry twice within this many hours": 20.0,
+  "Forced wipe: try again every this many minutes": 30,
+  "Forced wipe: give up this many hours after the release moment": 6.0,
   "Name shown in chat announcements": "Server Manager",
   "Name color (hex)": "#e0995e"
 }
 ```
 
+- **Forced wipe: try again / give up** — how a forced wipe waits for the
+  monthly update when it is late: a restart every so many minutes, until so many
+  hours after 19:00 London. See **Wipes** above.
 - **Server root** — where the flag files are written. Empty asks Oxide. Set it
   only if that turns out to be wrong on your install; the plugin says so in
   console at boot if it cannot work it out.
@@ -384,7 +440,7 @@ this section says.
   update moves it, positions turn themselves off with a console warning until
   the plugin reloads, rather than show a hidden admin as an ordinary player.
 
-- **Report the schedule** — sends every restart and update entry as it stands,
+- **Report the schedule** — sends every restart, update and wipe entry as it stands,
   with a plain description, when it next fires, anything wrong with it, the
   countdown settings, the framework check, and any countdown running now. Sent
   when anything in it changes.
@@ -561,7 +617,8 @@ All under `hotwire` (alias `hw`), in chat or on the server console.
 | `hotwire enable\|disable <restart\|update> <index>` | `hotwire.edit` | Turn one on or off |
 
 Indexes come from `hotwire list` and are per-list, so `restart 0` and
-`update 0` are different entries.
+`update 0` are different entries. `hotwire list` shows wipe entries too; they
+are added and changed from AFKPanel, not from chat.
 
 **`hotwire now` with no number lasts as long as a scheduled countdown** — an
 hour, by default, because it uses the same `Start the countdown this many
@@ -672,12 +729,13 @@ after installing, after moving the server, and after any Oxide update.
 ## What the plugin does at zero
 
 1. Records the fire time to `oxide/data/Hotwire/last_fired.json`.
-2. Writes the flag file, if this is an update. A failure here is reported and
-   downgrades the update to a plain restart — the safe direction to fail in.
+2. Writes the flag files: `UPDATE.flag` if this is an update, `WIPE.flag` if
+   this is a wipe. A failure here is reported and downgrades to a plain
+   restart — the safe direction to fail in.
 3. Announces.
 4. Kicks every connected player, so they get a reason rather than a timeout.
 5. Runs `quit`, which saves the world on the way out.
 
-Then the launcher takes over: it sees the process exit, acts on the flag if
-there is one (not when its `UPDATE_MODE` is `off`), deletes the flag once the
-update completes, and starts the server again.
+Then the launcher takes over: it sees the process exit, acts on the flags if
+there are any (not on `UPDATE.flag` when its `hotwire.update_mode` is `off`),
+deletes each once it has been carried out, and starts the server again.

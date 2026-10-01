@@ -1,6 +1,6 @@
 # Add or update the Hotwire plugin
 
-The Hotwire plugin schedules announced restarts and updates, counts players down, and reports to AFKPanel once
+The Hotwire plugin schedules announced restarts, updates and wipes, counts players down, and reports to AFKPanel once
 connected. It needs Oxide. The launcher works without it.
 
 ## Add the plugin
