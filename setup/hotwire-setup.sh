@@ -28,7 +28,7 @@
 #
 set -uo pipefail
 
-VERSION="0.2.9"
+VERSION="0.2.10"
 DEFAULT_PANEL="https://afkpanel.com"
 
 # ---------------------------------------------------------------- output ----
@@ -673,7 +673,7 @@ RUST_APPID="258550"
 # branch, these change in the same commit (and so does $PinnedHashes in hotwire-setup.ps1 for Hotwire.cs),
 # or every install stops at a hash mismatch. Third-party downloads (SteamCMD from Ubuntu's archive, Oxide
 # from GitHub) are not pinned: Oxide is checked against the SHA-256 GitHub publishes for it instead.
-PIN_LAUNCHER="948761fac11129e5805b6f22d8d5cc82885986e8bdf8f1623d49f1eeccf7c605"
+PIN_LAUNCHER="f21c0961ce351cb09a06069c8079a0dd337db2ccc2a284ef05273100d01d2132"
 PIN_PLUGIN="453ccff15715de9eb155ffbb7dcf8eac64120c14f3e94e4910a93e4e5a5eac15"
 PIN_CFG="322b099f00965a581ec8c8a1ece4d6205e1e6b78fd1a53fe14e7adeb96ebbecb"
 

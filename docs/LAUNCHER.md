@@ -75,7 +75,7 @@ Fixed in the launcher, never settings: where Oxide is downloaded from and checke
 | The build check | Every start prints the installed and public builds, from one SteamCMD call cached for `hotwire.build_check_hours`. In `hotwire` mode the cached answer is used only during a crash streak. |
 | Doubt | Resolves toward updating: a Rust server that does not update becomes unjoinable, because clients update themselves |
 | The backstop | After `hotwire.max_days_without_update` without a successful update, one happens and the console says so. A missing stamp counts as forever, so a fresh install updates on its first start. |
-| Oxide | Installed with the server and put back after every update, unless `hotwire.install_framework` is `0`. With `hotwire.skip_unchanged_framework` it is not re-extracted when neither it nor the game changed. |
+| Oxide | Installed with the server and put back after every update, unless `hotwire.install_framework` is `0`. With `hotwire.skip_unchanged_framework` it is not re-extracted when neither changed: the game's build is the one from before the update, and Oxide's version is the newest release on GitHub, the file that is downloaded and checked. An update that changed the build, or a validate, always puts Oxide back. |
 | A failure in any of it | Reported, and the server starts under the ordinary rules |
 
 ## Wipes

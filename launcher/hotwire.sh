@@ -21,9 +21,9 @@
 #     offers a launcher-editing feature. Capabilities, not the version number,
 #     are what a feature is gated on; settings_file says the settings are read
 #     from hotwire.cfg.
-HOTWIRE_LAUNCHER_VERSION="1.1.4-linux"
+HOTWIRE_LAUNCHER_VERSION="1.1.5-linux"
 HOTWIRE_LAUNCHER_CAPABILITIES="supervise,update,framework_verify,crash_backstop,log_rotate,convar_persist,wipe,backup,settings_file"
-HOTWIRE_LAUNCHER_HASH="655af7dd1ac95c8fa878fb4d4c0090591e794d94f6164ec23c3c537351494a95"
+HOTWIRE_LAUNCHER_HASH="0dc6ab7afadcc6757d90b7218dc961502b9c0bca80403fa13e6a574892e99b95"
 
 # ======================================================================
 #  HOW THIS LAUNCHER WORKS
@@ -619,32 +619,44 @@ framework_update() {
 
     local build_after; read_installed_build; build_after="$INSTALLED_BUILD"
 
-    # Skip if neither the game nor Oxide changed.
-    if [ "$SKIP_UNCHANGED_FRAMEWORK" = "1" ] && [ -f "$OXIDE_STAMP" ]; then
-        local want=""
-        want="$(curl -fsSL --max-time 25 "$FRAMEWORK_FEED" 2>/dev/null | grep -oE '"latest_release_version"[^,]*' | grep -oE '[0-9]+(\.[0-9]+)+' | head -1 || true)"
-        local have; have="$(cat "$OXIDE_STAMP" 2>/dev/null || true)"
-        if [ -n "$want" ] && [ "$want" = "$have" ]; then
-            log "Oxide $have and the game are unchanged; skipping the framework refresh."
-            FRAMEWORK_OK=1; return 0
+    # One look at GitHub's latest release: its tag is the version we compare and record, and it is the file we download
+    # and check. uMod's feed is not asked: on 2026-10-01 it still named the old Oxide an hour after GitHub had the new one,
+    # and a skip on its word left a freshly updated server without Oxide.
+    local from="$FRAMEWORK_URL" sha="" tag="" rel=""
+    rel="$(curl -fsSL --max-time 25 -H 'Accept: application/vnd.github+json' "$FRAMEWORK_RELEASES" 2>/dev/null || true)"
+    if [ -n "$rel" ]; then
+        if have_json; then
+            tag="$(printf '%s' "$rel" | jq -r '.tag_name // empty' 2>/dev/null)"
+            if [ "$VERIFY_FRAMEWORK" = "1" ]; then
+                from="$(printf '%s' "$rel" | jq -r --arg n "$FRAMEWORK_ASSET" '.assets[]?|select(.name==$n)|.browser_download_url' 2>/dev/null | head -1)"
+                sha="$(printf '%s' "$rel" | jq -r --arg n "$FRAMEWORK_ASSET" '.assets[]?|select(.name==$n)|.digest' 2>/dev/null | head -1)"
+                sha="${sha#sha256:}"
+                case "$from" in https://github.com/*) ;; *) from="$FRAMEWORK_URL"; sha="" ;; esac
+                [[ "$sha" =~ ^[0-9a-fA-F]{64}$ ]] || sha=""
+            fi
+        else
+            tag="$(printf '%s' "$rel" | grep -oE '"tag_name"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed -E 's/.*"([^"]*)"$/\1/')"
         fi
+        [[ "$tag" =~ ^v?[0-9]+(\.[0-9]+)+$ ]] || tag=""
+        tag="${tag#v}"
+    fi
+    if [ "$VERIFY_FRAMEWORK" = "1" ]; then
+        if ! have_json; then warn "jq is not installed; taking the Oxide download unverified."
+        elif [ -z "$sha" ]; then warn "Could not read a verified SHA-256 from GitHub; taking the download unverified."; fi
     fi
 
-    # Resolve the download and (if verifying) the published SHA-256 from GitHub.
-    local from="$FRAMEWORK_URL" sha="" tag=""
-    if [ "$VERIFY_FRAMEWORK" = "1" ] && have_json; then
-        local rel; rel="$(curl -fsSL --max-time 25 -H 'Accept: application/vnd.github+json' "$FRAMEWORK_RELEASES" 2>/dev/null || true)"
-        if [ -n "$rel" ]; then
-            from="$(printf '%s' "$rel" | jq -r --arg n "$FRAMEWORK_ASSET" '.assets[]?|select(.name==$n)|.browser_download_url' 2>/dev/null | head -1)"
-            sha="$(printf '%s' "$rel" | jq -r --arg n "$FRAMEWORK_ASSET" '.assets[]?|select(.name==$n)|.digest' 2>/dev/null | head -1)"
-            tag="$(printf '%s' "$rel" | jq -r '.tag_name // empty' 2>/dev/null)"
-            sha="${sha#sha256:}"
-            case "$from" in https://github.com/*) ;; *) from="$FRAMEWORK_URL"; sha="" ;; esac
-            [[ "$sha" =~ ^[0-9a-fA-F]{64}$ ]] || sha=""
+    # Skip only when neither the game nor Oxide moved. An update that changed the game's build has just written the
+    # game's own assemblies over Oxide's, so Oxide goes back on whatever its version says (as hotwire.bat does).
+    if [ "$SKIP_UNCHANGED_FRAMEWORK" = "1" ] && [ -f "$OXIDE_STAMP" ]; then
+        local have; have="$(cat "$OXIDE_STAMP" 2>/dev/null || true)"
+        if [ "${DO_VALIDATE:-0}" = "1" ]; then
+            log "A validate put the game's own files back, so Oxide goes back over them."
+        elif [ -n "${BUILD_BEFORE:-}" ] && [ -n "$build_after" ] && [ "$BUILD_BEFORE" != "$build_after" ]; then
+            log "The game moved from $BUILD_BEFORE to $build_after, so Oxide goes back over it."
+        elif [ -n "$tag" ] && [ "$tag" = "$have" ] && [ -n "$build_after" ]; then
+            log "Oxide $have and the game ($build_after) are unchanged; skipping the framework refresh."
+            FRAMEWORK_OK=1; return 0
         fi
-        [ -z "$sha" ] && warn "Could not read a verified SHA-256 from GitHub; taking the download unverified."
-    elif [ "$VERIFY_FRAMEWORK" = "1" ]; then
-        warn "jq is not installed; taking the Oxide download unverified."
     fi
 
     local zip="$ROOT/OxideMod.zip"
@@ -662,9 +674,9 @@ framework_update() {
     fi
     if unzip -o "$zip" -d "$ROOT" >/dev/null 2>&1; then
         FRAMEWORK_OK=1
-        # Record the version we just installed for the next skip check.
-        local ver; ver="$(curl -fsSL --max-time 25 "$FRAMEWORK_FEED" 2>/dev/null | grep -oE '"latest_release_version"[^,]*' | grep -oE '[0-9]+(\.[0-9]+)+' | head -1 || true)"
-        [ -n "$ver" ] && printf '%s' "$ver" > "$OXIDE_STAMP" 2>/dev/null || true
+        # Record the version we just installed for the next skip check: the release we downloaded, or nothing when it
+        # could not be read (the next update then extracts again, the safe direction).
+        if [ -n "$tag" ]; then printf '%s' "$tag" > "$OXIDE_STAMP" 2>/dev/null || true; else rm -f "$OXIDE_STAMP"; fi
         ok "Oxide extracted."
     else
         warn "Could not extract Oxide; keeping the current install."
@@ -1457,6 +1469,8 @@ per_launch_prep() {
     init_reporting
     decide_update_mode
     build_check
+    # The installed build before any update this pass: framework_update compares with it (Oxide goes back over a new build).
+    BUILD_BEFORE="$INSTALLED_BUILD"
     update_decision
     # Check mode says what a normal start would do, rather than "Plain restart" (the owner's test, 2026-09-28).
     if [ -n "$CHECK_ONLY" ]; then

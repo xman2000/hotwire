@@ -25,6 +25,18 @@ sit above a launcher `1.1.7`. Read the label, not the number.
 at the top of the file — it is a comment, not something it echoes, so read it
 rather than watch for it.
 
+## Launcher 1.1.5-linux, setup 0.2.10 (Linux) — 2026-10-01
+
+**Oxide goes back on after every update that rewrote the game.**
+
+- An update that changed the game's build, or a validate, always puts Oxide back. Before, the launcher skipped Oxide
+  whenever its version looked unchanged, and the update had just written the game's own files over it: on the monthly
+  update the server came back on the new map without Oxide.
+- Oxide's version is read from GitHub's latest release, the file the launcher downloads and checks, not uMod's feed,
+  which named the old Oxide for over an hour after the new one was out. When GitHub cannot be read, Oxide is extracted
+  rather than skipped.
+- Windows launcher unchanged.
+
 ## Plugin 1.1.49, setup 0.1.9 (Windows) and 0.2.9 (Linux) — 2026-10-01
 
 **A restart installs updates only when there is something to install.**
