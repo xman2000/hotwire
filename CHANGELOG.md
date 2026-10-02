@@ -25,6 +25,18 @@ sit above a launcher `1.1.7`. Read the label, not the number.
 at the top of the file — it is a comment, not something it echoes, so read it
 rather than watch for it.
 
+## Plugin 1.1.51, setup 0.1.11 (Windows) and 0.2.12 (Linux) — 2026-10-02
+
+**An update sent from AFKPanel while a countdown is running joins it instead of being refused.**
+
+- A scheduled restart counts down for an hour before it happens. An Update sent from AFKPanel in that hour used to be
+  refused, and the restart that followed did not update. Now the running countdown becomes an update, moved to the
+  time asked for when that is sooner, never later. Players hear the new kind and time once. A plain Restart sent during a
+  countdown is still refused, because a restart is already coming.
+- Commands Hotwire has already carried out are remembered per AFKPanel address. A server connected to a second panel
+  could treat a new command from it as one it had already run, and do nothing. The list is also cleared of anything
+  older than two days whenever it is read.
+
 ## Plugin 1.1.50, launcher 1.1.6-linux, setup 0.1.10 (Windows) and 0.2.11 (Linux) — 2026-10-01
 
 **A forced wipe whose update failed tries again as soon as it makes sense, not on a timer.**

@@ -17,7 +17,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Hotwire", "xman2000", "1.1.50")]
+    [Info("Hotwire", "xman2000", "1.1.51")]
     [Description("Scheduled restarts and updates. Announces, counts down, writes a flag, quits.")]
     internal class Hotwire : CovalencePlugin
     {
@@ -2185,6 +2185,36 @@ namespace Oxide.Plugins
             _scheduleCheckDue = DateTime.MinValue;
         }
 
+        // An update asked for while a countdown runs (ADR-0090): the running countdown becomes an update, and moves
+        // earlier when the update was asked for sooner. Players hear the new kind and time once, as a fresh start.
+        private void JoinCountdown(int seconds, bool validate)
+        {
+            if (!_countdownActive || _shuttingDown) return;
+
+            var changed = !_countdownIsUpdate || (validate && !_countdownIsValidate);
+            _countdownIsUpdate = true;
+            if (validate) _countdownIsValidate = true;
+
+            var target = DateTime.Now.AddSeconds(seconds);
+            if (target < _countdownTarget)
+            {
+                _countdownTarget = target;
+                changed = true;
+            }
+            if (!changed) return;
+
+            var remaining = RemainingSeconds();
+            _announced.Clear();
+            foreach (var point in _config.Countdown.AnnounceAt)
+                if (point >= remaining) _announced.Add(point);
+            Puts($"Countdown changed: {KindWord(null)} in {remaining}s (entry {_countdownKey}).");
+            Broadcast("CountdownStart", u => new object[] { KindWord(u), FormatRemaining(remaining) });
+            // The bar's label and fill are set when it is made, so it is made again for the new kind and time.
+            RemoveBars();
+            ShowBars();
+            _scheduleCheckDue = DateTime.MinValue;
+        }
+
         private void CountdownTick()
         {
             if (!_countdownActive || _shuttingDown) return;
@@ -3043,6 +3073,7 @@ namespace Oxide.Plugins
         private void StartPanelReporting()
         {
             _handledCommands = ReadData<Dictionary<string, HandledCommand>>(CommandsDataFile) ?? new Dictionary<string, HandledCommand>();
+            PruneHandledCommands();
             _appliedBans = ReadData<Dictionary<string, AppliedBan>>(BansDataFile) ?? new Dictionary<string, AppliedBan>();
 
             if (!_config.Panel.Enabled)
@@ -5629,8 +5660,15 @@ namespace Oxide.Plugins
             // Say what happened instead of doing it twice. A restart that is
             // repeated after the server came back up is exactly the harm this
             // stops.
+            //
+            // Kept per panel (ADR-0090): two panels number their commands from their
+            // own counters, so the same id from another panel is a different
+            // command. A bare id is from before 1.1.51 and still counts, until it
+            // is two days old.
+            PruneHandledCommands();
+            var key = HandledKey(id);
             HandledCommand done;
-            if (_handledCommands.TryGetValue(id, out done))
+            if (_handledCommands.TryGetValue(key, out done) || _handledCommands.TryGetValue(id, out done))
             {
                 QueueCommandResult(id, "received", null);
                 QueueCommandResult(id, done.Status, done.Result);
@@ -5643,8 +5681,7 @@ namespace Oxide.Plugins
             // Recorded on disk before anything is done, so a command that ends
             // with the server quitting is known about when it comes back.
             var record = new HandledCommand { Status = "failed", Result = "interrupted before it finished", HandledUtc = DateTime.UtcNow };
-            _handledCommands[id] = record;
-            PruneHandledCommands();
+            _handledCommands[key] = record;
             WriteData(CommandsDataFile, _handledCommands);
             QueueCommandResult(id, "received", null);
 
@@ -5733,7 +5770,6 @@ namespace Oxide.Plugins
                 case "restart":
                 {
                     if (_shuttingDown) { status = "refused"; result = "the server is already shutting down"; return; }
-                    if (_countdownActive) { status = "refused"; result = $"a countdown is already running ({FormatRemaining(RemainingSeconds())} left)"; return; }
                     var asked = 0;
                     var delayToken = args["delay"];
                     if (delayToken != null) int.TryParse(delayToken.ToString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out asked);
@@ -5743,6 +5779,17 @@ namespace Oxide.Plugins
                     // restart also writes the update flag the launcher acts on.
                     var validate = BoolArg(args, "validate");
                     var update = validate || BoolArg(args, "update");
+                    if (_countdownActive)
+                    {
+                        // A restart is coming anyway. An update asked for meanwhile makes that restart an update rather
+                        // than being refused (the admin then had a plain restart and no update): sooner if asked sooner,
+                        // never later. A plain restart adds nothing to one already coming.
+                        if (!update) { status = "refused"; result = $"a countdown is already running ({FormatRemaining(RemainingSeconds())} left)"; return; }
+                        JoinCountdown(seconds, validate);
+                        status = "done";
+                        result = $"{(validate ? "validate" : "update")} joined the running countdown: {RemainingSeconds()}s left";
+                        return;
+                    }
                     BeginCountdown(DateTime.Now.AddSeconds(seconds), update, validate, null, "");
                     _scheduleCheckDue = DateTime.MinValue;
                     var what = validate ? "validate" : update ? "update" : "restart";
@@ -6029,6 +6076,8 @@ namespace Oxide.Plugins
                 SpoolReport(body);
             });
         }
+
+        private string HandledKey(string id) => (_panel == null ? "" : _panel.Url) + "#" + id;
 
         private void PruneHandledCommands()
         {
