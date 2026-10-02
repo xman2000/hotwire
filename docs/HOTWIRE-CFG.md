@@ -98,8 +98,8 @@ Each is off in the file and shows the value used.
 | `hotwire.steam_branch` | `public` | The Steam branch. Empty lets Steam keep the last one. |
 | `hotwire.max_days_without_update` | 14 | `hotwire` mode: update after this many days without one. 0 = never. |
 | `hotwire.update_on_new_build` | 1 | Update when Steam has a newer build |
-| `hotwire.fast_rust_updates` | 0 | 1 = a Rust update on a server with Oxide finishes in one try (launchers 1.1.18, 1.1.7-linux) |
-| `hotwire.recover_refused_update` | 1 | When Steam no longer serves the installed build's file list, update without it (launchers 1.1.18, 1.1.7-linux). 0 = start the installed build. |
+| `hotwire.fast_rust_updates` | 0 | 1 = a Rust update on a server with Oxide finishes in one try (launchers 1.1.19, 1.1.7-linux) |
+| `hotwire.recover_refused_update` | 1 | When Steam no longer serves the installed build's file list, update without it (launchers 1.1.19, 1.1.7-linux). 0 = start the installed build. |
 | `hotwire.build_check_hours` | 6 | Hours to trust a Steam build check. 0 turns the check off. |
 | `hotwire.steam_tries` | 5 | SteamCMD attempts before starting what is on disk |
 | `hotwire.steam_retry_seconds` | 60 | Seconds between SteamCMD attempts |

@@ -42,7 +42,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$Version = '0.1.12'
+$Version = '0.1.13'
 
 # Captured here: inside a function, $PSBoundParameters describes that function, not this script.
 $SteamCmdGiven = $PSBoundParameters.ContainsKey('SteamCmd')
@@ -100,9 +100,9 @@ $PluginUrl = 'https://raw.githubusercontent.com/xman2000/hotwire/connect-and-rep
 # ABSENT: their versions vary, so they are not pinned. They are reported as
 # "unverified (third-party)" rather than blocked -- the omission is never silent.
 $PinnedHashes = @{
-    'hotwire.bat' = '2abc1ed05b8b8daa459d3005f98bd89adcc6b776a6f61952139dec6639ea8b96'
+    'hotwire.bat' = '5248e7bacc24cbaa9f8d9e89e26701089ac9d6ebefd8f5679f20f4e65f28297c'
     'Hotwire.cs'  = '51ad3986e413c0bf7de1f8184a5134c1110e4ad3425895e141c63fdf24565c75'
-    'hotwire.example.cfg' = '80d77b951afc5dc528f10e5592886e9f8bb412fd3a8073a29640b83291bdeb23'
+    'hotwire.example.cfg' = '49de5e242c14418158c4796a23f2ca7b1c99eddcf0cdc3fd3e65c05cd94d9971'
 }
 
 $Docs = [ordered]@{

@@ -2,7 +2,7 @@
 setlocal EnableDelayedExpansion
 
 REM ==[ H O T W I R E ]===================================================
-REM  Hotwire launcher for Windows, version 1.1.18 (2026-10-02)
+REM  Hotwire launcher for Windows, version 1.1.19 (2026-10-02)
 REM  Built by xman2000 and Claude.  MIT License.
 REM  https://github.com/xman2000/hotwire
 REM
@@ -28,7 +28,7 @@ REM  works the hash out again from this file's bytes, so the panel offers a
 REM  wipe or a permanent setting only through a launcher that is unmodified
 REM  and says it can carry them out. settings_file says the settings are
 REM  read from hotwire.cfg. Not settings; do not edit.
-set "HOTWIRE_LAUNCHER_VERSION=1.1.18"
+set "HOTWIRE_LAUNCHER_VERSION=1.1.19"
 set "HOTWIRE_LAUNCHER_CAPABILITIES=supervise,update,framework_verify,crash_backstop,log_rotate,convar_persist,wipe,settings_file"
 
 REM ======================================================================
@@ -517,7 +517,8 @@ REM  the update runs again, once. If it still fails and Steam left no record
 REM  it can use, the old one is put back.
 set "PSASIDE=$f=$env:HOTWIRE_ACFPATH; if(-not (Test-Path -LiteralPath $f)){ exit 1 }; $dir=Join-Path $env:HOTWIRE_ROOT 'hotwire'; try{ if(-not (Test-Path -LiteralPath $dir)){ [void](New-Item -ItemType Directory -Path $dir) }; Move-Item -LiteralPath $f -Destination (Join-Path $dir 'appmanifest-refused.acf') -Force; Write-Output 'Steam no longer serves the installed Rust build''s file list, so this update cannot patch it.'; Write-Output 'Setting Steam''s install record aside and updating again: Steam checks the files on disk and downloads what changed.'; exit 0 } catch { exit 1 }"
 set "PSSETTLE=$q=[char]34; $saved=Join-Path $env:HOTWIRE_ROOT 'hotwire\appmanifest-refused.acf'; $f=$env:HOTWIRE_ACFPATH; if(-not (Test-Path -LiteralPath $saved)){ exit 0 }; $b=''; if(Test-Path -LiteralPath $f){ $m=[regex]::Match([IO.File]::ReadAllText($f), $q+'buildid'+$q+'\s+'+$q+'([0-9]+)'); if($m.Success){ $b=$m.Groups[1].Value } }; if($b -eq '' -or $b -eq '0'){ Copy-Item -LiteralPath $saved -Destination $f -Force; Write-Output 'The update did not finish. Steam''s install record is put back as it was.' }"
-set "HOTWIRE_ACFPATH=%HOTWIRE_ACF%"
+REM  Its own path: the build check above clears HOTWIRE_ACF once it is done.
+set "HOTWIRE_ACFPATH=%ROOT%\steamapps\appmanifest_%APPID%.acf"
 set "HOTWIRE_ROOT=%ROOT%"
 if "%FAST_RUST_UPDATES%"=="1" if not "%INSTALL_FRAMEWORK%"=="0" if defined INSTALLED_BUILD if defined PUBLIC_BUILD if !INSTALLED_BUILD! LSS !PUBLIC_BUILD! (
     powershell -NoProfile -NonInteractive -Command "!PSMARK!"
@@ -594,7 +595,7 @@ REM  Once per update, a try that left the install marked Files Corrupt is
 REM  retried at once: Steam checks every file on that next run, so waiting
 REM  changes nothing.
 if "!QUICK_RETRY_USED!"=="1" goto steamwait
-if not exist "%HOTWIRE_ACF%" goto steamwait
+if not exist "!HOTWIRE_ACFPATH!" goto steamwait
 powershell -NoProfile -NonInteractive -Command "!PSCORRUPT!" >nul 2>&1
 if errorlevel 1 goto steamwait
 set "QUICK_RETRY_USED=1"
@@ -1044,7 +1045,7 @@ REM     written as ordinary PowerShell rather than through cmd's quoting
 REM     rules.
 REM ======================================================================
 exit /b 0
-HOTWIRE_LAUNCHER_HASH="193308c906df9f10bc683752c84b6bc3b516389c53df68ac42c133b8a55be084"
+HOTWIRE_LAUNCHER_HASH="af65a087d60fae927b6601c7dd3fda7a8d11f5bb476d5f206b4461a120a3bc3b"
 
 #HOTWIRE-PS
 # hotwire.bat's PowerShell. cmd hands everything from the line above down to PowerShell, and HOTWIRE_MODE says

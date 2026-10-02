@@ -33,8 +33,8 @@ The launcher's settings, and the default when `hotwire.cfg` leaves one out:
 | `hotwire.steam_branch` | `public` | The Steam branch. Empty lets Steam keep the install on its current branch. |
 | `hotwire.max_days_without_update` | `14` | `hotwire` mode's backstop. `0` turns it off. |
 | `hotwire.update_on_new_build` | `1` | `hotwire` mode updates when Steam's build is ahead |
-| `hotwire.fast_rust_updates` | `0` | Launchers 1.1.18 and 1.1.7-linux. `1` = a Rust update on a server with Oxide finishes in one try. See [Fast Rust updates](#fast-rust-updates). |
-| `hotwire.recover_refused_update` | `1` | Launchers 1.1.18 and 1.1.7-linux. When Steam no longer serves the installed build's file list, update without it. See [A refused update](#a-refused-update). `0` = start the installed build. |
+| `hotwire.fast_rust_updates` | `0` | Launchers 1.1.19 and 1.1.7-linux. `1` = a Rust update on a server with Oxide finishes in one try. See [Fast Rust updates](#fast-rust-updates). |
+| `hotwire.recover_refused_update` | `1` | Launchers 1.1.19 and 1.1.7-linux. When Steam no longer serves the installed build's file list, update without it. See [A refused update](#a-refused-update). `0` = start the installed build. |
 | `hotwire.build_check_hours` | `6` | How long Steam's answer is cached. `0` turns the check off. |
 | `hotwire.steam_tries` | `5` | SteamCMD attempts before starting what is on disk |
 | `hotwire.steam_retry_seconds` | `60` | Wait between those attempts |
@@ -83,7 +83,7 @@ Fixed in the launcher, never settings: where Oxide is downloaded from and checke
 
 ### Fast Rust updates
 
-Requires launcher 1.1.18 (Windows) or 1.1.7-linux. Off by default: `hotwire.fast_rust_updates 1` turns it on.
+Requires launcher 1.1.19 (Windows) or 1.1.7-linux. Off by default: `hotwire.fast_rust_updates 1` turns it on.
 
 SteamCMD updates Rust by patching the game files on disk. Oxide replaces 11 of them, so on a server with Oxide the
 first SteamCMD run for a new Rust build stops with "Corrupt game files" (state `0x486`). SteamCMD then records the
@@ -108,7 +108,7 @@ default installation will not be affected."
 
 ### A refused update
 
-Requires launcher 1.1.18 (Windows) or 1.1.7-linux.
+Requires launcher 1.1.19 (Windows) or 1.1.7-linux.
 
 To update, SteamCMD needs the file list of the Rust build installed. It keeps these lists in a cache shared by every
 server that uses the same SteamCMD, and asks Steam only for one it does not have. Steam does not serve an old Rust

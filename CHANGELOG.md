@@ -25,6 +25,15 @@ sit above a launcher `1.1.7`. Read the label, not the number.
 at the top of the file — it is a comment, not something it echoes, so read it
 rather than watch for it.
 
+## Launcher 1.1.19 (Windows), setup 0.1.13 (Windows) and 0.2.14 (Linux) — 2026-10-02
+
+**On Windows, the refused-update recovery, the quick retry and Fast Rust updates now work.**
+
+- In launcher 1.1.18 all three looked for Steam's install record under a name the launcher had already cleared, so none
+  of them acted, and updates behaved as in 1.1.17. Measured on a Windows server the same day: the first SteamCMD run
+  for the new Rust build failed, and the retry waited the usual minute instead of starting at once.
+- 1.1.18 was never released; servers that installed it from the branch should take 1.1.19.
+
 ## Launcher 1.1.18 (Windows), launcher 1.1.7-linux, setup 0.1.12 (Windows) and 0.2.13 (Linux) — 2026-10-02
 
 **A server whose Rust build Steam no longer serves updates anyway, and a refused update no longer waits.**
