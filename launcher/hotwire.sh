@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # ==[ H O T W I R E ]===================================================
-#  Hotwire launcher for Linux, version 1.1.3-linux (2026-09-29)
+#  Hotwire launcher for Linux, version 1.1.7-linux (2026-10-02)
 #  Built by xman2000 and Claude.  MIT License.
 #  https://github.com/xman2000/hotwire
 #
@@ -21,9 +21,9 @@
 #     offers a launcher-editing feature. Capabilities, not the version number,
 #     are what a feature is gated on; settings_file says the settings are read
 #     from hotwire.cfg.
-HOTWIRE_LAUNCHER_VERSION="1.1.6-linux"
+HOTWIRE_LAUNCHER_VERSION="1.1.7-linux"
 HOTWIRE_LAUNCHER_CAPABILITIES="supervise,update,framework_verify,crash_backstop,log_rotate,convar_persist,wipe,backup,settings_file"
-HOTWIRE_LAUNCHER_HASH="cce0247d95492c465cefcda0b017a94f793cccc3e2b04619c5645eded4ed9a14"
+HOTWIRE_LAUNCHER_HASH="f3c97b766b1af807a0c4d352240f52c04c5a59469e3ac50b41fcc7b367504e16"
 
 # ======================================================================
 #  HOW THIS LAUNCHER WORKS
@@ -97,7 +97,7 @@ set_defaults() {
     UPDATE_MODE="auto"
     STEAMCMD="/usr/games/steamcmd"; STEAM_BRANCH="public"
     MAX_DAYS_WITHOUT_UPDATE="14"; MAX_STEAM_TRIES="5"; STEAM_RETRY_SECONDS="60"; STEAMCMD_WAIT_MINUTES="60"; FORCED_WIPE_STEAM_MINUTES="15"
-    BUILD_CHECK_HOURS="6"; UPDATE_ON_NEW_BUILD="1"
+    BUILD_CHECK_HOURS="6"; UPDATE_ON_NEW_BUILD="1"; FAST_RUST_UPDATES="0"; RECOVER_REFUSED_UPDATE="1"
     INSTALL_FRAMEWORK="1"; SKIP_UNCHANGED_FRAMEWORK="1"; VERIFY_FRAMEWORK="1"
     RESTART_ON_EXIT="1"; RESTART_DELAY="15"; CRASH_SECONDS="60"; MAX_CRASH_STREAK="10"; CRASH_BACKOFF="1"
     ROTATE_LOGS="1"; LOG_KEEP="14"; RCON_PASSWORD_MIN="8"; CHECK_OPTIONS="1"; BACKUPS="1"
@@ -192,6 +192,8 @@ declare -A HW_SETTINGS=(
     [hotwire.steam_branch]="STEAM_BRANCH word"
     [hotwire.max_days_without_update]="MAX_DAYS_WITHOUT_UPDATE int"
     [hotwire.update_on_new_build]="UPDATE_ON_NEW_BUILD bool"
+    [hotwire.fast_rust_updates]="FAST_RUST_UPDATES bool"
+    [hotwire.recover_refused_update]="RECOVER_REFUSED_UPDATE bool"
     [hotwire.build_check_hours]="BUILD_CHECK_HOURS int"
     [hotwire.steam_tries]="MAX_STEAM_TRIES int1"
     [hotwire.steam_retry_seconds]="STEAM_RETRY_SECONDS int"
@@ -585,8 +587,107 @@ forced_wipe_waiting() {
     [ -n "$expires" ] && [ "$expires" -lt "$(date +%s)" ] 2>/dev/null && return 1
     return 0
 }
+# Fast Rust updates. Steam updates a game by patching the files on disk, and Oxide has replaced some of them, so on
+# a modded server Steam's first try at a new build stops with "Corrupt game files" (state 0x486). Steam then marks
+# the install Files Corrupt in steamapps/appmanifest_<appid>.acf ("StateFlags", bit 128), and its next run checks
+# every file first and succeeds. Marking it before the first run saves the failed try. The manifest is Steam's own
+# and undocumented: only one exact line is changed, the edit is checked before it is used, a copy is kept, and if
+# Steam ever ignores the mark the update simply takes its usual second try (manifest_marked_corrupt below).
+mark_manifest_for_check() {
+    [ "$FAST_RUST_UPDATES" = "1" ] || return 0
+    [ "$INSTALL_FRAMEWORK" = "1" ] || return 0                     # nothing of Oxide's to trip over
+    [ -n "$INSTALLED_BUILD" ] && [ -n "$PUBLIC_BUILD" ] || return 0
+    [ "$INSTALLED_BUILD" -lt "$PUBLIC_BUILD" ] 2>/dev/null || return 0   # only an update that changes the build
+    [ -f "$APPMANIFEST" ] || return 0
+    local pattern='^[[:space:]]*"StateFlags"[[:space:]]+"4"[[:space:]]*$'
+    if [ "$(grep -cE "$pattern" "$APPMANIFEST")" != "1" ]; then
+        log "Fast Rust updates: Steam's install record is not in the expected form; leaving it to Steam."
+        return 0
+    fi
+    local tmp="$APPMANIFEST.hotwire-tmp"
+    sed -E 's/^([[:space:]]*"StateFlags"[[:space:]]+")4("[[:space:]]*)$/\1132\2/' "$APPMANIFEST" > "$tmp" 2>/dev/null || { rm -f "$tmp"; return 0; }
+    # Exactly one line may differ, and it must be the one meant.
+    if [ "$(diff "$APPMANIFEST" "$tmp" | grep -c '^[<>]')" != "2" ] || ! grep -qE '^[[:space:]]*"StateFlags"[[:space:]]+"132"[[:space:]]*$' "$tmp"; then
+        rm -f "$tmp"; log "Fast Rust updates: Steam's install record could not be changed; leaving it to Steam."
+        return 0
+    fi
+    mkdir -p "$ROOT/hotwire" 2>/dev/null; cp -p "$APPMANIFEST" "$ROOT/hotwire/appmanifest-before-update.acf" 2>/dev/null || true   # outside steamapps, where Steam never reads it
+    mv -f "$tmp" "$APPMANIFEST" || { rm -f "$tmp"; return 0; }
+    log "Fast Rust updates: Steam will check every game file before this update, so it finishes in one try."
+}
+# Steam itself marks the install Files Corrupt after a failed try; its next try checks every file and succeeds.
+manifest_marked_corrupt() {
+    local flags
+    flags="$(grep -oE '"StateFlags"[[:space:]]+"[0-9]+"' "$APPMANIFEST" 2>/dev/null | head -1 | grep -oE '"[0-9]+"' | tr -d '"' || true)"
+    [ -n "$flags" ] && [ $(( flags & 128 )) -ne 0 ] 2>/dev/null
+}
+# A refused update. To patch, SteamCMD needs the file lists (depot manifests) of the build installed. It reads them from
+# its cache and asks Steam only on a miss, and Steam refuses an old Rust build's lists to an anonymous login ("Failed to
+# get manifest request code, 'Access Denied'", then "No connection"). The cache is shared by every server that uses this
+# SteamCMD, so one server's update can leave another, still on the old build, unable to update. Without Steam's install
+# record SteamCMD checks the files on disk against the new build and downloads what differs (measured on rust2: about
+# 0.8 GB, 133 s), which is what other server tools ship for this. Only SteamCMD's own log says why a run failed, so the
+# part one run added to it is read while this launcher still holds the SteamCMD lock: no other server's run is in it.
+STEAM_LOG_SIZES=(); INSTALLED_MANIFESTS=""; RECOVERY_SAVED=""
+steam_content_logs() {
+    printf '%s\n' "$HOME/.local/share/Steam/logs/content_log.txt" "$HOME/Steam/logs/content_log.txt" \
+        "$(dirname "$STEAMCMD")/logs/content_log.txt"
+}
+note_steam_logs() {
+    STEAM_LOG_SIZES=()
+    local f
+    while IFS= read -r f; do STEAM_LOG_SIZES+=( "$(stat -c %s "$f" 2>/dev/null || echo 0)" ); done < <(steam_content_logs)
+    INSTALLED_MANIFESTS="$(grep -oE '"manifest"[[:space:]]+"[0-9]+"' "$APPMANIFEST" 2>/dev/null | grep -oE '[0-9]+' | sort -u | tr '\n' ' ' || true)"
+}
+# True when the run just finished was refused a file list of the build installed: the case a missing record mends.
+update_refused_installed() {
+    [ -n "$INSTALLED_MANIFESTS" ] || return 1
+    local f i=0 before size denied m
+    while IFS= read -r f; do
+        before="${STEAM_LOG_SIZES[$i]:-0}"; i=$((i+1))
+        size="$(stat -c %s "$f" 2>/dev/null || echo 0)"
+        [ "$size" -gt 0 ] 2>/dev/null || continue
+        [ "$size" -lt "$before" ] 2>/dev/null && before=0              # Steam started a new log
+        [ "$size" -gt "$before" ] 2>/dev/null || continue
+        denied="$(tail -c +"$((before+1))" "$f" 2>/dev/null | head -c 4194304 \
+            | grep -F "Failed to get manifest request code, 'Access Denied'" \
+            | grep -oE 'Manifest: [0-9]+' | grep -oE '[0-9]+' | sort -u || true)"
+        for m in $denied; do
+            case " $INSTALLED_MANIFESTS " in *" $m "*) return 0 ;; esac
+        done
+    done < <(steam_content_logs)
+    return 1
+}
+set_record_aside() {
+    [ "$RECOVER_REFUSED_UPDATE" = "1" ] && [ -f "$APPMANIFEST" ] || return 1
+    mkdir -p "$ROOT/hotwire" 2>/dev/null || return 1
+    mv -f "$APPMANIFEST" "$ROOT/hotwire/appmanifest-refused.acf" 2>/dev/null || return 1
+    RECOVERY_SAVED="$ROOT/hotwire/appmanifest-refused.acf"
+    log "Steam no longer serves the installed Rust build's file list, so this update cannot patch it."
+    log "Setting Steam's install record aside and updating again: Steam checks the files on disk and downloads what changed."
+}
+# After the update: keep Steam's new record when it finished, put the old one back when Steam left none it can use.
+settle_record() {
+    [ -n "$RECOVERY_SAVED" ] && [ -f "$RECOVERY_SAVED" ] || return 0
+    if [ "$STEAM_OK" = "1" ]; then
+        ok "The update finished without the old file list. The old install record is kept in hotwire/appmanifest-refused.acf."
+        return 0
+    fi
+    local b; b="$(grep -oE '"buildid"[[:space:]]+"[0-9]+"' "$APPMANIFEST" 2>/dev/null | head -1 | grep -oE '"[0-9]+"' | tr -d '"' || true)"
+    if [ -z "$b" ] || [ "$b" = "0" ]; then
+        cp -p "$RECOVERY_SAVED" "$APPMANIFEST" 2>/dev/null && warn "The update did not finish. Steam's install record is put back as it was."
+    fi
+}
 steam_update() {
+    RECOVERY_SAVED=""
+    steam_update_attempts
+    settle_record
+    return 0
+}
+steam_update_attempts() {
     STEAM_OK=0
+    mark_manifest_for_check
+    local quick_retry_used=0 recovery_used=0 refused=0
     # A forced wipe rides this update, and the old build cannot take players once their game has updated: keep trying
     # for hotwire.forced_wipe_steam_minutes before starting what is on disk (the server always starts in the end).
     local deadline=0
@@ -611,7 +712,9 @@ steam_update() {
         # never holds this server down: past the deadline we start what we have.
         exec 8>"$STEAM_LOCK" || { warn "Could not open the steamcmd lock."; return 0; }
         if flock -w $(( STEAMCMD_WAIT_MINUTES * 60 )) 8; then
+            note_steam_logs
             "$STEAMCMD" "${args[@]}"; local rc=$?
+            refused=0; [ "$rc" != "0" ] && update_refused_installed && refused=1
             exec 8>&-
             if [ "$rc" = "0" ]; then STEAM_OK=1; ok "steamcmd finished."; return 0; fi
             bad "steamcmd exited $rc."
@@ -620,14 +723,26 @@ steam_update() {
             warn "Waited $STEAMCMD_WAIT_MINUTES min for another server's steamcmd; starting with what is on disk."
             return 0
         fi
+        # Once per update, a refusal of the installed build's file list is mended at once, whatever the try count:
+        # every further try would be refused the same way.
+        if [ "$refused" = "1" ] && [ "$recovery_used" = "0" ] && set_record_aside; then
+            recovery_used=1
+            continue
+        fi
         if [ "$tries" -ge "$MAX_STEAM_TRIES" ] && [ "$(date +%s)" -ge "$deadline" ]; then
             warn "steamcmd gave up after $tries attempts; launching what we have."
             return 0
         fi
+        # Once per update, a try that left the install marked Files Corrupt is retried at once: Steam checks every
+        # file on that next run, so waiting changes nothing.
+        if [ "$quick_retry_used" = "0" ] && manifest_marked_corrupt; then
+            quick_retry_used=1
+            log "Steam marked the game files for a full check; trying again now."
+            continue
+        fi
         log "Retrying in $STEAM_RETRY_SECONDS s..."; sleep "$STEAM_RETRY_SECONDS"
     done
 }
-
 # ======================================================================
 # Section 6-framework -- install/refresh Oxide (the Linux build), with a
 # skip-when-unchanged optimisation and a GitHub SHA-256 verification.

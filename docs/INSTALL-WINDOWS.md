@@ -216,6 +216,7 @@ The plugin loads its key and starts reporting. The server appears in AFKPanel wi
 | The server never appears in the server browser | Port 28017/UDP is closed, or your host blocks it | Open the port, or ask your host |
 | The server stops after "consecutive crashes", on a machine with another server | Both servers use the same ports | Give one of them different ports in its `hotwire.cfg` |
 | The server is in AFKPanel but shows no player counts | The plugin is not loaded | Look in `oxide\logs\` for a compile error |
+| The console says Steam no longer serves the installed Rust build's file list | The server was on an old build, and the machine's SteamCMD no longer has that build's file list | Nothing: the launcher updates without it. Launcher 1.1.18 or later. |
 
 ## Disconnect the server
 

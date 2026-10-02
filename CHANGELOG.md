@@ -25,6 +25,23 @@ sit above a launcher `1.1.7`. Read the label, not the number.
 at the top of the file — it is a comment, not something it echoes, so read it
 rather than watch for it.
 
+## Launcher 1.1.18 (Windows), launcher 1.1.7-linux, setup 0.1.12 (Windows) and 0.2.13 (Linux) — 2026-10-02
+
+**A server whose Rust build Steam no longer serves updates anyway, and a refused update no longer waits.**
+
+- To update, SteamCMD needs the file list of the Rust build installed. Several servers on one machine share SteamCMD's
+  copy of these lists, and Steam does not serve an old build's list. A server left on an old build, for example after
+  another server on the machine updated, could fail every update and start on a build players cannot join. When Steam
+  refuses that list, the launcher now sets Steam's install record aside and updates again, so SteamCMD checks the files
+  on disk and downloads what changed. New setting `hotwire.recover_refused_update`, on by default.
+- When a SteamCMD run leaves the install marked for a full check, the next attempt starts at once instead of after
+  `hotwire.steam_retry_seconds`, once per update.
+- New setting `hotwire.fast_rust_updates`, off by default. On a server with Oxide, SteamCMD's first run for a new Rust
+  build fails and the next one finishes. With this on, the launcher asks Steam to check every game file first, so the
+  first run finishes. It changes a Steam file that Valve does not document.
+- How each works: `docs/LAUNCHER.md`, "Fast Rust updates" and "A refused update".
+- The header comment at the top of each launcher names the version the launcher reports.
+
 ## Plugin 1.1.51, setup 0.1.11 (Windows) and 0.2.12 (Linux) — 2026-10-02
 
 **An update sent from AFKPanel while a countdown is running joins it instead of being refused.**

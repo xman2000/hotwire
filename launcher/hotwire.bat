@@ -2,7 +2,7 @@
 setlocal EnableDelayedExpansion
 
 REM ==[ H O T W I R E ]===================================================
-REM  Hotwire launcher for Windows, version 1.1.16 (2026-09-28)
+REM  Hotwire launcher for Windows, version 1.1.18 (2026-10-02)
 REM  Built by xman2000 and Claude.  MIT License.
 REM  https://github.com/xman2000/hotwire
 REM
@@ -28,7 +28,7 @@ REM  works the hash out again from this file's bytes, so the panel offers a
 REM  wipe or a permanent setting only through a launcher that is unmodified
 REM  and says it can carry them out. settings_file says the settings are
 REM  read from hotwire.cfg. Not settings; do not edit.
-set "HOTWIRE_LAUNCHER_VERSION=1.1.17"
+set "HOTWIRE_LAUNCHER_VERSION=1.1.18"
 set "HOTWIRE_LAUNCHER_CAPABILITIES=supervise,update,framework_verify,crash_backstop,log_rotate,convar_persist,wipe,settings_file"
 
 REM ======================================================================
@@ -479,6 +479,51 @@ if "%DO_UPDATE%"=="0" (
     goto buildargs
 )
 
+REM  Fast Rust updates. Steam updates a game by patching the files on disk,
+REM  and Oxide has replaced some of them, so on a modded server Steam's first
+REM  try at a new build stops with "Corrupt game files" (state 0x486). Steam
+REM  then marks the install Files Corrupt in steamapps\appmanifest (StateFlags,
+REM  bit 128), and its next run checks every file first and succeeds. Marking
+REM  it before the first run saves the failed try. The record is Steam's own
+REM  and undocumented: one exact line is changed, the change is checked
+REM  before it is written, a copy is kept in hotwire\, and if Steam ever
+REM  ignores the mark the update takes its usual second try (see steamfailed).
+set "PSMARK="
+set "PSMARK=!PSMARK!$f=$env:HOTWIRE_ACFPATH; $q=[char]34; $nl=[char]10; if(-not (Test-Path -LiteralPath $f)){ exit 0 }; "
+set "PSMARK=!PSMARK!$re='\A\s*'+$q+'StateFlags'+$q+'\s+'+$q+'4'+$q+'\s*\z'; $lines=[IO.File]::ReadAllText($f).Split($nl); $hit=@(); "
+set "PSMARK=!PSMARK!for($i=0; $i -lt $lines.Length; $i++){ if($lines[$i].TrimEnd([char]13) -match $re){ $hit+=$i } }; "
+set "PSMARK=!PSMARK!if($hit.Count -ne 1){ Write-Output 'Fast Rust updates: Steam''s install record is not in the expected form; leaving it to Steam.'; exit 0 }; "
+set "PSMARK=!PSMARK!$new=[string[]]$lines.Clone(); $new[$hit[0]]=$lines[$hit[0]].Replace($q+'4'+$q, $q+'132'+$q); $tmp=$f+'.hotwire-tmp'; "
+set "PSMARK=!PSMARK!try{ [IO.File]::WriteAllText($tmp, [string]::Join($nl, $new)); "
+set "PSMARK=!PSMARK!  $back=[IO.File]::ReadAllText($tmp).Split($nl); $diff=0; for($i=0; $i -lt $lines.Length; $i++){ if($back[$i] -ne $lines[$i]){ $diff++ } }; "
+set "PSMARK=!PSMARK!  if($back.Length -ne $lines.Length -or $diff -ne 1){ throw 'unexpected' }; "
+set "PSMARK=!PSMARK!  $dir=Join-Path $env:HOTWIRE_ROOT 'hotwire'; if(-not (Test-Path -LiteralPath $dir)){ [void](New-Item -ItemType Directory -Path $dir) }; "
+set "PSMARK=!PSMARK!  Copy-Item -LiteralPath $f -Destination (Join-Path $dir 'appmanifest-before-update.acf') -Force; [IO.File]::Replace($tmp, $f, [NullString]::Value); "
+set "PSMARK=!PSMARK!  Write-Output 'Fast Rust updates: Steam will check every game file before this update, so it finishes in one try.' "
+set "PSMARK=!PSMARK!} catch { Remove-Item -LiteralPath $tmp -ErrorAction SilentlyContinue; Write-Output 'Fast Rust updates: Steam''s install record could not be changed; leaving it to Steam.' } "
+set "PSCORRUPT=$m=[regex]::Match([IO.File]::ReadAllText($env:HOTWIRE_ACFPATH), 'StateFlags'+[char]34+'\s+'+[char]34+'([0-9]+)'); if($m.Success -and ([int64]$m.Groups[1].Value -band 128)){ exit 0 }; exit 1"
+set "QUICK_RETRY_USED=0"
+set "RECOVERY_USED=0"
+REM  A refused update. To patch, SteamCMD needs the file lists of the build
+REM  installed. It reads them from its cache and asks Steam only on a miss,
+REM  and Steam refuses an old Rust build's lists to an anonymous login. The
+REM  cache is shared by every server using this SteamCMD, so one server's
+REM  update can leave another, still on the old build, unable to update. The
+REM  locked run above reads what SteamCMD's log gained during it and answers
+REM  96 when a list of the installed build was refused. Without Steam's
+REM  install record SteamCMD checks the files on disk against the new build
+REM  and downloads what differs, so the record is set aside in hotwire\ and
+REM  the update runs again, once. If it still fails and Steam left no record
+REM  it can use, the old one is put back.
+set "PSASIDE=$f=$env:HOTWIRE_ACFPATH; if(-not (Test-Path -LiteralPath $f)){ exit 1 }; $dir=Join-Path $env:HOTWIRE_ROOT 'hotwire'; try{ if(-not (Test-Path -LiteralPath $dir)){ [void](New-Item -ItemType Directory -Path $dir) }; Move-Item -LiteralPath $f -Destination (Join-Path $dir 'appmanifest-refused.acf') -Force; Write-Output 'Steam no longer serves the installed Rust build''s file list, so this update cannot patch it.'; Write-Output 'Setting Steam''s install record aside and updating again: Steam checks the files on disk and downloads what changed.'; exit 0 } catch { exit 1 }"
+set "PSSETTLE=$q=[char]34; $saved=Join-Path $env:HOTWIRE_ROOT 'hotwire\appmanifest-refused.acf'; $f=$env:HOTWIRE_ACFPATH; if(-not (Test-Path -LiteralPath $saved)){ exit 0 }; $b=''; if(Test-Path -LiteralPath $f){ $m=[regex]::Match([IO.File]::ReadAllText($f), $q+'buildid'+$q+'\s+'+$q+'([0-9]+)'); if($m.Success){ $b=$m.Groups[1].Value } }; if($b -eq '' -or $b -eq '0'){ Copy-Item -LiteralPath $saved -Destination $f -Force; Write-Output 'The update did not finish. Steam''s install record is put back as it was.' }"
+set "HOTWIRE_ACFPATH=%HOTWIRE_ACF%"
+set "HOTWIRE_ROOT=%ROOT%"
+if "%FAST_RUST_UPDATES%"=="1" if not "%INSTALL_FRAMEWORK%"=="0" if defined INSTALLED_BUILD if defined PUBLIC_BUILD if !INSTALLED_BUILD! LSS !PUBLIC_BUILD! (
+    powershell -NoProfile -NonInteractive -Command "!PSMARK!"
+)
+set "HOTWIRE_ROOT="
+
 set /a STEAM_TRIES=0
 set "STEAM_OK=0"
 
@@ -501,7 +546,13 @@ set "PSSTEAM=!PSSTEAM!$lock=Join-Path (Split-Path -Parent $sc) 'hotwire-steamcmd
 set "PSSTEAM=!PSSTEAM!while($null -eq $h){ try{ $h=[IO.File]::Open($lock,[IO.FileMode]::OpenOrCreate,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None) } catch { "
 set "PSSTEAM=!PSSTEAM!  if((Get-Date) -gt $deadline){ Write-Output ('Another server has been using SteamCMD for over '+$wait+' minutes. Not waiting any longer.'); exit 97 }; "
 set "PSSTEAM=!PSSTEAM!  if(-not $said){ Write-Output 'Another server is using SteamCMD right now. Waiting for it to finish...'; $said=$true }; Start-Sleep -Seconds 5 } } "
-set "PSSTEAM=!PSSTEAM!try{ $p=Start-Process -FilePath $sc -ArgumentList $a -NoNewWindow -Wait -PassThru; exit $p.ExitCode } finally { $h.Dispose() } "
+set "PSSTEAM=!PSSTEAM!try{ $lg=Join-Path (Split-Path -Parent $sc) 'logs\content_log.txt'; $before=0; if(Test-Path -LiteralPath $lg){ $before=(Get-Item -LiteralPath $lg).Length }; "
+set "PSSTEAM=!PSSTEAM!  $inst=@(); if($env:HOTWIRE_ACFPATH -and (Test-Path -LiteralPath $env:HOTWIRE_ACFPATH)){ foreach($x in [regex]::Matches([IO.File]::ReadAllText($env:HOTWIRE_ACFPATH), $q+'manifest'+$q+'\s+'+$q+'([0-9]+)'+$q)){ $inst+=$x.Groups[1].Value } }; "
+set "PSSTEAM=!PSSTEAM!  $p=Start-Process -FilePath $sc -ArgumentList $a -NoNewWindow -Wait -PassThru; $code=$p.ExitCode; "
+set "PSSTEAM=!PSSTEAM!  if($code -ne 0 -and $env:HOTWIRE_RECOVER -eq '1' -and $inst.Count -gt 0 -and (Test-Path -LiteralPath $lg)){ $len=(Get-Item -LiteralPath $lg).Length; if($len -lt $before){ $before=0 }; "
+set "PSSTEAM=!PSSTEAM!    if($len -gt $before){ $fs=[IO.File]::Open($lg, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite); try{ [void]$fs.Seek($before, [IO.SeekOrigin]::Begin); $n=[int][Math]::Min($len-$before, 4194304); $buf=New-Object byte[] $n; [void]$fs.Read($buf, 0, $n) } finally { $fs.Dispose() }; "
+set "PSSTEAM=!PSSTEAM!      foreach($line in [Text.Encoding]::UTF8.GetString($buf).Split([char]10)){ if($line.Contains('Failed to get manifest request code') -and $line.Contains('Access Denied')){ $mm=[regex]::Match($line, 'Manifest: ([0-9]+)'); if($mm.Success -and ($inst -contains $mm.Groups[1].Value)){ $code=96 } } } } }; "
+set "PSSTEAM=!PSSTEAM!  exit $code } finally { $h.Dispose() } "
 
 :steamupdate
 set /a STEAM_TRIES+=1
@@ -511,6 +562,7 @@ set "HOTWIRE_APPID=%APPID%"
 set "HOTWIRE_STEAMBRANCH=%STEAM_BRANCH%"
 set "HOTWIRE_VALIDATE=%DO_VALIDATE%"
 set "HOTWIRE_STEAMWAIT=%STEAMCMD_WAIT_MINUTES%"
+set "HOTWIRE_RECOVER=%RECOVER_REFUSED_UPDATE%"
 powershell -NoProfile -NonInteractive -Command "!PSSTEAM!"
 set "STEAMEXIT=!errorlevel!"
 set "HOTWIRE_STEAMCMD="
@@ -519,13 +571,36 @@ set "HOTWIRE_APPID="
 set "HOTWIRE_STEAMBRANCH="
 set "HOTWIRE_VALIDATE="
 set "HOTWIRE_STEAMWAIT="
+set "HOTWIRE_RECOVER="
 if not "!STEAMEXIT!"=="0" goto steamfailed
 set "STEAM_OK=1"
+if "!RECOVERY_USED!"=="1" echo [%date% %time%] The update finished without the old file list. The old install record is kept in hotwire\appmanifest-refused.acf.
 goto framework
 
 :steamfailed
 echo [%date% %time%] steamcmd error (attempt !STEAM_TRIES! of %MAX_STEAM_TRIES%).
+if not "!STEAMEXIT!"=="96" goto steamnotrefused
+if "!RECOVERY_USED!"=="1" goto steamnotrefused
+set "HOTWIRE_ROOT=%ROOT%"
+powershell -NoProfile -NonInteractive -Command "!PSASIDE!"
+set "ASIDEEXIT=!errorlevel!"
+set "HOTWIRE_ROOT="
+if not "!ASIDEEXIT!"=="0" goto steamnotrefused
+set "RECOVERY_USED=1"
+goto steamupdate
+:steamnotrefused
 if !STEAM_TRIES! GEQ %MAX_STEAM_TRIES% goto steamgaveup
+REM  Once per update, a try that left the install marked Files Corrupt is
+REM  retried at once: Steam checks every file on that next run, so waiting
+REM  changes nothing.
+if "!QUICK_RETRY_USED!"=="1" goto steamwait
+if not exist "%HOTWIRE_ACF%" goto steamwait
+powershell -NoProfile -NonInteractive -Command "!PSCORRUPT!" >nul 2>&1
+if errorlevel 1 goto steamwait
+set "QUICK_RETRY_USED=1"
+echo [%date% %time%] Steam marked the game files for a full check; trying again now.
+goto steamupdate
+:steamwait
 REM  timeout refuses to run when stdin is redirected, which is how this
 REM  launcher behaves under a scheduler. Without the fallback the retry
 REM  would return instantly and hammer steamcmd.
@@ -536,6 +611,11 @@ goto steamupdate
 
 :steamgaveup
 echo [%date% %time%] Giving up on steamcmd. Launching what we have.
+if not "!RECOVERY_USED!"=="1" goto steamsettled
+set "HOTWIRE_ROOT=%ROOT%"
+powershell -NoProfile -NonInteractive -Command "!PSSETTLE!"
+set "HOTWIRE_ROOT="
+:steamsettled
 
 :framework
 REM  Oxide/uMod. hotwire.install_framework 0 skips it for a vanilla server.
@@ -964,7 +1044,7 @@ REM     written as ordinary PowerShell rather than through cmd's quoting
 REM     rules.
 REM ======================================================================
 exit /b 0
-HOTWIRE_LAUNCHER_HASH="cec9fc12c871d6e87db1df6eda0a8a390095dcc5f7458a566fbef1bc8ee9b8b1"
+HOTWIRE_LAUNCHER_HASH="193308c906df9f10bc683752c84b6bc3b516389c53df68ac42c133b8a55be084"
 
 #HOTWIRE-PS
 # hotwire.bat's PowerShell. cmd hands everything from the line above down to PowerShell, and HOTWIRE_MODE says
@@ -998,6 +1078,8 @@ $hwSettings = @{
     'hotwire.steam_branch'             = @('STEAM_BRANCH', 'word', 'public')
     'hotwire.max_days_without_update'  = @('MAX_DAYS_WITHOUT_UPDATE', 'int', '14')
     'hotwire.update_on_new_build'      = @('UPDATE_ON_NEW_BUILD', 'bool', '1')
+    'hotwire.fast_rust_updates'        = @('FAST_RUST_UPDATES', 'bool', '0')
+    'hotwire.recover_refused_update'   = @('RECOVER_REFUSED_UPDATE', 'bool', '1')
     'hotwire.build_check_hours'        = @('BUILD_CHECK_HOURS', 'int', '6')
     'hotwire.steam_tries'              = @('MAX_STEAM_TRIES', 'int1', '5')
     'hotwire.steam_retry_seconds'      = @('STEAM_RETRY_SECONDS', 'int', '60')

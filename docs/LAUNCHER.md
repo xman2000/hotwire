@@ -33,6 +33,8 @@ The launcher's settings, and the default when `hotwire.cfg` leaves one out:
 | `hotwire.steam_branch` | `public` | The Steam branch. Empty lets Steam keep the install on its current branch. |
 | `hotwire.max_days_without_update` | `14` | `hotwire` mode's backstop. `0` turns it off. |
 | `hotwire.update_on_new_build` | `1` | `hotwire` mode updates when Steam's build is ahead |
+| `hotwire.fast_rust_updates` | `0` | Launchers 1.1.18 and 1.1.7-linux. `1` = a Rust update on a server with Oxide finishes in one try. See [Fast Rust updates](#fast-rust-updates). |
+| `hotwire.recover_refused_update` | `1` | Launchers 1.1.18 and 1.1.7-linux. When Steam no longer serves the installed build's file list, update without it. See [A refused update](#a-refused-update). `0` = start the installed build. |
 | `hotwire.build_check_hours` | `6` | How long Steam's answer is cached. `0` turns the check off. |
 | `hotwire.steam_tries` | `5` | SteamCMD attempts before starting what is on disk |
 | `hotwire.steam_retry_seconds` | `60` | Wait between those attempts |
@@ -78,6 +80,61 @@ Fixed in the launcher, never settings: where Oxide is downloaded from and checke
 | The backstop | After `hotwire.max_days_without_update` without a successful update, one happens and the console says so. A missing stamp counts as forever, so a fresh install updates on its first start. |
 | Oxide | Installed with the server and put back after every update, unless `hotwire.install_framework` is `0`. With `hotwire.skip_unchanged_framework` it is not re-extracted when neither changed: the game's build is the one from before the update, and Oxide's version is the newest release on GitHub, the file that is downloaded and checked. An update that changed the build, or a validate, always puts Oxide back. |
 | A failure in any of it | Reported, and the server starts under the ordinary rules |
+
+### Fast Rust updates
+
+Requires launcher 1.1.18 (Windows) or 1.1.7-linux. Off by default: `hotwire.fast_rust_updates 1` turns it on.
+
+SteamCMD updates Rust by patching the game files on disk. Oxide replaces 11 of them, so on a server with Oxide the
+first SteamCMD run for a new Rust build stops with "Corrupt game files" (state `0x486`). SteamCMD then records the
+install as Files Corrupt, and its next run checks every file, downloads the ones that differ and finishes the update.
+
+| Step | What the launcher does |
+| --- | --- |
+| Before an update to a newer Rust build, with Oxide installed | Records the install as Files Corrupt itself, so SteamCMD checks every file and finishes in one run |
+| Where | `steamapps/appmanifest_258550.acf`, the line `"StateFlags" "4"`, changed to `"132"` |
+| A copy | `hotwire/appmanifest-before-update.acf`, the record as it was |
+| When the record is not in the expected form | Nothing is changed and the console says so |
+| After any SteamCMD run that left the install marked Files Corrupt | The next attempt starts at once, once per update, instead of after `hotwire.steam_retry_seconds` |
+| `hotwire.fast_rust_updates 0` (the default) | The record is not changed. The quick retry still applies. |
+
+The record is Steam's own file, and Valve does not document it. If Steam stops reading the mark, updates go back to
+taking two runs.
+
+Either way, an update on a server with Oxide replaces every game file that differs from Steam's copy, including files
+you changed by hand. Oxide is put back after the update. Files that are not part of Steam's install, such as saves and
+Oxide's plugins and configs, are not touched: Valve's SteamCMD documentation says "Any files that are not part of the
+default installation will not be affected."
+
+### A refused update
+
+Requires launcher 1.1.18 (Windows) or 1.1.7-linux.
+
+To update, SteamCMD needs the file list of the Rust build installed. It keeps these lists in a cache shared by every
+server that uses the same SteamCMD, and asks Steam only for one it does not have. Steam does not serve an old Rust
+build's list. So once the cache has lost it, for example after another server on the machine updated, every SteamCMD
+run stops with "Access Denied" and "No connection", and the server would start on the old build.
+
+| Step | What the launcher does |
+| --- | --- |
+| After a failed SteamCMD run | Reads what that run added to SteamCMD's own log (`content_log.txt`) |
+| When Steam refused a file list of the build installed | Moves `steamapps/appmanifest_258550.acf` to `hotwire/appmanifest-refused.acf` and runs the update again at once, once per update |
+| The update that follows | SteamCMD checks the files on disk against the new build and downloads what differs |
+| When it finishes | Steam writes a new record. The old one stays in `hotwire/`. |
+| When it fails and Steam left no record it can use | The old record is put back |
+| `hotwire.recover_refused_update 0` | Nothing is moved, and the server starts on the installed build after the usual tries |
+
+Measured on one Linux server: about 0.8 GB downloaded, 133 seconds.
+
+| Console line | Meaning |
+| --- | --- |
+| `Fast Rust updates: Steam will check every game file before this update, so it finishes in one try.` | The mark is written |
+| `Fast Rust updates: Steam's install record is not in the expected form; leaving it to Steam.` | Nothing is changed |
+| `Fast Rust updates: Steam's install record could not be changed; leaving it to Steam.` | Nothing is changed |
+| `Steam marked the game files for a full check; trying again now.` | The quick retry |
+| `Steam no longer serves the installed Rust build's file list, so this update cannot patch it.` | A refused update was found |
+| `The update finished without the old file list.` | The recovery worked |
+| `The update did not finish. Steam's install record is put back as it was.` | The recovery failed, and the server starts on the installed build |
 
 ## Wipes
 
