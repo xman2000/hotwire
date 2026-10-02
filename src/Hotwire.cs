@@ -17,7 +17,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Hotwire", "xman2000", "1.1.51")]
+    [Info("Hotwire", "xman2000", "1.1.52")]
     [Description("Scheduled restarts and updates. Announces, counts down, writes a flag, quits.")]
     internal class Hotwire : CovalencePlugin
     {
@@ -4000,8 +4000,8 @@ namespace Oxide.Plugins
             }
 
             // Verified only when the launcher file is present AND its recomputed hash matches
-            // what it declared. A launcher that self-declares stock but has drifted comes back
-            // verified=false, and the panel does not trust its capabilities.
+            // what it declared: whether this is the stock file. A fact for the panel to show;
+            // it does not decide what the launcher is asked to do (LauncherCan).
             var verified = false;
             try
             {
@@ -7910,12 +7910,16 @@ namespace Oxide.Plugins
             return _backup.PlanAllows && _backup.PlanCheckedUtc != null && (DateTime.UtcNow - _backup.PlanCheckedUtc.Value).TotalDays < BackupPlanMemoryDays;
         }
 
+        // Whether the launcher that started this server says it can do something. Its capability list is the whole test:
+        // `verified` (the hash matches the stock file) is reported to the panel as a fact and gates nothing. Every
+        // launcher feature is a request file the launcher carries out between runs, and nothing edits the launcher, so
+        // a changed launcher that still claims a capability is asked, and one that cannot simply leaves it undone.
         private bool LauncherCan(string capability)
         {
             try
             {
                 var l = LauncherIdentity();
-                if (l == null || !(bool)l["verified"]) return false;
+                if (l == null) return false;
                 return ((JArray)l["capabilities"]).Any(c => (string)c == capability);
             }
             catch { return false; }
@@ -8631,7 +8635,7 @@ namespace Oxide.Plugins
                 case "off": return "backups are off in this server's Hotwire config";
                 case "plan": return "the account's plan does not include backups";
                 case "launcher_missing": return "backups need the Hotwire launcher, and this server was not started by it";
-                case "launcher_cannot": return "this server's launcher is modified or too old to take backups";
+                case "launcher_cannot": return "this server's launcher is too old to take backups";
                 case "identity": return "the save folder's name cannot be used for a backup folder";
                 case "no_sets": return "nothing is chosen to back up";
                 case "save_busy": return "the game is saving; try again in a moment";
@@ -11507,7 +11511,7 @@ namespace Oxide.Plugins
                 ["ErrBadSizeRange"] = "A random size from {0} to {1} is not a range inside 1000-6000, smallest first.",
                 ["ErrBadBlueprints"] = "\"{0}\" is not a blueprint action. Use keep, rename or delete.",
                 ["ErrNoLondonZone"] = "This machine has no Europe/London time zone, so the forced wipe's release moment cannot be worked out.",
-                ["ErrLauncherCannotWipe"] = "The launcher on this server cannot wipe: it needs the Hotwire launcher, unmodified, with the wipe capability.",
+                ["ErrLauncherCannotWipe"] = "The launcher on this server cannot wipe: it needs a Hotwire launcher with the wipe capability.",
                 ["ErrBadDate"] = "\"{0}\" is not a valid date. Use yyyy-MM-dd.",
                 ["ErrNoDays"] = "No days are selected.",
                 ["ErrNoDaysGiven"] = "No days were given.",

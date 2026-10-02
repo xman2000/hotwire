@@ -25,6 +25,15 @@ sit above a launcher `1.1.7`. Read the label, not the number.
 at the top of the file — it is a comment, not something it echoes, so read it
 rather than watch for it.
 
+## Plugin 1.1.52, setup 0.1.14 (Windows) and 0.2.15 (Linux) — 2026-10-02
+
+**Backups and wipes run with any Hotwire launcher that says it can do them, changed or not.**
+
+- Hotwire checks whether the launcher's file is the one released, and AFKPanel shows the answer. It no longer stops
+  backups or wipes on that answer: a launcher with one line edited, or one replaced while the old one was still running,
+  was treated as unable to back up. What the launcher says it can do is now the only test.
+- The messages for a launcher that cannot back up or wipe now say it is too old, not modified.
+
 ## Launcher 1.1.19 (Windows), setup 0.1.13 (Windows) and 0.2.14 (Linux) — 2026-10-02
 
 **On Windows, the refused-update recovery, the quick retry and Fast Rust updates now work.**
