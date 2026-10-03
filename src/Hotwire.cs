@@ -17,7 +17,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Hotwire", "xman2000", "1.1.52")]
+    [Info("Hotwire", "xman2000", "1.1.53")]
     [Description("Scheduled restarts and updates. Announces, counts down, writes a flag, quits.")]
     internal class Hotwire : CovalencePlugin
     {
@@ -3100,8 +3100,24 @@ namespace Oxide.Plugins
 
         private void WriteData(string name, object value)
         {
-            try { Interface.Oxide.DataFileSystem.WriteObject(name, value); }
-            catch (Exception ex) { PrintWarning($"Could not write oxide/data/{name}.json: {ex.Message}"); }
+            TryWriteData(name, value);
+        }
+
+        // WriteData that says whether it worked. Most data here is best effort; a
+        // command's record is not: it is written before the command runs, so a
+        // command that could not be recorded is not run (see ReceiveCommand).
+        private bool TryWriteData(string name, object value)
+        {
+            try
+            {
+                Interface.Oxide.DataFileSystem.WriteObject(name, value);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                PrintWarning($"Could not write oxide/data/{name}.json: {ex.Message}");
+                return false;
+            }
         }
 
         private void OnPluginLoaded(Plugin plugin) => _inventoryCheckDue = DateTime.UtcNow.AddSeconds(3);
@@ -5678,11 +5694,37 @@ namespace Oxide.Plugins
             var verb = ((string)command["verb"] ?? "").ToLowerInvariant();
             var args = command["args"] as JObject ?? new JObject();
 
+            // A command is done only before its expiry, by this server's clock. The
+            // panel hands out only unexpired commands, but one can arrive late (a
+            // slow answer, a stalled callback), and a restart meant for an hour
+            // ago is not one to start now. Without an expiry it is not run either:
+            // the panel always sends one.
+            var late = CommandExpiryProblem(command["expires_at"]);
+            if (late != null)
+            {
+                _handledCommands[key] = new HandledCommand { Status = "refused", Result = late, HandledUtc = DateTime.UtcNow };
+                WriteData(CommandsDataFile, _handledCommands);
+                QueueCommandResult(id, "received", null);
+                QueueCommandResult(id, "refused", late);
+                Puts($"Panel command {id} ({verb}): refused -- {late}");
+                return;
+            }
+
             // Recorded on disk before anything is done, so a command that ends
-            // with the server quitting is known about when it comes back.
+            // with the server quitting is known about when it comes back. A
+            // command that cannot be recorded is not run: after a reload it could
+            // not be told from a new one, and the panel's resend would run it again.
             var record = new HandledCommand { Status = "failed", Result = "interrupted before it finished", HandledUtc = DateTime.UtcNow };
             _handledCommands[key] = record;
-            WriteData(CommandsDataFile, _handledCommands);
+            if (!TryWriteData(CommandsDataFile, _handledCommands))
+            {
+                record.Status = "refused";
+                record.Result = "Hotwire could not record it in oxide/data/" + CommandsDataFile + ".json, so it did not run it";
+                QueueCommandResult(id, "received", null);
+                QueueCommandResult(id, "refused", record.Result);
+                PrintWarning($"Panel command {id} ({verb}): refused -- {record.Result}");
+                return;
+            }
             QueueCommandResult(id, "received", null);
 
             string status, result;
@@ -5701,6 +5743,20 @@ namespace Oxide.Plugins
             WriteData(CommandsDataFile, _handledCommands);
             QueueCommandResult(id, status, result);
             Puts($"Panel command {id} ({verb}): {status}{(string.IsNullOrEmpty(result) ? "" : " -- " + result)}");
+        }
+
+        // Why a command may not run now, or null: past its expiry by this server's
+        // clock, or carrying no expiry Hotwire can read.
+        private static string CommandExpiryProblem(JToken expiresAt)
+        {
+            DateTime expires;
+            if (expiresAt == null || expiresAt.Type == JTokenType.Null)
+                return "it carries no expiry";
+            if (expiresAt.Type == JTokenType.Date)
+                expires = ((DateTime)expiresAt).ToUniversalTime();
+            else if (!DateTime.TryParse((string)expiresAt, CultureInfo.InvariantCulture, DateTimeStyles.AdjustToUniversal | DateTimeStyles.AssumeUniversal, out expires))
+                return "its expiry cannot be read";
+            return expires <= DateTime.UtcNow ? "it expired before it arrived (" + expires.ToString("yyyy-MM-dd HH:mm:ss") + " UTC)" : null;
         }
 
         private void RunCommand(string verb, JObject args, out string status, out string result)

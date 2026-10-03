@@ -21,9 +21,9 @@
 #     offers a launcher-editing feature. Capabilities, not the version number,
 #     are what a feature is gated on; settings_file says the settings are read
 #     from hotwire.cfg.
-HOTWIRE_LAUNCHER_VERSION="1.1.7-linux"
+HOTWIRE_LAUNCHER_VERSION="1.1.8-linux"
 HOTWIRE_LAUNCHER_CAPABILITIES="supervise,update,framework_verify,crash_backstop,log_rotate,convar_persist,wipe,backup,settings_file"
-HOTWIRE_LAUNCHER_HASH="f3c97b766b1af807a0c4d352240f52c04c5a59469e3ac50b41fcc7b367504e16"
+HOTWIRE_LAUNCHER_HASH="eb679b45d74c1f4c6f06400bee5c074790e4695e3be78f4397c7b8197495a726"
 
 # ======================================================================
 #  HOW THIS LAUNCHER WORKS
@@ -926,6 +926,10 @@ _json_str() {  # a flat JSON string value: _json_str <file> <key>
     [ -f "$1" ] || return 0
     grep -oE "\"$2\"[[:space:]]*:[[:space:]]*\"[^\"]*\"" "$1" 2>/dev/null | head -1 | sed -E 's/.*:[[:space:]]*"([^"]*)"/\1/'
 }
+_json_val() {  # a flat JSON string or number: setup writes the server id quoted, the plugin as a number
+    [ -f "$1" ] || return 0
+    grep -oE "\"$2\"[[:space:]]*:[[:space:]]*(\"[^\"]*\"|[0-9]+)" "$1" 2>/dev/null | head -1 | sed -E 's/.*:[[:space:]]*"?([^"]*)"?/\1/'
+}
 _sha256() { printf '%s' "$1" | openssl dgst -sha256 | sed 's/^.*= *//'; }
 _hmac()   { printf '%s' "$2" | openssl dgst -sha256 -hmac "$1" | sed 's/^.*= *//'; }
 _bool()   { [ "$1" = "1" ] && printf 'true' || printf 'false'; }
@@ -938,6 +942,11 @@ init_reporting() {
     PANEL_URL="$(_json_str "$CONNECT_FILE" panel_url)"
     SCRIPT_KEY="$(_json_str "$KEYS_FILE" key_id)"
     SCRIPT_SECRET="$(_json_str "$KEYS_FILE" secret)"
+    # Which panel, and which server on it, a held report was made for. A report is
+    # never sent to another: a server connected to a different panel, or as a
+    # different server, drops what it held for the old one. A new key for the same
+    # server keeps it. No secret is in it.
+    SPOOL_ORIGIN="${PANEL_URL%/}|$(_json_val "$CONNECT_FILE" server_id)"
     local state
     if [ -n "$PANEL_URL" ] && [ -n "$SCRIPT_KEY" ] && [ -n "$SCRIPT_SECRET" ]; then
         REPORT_ENABLED=1; state="connected $SCRIPT_KEY"
@@ -970,41 +979,82 @@ _hw_post() {  # <kind> <payload-json> <report_id> <sent_at>
 
 _spool_write() {  # <kind> <payload> <rid> <sent_at>
     mkdir -p "$SPOOL_DIR" 2>/dev/null || return 0
-    printf '%s\n%s\n%s\n%s\n' "$1" "$3" "$4" "$2" > "$SPOOL_DIR/$(date +%s)-$3" 2>/dev/null || true
+    # Line 5 is the connection it was made for (SPOOL_ORIGIN). A file of four lines
+    # is from an older launcher and is sent as it always was.
+    printf '%s\n%s\n%s\n%s\n%s\n' "$1" "$3" "$4" "$2" "$SPOOL_ORIGIN" > "$SPOOL_DIR/$(date +%s)-$3" 2>/dev/null || true
     local n; n="$(ls -1 "$SPOOL_DIR" 2>/dev/null | wc -l)"
     if [ "$n" -gt "$SPOOL_MAX" ]; then
         ls -1tr "$SPOOL_DIR" 2>/dev/null | head -n "$((n - SPOOL_MAX))" | while read -r o; do rm -f "$SPOOL_DIR/$o"; done
     fi
 }
 
-hw_send() {  # <kind> <payload-json>  -- first send; spool on a retryable failure
+# A report is written to the spool and sent from there, never on the way to a
+# start: the server never waits on the panel (house rule 1). spool_kick sends in
+# the background; spool_flush sends now, only where the launcher is about to stop
+# for good and nothing is waiting to start.
+hw_send() {  # <kind> <payload-json>
     [ "$REPORT_ENABLED" = "1" ] || return 0
-    local kind="$1" payload="$2" rid sent_at code
+    local rid sent_at
     rid="$(cat /proc/sys/kernel/random/uuid 2>/dev/null || openssl rand -hex 16)"
     sent_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-    code="$(_hw_post "$kind" "$payload" "$rid" "$sent_at")"
-    case "$code" in
-        2*) : ;;
-        429|5*|000) _spool_write "$kind" "$payload" "$rid" "$sent_at"; log "Report ($kind) not sent (HTTP $code); spooled." ;;
-        *) log "Report ($kind) refused (HTTP $code); not retrying." ;;
-    esac
+    _spool_write "$1" "$2" "$rid" "$sent_at"
 }
 
-# Drain oldest-first; stop at the first that still cannot be sent. Politely bounded.
+# How long a held report is kept unsent, as the contract's spool keeps it by default.
+SPOOL_DAYS=7
+
+# Send what the spool holds, oldest first, at most 50 a pass: delete what was
+# accepted; stop at no answer, 429 or 5xx (the panel is away or busy, try again
+# later); drop any other refusal, which the same bytes would get again; drop what
+# is older than SPOOL_DAYS or was made for another connection.
 spool_drain() {
     [ "$REPORT_ENABLED" = "1" ] || return 0
     [ -d "$SPOOL_DIR" ] || return 0
-    local sent=0 f p kind rid sent_at payload code
+    local sent=0 dropped=0 expired=0 elsewhere=0 f p kind rid sent_at payload origin code made now
+    now="$(date +%s)"
     for f in $(ls -1tr "$SPOOL_DIR" 2>/dev/null); do
         [ "$sent" -ge 50 ] && break
         p="$SPOOL_DIR/$f"
         kind="$(sed -n 1p "$p")"; rid="$(sed -n 2p "$p")"; sent_at="$(sed -n 3p "$p")"; payload="$(sed -n 4p "$p")"
+        origin="$(sed -n 5p "$p")"
         [ -z "$kind" ] && { rm -f "$p"; continue; }
+        made="${f%%-*}"
+        if [ -n "$made" ] && [ "$made" -eq "$made" ] 2>/dev/null && [ $(( now - made )) -gt $(( SPOOL_DAYS * 86400 )) ]; then
+            rm -f "$p"; expired=$((expired + 1)); continue
+        fi
+        if [ -n "$origin" ] && [ "$origin" != "$SPOOL_ORIGIN" ]; then
+            rm -f "$p"; elsewhere=$((elsewhere + 1)); continue
+        fi
         code="$(_hw_post "$kind" "$payload" "$rid" "$sent_at")"
-        case "$code" in 2*) rm -f "$p"; sent=$((sent + 1)) ;; *) break ;; esac
+        case "$code" in
+            2*) rm -f "$p"; sent=$((sent + 1)) ;;
+            429|5*|000) break ;;
+            *) rm -f "$p"; dropped=$((dropped + 1)); log "Spool: a held $kind report was refused (HTTP $code) and is dropped: sent again it would be refused again." ;;
+        esac
     done
     [ "$sent" -gt 0 ] && log "Spool: sent $sent held report(s)."
+    [ "$expired" -gt 0 ] && log "Spool: dropped $expired report(s) held more than $SPOOL_DAYS days."
+    [ "$elsewhere" -gt 0 ] && log "Spool: dropped $elsewhere report(s) made for another panel or another server."
     return 0
+}
+
+# One sender at a time, in the background: the start never waits for it. A
+# sender that hangs or dies costs nothing but the reports it had not sent yet,
+# which stay in the spool for the next.
+spool_kick() {
+    [ "$REPORT_ENABLED" = "1" ] || return 0
+    [ -d "$SPOOL_DIR" ] || return 0
+    # Its own descriptor (6), and none of the launcher's locks (7 backup, 8 and 9
+    # SteamCMD) kept open in it: a sender still running must not hold them.
+    ( exec 7>&- 8>&- 9>&- 6>"$SPOOL_DIR/.sending"; flock -n 6 || exit 0; spool_drain ) </dev/null &
+}
+
+# Before the launcher stops for good: the last reports go now, while there is a
+# launcher to send them. Waits for a background sender first, at most a minute.
+spool_flush() {
+    [ "$REPORT_ENABLED" = "1" ] || return 0
+    [ -d "$SPOOL_DIR" ] || return 0
+    ( exec 7>&- 8>&- 9>&- 6>"$SPOOL_DIR/.sending"; flock -w 60 6 || exit 0; spool_drain ) </dev/null
 }
 
 # One session report per run, sent after the server exits: what only the script
@@ -1646,8 +1696,9 @@ per_launch_prep() {
 # ======================================================================
 run_loop() {
     while :; do
-        spool_drain
         per_launch_prep
+        # Held reports go in the background; the server starts without waiting.
+        spool_kick
         rotate_log
         write_launcher_state
         log "Starting server..."
@@ -1662,8 +1713,10 @@ run_loop() {
 
         if [ "$run_secs" -lt "$CRASH_SECONDS" ]; then CRASH_STREAK=$((CRASH_STREAK+1)); crashed=true; else CRASH_STREAK=0; crashed=false; fi
         report_session "$rc" "$crashed"
+        # It goes now, in the background, not after the next update.
+        spool_kick
 
-        if [ "$RESTART_ON_EXIT" = "0" ]; then log "Server exited; hotwire.restart_on_exit is 0. Stopping."; exit 0; fi
+        if [ "$RESTART_ON_EXIT" = "0" ]; then log "Server exited; hotwire.restart_on_exit is 0. Stopping."; spool_flush; exit 0; fi
 
         if [ "$MAX_CRASH_STREAK" != "0" ] && [ "$CRASH_STREAK" -ge "$MAX_CRASH_STREAK" ]; then
             rule
@@ -1672,6 +1725,8 @@ run_loop() {
             log  "Common causes: a bad convar, a port already in use (another server?), or a broken update."
             rule
             report_launcher_stopped "$CRASH_STREAK consecutive runs under ${CRASH_SECONDS}s"
+            # Stopping for good: nothing waits to start, so this report goes now.
+            spool_flush
             exit 1
         fi
 

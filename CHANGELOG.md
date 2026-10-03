@@ -25,6 +25,23 @@ sit above a launcher `1.1.7`. Read the label, not the number.
 at the top of the file — it is a comment, not something it echoes, so read it
 rather than watch for it.
 
+## Plugin 1.1.53, launcher 1.1.8-linux, setup 0.1.15 (Windows) and 0.2.16 (Linux) — 2026-10-03
+
+**The Linux launcher never waits for AFKPanel before starting the server, and a command from AFKPanel runs only while
+it is still current and only once it is recorded.**
+
+- The Linux launcher's reports (how a run ended, a stop after repeated crashes) are written to its spool and sent from
+  there in the background. The server starts without waiting for them, however slow or unreachable AFKPanel is. Before
+  this, the launcher sent what it held before every start and could wait up to 15 seconds for each report. Only one
+  sender runs at a time, and when the launcher stops for good it sends what it holds first.
+- The Linux launcher's spool follows the same rules as the plugin's: a report refused for what it is (any refusal but
+  429) is dropped instead of blocking every report behind it; a report held more than 7 days is dropped; a report is
+  sent only to the AFKPanel, and the server on it, it was made for. A new key for the same server keeps it.
+- A command from AFKPanel is not run after its expiry, by the server's own clock, even when it arrives late. A command
+  without an expiry is not run.
+- A command is recorded in `oxide/data/Hotwire/panel_commands.json` before it runs, so it is never run twice. When that
+  file cannot be written, the command is now refused instead of run.
+
 ## Plugin 1.1.52, setup 0.1.14 (Windows) and 0.2.15 (Linux) — 2026-10-02
 
 **Backups and wipes run with any Hotwire launcher that says it can do them, changed or not.**
