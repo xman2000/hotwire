@@ -17,7 +17,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Hotwire", "xman2000", "1.1.53")]
+    [Info("Hotwire", "xman2000", "1.1.54")]
     [Description("Scheduled restarts and updates. Announces, counts down, writes a flag, quits.")]
     internal class Hotwire : CovalencePlugin
     {
@@ -190,6 +190,15 @@ namespace Oxide.Plugins
             // last saw it. Off leaves the schedule editable only in game.
             [JsonProperty("Accept schedule changes from the panel")]
             public bool AcceptScheduleChanges = true;
+
+            // Updating a plugin from uMod, or putting back the version an
+            // update replaced, when the panel asks. Hotwire fetches the file
+            // from umod.org itself and refuses it unless its SHA-256 is the one
+            // the panel named; it keeps the old file, its config and its data,
+            // and puts them back by itself if the new file does not load. Off
+            // means plugin files change only by hand.
+            [JsonProperty("Accept plugin updates from the panel")]
+            public bool AcceptPluginUpdates = true;
 
             // Oxide's own log (oxide/logs/oxide_<date>.txt), so the panel can
             // show what plugins said: compile failures, hook errors, warnings.
@@ -854,6 +863,7 @@ namespace Oxide.Plugins
 
             ValidateSchedule();
             ResumeWipeState();
+            ResumePluginChanges();
 
             // Descending, so the tick can stop at the first point it crosses.
             _config.Countdown.AnnounceAt = _config.Countdown.AnnounceAt
@@ -5727,6 +5737,14 @@ namespace Oxide.Plugins
             }
             QueueCommandResult(id, "received", null);
 
+            // A plugin update finishes later: the file is downloaded, then Oxide
+            // compiles it. Its result is sent when it is known.
+            if (verb == "plugin.update" || verb == "plugin.restore")
+            {
+                StartPluginChange(id, key, verb, args);
+                return;
+            }
+
             string status, result;
             try
             {
@@ -6106,6 +6124,408 @@ namespace Oxide.Plugins
                     return;
             }
         }
+
+        #region Plugin updates from the panel
+
+        // One plugin updated to the build on uMod the panel names by SHA-256,
+        // or put back to the version an update replaced. The address is built
+        // here from the plugin's file name on umod.org, never taken from the
+        // command, and a file whose hash is not the one named is refused, so
+        // what runs is what the panel checked whatever the connection did. The
+        // old file, its config and its data are kept under
+        // oxide/data/Hotwire/plugin-backups/<name>/ (one generation), and put
+        // back by Hotwire without asking anyone when the new file has not
+        // loaded within PluginChangeWaitSeconds. One change at a time.
+        private const string PluginBackupFolder = "plugin-backups";
+        private const int PluginChangeWaitSeconds = 180;
+        private const int PluginDownloadMaxBytes = 4 * 1024 * 1024;
+        private const long PluginBackupMaxBytes = 50L * 1024 * 1024;
+        private static readonly Regex PluginNameArg = new Regex("^[A-Za-z0-9_]{1,64}$", RegexOptions.Compiled);
+        private static readonly Regex Sha256Arg = new Regex("^sha256:[0-9a-f]{64}$", RegexOptions.Compiled);
+        private string _pluginChangeBusy;
+
+        private sealed class PluginBackupManifest
+        {
+            public string Plugin;
+            public string FromSha256;
+            public string ToSha256;
+            public DateTime AtUtc;
+            public bool Config;
+            public bool DataFile;
+            public bool DataFolder;
+            // Set while the new file is in place and not yet seen loaded, so a
+            // reload of Hotwire (or a restart) in that window still finishes it.
+            public bool Watching;
+            public string CommandId;
+            public bool Restored;
+        }
+
+        private static string PluginFile(string name) => Path.Combine(Interface.Oxide.PluginDirectory, name + ".cs");
+        private static string PluginConfigFile(string name) => Path.Combine(Interface.Oxide.ConfigDirectory, name + ".json");
+        private static string PluginDataFile(string name) => Path.Combine(Interface.Oxide.DataDirectory, name + ".json");
+        private static string PluginDataFolder(string name) => Path.Combine(Interface.Oxide.DataDirectory, name);
+        private static string PluginBackupDir(string name) => Path.Combine(Path.Combine(Path.Combine(Interface.Oxide.DataDirectory, "Hotwire"), PluginBackupFolder), name);
+        private static string PluginManifestFile(string name) => Path.Combine(PluginBackupDir(name), "backup.json");
+
+        private static string FileSha256(string path)
+        {
+            using (var sha = SHA256.Create())
+                return "sha256:" + Hex(sha.ComputeHash(File.ReadAllBytes(path)));
+        }
+
+        // Why a plugin's file may not be changed from the panel now, or null.
+        private string PluginChangeProblem(string name)
+        {
+            if (!_config.Panel.AcceptPluginUpdates) return "plugin updates from the panel are off in this server's Hotwire config";
+            if (!PluginNameArg.IsMatch(name)) return "not a plugin name";
+            if (string.Equals(name, Name, StringComparison.OrdinalIgnoreCase)) return "Hotwire does not change its own file";
+            if (_shuttingDown) return "the server is shutting down";
+            if (_countdownActive) return "a restart is counting down";
+            if (_pluginChangeBusy != null) return "another plugin (" + _pluginChangeBusy + ") is being changed; try again when it finishes";
+            if (!File.Exists(PluginFile(name))) return "there is no " + name + ".cs in the plugins folder";
+            return null;
+        }
+
+        private void StartPluginChange(string id, string key, string verb, JObject args)
+        {
+            var name = ((string)args["plugin"] ?? "").Trim();
+            var problem = PluginChangeProblem(name);
+            if (problem != null) { FinishPluginChange(id, key, verb, "refused", problem); return; }
+
+            if (verb == "plugin.restore") { RestorePlugin(id, key, name); return; }
+
+            var want = ((string)args["sha256"] ?? "").Trim().ToLowerInvariant();
+            var from = ((string)args["from_sha256"] ?? "").Trim().ToLowerInvariant();
+            if (!Sha256Arg.IsMatch(want) || !Sha256Arg.IsMatch(from)) { FinishPluginChange(id, key, verb, "refused", "the update does not name both files by SHA-256"); return; }
+
+            string current;
+            try { current = FileSha256(PluginFile(name)); }
+            catch (Exception ex) { FinishPluginChange(id, key, verb, "failed", "could not read " + name + ".cs: " + ex.Message); return; }
+            if (current != from) { FinishPluginChange(id, key, verb, "refused", "the file on the server changed since the panel saw it; the panel will have the current one shortly, so check it and try again"); return; }
+            if (current == want) { FinishPluginChange(id, key, verb, "done", "it is already that version"); return; }
+
+            _pluginChangeBusy = name;
+            FetchFromUmod(name, (bytes, error) =>
+            {
+                if (bytes == null) { _pluginChangeBusy = null; FinishPluginChange(id, key, verb, "failed", "could not download it from uMod: " + error); return; }
+
+                string got;
+                using (var sha = SHA256.Create()) got = "sha256:" + Hex(sha.ComputeHash(bytes));
+                if (got != want)
+                {
+                    _pluginChangeBusy = null;
+                    FinishPluginChange(id, key, verb, "failed", "uMod served a different file (" + got + ") from the one the panel checked; nothing was changed. uMod may have published a newer version since.");
+                    return;
+                }
+
+                PluginBackupManifest manifest;
+                string backupProblem = BackUpPlugin(name, from, want, out manifest);
+                if (backupProblem != null) { _pluginChangeBusy = null; FinishPluginChange(id, key, verb, "failed", backupProblem + "; nothing was changed"); return; }
+
+                manifest.Watching = true;
+                manifest.CommandId = id;
+                WritePluginManifest(name, manifest);
+
+                var before = plugins.Find(name);
+                var beforeError = PluginError(name);
+                // Oxide's folder watcher does not see a file moved into place (Linux,
+                // measured on rust2), so the reload is asked for. Its loader compiles
+                // the new file before it unloads the running one, so a file that does
+                // not compile leaves the old version running.
+                try { PutPluginFile(name, bytes); Interface.Oxide.ReloadPlugin(name); }
+                catch (Exception ex)
+                {
+                    manifest.Watching = false;
+                    WritePluginManifest(name, manifest);
+                    _pluginChangeBusy = null;
+                    FinishPluginChange(id, key, verb, "failed", "could not write the new " + name + ".cs: " + ex.Message + "; the old file is unchanged");
+                    return;
+                }
+
+                WatchPluginLoad(name, before, beforeError, loaded =>
+                {
+                    manifest.Watching = false;
+                    if (loaded)
+                    {
+                        WritePluginManifest(name, manifest);
+                        _pluginChangeBusy = null;
+                        FinishPluginChange(id, key, verb, "done", "updated and loaded; the previous version, its config and its data are kept on the server, and can be put back from the panel");
+                        return;
+                    }
+
+                    var why = PluginError(name);
+                    var putBack = PutBackPlugin(name, manifest);
+                    WritePluginManifest(name, manifest);
+                    _pluginChangeBusy = null;
+                    FinishPluginChange(id, key, verb, "failed",
+                        (string.IsNullOrEmpty(why) ? "the new version did not load within " + PluginChangeWaitSeconds + " seconds" : "the new version did not load (Oxide: " + FirstLine(why) + ")")
+                        + (putBack == null ? "; the previous version, its config and its data were put back" : "; putting the previous version back failed: " + putBack + ". It is in oxide/data/Hotwire/" + PluginBackupFolder + "/" + name));
+                });
+            });
+        }
+
+        private void RestorePlugin(string id, string key, string name)
+        {
+            var manifest = ReadPluginManifest(name);
+            if (manifest == null || manifest.Restored) { FinishPluginChange(id, key, "plugin.restore", "refused", "there is no earlier version of " + name + " kept on this server"); return; }
+
+            string current;
+            try { current = FileSha256(PluginFile(name)); }
+            catch (Exception ex) { FinishPluginChange(id, key, "plugin.restore", "failed", "could not read " + name + ".cs: " + ex.Message); return; }
+            if (current != manifest.ToSha256) { FinishPluginChange(id, key, "plugin.restore", "refused", name + ".cs changed since the update, so it was not overwritten; the earlier version is in oxide/data/Hotwire/" + PluginBackupFolder + "/" + name); return; }
+
+            _pluginChangeBusy = name;
+            var before = plugins.Find(name);
+            var beforeError = PluginError(name);
+            var problem = PutBackPlugin(name, manifest);
+            WritePluginManifest(name, manifest);
+            if (problem != null) { _pluginChangeBusy = null; FinishPluginChange(id, key, "plugin.restore", "failed", problem); return; }
+
+            WatchPluginLoad(name, before, beforeError, loaded =>
+            {
+                _pluginChangeBusy = null;
+                FinishPluginChange(id, key, "plugin.restore", "done", loaded
+                    ? "the earlier version, its config and its data are back, and it is loaded"
+                    : "the earlier version, its config and its data are back; Oxide has not loaded it yet, see the server console");
+            });
+        }
+
+        // Records the outcome where ReceiveCommand records every command, and
+        // sends it.
+        private void FinishPluginChange(string id, string key, string verb, string status, string result)
+        {
+            HandledCommand record;
+            if (!_handledCommands.TryGetValue(key, out record))
+                _handledCommands[key] = record = new HandledCommand { HandledUtc = DateTime.UtcNow };
+            record.Status = status;
+            record.Result = result;
+            WriteData(CommandsDataFile, _handledCommands);
+            QueueCommandResult(id, status, result);
+            Puts($"Panel command {id} ({verb}): {status} -- {result}");
+            _inventoryCheckDue = DateTime.UtcNow.AddSeconds(3);
+        }
+
+        // umod.org/plugins/<name>.cs, read as bytes so its hash is the file's.
+        private void FetchFromUmod(string name, Action<byte[], string> done)
+        {
+            UnityEngine.Networking.UnityWebRequest request;
+            try
+            {
+                request = UnityEngine.Networking.UnityWebRequest.Get("https://umod.org/plugins/" + name + ".cs");
+                request.timeout = 60;
+                request.SendWebRequest();
+            }
+            catch (Exception ex) { done(null, ex.Message); return; }
+
+            Timer poll = null;
+            poll = timer.Every(0.5f, () =>
+            {
+                if (!request.isDone) return;
+                poll.Destroy();
+                byte[] bytes = null;
+                string error = null;
+                try
+                {
+                    if (!string.IsNullOrEmpty(request.error)) error = request.error;
+                    else if (request.responseCode != 200) error = "HTTP " + request.responseCode;
+                    else
+                    {
+                        bytes = request.downloadHandler.data;
+                        if (bytes == null || bytes.Length == 0) { bytes = null; error = "an empty file"; }
+                        else if (bytes.Length > PluginDownloadMaxBytes) { bytes = null; error = "a file larger than " + (PluginDownloadMaxBytes / 1024 / 1024) + " MB"; }
+                    }
+                }
+                catch (Exception ex) { bytes = null; error = ex.Message; }
+                finally { request.Dispose(); }
+                done(bytes, error);
+            });
+        }
+
+        // The old file, its config and its data, copied before anything is
+        // changed. The previous backup of this plugin is replaced.
+        private string BackUpPlugin(string name, string from, string to, out PluginBackupManifest manifest)
+        {
+            manifest = new PluginBackupManifest { Plugin = name, FromSha256 = from, ToSha256 = to, AtUtc = DateTime.UtcNow };
+            var dir = PluginBackupDir(name);
+            try
+            {
+                long size = new FileInfo(PluginFile(name)).Length;
+                if (File.Exists(PluginConfigFile(name))) size += new FileInfo(PluginConfigFile(name)).Length;
+                if (File.Exists(PluginDataFile(name))) size += new FileInfo(PluginDataFile(name)).Length;
+                if (Directory.Exists(PluginDataFolder(name)))
+                    size += new DirectoryInfo(PluginDataFolder(name)).GetFiles("*", SearchOption.AllDirectories).Sum(f => f.Length);
+                if (size > PluginBackupMaxBytes) return "its file, config and data come to more than " + (PluginBackupMaxBytes / 1024 / 1024) + " MB, more than Hotwire keeps a copy of; update it by hand";
+
+                if (Directory.Exists(dir)) Directory.Delete(dir, true);
+                Directory.CreateDirectory(dir);
+                File.Copy(PluginFile(name), Path.Combine(dir, "plugin.cs.bak"));
+                if (File.Exists(PluginConfigFile(name))) { File.Copy(PluginConfigFile(name), Path.Combine(dir, "config.json")); manifest.Config = true; }
+                if (File.Exists(PluginDataFile(name))) { File.Copy(PluginDataFile(name), Path.Combine(dir, "data.json")); manifest.DataFile = true; }
+                if (Directory.Exists(PluginDataFolder(name))) { CopyFolder(PluginDataFolder(name), Path.Combine(dir, "data")); manifest.DataFolder = true; }
+                return null;
+            }
+            catch (Exception ex)
+            {
+                return "could not keep a copy of the current version: " + ex.Message;
+            }
+        }
+
+        // Config and data first, the plugin file last, so the version that loads
+        // reads its own config. The plugin is unloaded first so it cannot save
+        // over what is put back.
+        private string PutBackPlugin(string name, PluginBackupManifest manifest)
+        {
+            var dir = PluginBackupDir(name);
+            try
+            {
+                var loaded = plugins.Find(name);
+                if (loaded != null && loaded.IsLoaded) Interface.Oxide.UnloadPlugin(name);
+
+                if (manifest.Config) File.Copy(Path.Combine(dir, "config.json"), PluginConfigFile(name), true);
+                if (manifest.DataFile) File.Copy(Path.Combine(dir, "data.json"), PluginDataFile(name), true);
+                if (manifest.DataFolder)
+                {
+                    if (Directory.Exists(PluginDataFolder(name))) Directory.Delete(PluginDataFolder(name), true);
+                    CopyFolder(Path.Combine(dir, "data"), PluginDataFolder(name));
+                }
+                PutPluginFile(name, File.ReadAllBytes(Path.Combine(dir, "plugin.cs.bak")));
+                Interface.Oxide.ReloadPlugin(name);
+                manifest.Restored = true;
+                return null;
+            }
+            catch (Exception ex)
+            {
+                return ex.Message;
+            }
+        }
+
+        // Written beside the plugin under a name Oxide does not watch, then moved
+        // over it in one step, so Oxide never compiles half a file.
+        private static void PutPluginFile(string name, byte[] bytes)
+        {
+            var target = PluginFile(name);
+            var temp = Path.Combine(Interface.Oxide.PluginDirectory, "_hotwire_" + name + ".tmp");
+            File.WriteAllBytes(temp, bytes);
+            File.Replace(temp, target, null);
+        }
+
+        private static void CopyFolder(string from, string to)
+        {
+            Directory.CreateDirectory(to);
+            foreach (var file in Directory.GetFiles(from)) File.Copy(file, Path.Combine(to, Path.GetFileName(file)), true);
+            foreach (var sub in Directory.GetDirectories(from)) CopyFolder(sub, Path.Combine(to, Path.GetFileName(sub)));
+        }
+
+        private string PluginError(string name)
+        {
+            try
+            {
+                string error;
+                var errors = Loader?.PluginErrors;
+                return errors != null && errors.TryGetValue(name, out error) ? error : null;
+            }
+            catch { return null; }
+        }
+
+        private static string FirstLine(string text)
+        {
+            var line = (text ?? "").Split('\n')[0].Trim();
+            return line.Length > 300 ? line.Substring(0, 300) : line;
+        }
+
+        // Loaded means a loaded instance that is not the one there before the
+        // file changed. Oxide keeps the old instance running when the new file
+        // fails to compile, so "still loaded" is not success. A new compile
+        // error ends the wait early.
+        private void WatchPluginLoad(string name, Plugin before, string beforeError, Action<bool> done)
+        {
+            var deadline = DateTime.UtcNow.AddSeconds(PluginChangeWaitSeconds);
+            var since = DateTime.UtcNow;
+            Timer watch = null;
+            watch = timer.Every(2f, () =>
+            {
+                var now = plugins.Find(name);
+                if (now != null && now.IsLoaded && !ReferenceEquals(now, before)) { watch.Destroy(); done(true); return; }
+                var error = PluginError(name);
+                var failedEarly = !string.IsNullOrEmpty(error) && error != beforeError && (DateTime.UtcNow - since).TotalSeconds > 4;
+                if (!failedEarly && DateTime.UtcNow < deadline) return;
+                watch.Destroy();
+                done(false);
+            });
+        }
+
+        private PluginBackupManifest ReadPluginManifest(string name)
+        {
+            try
+            {
+                var path = PluginManifestFile(name);
+                return File.Exists(path) ? JsonConvert.DeserializeObject<PluginBackupManifest>(File.ReadAllText(path)) : null;
+            }
+            catch { return null; }
+        }
+
+        private void WritePluginManifest(string name, PluginBackupManifest manifest)
+        {
+            try { File.WriteAllText(PluginManifestFile(name), JsonConvert.SerializeObject(manifest, Formatting.Indented)); }
+            catch (Exception ex) { PrintWarning($"Could not write the backup record for {name}: {ex.Message}"); }
+        }
+
+        // An update that was still waiting for its plugin to load when Hotwire
+        // stopped (a reload, a restart): finished now. Loaded with the new file is
+        // done; anything else gets the previous version back.
+        private void ResumePluginChanges()
+        {
+            string root;
+            try { root = Path.Combine(Path.Combine(Interface.Oxide.DataDirectory, "Hotwire"), PluginBackupFolder); }
+            catch { return; }
+            if (!Directory.Exists(root)) return;
+
+            foreach (var dir in Directory.GetDirectories(root))
+            {
+                var name = Path.GetFileName(dir);
+                var manifest = ReadPluginManifest(name);
+                if (manifest == null || !manifest.Watching) continue;
+                var id = manifest.CommandId ?? "";
+                var key = HandledKey(id);
+                timer.Once(30f, () =>
+                {
+                    string current = null;
+                    try { current = FileSha256(PluginFile(name)); } catch { }
+                    if (current != manifest.ToSha256)
+                    {
+                        manifest.Watching = false;
+                        WritePluginManifest(name, manifest);
+                        if (id.Length > 0) FinishPluginChange(id, key, "plugin.update", "failed", name + ".cs changed while Hotwire was stopped, so it was left as it is; the previous version is in oxide/data/Hotwire/" + PluginBackupFolder + "/" + name);
+                        return;
+                    }
+
+                    // A loaded plugin of this name may still be the old one: Oxide
+                    // keeps it running when the new file fails. So it is reloaded and
+                    // watched exactly as the update was.
+                    _pluginChangeBusy = name;
+                    var before = plugins.Find(name);
+                    var beforeError = PluginError(name);
+                    try { Interface.Oxide.ReloadPlugin(name); } catch { }
+                    WatchPluginLoad(name, before, beforeError, loaded =>
+                    {
+                        manifest.Watching = false;
+                        if (loaded)
+                        {
+                            WritePluginManifest(name, manifest);
+                            _pluginChangeBusy = null;
+                            if (id.Length > 0) FinishPluginChange(id, key, "plugin.update", "done", "updated and loaded (finished after Hotwire restarted); the previous version is kept on the server");
+                            return;
+                        }
+                        var putBack = PutBackPlugin(name, manifest);
+                        WritePluginManifest(name, manifest);
+                        _pluginChangeBusy = null;
+                        if (id.Length > 0) FinishPluginChange(id, key, "plugin.update", "failed", "the new version did not load after Hotwire restarted" + (putBack == null ? "; the previous version, its config and its data were put back" : "; putting the previous version back failed: " + putBack));
+                    });
+                });
+            }
+        }
+
+        #endregion
 
         private void QueueCommandResult(string id, string status, string result)
         {

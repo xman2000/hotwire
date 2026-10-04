@@ -232,7 +232,8 @@ Reporting to AFKPanel. Nothing is sent until the Rust server has been connected 
   "Send player positions for the panel's live map": true,
   "Send player positions every this many seconds": 30,
   "Report the schedule": true,
-  "Accept schedule changes from the panel": true
+  "Accept schedule changes from the panel": true,
+  "Accept plugin updates from the panel": true
 }
 ```
 
@@ -254,6 +255,7 @@ Reporting to AFKPanel. Nothing is sent until the Rust server has been connected 
 | `Send player positions every this many seconds` | While anyone is playing; once more when the last player leaves | 30 or more |
 | `Report the schedule` | Every restart, update and wipe entry, its next time and any problem, the countdown settings, and the running countdown; sent when any of it changes | |
 | `Accept schedule changes from the panel` | Lets AFKPanel add, edit, enable, disable and remove entries. Each change is checked as a chat command is, and refused if the schedule changed in game since AFKPanel last saw it. `false` keeps the schedule editable in game only; a restart, update or wipe now, and cancelling a countdown, follow `Accept commands from the panel`. | |
+| `Accept plugin updates from the panel` | Lets AFKPanel update a plugin to uMod's current file, and undo that update. Hotwire downloads the file from umod.org by the plugin's file name and installs it only if its SHA-256 is the one AFKPanel named. It first copies the plugin's file, its config (`oxide/config/<name>.json`) and its data (`oxide/data/<name>.json` and `oxide/data/<name>/`) to `oxide/data/Hotwire/plugin-backups/<name>/`, replacing the previous copy, and puts them back if the new file has not loaded within 3 minutes. Refused while a restart is counting down, while another plugin is being changed, for Hotwire itself, and when the copy would be larger than 50 MB. `false` means plugin files change only by hand. | |
 
 | Rule | Value |
 | --- | --- |

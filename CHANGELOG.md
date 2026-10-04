@@ -25,6 +25,23 @@ sit above a launcher `1.1.7`. Read the label, not the number.
 at the top of the file — it is a comment, not something it echoes, so read it
 rather than watch for it.
 
+## Plugin 1.1.54, setup 0.1.16 (Windows) and 0.2.17 (Linux) — 2026-10-04
+
+**AFKPanel can update a plugin to uMod's current file, and undo the update, and the plugin keeps a copy and puts it back
+by itself when the new file does not load.**
+
+- Hotwire downloads the file from umod.org by the plugin's file name, never from an address it was sent, and installs it
+  only if its SHA-256 is the one AFKPanel named. A file that is not, or a plugin file changed on the server since AFKPanel
+  last saw it, is refused and nothing is changed.
+- Before anything is changed it copies the plugin's file, config and data to `oxide/data/Hotwire/plugin-backups/<name>/`.
+- It asks Oxide to load the new file and waits up to 3 minutes for it to load. Oxide keeps the running version when the
+  new file does not compile; when the new file has not loaded, Hotwire puts the file, config and data back. An update
+  still waiting when Hotwire restarts is finished when it starts again.
+- Undoing an update puts back the file, config and data kept before it, and only while the updated file is still the one
+  installed.
+- One plugin at a time, never while a restart is counting down, never Hotwire itself. A new setting, `Accept plugin
+  updates from the panel` (on), turns it off.
+
 ## Plugin 1.1.53, launcher 1.1.8-linux, setup 0.1.15 (Windows) and 0.2.16 (Linux) — 2026-10-03
 
 **The Linux launcher never waits for AFKPanel before starting the server, and a command from AFKPanel runs only while
