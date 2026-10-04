@@ -90,7 +90,7 @@ A wipe starts a new map: the plugin hands the launcher the next seed (and size),
 | Scheduled wipe | On the entry's own time and repeat |
 | Forced wipe | When Facepunch's monthly update arrives on the first Thursday of the month: once AFKPanel sees the new Rust build and the Oxide made for it, and not before 19:00 London time unless the entry says so. The launcher applies the new seed only in a start whose update changed the installed build. Until then the old map stays and the plugin tries again every 30 minutes, for 6 hours, then stops and says so. Without AFKPanel, it restarts at 19:00 London and the launcher's build comparison decides. |
 
-Wipe entries are added and changed in AFKPanel. `hotwire list` shows them in game. A wipe requires the Hotwire launcher, unmodified; on a start script the entry reports that and never fires.
+Wipe entries are added and changed in AFKPanel. `hotwire list` shows them in game. A wipe requires the Hotwire launcher; on a start script the entry reports that and never fires.
 
 ## Commands
 

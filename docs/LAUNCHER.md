@@ -29,7 +29,7 @@ The launcher's settings, and the default when `hotwire.cfg` leaves one out:
 | `hotwire.update_mode` | `auto` | See Update modes |
 | `hotwire.steamcmd` | Windows `C:\steamcmd\steamcmd.exe`; Linux `/usr/games/steamcmd` | SteamCMD. Several servers may share one. |
 | `hotwire.steamcmd_wait_minutes` | `60` | How long to wait for another server's SteamCMD run before starting as is |
-| `hotwire.forced_wipe_steam_minutes` | `15` | Linux 1.1.6 and later: when a forced wipe waits on the update, keep trying SteamCMD this long before starting what is on disk. `0` = only `hotwire.steam_tries` |
+| `hotwire.forced_wipe_steam_minutes` | `15` | Launchers 1.1.20 (Windows) and 1.1.6-linux or later: when a forced wipe waits on the update, keep trying SteamCMD this long before starting what is on disk. `0` = only `hotwire.steam_tries` |
 | `hotwire.steam_branch` | `public` | The Steam branch. Empty lets Steam keep the install on its current branch. |
 | `hotwire.max_days_without_update` | `14` | `hotwire` mode's backstop. `0` turns it off. |
 | `hotwire.update_on_new_build` | `1` | `hotwire` mode updates when Steam's build is ahead |
@@ -151,10 +151,43 @@ A wipe comes from the plugin as `WIPE.flag`, one `key value` per line: the new s
 | The seed cannot be written | The wipe is cancelled and the server starts unchanged |
 | An expired flag, or a cycle already recorded | Ignored |
 | The outcome | Written to `WIPE.result` for the plugin to read |
-| A forced wipe waiting on the update (Linux 1.1.6) | SteamCMD is tried for up to `hotwire.forced_wipe_steam_minutes` (15) before the server starts on what is on disk |
+| A forced wipe waiting on the update | SteamCMD is tried for up to `hotwire.forced_wipe_steam_minutes` (15) before the server starts on what is on disk |
 | A forced wipe (`forced 1` and the build the plugin armed on) | Applied only if the update changed the installed build. Otherwise the flag stays, the old map starts, and `WIPE.result` says `deferred`, so the plugin tries again. |
-| The before-wipe backup (Linux) | Taken only once the build is known to have changed, not on every try |
-| A modified launcher | The plugin checks the launcher's code hash before it writes a flag, and offers no wipe for a modified one |
+| The before-wipe backup | Taken only once the build is known to have changed, not on every try |
+| Which launchers wipe | One that lists `wipe` among its capabilities. A changed launcher still wipes; AFKPanel shows that it is not the released file. |
+
+## Backups
+
+The plugin decides when a backup runs and, right after Rust's save, copies what only the game can copy safely. The
+launcher does the rest, at the lowest priority. Requires launcher 1.1.20 on Windows or 1.1.0-linux.
+
+| Step | What the launcher does |
+| --- | --- |
+| While the server runs | Adds the save, checked unchanged while it is copied, the plugins and the map, then archives the backup |
+| Between runs | Backs up the stopped server before an update or a wipe, when the settings ask for it |
+| The archive | `backup/<save folder name>/<UTC time>-<why>`: `.tar.zst` on Linux, `.zip` on Windows. A `MANIFEST` inside lists every file's SHA-256. Before the archive is kept it is checked: on Linux `zstd` tests the whole archive; on Windows every file is read back and compared with the `MANIFEST`. |
+| Free space | A backup that would leave less than the plugin's floor free on that drive (5 GB unless changed) is refused and says so |
+| Keeping | The plugin's rotation: recent, daily, weekly, monthly and before-wipe backups, then the size cap |
+| The record | `backup.log` beside the archives, and a result Hotwire reports to AFKPanel |
+
+`hotwire-secrets.cfg` and `oxide/data/Hotwire`, which hold this server's secrets, are never in a backup.
+
+## Reports to AFKPanel
+
+Once the server is connected, the launcher reports what only it knows, signed with its own key from `hotwire/keys.json`.
+Requires launcher 1.1.20 on Windows; every Linux launcher that reads `hotwire.cfg` does it.
+
+| Report | Sent |
+| --- | --- |
+| How a run ended: when, the exit code, whether it was a crash, and what its update did | After every run |
+| The launcher stopped after a crash streak, and the crash log it kept | When it stops |
+
+| Rule | Value |
+| --- | --- |
+| When it is sent | In the background. The server never waits for it. |
+| No answer, or AFKPanel busy | The report waits in `hotwire/launcher-spool` and is sent at a later start, for up to 7 days |
+| Refused for another reason | Dropped, because the same report would be refused again |
+| Connected to another panel or as another server | What was held for the old connection is dropped |
 
 ## Several servers on one machine
 

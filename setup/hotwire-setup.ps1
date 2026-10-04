@@ -1,5 +1,5 @@
 <#
-    hotwire-setup -- install a Rust server on Windows, and connect it to Hotwire Panel if you want to.
+    hotwire-setup -- install a Rust server on Windows, and connect it to AFKPanel if you want to.
 
     https://github.com/xman2000/hotwire            MIT (c) 2026 xman2000
 
@@ -42,7 +42,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$Version = '0.1.17'
+$Version = '0.1.18'
 
 # Captured here: inside a function, $PSBoundParameters describes that function, not this script.
 $SteamCmdGiven = $PSBoundParameters.ContainsKey('SteamCmd')
@@ -54,7 +54,7 @@ function Resolve-FullPath([string]$Path) {
 }
 $AppId = '258550'
 # The Steam branch is asked for, kept in the install record, named on every download and written into
-# hotwire.bat. Steam otherwise keeps an install on whatever branch that machine last used: a real test
+# hotwire.cfg. Steam otherwise keeps an install on whatever branch that machine last used: a real test
 # install came out on staging with nothing here asking for it. Facepunch's wiki: once an install is on a
 # newer build, name public to get back to it. public is only the suggestion.
 $DefaultBranch = 'public'
@@ -63,15 +63,15 @@ $DefaultBranch = 'public'
 $SteamCmdWaitMinutes = 60
 $DefaultPanel = 'https://afkpanel.com'
 
-# Every URL below was checked on 2026-09-13. umod.org/games/rust/download answers 301 to
-# github.com/OxideMod/Oxide.Rust/releases/latest/download/Oxide.Rust.zip -- the Windows bundle.
-# The Linux bundle is a different file with the same entry names, so the redirect target is checked.
+# Oxide comes from its GitHub release, checked against the SHA-256 GitHub publishes for the file. The Linux
+# bundle is a different file with the same entry names, so the name of the file downloaded is checked too.
 $SteamCmdZipUrl = 'https://steamcdn-a.akamaihd.net/client/installer/steamcmd.zip'
-$OxideZipUrl = 'https://umod.org/games/rust/download'
+$OxideReleaseUrl = 'https://api.github.com/repos/OxideMod/Oxide.Rust/releases/latest'
+$OxideAsset = 'Oxide.Rust.zip'
+$OxideZipUrl = 'https://github.com/OxideMod/Oxide.Rust/releases/latest/download/Oxide.Rust.zip'
 
-# Hotwire itself, from the branch this script ships on: the launcher there knows INSTALL_FRAMEWORK, which
-# a vanilla install needs. Repoint at main when the branch merges. GitHub serves both with LF line
-# endings (checked 2026-09-13), which cmd.exe misreads in a .bat, so the launcher is saved with CRLF.
+# Hotwire itself, from the branch this script ships on, checked against the pins below. GitHub serves
+# these with LF line endings, which cmd.exe misreads in a .bat, so the launcher is saved with CRLF.
 $LauncherUrl = 'https://raw.githubusercontent.com/xman2000/hotwire/connect-and-report/launcher/hotwire.bat'
 # The settings list the launcher reads from (1.1.16 and later): kept as hotwire.example.cfg, and copied into this
 # server's hotwire.cfg with its ports, map and branch filled in.
@@ -79,30 +79,30 @@ $CfgUrl = 'https://raw.githubusercontent.com/xman2000/hotwire/connect-and-report
 $PluginUrl = 'https://raw.githubusercontent.com/xman2000/hotwire/connect-and-report/src/Hotwire.cs'
 
 # ---------------------------------------------------------------------------
-# HW-9: pinned SHA-256 of the FIRST-PARTY files this script downloads and then
-# runs, so a launcher or plugin altered in transit (or at rest on GitHub) is
-# caught before it is ever executed -- the OX-2 mirror. Confirm-DownloadHash
-# compares Get-FileHash of each download against the value here.
+# Pinned SHA-256 of the FIRST-PARTY files this script downloads and then runs,
+# so a launcher or plugin altered in transit (or at rest on GitHub) is caught
+# before it is ever executed. Confirm-DownloadHash compares Get-FileHash of each
+# download against the value here.
 #
 # These are the hashes of the files AS SERVED: raw.githubusercontent serves the
 # git blob, which .gitattributes normalises to LF, so hotwire.bat is hashed with
 # LF line endings here even though it is checked out -- and finally saved -- with
 # CRLF. Compute a value as: (read file, replace CRLF with LF, sha256).
 #
-# !! REGENERATED AT RELEASE TIME -- NO AUTOMATION EXISTS YET !!
 # Whenever launcher/hotwire.bat, launcher/hotwire.example.cfg or src/Hotwire.cs
 # changes on the branch the URLs above point at, these values MUST change in the
 # same commit, or every install aborts with a hash mismatch. tools/build-release.sh
-# refuses to build a release while any of them is stale. A value must match what that branch actually
-# serves once pushed; a hash computed from an unpushed working tree will not.
+# refuses to build a release while any of them is stale. A value must match what
+# that branch serves once pushed: hash the committed file, not the working tree.
 #
-# Third-party downloads (SteamCMD from Valve, Oxide from uMod) are deliberately
-# ABSENT: their versions vary, so they are not pinned. They are reported as
-# "unverified (third-party)" rather than blocked -- the omission is never silent.
+# Third-party downloads are deliberately ABSENT: their versions vary, so they are
+# not pinned. Oxide is checked against the SHA-256 GitHub publishes instead;
+# SteamCMD is reported as "unverified (third-party)" rather than blocked, so the
+# omission is never silent.
 $PinnedHashes = @{
-    'hotwire.bat' = '5248e7bacc24cbaa9f8d9e89e26701089ac9d6ebefd8f5679f20f4e65f28297c'
-    'Hotwire.cs'  = 'ed48eeefa4e5667f108e79577e361b5ecae5eb130ba33df013d8ea83599a8e76'
-    'hotwire.example.cfg' = '49de5e242c14418158c4796a23f2ca7b1c99eddcf0cdc3fd3e65c05cd94d9971'
+    'hotwire.bat' = 'f6778e99889dea317ecd66003911d2ae3f55bc0f8ed8651bfae811a8620b821d'
+    'Hotwire.cs'  = '047988a1f3b06fd9951bb2a4849c1768999e1ed8d12bdc951acaf301697cc3e8'
+    'hotwire.example.cfg' = '121c1480f3f6edbb3f48790a0fd72abeff1c964d7cd3ef1608646663b1661f4c'
 }
 
 $Docs = [ordered]@{
@@ -525,7 +525,7 @@ function Select-KnownServer([string]$Question, [string]$Exclude = '', [switch]$I
 # ------------------------------------------------------------------ ports
 # Each server on a machine needs its own ports. The layout is hotwire.bat's: game, RCON one above it,
 # query two above; Rust+ is the larger of game and RCON plus 67 (Rust wiki). A server's ports come from its
-# record, then from its hotwire.bat, and are chosen once, when first needed.
+# record, then from its hotwire.cfg (or a hotwire.bat from before 1.1.16), and are chosen once, when first needed.
 function New-PortSet([int]$Game, [int]$Query, [int]$Rcon) {
     return [pscustomobject]@{ Game = $Game; Query = $Query; Rcon = $Rcon; App = ([math]::Max($Game, $Rcon) + 67) }
 }
@@ -717,7 +717,7 @@ function Invoke-Download([string]$Url, [string]$OutFile, [string]$What) {
     return $response
 }
 
-# HW-9: integrity gate for a download. $ArtifactKey indexes $PinnedHashes.
+# The integrity gate for a download. $ArtifactKey indexes $PinnedHashes.
 #   - a hash is pinned and matches      -> say so, carry on
 #   - a hash is pinned and does NOT     -> STOP. Setup is install-time, not the
 #                                          boot path, so aborting is safe; running
@@ -785,7 +785,7 @@ function Get-RiskyFolder([string]$d) {
 # The clock. Two reasons it is checked before anything is downloaded:
 #   - hours or days out, HTTPS certificate checks fail and every download here fails with a message
 #     about trust rather than time;
-#   - minutes out, Hotwire Panel refuses every signed request later (its window is 300 seconds) with
+#   - minutes out, AFKPanel refuses every signed request later (its window is 300 seconds) with
 #     a message that says nothing about clocks.
 # Measured against the Date header of the SteamCMD download server, which this script contacts
 # anyway, so checking costs no extra party a request.
@@ -811,7 +811,7 @@ function Test-InstallClock {
 
     if ($abs -le 300) { Write-Warn ("clock is {0:N0}s {1} -- fine for now, but drifting" -f $abs, $direction) }
     else { Write-Bad ("clock is {0:N0}s {1}" -f $abs, $direction) }
-    Write-Note "Downloads tolerate some drift. Hotwire Panel, if you connect later, refuses anything over 300s."
+    Write-Note "Downloads tolerate some drift. AFKPanel, if you connect later, refuses anything over 300s."
 
     $service = Get-Service -Name W32Time -ErrorAction SilentlyContinue
     if (-not $service) { Write-Note "The Windows Time service is not installed. Fix: Settings > Time > 'Sync now'."; return }
@@ -1145,7 +1145,7 @@ function Show-InstallState($s, [string]$Title) {
         $abs = [math]::Abs($s.ClockSkew); $dir = if ($s.ClockSkew -gt 0) { 'ahead' } else { 'behind' }
         if ($abs -le 30) { Write-Check ok 'Clock' ("right ({0:N0}s from Steam's servers)" -f $abs) }
         elseif ($abs -le 300) { Write-Check warn 'Clock' ("{0:N0}s {1} -- drifting" -f $abs, $dir) }
-        else { Write-Check fail 'Clock' ("{0:N0}s {1} -- Hotwire Panel would refuse every request" -f $abs, $dir) }
+        else { Write-Check fail 'Clock' ("{0:N0}s {1} -- AFKPanel would refuse every request" -f $abs, $dir) }
     }
 
     Write-Group "Rust"
@@ -1180,9 +1180,9 @@ function Show-InstallState($s, [string]$Title) {
     if (-not $s.HasLauncher) { Write-Check info 'RCON password' 'set with the start script' }
     elseif ($s.RconProblem) { Write-Check fail 'RCON password' "$($s.RconProblem) -- hotwire.bat will not start" }
     else { Write-Check ok 'RCON password' 'set, and hotwire.bat will accept it' }
-    if ($s.Connected) { Write-Check ok 'Hotwire Panel' $(if ($s.Identity) { "connected as '$($s.Identity)'" } else { 'connected' }) }
-    elseif ($s.PanelDeclined) { Write-Check info 'Hotwire Panel' 'not connected -- you said no' }
-    else { Write-Check no 'Hotwire Panel' 'not connected' }
+    if ($s.Connected) { Write-Check ok 'AFKPanel' $(if ($s.Identity) { "connected as '$($s.Identity)'" } else { 'connected' }) }
+    elseif ($s.PanelDeclined) { Write-Check info 'AFKPanel' 'not connected -- you said no' }
+    else { Write-Check no 'AFKPanel' 'not connected' }
 
     Write-Group "Firewall"
     if ($s.FirewallError) { Write-Check warn 'Windows Firewall' "could not be read: $($s.FirewallError)" }
@@ -1233,7 +1233,7 @@ function Get-InstallPlan($s) {
     }
     $portsShut = $s.FirewallError -or ($s.FirewallOn -and ($s.Game.Allows.Count -eq 0 -or $s.Query.Allows.Count -eq 0 -or $s.Game.Blocks.Count -gt 0 -or $s.Query.Blocks.Count -gt 0))
     if ($portsShut) { & $add 'firewall' 'Firewall' "open this server's game and query ports" }
-    if (-not $s.Connected -and -not $s.PanelDeclined) { & $add 'panel' 'Hotwire Panel' 'connect this server' }
+    if (-not $s.Connected -and -not $s.PanelDeclined) { & $add 'panel' 'AFKPanel' 'connect this server' }
     return $plan.ToArray()
 }
 
@@ -1242,7 +1242,7 @@ function Get-DeclinedNames($s) {
     if ($s.OxideDeclined -and -not $s.OxideComplete) { $names += 'Oxide' }
     if ($s.LauncherDeclined -and -not $s.HasLauncher) { $names += 'the start script' }
     if ($s.PluginDeclined -and -not $s.HasPlugin) { $names += 'the Hotwire plugin' }
-    if ($s.PanelDeclined -and -not $s.Connected) { $names += 'Hotwire Panel' }
+    if ($s.PanelDeclined -and -not $s.Connected) { $names += 'AFKPanel' }
     return $names
 }
 
@@ -1583,7 +1583,8 @@ function Install-Oxide([string]$d) {
     Write-Why @(
         "Oxide (uMod) is what lets a Rust server run plugins. Hotwire's own plugin needs it.",
         "",
-        "This downloads the Windows build of Oxide and puts its files over the server, replacing some",
+        "This downloads the Windows build of Oxide from GitHub, checks it against the SHA-256 GitHub",
+        "publishes for it, and puts its files over the server, replacing some",
         "of the game's own files in RustDedicated_Data\Managed. That is how Oxide works. The game's",
         "files are copied to hotwire\backups first, so they can be put back.",
         "",
@@ -1601,8 +1602,27 @@ function Install-Oxide([string]$d) {
     }
 
     $zip = Join-Path $env:TEMP 'hotwire-oxide.zip'
-    $response = Invoke-Download $OxideZipUrl $zip 'Oxide for Rust'
-    Confirm-DownloadHash $zip 'Oxide.Rust.zip' 'Oxide for Rust'
+    $from = $OxideZipUrl; $sha = $null
+    try {
+        $release = Invoke-RestMethod -Uri $OxideReleaseUrl -TimeoutSec 25 -Headers @{ Accept = 'application/vnd.github+json' }
+        $asset = @($release.assets | Where-Object { $_.name -eq $OxideAsset })[0]
+        $digest = [string]$asset.digest
+        if ($digest -match '^sha256:[0-9a-fA-F]{64}$' -and ([string]$asset.browser_download_url) -like 'https://github.com/*') {
+            $from = [string]$asset.browser_download_url; $sha = $digest.Substring(7).ToLower()
+        }
+    } catch { }
+    $response = Invoke-Download $from $zip 'Oxide for Rust'
+    if ($sha) {
+        $actual = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLower()
+        if ($actual -ne $sha) {
+            Remove-Item -LiteralPath $zip -Force -ErrorAction SilentlyContinue
+            Stop-Politely "checking the Oxide download" "its SHA-256 ($actual) is not the $sha GitHub publishes" `
+                "nothing was unpacked; run install again later"
+        }
+        Write-Ok "Oxide matches the SHA-256 GitHub publishes"
+    } else {
+        Write-Warn "GitHub did not say what Oxide's SHA-256 should be; it is used unchecked (third-party)"
+    }
     try {
         # Windows PowerShell 5.1 exposes the final URL as ResponseUri; PowerShell 7 as RequestMessage.
         $finalUrl = [string]$response.BaseResponse.ResponseUri
@@ -1783,7 +1803,7 @@ function Sync-LauncherBranch([string]$d) {
 
 # A random map for a new server. Rust's own default seed is 1337, so a server left to the default
 # plays the same map as every other one. The seed is picked once, here, and written into
-# hotwire.bat; server.randomize_seed would pick a new one on every start, which is a new map on
+# hotwire.cfg; server.randomize_seed would pick a new one on every start, which is a new map on
 # every restart. 1 to 2147483647, the range server.seed accepts, every value equally likely.
 function New-MapSeed {
     $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
@@ -1866,9 +1886,9 @@ function Install-Launcher([string]$d) {
     }
 
     # hotwire.bat runs with delayed expansion on, from its own folder. A ! or % in that folder's path is
-    # eaten before the path is used, and a quote, caret or ampersand breaks the lines that use it. HW-10: an
-    # apostrophe used to close the PowerShell single-quoted literals the launcher builds paths in; those now
-    # go through environment variables, but the apostrophe is rejected here too.
+    # eaten before the path is used, and a quote, caret or ampersand breaks the lines that use it. The launcher
+    # passes paths to PowerShell through environment variables, so an apostrophe is safe there, but it is
+    # rejected here too.
     if ($d -match '[!%"^&'']') {
         Stop-Politely "installing hotwire.bat in $d" "the path contains one of ! % ' `" ^ &, which a .bat cannot use safely" `
             "install into a folder without those characters, for example C:\rustserver"
@@ -1990,7 +2010,7 @@ function New-RconPassword {
     return $sb.ToString()
 }
 
-# The launcher's own refusals, in its words (hotwire.bat section 2), plus two a .bat file imposes: for /f
+# The launcher's own refusals, in its words, plus two a .bat file imposes: for /f
 # skips a line starting with a semicolon, and a batch file treats % as the start of a variable.
 function Test-RconPassword([string]$Password) {
     if (-not $Password) { return 'it is empty' }
@@ -2232,7 +2252,7 @@ function Set-Firewall([string]$d) {
 }
 
 # ----------------------------------------------------------------- signing --
-# The frozen canonical form (docs/CONTRACT.md in the panel repo):
+# The form AFKPanel checks a signature against, which never changes:
 #     <METHOD> <path>`n<timestamp>`n<nonce>`n<sha256 of the raw body>
 #
 # Every byte matters. The body is hashed as the EXACT bytes that go on the wire -- UTF-8, no BOM,
@@ -2269,8 +2289,7 @@ function New-Nonce {
     return -join ($bytes | ForEach-Object { $_.ToString('x2') })
 }
 
-# The published conformance vector, copied from the panel's
-# tests/Fixtures/contract/signature/conformance.json. If this machine cannot reproduce the signature
+# AFKPanel's published test vector for request signing. If this machine cannot reproduce the signature
 # below, its canonicalisation is wrong -- not the panel's. Signing is the one thing that fails
 # invisibly: a canonicalisation one byte out is a 401 with no useful message, on a machine nobody
 # can reach inbound. So it is checked here rather than left to be discovered.
@@ -2725,7 +2744,7 @@ function Invoke-Detach {
 
     # connect.json first: once it is gone every check reads "not connected", even if this stops part-way.
     foreach ($f in $present) { Remove-Item -LiteralPath $f -Force }
-    Add-Change "disconnected $r from Hotwire Panel" "connect again, with a new code from the panel"
+    Add-Change "disconnected $r from AFKPanel" "connect again, with a new code from the panel"
     Write-Host ""
     Write-Host "Disconnected. Everything connect wrote has been removed."
     return 0
@@ -2734,17 +2753,17 @@ function Invoke-Detach {
 # ----------------------------------------------------------- 10. the panel --
 # Asked last, once the server is complete. Yes runs exactly what 'connect' runs; no changes nothing.
 function Invoke-PanelOffer([string]$d) {
-    Write-Step "Hotwire Panel"
+    Write-Step "AFKPanel"
     if (Test-Path -LiteralPath (Get-StateFile $d)) {
         Write-Ok "this server is already connected -- 'Show the connection' in the menu says where"
         return
     }
     Write-Why @(
-        "Hotwire Panel is our web panel for managing Rust servers. Connecting needs an account and a",
+        "AFKPanel is a web panel for managing Rust servers. Connecting needs an account and a",
         "code from the panel, writes three small files in this folder, and 'Disconnect' in the menu",
         "removes them."
     )
-    if (-not (Confirm-Offer $d 'panel' "Connect this server to Hotwire Panel?")) {
+    if (-not (Confirm-Offer $d 'panel' "Connect this server to AFKPanel?")) {
         Write-Note "Not connected. Connect any time from the menu."
         return
     }
@@ -2883,7 +2902,7 @@ function Invoke-Menu {
     } else { Write-No "no Rust server in this folder" }
 
     # 2. The clock. Measured against Valve's download server, not the panel, so looking at this menu
-    # never contacts Hotwire Panel. A correct clock is correct against both.
+    # never contacts AFKPanel. A correct clock is correct against both.
     $skew = Get-ClockSkew
     if ($null -eq $skew) { Write-Warn "could not check the clock (no internet connection?)" }
     else {
@@ -2892,7 +2911,7 @@ function Invoke-Menu {
         if ($abs -le 30) { Write-Ok ("clock is right ({0:N0}s from Steam's servers)" -f $abs) }
         else {
             if ($abs -le 300) { Write-Warn ("clock is {0:N0}s {1} -- drifting" -f $abs, $direction) }
-            else { Write-Bad ("clock is {0:N0}s {1} -- Hotwire Panel would refuse every request" -f $abs, $direction) }
+            else { Write-Bad ("clock is {0:N0}s {1} -- AFKPanel would refuse every request" -f $abs, $direction) }
             Write-Note "fix: run this as Administrator and choose 1 (install checks and offers to sync it),"
             Write-Note "     or Settings > Time > 'Sync now'"
         }
@@ -2927,12 +2946,12 @@ function Invoke-Menu {
         }
         elseif ($state) { Write-Ok "connected to $($state.panel_url) as '$($state.identity)'" }
         else { Write-Warn "connected, but hotwire\connect.json could not be read" }
-    } else { Write-No "not connected to Hotwire Panel" }
+    } else { Write-No "not connected to AFKPanel" }
 
     Write-Host ""
     Write-Host "  1  Install a Rust server in this folder"
     Write-Host "  2  Check this machine is ready to connect      (changes nothing)"
-    Write-Host "  3  Connect this server to Hotwire Panel"
+    Write-Host "  3  Connect this server to AFKPanel"
     Write-Host "  4  Show the connection"
     Write-Host "  5  Disconnect"
     Write-Host ""
@@ -2950,7 +2969,7 @@ function Invoke-Menu {
         elseif (Test-CfgLauncher $here) { Write-Note "Suggested: hotwire-secrets.cfg, beside hotwire.bat, needs a line reading: rcon.password `"your password`"" }
         else { Write-Note "Suggested: secrets.bat, beside hotwire.bat, needs a line reading: set `"RCON_PASSWORD=your password`"" }
     }
-    elseif (-not $connected) { Write-Note "Suggested: 3, connect to Hotwire Panel." }
+    elseif (-not $connected) { Write-Note "Suggested: 3, connect to AFKPanel." }
     else { Write-Note "Suggested: 4." }
     Write-Note "Enter on its own leaves without doing anything."
 
@@ -2969,7 +2988,7 @@ function Invoke-Menu {
 
 function Show-Help {
 @'
-hotwire-setup -- install a Rust server, and connect it to Hotwire Panel if you want to
+hotwire-setup -- install a Rust server, and connect it to AFKPanel if you want to
 
   (none)    A menu. It looks at this folder and suggests what to do next.
   install   Pre-flight checks everything, then installs only what is missing. Asks before every step.

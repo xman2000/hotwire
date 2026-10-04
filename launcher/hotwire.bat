@@ -2,7 +2,7 @@
 setlocal EnableDelayedExpansion
 
 REM ==[ H O T W I R E ]===================================================
-REM  Hotwire launcher for Windows, version 1.1.19 (2026-10-02)
+REM  Hotwire launcher for Windows. Its version is HOTWIRE_LAUNCHER_VERSION below.
 REM  Built by xman2000 and Claude.  MIT License.
 REM  https://github.com/xman2000/hotwire
 REM
@@ -21,15 +21,16 @@ REM  current build. Run it after editing a setting.
 set "CHECK_ONLY="
 if /i "%~1"=="check" set "CHECK_ONLY=1"
 
-REM  Who this launcher is, for the plugin and the panel: written to
+REM  Who this launcher is, for the plugin: written to
 REM  oxide\data\Hotwire\launcher.json before every start, with this file's
-REM  code hash (the HOTWIRE_LAUNCHER_HASH line near the end). The plugin
-REM  works the hash out again from this file's bytes, so the panel offers a
-REM  wipe or a permanent setting only through a launcher that is unmodified
-REM  and says it can carry them out. settings_file says the settings are
-REM  read from hotwire.cfg. Not settings; do not edit.
-set "HOTWIRE_LAUNCHER_VERSION=1.1.19"
-set "HOTWIRE_LAUNCHER_CAPABILITIES=supervise,update,framework_verify,crash_backstop,log_rotate,convar_persist,wipe,settings_file"
+REM  code hash (the HOTWIRE_LAUNCHER_HASH line near the end). The capability
+REM  list decides which features the plugin offers; settings_file says the
+REM  settings are read from hotwire.cfg. AFKPanel shows whether this file is
+REM  the released one, and nothing waits on that answer. Not settings; do
+REM  not edit.
+set "HOTWIRE_LAUNCHER_VERSION=1.1.20"
+set "HOTWIRE_LAUNCHER_CAPABILITIES=supervise,update,framework_verify,crash_backstop,log_rotate,convar_persist,wipe,backup,settings_file"
+echo [%date% %time%] Hotwire launcher %HOTWIRE_LAUNCHER_VERSION% (Windows)
 
 REM ======================================================================
 REM  HOW THIS LAUNCHER WORKS
@@ -141,8 +142,7 @@ set "UPDATE_FLAG=UPDATE.flag"
 set "VALIDATE_FLAG=VALIDATE.flag"
 set "WIPE_FLAG=WIPE.flag"
 set "FRAMEWORK_VERSION_FILE=%ROOT%\RustDedicated_Data\Managed\Oxide.Rust.dll"
-set "FRAMEWORK_FEED=https://assets.umod.org/games/rust.json"
-set "FRAMEWORK_URL=https://umod.org/games/rust/download"
+set "FRAMEWORK_URL=https://github.com/OxideMod/Oxide.Rust/releases/latest/download/Oxide.Rust.zip"
 set "FRAMEWORK_RELEASES=https://api.github.com/repos/OxideMod/Oxide.Rust/releases/latest"
 set "FRAMEWORK_ASSET=Oxide.Rust.zip"
 set "LOGFILE=%ROOT%\logs\server_log.txt"
@@ -167,18 +167,18 @@ REM  would be fine and the server simply would not start.
 if not exist "%ROOT%\RustDedicated.exe" (
     echo [%date% %time%] ================================================
     echo [%date% %time%] No RustDedicated.exe in:
-    echo [%date% %time%]   %ROOT%
+    echo [%date% %time%]   !ROOT!
     echo [%date% %time%] Keep hotwire.bat beside RustDedicated.exe, or the
     echo [%date% %time%] install is incomplete.
     echo [%date% %time%] ================================================
     pause & exit /b 1
 )
 
-cd /d "%ROOT%" || (echo Cannot cd to %ROOT% & pause & exit /b 1)
+cd /d "%ROOT%" || (echo Cannot cd to !ROOT! & pause & exit /b 1)
 if not exist "%ROOT%\logs" mkdir "%ROOT%\logs" >nul 2>&1
 if not exist "%ROOT%\logs" (
     echo [%date% %time%] ================================================
-    echo [%date% %time%] Cannot create %ROOT%\logs
+    echo [%date% %time%] Cannot create !ROOT!\logs
     echo [%date% %time%] The rotated logs and the update backstop stamp
     echo [%date% %time%] both live there. Without it a crash leaves no
     echo [%date% %time%] log to read and the backstop never fires.
@@ -194,15 +194,19 @@ set "HOTWIRE_FIRST=1"
 
 
 :start
+REM  What this pass did, for the session report after the run.
+set "UPDATE_ATTEMPTED=0"
+set "STEAM_OK=0"
+set "FRAMEWORK_OK=0"
 
 REM ======================================================================
-REM  5. READING hotwire.cfg AND hotwire-secrets.cfg
+REM  READING hotwire.cfg AND hotwire-secrets.cfg
 REM
 REM     Machinery. PowerShell reads both files as data and checks every
 REM     line. cmd is handed only the launcher's own settings, each checked
 REM     to be a number, a word or a path with nothing cmd reads as syntax.
 REM     The server's settings and the RCON password never pass through
-REM     cmd: PowerShell keeps them for the start, in section 8.
+REM     cmd: PowerShell keeps them for the start, under LAUNCH below.
 REM ======================================================================
 call :hotwire_load
 if defined HOTWIRE_FIRST if not "!HW_LOAD!"=="ok" (
@@ -234,7 +238,7 @@ if /i "!UPDATE_EFFECTIVE!"=="always" echo [%date% %time%] hotwire.update_mode is
 :updatemodeknown
 
 REM ======================================================================
-REM  6a. WHAT BUILD IS OUT THERE
+REM  WHAT BUILD IS OUT THERE
 REM
 REM     Machinery. Nothing here is a setting -- those are in hotwire.cfg.
 REM
@@ -325,7 +329,7 @@ if "!PUBLIC_BUILD!"=="?" set "PUBLIC_BUILD="
 
 if not defined INSTALLED_BUILD (
     echo [%date% %time%] Rust build: cannot read the installed build from
-    echo [%date% %time%]   %ROOT%\steamapps\appmanifest_%APPID%.acf
+    echo [%date% %time%]   !ROOT!\steamapps\appmanifest_%APPID%.acf
 ) else if not defined PUBLIC_BUILD (
     echo [%date% %time%] Rust build: installed !INSTALLED_BUILD!, and Steam did
     echo [%date% %time%] not answer. Carrying on under the usual rules.
@@ -344,13 +348,13 @@ if not defined INSTALLED_BUILD (
     echo [%date% %time%] Clients update themselves, so once the protocol
     echo [%date% %time%] moves this server stops accepting connections.
     REM  What happens next depends on the update mode, so say that, not what
-    REM  an admin in another mode would do (the owner's test, 2026-09-28).
+    REM  an admin in another mode would do.
     set "HW_NEWER=updates"
     if /i "!UPDATE_EFFECTIVE!"=="off" set "HW_NEWER=off"
     if /i "!UPDATE_EFFECTIVE!"=="hotwire" if not "%UPDATE_ON_NEW_BUILD%"=="1" set "HW_NEWER=flag"
     if "!HW_NEWER!"=="updates" echo [%date% %time%] A normal start updates it before launching.
     if "!HW_NEWER!"=="off" echo [%date% %time%] hotwire.update_mode is off, so this launcher does not update it.
-    if "!HW_NEWER!"=="flag" echo [%date% %time%] Create %UPDATE_FLAG% in %ROOT% to update on the next start.
+    if "!HW_NEWER!"=="flag" echo [%date% %time%] Create %UPDATE_FLAG% in !ROOT! to update on the next start.
     set "HW_NEWER="
     echo [%date% %time%] ================================================
 )
@@ -359,7 +363,7 @@ if not defined INSTALLED_BUILD (
 
 
 REM ======================================================================
-REM  6. UPDATE OR RESTART
+REM  UPDATE OR RESTART
 REM
 REM     The two flag files, and what each one costs:
 REM
@@ -437,7 +441,7 @@ if "%MAX_DAYS_WITHOUT_UPDATE%"=="0" goto :updatedecided
 set "DAYS_SINCE_UPDATE=9999"
 REM  Floor, not [int]: [int] rounds, so 13.6 days would trip a 14-day
 REM  backstop half a day early.
-REM  HW-10: pass the path through an environment variable, never inside a
+REM  The path goes through an environment variable, never inside a
 REM  PowerShell single-quoted literal, so an apostrophe in the path (a folder
 REM  like C:\Rob's server) cannot close the literal and break or inject.
 set "HOTWIRE_STAMP=%UPDATE_STAMP%"
@@ -463,6 +467,9 @@ if defined CHECK_ONLY if "%DO_UPDATE%"=="1" echo [%date% %time%] check mode -- a
 if defined CHECK_ONLY if "%DO_UPDATE%"=="0" echo [%date% %time%] check mode -- a normal start would launch without updating.
 if defined CHECK_ONLY set "DO_UPDATE=0"
 
+REM  A backup of the stopped server, before an update or a wipe changes it.
+if not defined CHECK_ONLY call :hotwire_ps backup
+
 REM  hotwire-before.bat runs on every real start, before any update, in a
 REM  cmd of its own: whatever it does to its variables, or an exit in it,
 REM  stays there. A failure is said and the start carries on. check mode
@@ -478,6 +485,7 @@ if "%DO_UPDATE%"=="0" (
     if not defined CHECK_ONLY echo [%date% %time%] Plain restart -- skipping steamcmd and framework.
     goto buildargs
 )
+set "UPDATE_ATTEMPTED=1"
 
 REM  Fast Rust updates. Steam updates a game by patching the files on disk,
 REM  and Oxide has replaced some of them, so on a modded server Steam's first
@@ -526,6 +534,27 @@ if "%FAST_RUST_UPDATES%"=="1" if not "%INSTALL_FRAMEWORK%"=="0" if defined INSTA
 set "HOTWIRE_ROOT="
 
 set /a STEAM_TRIES=0
+
+REM  A forced wipe rides this update, and the old build cannot take players
+REM  once their game has updated: SteamCMD keeps being tried for
+REM  hotwire.forced_wipe_steam_minutes past the usual tries, before the
+REM  server starts on what is on disk. The flag must say forced, its cycle
+REM  must not be done, and it must not have expired. 0 when none waits.
+set "FORCED_DEADLINE=0"
+set "FORCED_UNTIL="
+if not "%FORCED_WIPE_STEAM_MINUTES%"=="0" if exist "%ROOT%\%WIPE_FLAG%" (
+    set "HOTWIRE_WIPEFLAG=%ROOT%\%WIPE_FLAG%"
+    set "HOTWIRE_WIPESTATE=%ROOT%\hotwire\wipe-cycle"
+    set "HOTWIRE_WIPEMIN=%FORCED_WIPE_STEAM_MINUTES%"
+    for /f "tokens=1,2" %%a in ('powershell -NoProfile -NonInteractive -Command "$w=@{}; foreach($l in [IO.File]::ReadAllLines($env:HOTWIRE_WIPEFLAG)){ $p=$l.Trim().Split(' ',2); if($p.Count -eq 2 -and -not $w.ContainsKey($p[0])){ $w[$p[0]]=$p[1].Trim() } }; $now=[DateTimeOffset]::UtcNow.ToUnixTimeSeconds(); $done=''; if(Test-Path -LiteralPath $env:HOTWIRE_WIPESTATE){ $done=([IO.File]::ReadAllText($env:HOTWIRE_WIPESTATE)).Trim() }; $ok=($w['forced'] -eq '1') -and -not ($w['cycle'] -and $w['cycle'] -eq $done) -and -not ($w['expires'] -match '\A[0-9]+\z' -and [long]$w['expires'] -lt $now); if($ok){ $d=$now+60*[long]$env:HOTWIRE_WIPEMIN; Write-Output ([string]$d+' '+(Get-Date).AddMinutes([long]$env:HOTWIRE_WIPEMIN).ToString('HH:mm')) }"') do (
+        set "FORCED_DEADLINE=%%a"
+        set "FORCED_UNTIL=%%b"
+    )
+    set "HOTWIRE_WIPEFLAG="
+    set "HOTWIRE_WIPESTATE="
+    set "HOTWIRE_WIPEMIN="
+)
+if not "!FORCED_DEADLINE!"=="0" echo [%date% %time%] A forced wipe waits on this update: trying SteamCMD until !FORCED_UNTIL! if it fails.
 set "STEAM_OK=0"
 
 REM  One SteamCMD run at a time on this machine. Several servers can share one
@@ -533,8 +562,8 @@ REM  SteamCMD, and nothing says two runs of it at once are safe, so the run
 REM  first holds hotwire-steamcmd.lock beside steamcmd.exe, opened unshared.
 REM  Windows lets go of an open file when its process ends, however it ends,
 REM  so a crash can never leave the lock stuck. hotwire-setup takes the same
-REM  lock. Waiting longer than hotwire.steamcmd_wait_minutes counts as a
-REM  failed try.
+REM  lock. After hotwire.steamcmd_wait_minutes of waiting, the server starts
+REM  with what is on disk, as it does when SteamCMD gives up.
 REM  The arguments are assembled in PowerShell from the environment, so a
 REM  folder name never passes through cmd's parser on the way.
 set "PSSTEAM="
@@ -554,6 +583,12 @@ set "PSSTEAM=!PSSTEAM!  if($code -ne 0 -and $env:HOTWIRE_RECOVER -eq '1' -and $i
 set "PSSTEAM=!PSSTEAM!    if($len -gt $before){ $fs=[IO.File]::Open($lg, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite); try{ [void]$fs.Seek($before, [IO.SeekOrigin]::Begin); $n=[int][Math]::Min($len-$before, 4194304); $buf=New-Object byte[] $n; [void]$fs.Read($buf, 0, $n) } finally { $fs.Dispose() }; "
 set "PSSTEAM=!PSSTEAM!      foreach($line in [Text.Encoding]::UTF8.GetString($buf).Split([char]10)){ if($line.Contains('Failed to get manifest request code') -and $line.Contains('Access Denied')){ $mm=[regex]::Match($line, 'Manifest: ([0-9]+)'); if($mm.Success -and ($inst -contains $mm.Groups[1].Value)){ $code=96 } } } } }; "
 set "PSSTEAM=!PSSTEAM!  exit $code } finally { $h.Dispose() } "
+
+if not exist "!STEAMCMD!" (
+    echo [%date% %time%] SteamCMD is not at !STEAMCMD!. Set hotwire.steamcmd in
+    echo [%date% %time%] hotwire.cfg. Starting what is on disk.
+    goto steamsettled
+)
 
 :steamupdate
 set /a STEAM_TRIES+=1
@@ -579,6 +614,7 @@ if "!RECOVERY_USED!"=="1" echo [%date% %time%] The update finished without the o
 goto framework
 
 :steamfailed
+if "!STEAMEXIT!"=="97" goto steamgaveup
 echo [%date% %time%] steamcmd error (attempt !STEAM_TRIES! of %MAX_STEAM_TRIES%).
 if not "!STEAMEXIT!"=="96" goto steamnotrefused
 if "!RECOVERY_USED!"=="1" goto steamnotrefused
@@ -590,7 +626,13 @@ if not "!ASIDEEXIT!"=="0" goto steamnotrefused
 set "RECOVERY_USED=1"
 goto steamupdate
 :steamnotrefused
-if !STEAM_TRIES! GEQ %MAX_STEAM_TRIES% goto steamgaveup
+if !STEAM_TRIES! LSS %MAX_STEAM_TRIES% goto steamretry
+if "!FORCED_DEADLINE!"=="0" goto steamgaveup
+set "NOW_EPOCH=0"
+for /f %%t in ('powershell -NoProfile -NonInteractive -Command "[DateTimeOffset]::UtcNow.ToUnixTimeSeconds()"') do set "NOW_EPOCH=%%t"
+if !NOW_EPOCH! GEQ !FORCED_DEADLINE! goto steamgaveup
+echo [%date% %time%] A forced wipe waits: trying SteamCMD again until !FORCED_UNTIL!.
+:steamretry
 REM  Once per update, a try that left the install marked Files Corrupt is
 REM  retried at once: Steam checks every file on that next run, so waiting
 REM  changes nothing.
@@ -611,7 +653,7 @@ if errorlevel 1 ping -n !PINGWAIT! 127.0.0.1 >nul 2>&1
 goto steamupdate
 
 :steamgaveup
-echo [%date% %time%] Giving up on steamcmd. Launching what we have.
+echo [%date% %time%] Giving up on steamcmd. Starting what is on disk.
 if not "!RECOVERY_USED!"=="1" goto steamsettled
 set "HOTWIRE_ROOT=%ROOT%"
 powershell -NoProfile -NonInteractive -Command "!PSSETTLE!"
@@ -619,9 +661,9 @@ set "HOTWIRE_ROOT="
 :steamsettled
 
 :framework
-REM  Oxide/uMod. hotwire.install_framework 0 skips it for a vanilla server.
+REM  Oxide. hotwire.install_framework 0 skips it for a vanilla server.
 REM  -f makes curl fail on an HTTP error instead of saving the error page,
-REM  which would otherwise be force-extracted over a working install.
+REM  which would otherwise be extracted over a working install.
 set "FRAMEWORK_OK=0"
 if "%INSTALL_FRAMEWORK%"=="0" (
     echo [%date% %time%] Vanilla server: hotwire.install_framework is 0, so no framework.
@@ -629,87 +671,17 @@ if "%INSTALL_FRAMEWORK%"=="0" (
     goto :frameworkdone
 )
 
-REM  Re-read the installed build. If steamcmd changed it, the game's own
-REM  managed assemblies were just rewritten and the framework has to go
-REM  back over the top of them whatever its version says. Only when the
-REM  game did NOT move is skipping the extract safe.
-REM  Read with the same [char]-built regex as section 6a rather than with
-REM  findstr and escaped quotes. cmd has no backslash escape, and quoting a
-REM  quote inside a for/f is how this file has gone wrong before.
-set "BUILD_AFTER="
-set "HOTWIRE_ACF2=%ROOT%\steamapps\appmanifest_%APPID%.acf"
-for /f %%B in ('powershell -NoProfile -NonInteractive -Command "$q=[char]34; $t=[IO.File]::ReadAllText($env:HOTWIRE_ACF2); $m=[regex]::Match($t, $q+'buildid'+$q+'\s+'+$q+'(\d+)'+$q); if($m.Success){ $m.Groups[1].Value }"') do set "BUILD_AFTER=%%B"
-set "HOTWIRE_ACF2="
-
-set "FWSKIP=0"
-if not "%SKIP_UNCHANGED_FRAMEWORK%"=="1" goto :frameworkextract
-if not defined INSTALLED_BUILD goto :frameworkextract
-if not defined BUILD_AFTER goto :frameworkextract
-if not "!INSTALLED_BUILD!"=="!BUILD_AFTER!" (
-    echo [%date% %time%] The game moved from !INSTALLED_BUILD! to !BUILD_AFTER!,
-    echo [%date% %time%] so the framework is going back over it.
-    goto :frameworkextract
-)
-
-set "HOTWIRE_FWFILE=%FRAMEWORK_VERSION_FILE%"
-set "HOTWIRE_FWFEED=%FRAMEWORK_FEED%"
-set "PSFW="
-set "PSFW=!PSFW!$ErrorActionPreference='SilentlyContinue'; "
-set "PSFW=!PSFW!$f=$env:HOTWIRE_FWFILE; $u=$env:HOTWIRE_FWFEED; "
-set "PSFW=!PSFW!if([string]::IsNullOrWhiteSpace($f)){ exit 2 } "
-set "PSFW=!PSFW!if(-not (Test-Path -LiteralPath $f)){ exit 2 } "
-set "PSFW=!PSFW!$v=[string](Get-Item -LiteralPath $f).VersionInfo.FileVersion; "
-set "PSFW=!PSFW!if([string]::IsNullOrWhiteSpace($v)){ exit 2 } "
-set "PSFW=!PSFW!$vn=(($v.Trim() -split '\.') + @('0','0','0'))[0..2] -join '.'; "
-set "PSFW=!PSFW!try{ [Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12 } catch {} "
-set "PSFW=!PSFW!$r=Invoke-RestMethod -Uri $u -TimeoutSec 25; "
-set "PSFW=!PSFW!$l=[string]$r.latest_release_version; "
-set "PSFW=!PSFW!if([string]::IsNullOrWhiteSpace($l)){ exit 2 } "
-set "PSFW=!PSFW!$ln=(($l.Trim() -split '\.') + @('0','0','0'))[0..2] -join '.'; "
-set "PSFW=!PSFW!Write-Output ('Framework: installed '+$vn+', latest '+$ln); "
-set "PSFW=!PSFW!if($vn -eq $ln){ exit 0 } else { exit 1 } "
-powershell -NoProfile -NonInteractive -Command "!PSFW!"
-set "FWSAME=!errorlevel!"
-set "HOTWIRE_FWFILE="
-set "HOTWIRE_FWFEED="
-
-REM  0 means the versions matched. 1 means they did not. Anything else
-REM  means the comparison could not be made -- no version file, no feed,
-REM  no network -- and the extract happens, which is what used to happen
-REM  every time anyway.
-if "!FWSAME!"=="0" (
-    echo [%date% %time%] Game and framework both unchanged. Skipping the
-    echo [%date% %time%] extract rather than writing over a working install.
-    set "FWSKIP=1"
-) else if not "!FWSAME!"=="1" (
-    echo [%date% %time%] Could not compare framework versions ^(exit !FWSAME!^).
-    echo [%date% %time%] Extracting, as before.
-)
-
-if "!FWSKIP!"=="1" (
-    set "FRAMEWORK_OK=1"
-    goto :frameworkdone
-)
-
-:frameworkextract
-REM  HW-9: the framework (uMod / Oxide) is third-party and its version changes
-REM  with every Rust release, so there is no hash of ours to pin it against.
-REM  GitHub publishes a SHA-256 for every release file, and uMod's download
-REM  link redirects to that same file, so the launcher checks the download
-REM  against it (hotwire.verify_framework). That proves the file is the one GitHub
-REM  holds for the release, not who built it: both come from GitHub. When the
-REM  check cannot be made, the download is unverified, as it always was, and
-REM  the log says so rather than staying silent. setup pins the first-party
-REM  launcher and plugin separately (see $PinnedHashes in hotwire-setup.ps1).
-REM  HW-10: the destination path goes through an environment variable, never a
-REM  PowerShell single-quoted literal, so an apostrophe in the path is safe.
-REM  The PowerShell below avoids the characters delayed expansion eats.
+REM  One look at GitHub's latest Oxide release: its tag is the version the
+REM  installed Oxide is compared with, and its file is what is downloaded and
+REM  checked against the SHA-256 GitHub publishes. uMod's feed is not asked:
+REM  on 2026-10-01 it still named the old Oxide an hour after GitHub had the
+REM  new one. The paths go through environment variables, so an apostrophe
+REM  in a folder name is safe, and the PowerShell avoids the characters
+REM  delayed expansion eats.
 set "FW_FROM=%FRAMEWORK_URL%"
+set "FW_GH="
 set "FW_SHA="
 set "FW_TAG="
-set "FW_CHECK=0"
-if "%VERIFY_FRAMEWORK%"=="0" goto :fwfetch
-set "FW_CHECK=1"
 set "HOTWIRE_FWREL=%FRAMEWORK_RELEASES%"
 set "HOTWIRE_FWASSET=%FRAMEWORK_ASSET%"
 set "HOTWIRE_FWOUT=%ROOT%\logs\.framework-release.tmp"
@@ -717,13 +689,15 @@ if exist "!HOTWIRE_FWOUT!" del "!HOTWIRE_FWOUT!"
 set "PSREL="
 set "PSREL=!PSREL!try{ [Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12 } catch {} "
 set "PSREL=!PSREL!try{ $r=Invoke-RestMethod -Uri $env:HOTWIRE_FWREL -TimeoutSec 25 -Headers @{ Accept='application/vnd.github+json' }; "
+set "PSREL=!PSREL!$t=[string]$r.tag_name; if($t -match '\Av?[0-9]+(\.[0-9]+)+\z'){ $t=$t.TrimStart('v') } else { $t='-' }; "
 set "PSREL=!PSREL!$a=@($r.assets | Where-Object { $_.name -eq $env:HOTWIRE_FWASSET })[0]; $d=[string]$a.digest; $u=[string]$a.browser_download_url; "
-set "PSREL=!PSREL!if($d.Length -eq 71 -and $d -like 'sha256:*' -and $u -like 'https://github.com/*'){ "
-set "PSREL=!PSREL!Set-Content -LiteralPath $env:HOTWIRE_FWOUT -Value ($u+' '+$d.Substring(7).ToLower()+' '+[string]$r.tag_name) -Encoding ASCII } } catch {} "
+set "PSREL=!PSREL!if($d.Length -eq 71 -and $d -like 'sha256:*'){ $d=$d.Substring(7).ToLower() } else { $d='-' }; "
+set "PSREL=!PSREL!if($u -notlike 'https://github.com/*'){ $u='-'; $d='-' }; "
+set "PSREL=!PSREL!Set-Content -LiteralPath $env:HOTWIRE_FWOUT -Value ($u+' '+$d+' '+$t) -Encoding ASCII } catch {} "
 powershell -NoProfile -NonInteractive -Command "!PSREL!"
 if exist "!HOTWIRE_FWOUT!" (
     for /f "usebackq tokens=1-3" %%A in ("!HOTWIRE_FWOUT!") do (
-        set "FW_FROM=%%A"
+        set "FW_GH=%%A"
         set "FW_SHA=%%B"
         set "FW_TAG=%%C"
     )
@@ -733,20 +707,83 @@ set "HOTWIRE_FWREL="
 set "HOTWIRE_FWASSET="
 set "HOTWIRE_FWOUT="
 set "PSREL="
-if not defined FW_SHA (
-    set "FW_FROM=%FRAMEWORK_URL%"
-    echo [%date% %time%] GitHub did not say what Oxide's latest release is, so this
-    echo [%date% %time%] download cannot be checked. Downloading from uMod as before.
+if defined FW_GH if not "!FW_GH!"=="-" set "FW_FROM=!FW_GH!"
+if "!FW_SHA!"=="-" set "FW_SHA="
+if "!FW_TAG!"=="-" set "FW_TAG="
+if "%VERIFY_FRAMEWORK%"=="0" set "FW_SHA="
+
+REM  Re-read the installed build. If steamcmd changed it, the game's own
+REM  managed assemblies were just rewritten and the framework has to go
+REM  back over the top of them whatever its version says. Only when the
+REM  game did NOT move is skipping the extract safe.
+REM  Read with the same [char]-built regex as the build check above rather
+REM  than with findstr and escaped quotes: cmd has no backslash escape, and a
+REM  quote inside a for/f breaks the line.
+set "BUILD_AFTER="
+set "HOTWIRE_ACF2=%ROOT%\steamapps\appmanifest_%APPID%.acf"
+for /f %%B in ('powershell -NoProfile -NonInteractive -Command "$q=[char]34; $t=[IO.File]::ReadAllText($env:HOTWIRE_ACF2); $m=[regex]::Match($t, $q+'buildid'+$q+'\s+'+$q+'(\d+)'+$q); if($m.Success){ $m.Groups[1].Value }"') do set "BUILD_AFTER=%%B"
+set "HOTWIRE_ACF2="
+
+if not "%SKIP_UNCHANGED_FRAMEWORK%"=="1" goto :frameworkextract
+if not defined INSTALLED_BUILD goto :frameworkextract
+if not defined BUILD_AFTER goto :frameworkextract
+if not "!INSTALLED_BUILD!"=="!BUILD_AFTER!" (
+    echo [%date% %time%] The game moved from !INSTALLED_BUILD! to !BUILD_AFTER!,
+    echo [%date% %time%] so the framework is going back over it.
+    goto :frameworkextract
+)
+if not defined FW_TAG (
+    echo [%date% %time%] GitHub did not say what Oxide's latest release is, so the
+    echo [%date% %time%] installed version cannot be compared. Extracting.
+    goto :frameworkextract
 )
 
-:fwfetch
+REM  The installed Oxide's file version, 2.0.7801.0, against GitHub's tag,
+REM  2.0.7801: the first three parts are compared. 0 means the same, 1
+REM  different, anything else that the installed version could not be read,
+REM  and then the extract happens.
+set "HOTWIRE_FWFILE=%FRAMEWORK_VERSION_FILE%"
+set "HOTWIRE_FWTAG=!FW_TAG!"
+set "PSFW="
+set "PSFW=!PSFW!$ErrorActionPreference='SilentlyContinue'; $f=$env:HOTWIRE_FWFILE; "
+set "PSFW=!PSFW!if([string]::IsNullOrWhiteSpace($f) -or -not (Test-Path -LiteralPath $f)){ exit 2 } "
+set "PSFW=!PSFW!$v=[string](Get-Item -LiteralPath $f).VersionInfo.FileVersion; "
+set "PSFW=!PSFW!if([string]::IsNullOrWhiteSpace($v)){ exit 2 } "
+set "PSFW=!PSFW!$vn=(($v.Trim() -split '\.') + @('0','0','0'))[0..2] -join '.'; "
+set "PSFW=!PSFW!$ln=(($env:HOTWIRE_FWTAG.Trim() -split '\.') + @('0','0','0'))[0..2] -join '.'; "
+set "PSFW=!PSFW!Write-Output ('Oxide: installed '+$vn+', GitHub '+$ln); "
+set "PSFW=!PSFW!if($vn -eq $ln){ exit 0 } else { exit 1 } "
+powershell -NoProfile -NonInteractive -Command "!PSFW!"
+set "FWSAME=!errorlevel!"
+set "HOTWIRE_FWFILE="
+set "HOTWIRE_FWTAG="
+set "PSFW="
+if "!FWSAME!"=="0" (
+    echo [%date% %time%] Game and Oxide both unchanged. Skipping the extract
+    echo [%date% %time%] rather than writing over a working install.
+    set "FRAMEWORK_OK=1"
+    goto :frameworkdone
+)
+if not "!FWSAME!"=="1" echo [%date% %time%] Could not read the installed Oxide's version. Extracting.
+
+:frameworkextract
+REM  Oxide is third-party and its version changes with every Rust release,
+REM  so there is no hash of ours to pin it against. The launcher checks the
+REM  download against the SHA-256 GitHub publishes for it
+REM  (hotwire.verify_framework). That proves the file is the one GitHub holds
+REM  for the release, not who built it. When the check cannot be made, the
+REM  download is used unchecked and the log says so. Setup pins the
+REM  first-party launcher and plugin separately.
+if "%VERIFY_FRAMEWORK%"=="1" if not defined FW_SHA echo [%date% %time%] GitHub did not give Oxide's SHA-256, so this download cannot be checked.
 if defined FW_SHA (
     echo [%date% %time%] Downloading Oxide !FW_TAG! from GitHub, to check against its SHA-256.
 ) else (
-    echo [%date% %time%] Downloading the framework from uMod ^(third-party, not hash-verified^).
+    echo [%date% %time%] Downloading Oxide from GitHub ^(not checked^).
 )
 set "HOTWIRE_ZIPROOT=%ROOT%"
-curl -fSL -A "Mozilla/5.0" "!FW_FROM!" --output "%ROOT%\OxideMod.zip"
+REM  A stalled download gives up (under 1 byte a second for 2 minutes); a
+REM  slow one carries on.
+curl -fSL -A "Mozilla/5.0" --connect-timeout 30 --speed-limit 1 --speed-time 120 "!FW_FROM!" --output "%ROOT%\OxideMod.zip"
 if errorlevel 1 (
     echo [%date% %time%] Framework download failed. Keeping the install.
     goto :fwcleanup
@@ -783,15 +820,10 @@ if exist "%ROOT%\OxideMod.zip" del "%ROOT%\OxideMod.zip"
 :frameworkdone
 
 REM  The flag is consumed and the backstop clock reset ONLY when the
-REM  update actually happened.
-REM
-REM  Both used to run unconditionally, and both are reachable after
-REM  steamcmd has given up. That turned "one flag, one update" into "one
-REM  flag, one attempt": a failed update ate the flag and said nothing,
-REM  and the next restart was a plain restart. Worse, a server that could
-REM  not reach Steam reset its own backstop clock on every failed try, so
-REM  the one thing written to catch a server drifting out of date was the
-REM  one thing that could never fire.
+REM  update completed. Both are reachable after steamcmd has given up:
+REM  a failed update that ate its flag would make the next restart a plain
+REM  one, and a server that could not reach Steam would reset its own
+REM  backstop on every failed try, so the backstop could never fire.
 set "UPDATE_OK=0"
 if "!STEAM_OK!"=="1" if "!FRAMEWORK_OK!"=="1" set "UPDATE_OK=1"
 
@@ -844,7 +876,7 @@ if "!UPDATE_OK!"=="1" if exist "%ROOT%\%VALIDATE_FLAG%" (
 )
 if "!UPDATE_OK!"=="1" if not exist "%UPDATE_STAMP%" (
     echo [%date% %time%] WARNING: could not write the update stamp at
-    echo [%date% %time%]   %UPDATE_STAMP%
+    echo [%date% %time%]   !UPDATE_STAMP!
     echo [%date% %time%] The backstop reads it, so it will act as though
     echo [%date% %time%] no update has ever happened.
 )
@@ -862,7 +894,7 @@ if errorlevel 1 echo [%date% %time%] hotwire-after.bat exited non-zero; carrying
 REM ======================================================================
 :buildargs
 REM ======================================================================
-REM  6b. WIPES AND PERMANENT SETTINGS
+REM  WIPES AND PERMANENT SETTINGS
 REM
 REM     Machinery. The plugin leaves WIPE.flag or CONVAR.request here when
 REM     the panel asks for a wipe or a permanent convar. Between runs is the
@@ -889,25 +921,21 @@ if defined CHECK_ONLY (
 
 
 REM ======================================================================
-REM  8. LAUNCH
+REM  LAUNCH
 REM ======================================================================
 
 REM  Rotate the log. -logfile TRUNCATES on every start, so without this a
 REM  restart destroys the log of whatever went wrong before it.
 REM
-REM  That was true of a crash loop too, which is the case it most needed
-REM  to be false for. Rotation culled to hotwire.log_keep every pass, and a
-REM  server dying on boot loops every 15 seconds, so about three and a half
-REM  minutes later the log holding the actual failure had been culled away
-REM  and fourteen identical near-empty ones were left in its place.
-REM
-REM  So the first log of a crash streak goes to server_crash_*, which the
-REM  cull never matches. Later crashes in the same streak rotate normally:
+REM  A crash loop relaunches every few seconds, and culling to
+REM  hotwire.log_keep would soon remove the log that explains it. So the
+REM  first log of a crash streak goes to server_crash_*, which the cull
+REM  never matches. Later crashes in the same streak rotate normally:
 REM  they say the same thing as the first, and keeping every one of them
 REM  is how a crash loop fills a disk.
 if not "%ROTATE_LOGS%"=="0" if exist "%LOGFILE%" (
-    REM  HW-10: log root via an environment variable, not a PS single-quoted
-    REM  literal, so an apostrophe in the path is safe.
+    REM  The log folder goes through an environment variable, so an
+    REM  apostrophe in the path is safe.
     set "HOTWIRE_LOGROOT=%ROOT%"
     set "LOGSTAMP="
     for /f %%i in ('powershell -NoProfile -Command "Get-Date -Format yyyyMMdd-HHmmss"') do set "LOGSTAMP=%%i"
@@ -927,7 +955,11 @@ set "HOTWIRE_STATE=%ROOT%\oxide\data\Hotwire\launcher.json"
 powershell -NoProfile -NonInteractive -Command "$t=[IO.File]::ReadAllText($env:HOTWIRE_SELF,[Text.Encoding]::GetEncoding(28591)); $h=''; $m=[regex]::Match($t,'(?m)^HOTWIRE_LAUNCHER_HASH=.?([0-9a-f]{64})'); if($m.Success){ $h=$m.Groups[1].Value }; [void](New-Item -ItemType Directory -Force -Path (Split-Path -Parent $env:HOTWIRE_STATE)); $o=[ordered]@{ version=$env:HOTWIRE_LAUNCHER_VERSION; hash=$h; capabilities=$env:HOTWIRE_LAUNCHER_CAPABILITIES; platform='windows'; path=$env:HOTWIRE_SELF; update_mode=$env:UPDATE_MODE }; [IO.File]::WriteAllText($env:HOTWIRE_STATE, ($o | ConvertTo-Json))" >nul 2>&1
 set "HOTWIRE_STATE="
 
+REM  Held reports go in the background; the server starts without waiting.
+call :hotwire_send background
 echo [%date% %time%] Starting server...
+set "STARTED_AT="
+for /f %%t in ('powershell -NoProfile -Command "(Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')"') do set "STARTED_AT=%%t"
 
 REM  Timed so a crash loop can be told from a working restart. If either
 REM  call fails the run is treated as a long one: erring that way keeps
@@ -939,22 +971,41 @@ for /f %%t in ('powershell -NoProfile -Command "[int]((Get-Date).ToUniversalTime
 REM  PowerShell starts RustDedicated.exe with the argument list from the
 REM  last good read of hotwire.cfg, and waits for it to exit.
 call :hotwire_ps launch
+set "RUST_EXIT=!errorlevel!"
 
 set "RUN_END=0"
 for /f %%t in ('powershell -NoProfile -Command "[int]((Get-Date).ToUniversalTime() - (Get-Date '1970-01-01')).TotalSeconds"') do set "RUN_END=%%t"
 set "RUN_SECONDS=99999"
 if not "!RUN_START!"=="0" if not "!RUN_END!"=="0" set /a RUN_SECONDS=RUN_END-RUN_START
 
+set "CRASHED=0"
 if !RUN_SECONDS! LSS %CRASH_SECONDS% (
     set /a CRASH_STREAK+=1
+    set "CRASHED=1"
 ) else (
     set /a CRASH_STREAK=0
 )
 
+REM  The session report: how this run ended and what its update did. Written
+REM  to the spool now and sent in the background.
+set "HOTWIRE_REPORT=session"
+set "HOTWIRE_STARTED_AT=!STARTED_AT!"
+set "HOTWIRE_RUST_EXIT=!RUST_EXIT!"
+set "HOTWIRE_CRASHED=!CRASHED!"
+set "HOTWIRE_UPDATE_ATTEMPTED=!UPDATE_ATTEMPTED!"
+call :hotwire_ps report >nul
+set "HOTWIRE_REPORT="
+set "HOTWIRE_STARTED_AT="
+set "HOTWIRE_RUST_EXIT="
+set "HOTWIRE_CRASHED="
+set "HOTWIRE_UPDATE_ATTEMPTED="
+
 if "%RESTART_ON_EXIT%"=="0" (
     echo [%date% %time%] Server exited after !RUN_SECONDS!s. hotwire.restart_on_exit is 0 -- not relaunching.
+    call :hotwire_send wait
     exit /b 0
 )
+call :hotwire_send background
 
 if not "%MAX_CRASH_STREAK%"=="0" if !CRASH_STREAK! GEQ %MAX_CRASH_STREAK% goto crashstop
 
@@ -970,7 +1021,7 @@ if not "%CRASH_BACKOFF%"=="0" if !CRASH_STREAK! GEQ 5 set "DELAY=300"
 
 if !CRASH_STREAK! GTR 0 (
     echo [%date% %time%] Server exited after !RUN_SECONDS!s -- that is a crash, not a restart.
-    echo [%date% %time%] Crash !CRASH_STREAK! of %MAX_CRASH_STREAK%. Retrying in !DELAY!s.
+    if "%MAX_CRASH_STREAK%"=="0" (echo [%date% %time%] Crash !CRASH_STREAK!. Retrying in !DELAY!s.) else (echo [%date% %time%] Crash !CRASH_STREAK! of %MAX_CRASH_STREAK%. Retrying in !DELAY!s.)
 ) else (
     echo [%date% %time%] Server exited. Restarting in !DELAY!s. Ctrl+C to stop.
 )
@@ -984,13 +1035,19 @@ if errorlevel 1 (
 goto start
 
 :crashstop
+REM  The launcher report: stopped for good, which a missing heartbeat cannot
+REM  tell from a network outage. Nothing waits to start, so it goes now.
+set "HOTWIRE_REPORT=launcher"
+call :hotwire_ps report >nul
+set "HOTWIRE_REPORT="
+call :hotwire_send wait
 echo [%date% %time%] ====================================================
 echo [%date% %time%] STOPPED. %MAX_CRASH_STREAK% consecutive crashes, each
 echo [%date% %time%] under %CRASH_SECONDS%s. The server is not starting, and
 echo [%date% %time%] relaunching it again will not change that.
 echo [%date% %time%]
 echo [%date% %time%] The log from the first crash is kept as
-echo [%date% %time%]   %ROOT%\logs\server_crash_*.txt
+echo [%date% %time%]   !ROOT!\logs\server_crash_*.txt
 echo [%date% %time%] and is the one worth reading. Usual causes: a bad
 echo [%date% %time%] setting in hotwire.cfg, a port already in use, or a
 echo [%date% %time%] corrupt save. On a machine with more than one server,
@@ -1026,7 +1083,24 @@ set "HW_LINE="
 set "HOTWIRE_MODE="
 exit /b 0
 
-REM  :hotwire_ps <edits|launch> runs one part, and returns its exit code.
+REM  :hotwire_send <background|wait> sends the held reports to AFKPanel: in
+REM  the background before and after a run, or now, waiting up to a minute
+REM  for a sender already running, when the launcher is about to stop.
+:hotwire_send
+set "HOTWIRE_MODE=send"
+set "HOTWIRE_ROOT=%ROOT%"
+if "%~1"=="wait" (
+    set "HOTWIRE_SEND_WAIT=60"
+    powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "!HW_PS!"
+) else (
+    set "HOTWIRE_SEND_WAIT=0"
+    start "" /b powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "!HW_PS!"
+)
+set "HOTWIRE_SEND_WAIT="
+set "HOTWIRE_MODE="
+exit /b 0
+
+REM  :hotwire_ps <edits|launch|report> runs one part, and returns its exit code.
 :hotwire_ps
 set "HOTWIRE_MODE=%~1"
 set "HOTWIRE_ROOT=%ROOT%"
@@ -1045,7 +1119,7 @@ REM     written as ordinary PowerShell rather than through cmd's quoting
 REM     rules.
 REM ======================================================================
 exit /b 0
-HOTWIRE_LAUNCHER_HASH="af65a087d60fae927b6601c7dd3fda7a8d11f5bb476d5f206b4461a120a3bc3b"
+HOTWIRE_LAUNCHER_HASH="71f3df8912fc48a902abb0b5a155984504d1d3f5a67712df8bd6413a14349fd2"
 
 #HOTWIRE-PS
 # hotwire.bat's PowerShell. cmd hands everything from the line above down to PowerShell, and HOTWIRE_MODE says
@@ -1054,6 +1128,9 @@ HOTWIRE_LAUNCHER_HASH="af65a087d60fae927b6601c7dd3fda7a8d11f5bb476d5f206b4461a12
 #           and keep the server's argument list for the start
 #   edits   carry out a wipe or a permanent convar the plugin asked for, by writing hotwire.cfg
 #   launch  start RustDedicated.exe with that argument list, and wait for it
+#   backup  back up the stopped server before an update or a wipe, when that is asked for
+#   report  write a session or launcher report to the spool
+#   send    send what the spool holds to AFKPanel
 #
 # The settings are read as data, one line at a time, and never run. A line is a name, spaces, then a value; a
 # value with spaces is in double quotes and holds none inside; no control characters. Each value is checked for
@@ -1085,6 +1162,7 @@ $hwSettings = @{
     'hotwire.steam_tries'              = @('MAX_STEAM_TRIES', 'int1', '5')
     'hotwire.steam_retry_seconds'      = @('STEAM_RETRY_SECONDS', 'int', '60')
     'hotwire.steamcmd_wait_minutes'    = @('STEAMCMD_WAIT_MINUTES', 'int', '60')
+    'hotwire.forced_wipe_steam_minutes' = @('FORCED_WIPE_STEAM_MINUTES', 'int', '15')
     'hotwire.install_framework'        = @('INSTALL_FRAMEWORK', 'bool', '1')
     'hotwire.skip_unchanged_framework' = @('SKIP_UNCHANGED_FRAMEWORK', 'bool', '1')
     'hotwire.verify_framework'         = @('VERIFY_FRAMEWORK', 'bool', '1')
@@ -1189,7 +1267,10 @@ function Read-Config {
                 else { $r.Problems.Add('line ' + $n + ': ' + $name + ': ' + $why + '; the default is used') }
                 continue
             }
-            $r.Values[$lower] = $p.Value
+            # A number goes on in base 10: cmd reads a leading zero as octal, so "08" would break its arithmetic.
+            $value = $p.Value
+            if ($value -ne '' -and @('int', 'int1', 'seed', 'worldsize', 'port') -contains $kind) { $value = [string][long]$value }
+            $r.Values[$lower] = $value
             continue
         }
         if ($lower.StartsWith('hotwire.')) { $r.Problems.Add('line ' + $n + ': ' + $name + ': not a launcher setting; ignored'); continue }
@@ -1453,6 +1534,11 @@ function Invoke-Edits {
             if ($seed -notmatch '^\d{1,10}$' -or [long]$seed -gt 2147483647) { $why = 'seed is not a whole number from 0 to 2147483647' }
             elseif ($size -and ($size -notmatch '^\d{1,5}$' -or [int]$size -lt 1000 -or [int]$size -gt 6000)) { $why = 'size is not a whole number from 1000 to 6000' }
             elseif ('keep', 'rename', 'delete' -notcontains $bp) { $why = 'blueprints must be keep, rename or delete' }
+            # A forced wipe's backup was held back until the update was known to have arrived (above).
+            if (-not $why -and $forced -eq '1' -and $w['backup'] -eq '1' -and $env:BACKUPS -ne '0') {
+                Say 'Backing up the stopped server before the wipe...'
+                [void](Invoke-BackupArchive 'before_wipe' ([DateTime]::UtcNow.ToString("yyyyMMdd'T'HHmmss'Z'") + '-before_wipe') '' '' '' '' '')
+            }
             if (-not $why) {
                 $pairs = @(, @('server.seed', $seed))
                 if ($size) { $pairs += , @('server.worldsize', $size) }
@@ -1540,9 +1626,557 @@ function Invoke-Launch {
     $psi.UseShellExecute = $false
     # The server does not need the password in its environment: it has it on its command line.
     [void]$psi.EnvironmentVariables.Remove('HOTWIRE_RCON64')
+    # A claim left by a backup cut short is the launcher's to clear; the staging it names is cleared by the next one.
+    Remove-Item -LiteralPath ($backupFlag + '.work') -Force -ErrorAction SilentlyContinue
     $p = [Diagnostics.Process]::Start($psi)
+    # Beside the running server, at the lowest priority while one runs: pick up the backups Hotwire asks for, until
+    # the server exits. A backup already under way is finished before the exit is acted on.
+    while (-not $p.WaitForExit(5000)) {
+        if ($env:BACKUPS -ne '0' -and (Test-Path -LiteralPath $backupFlag)) {
+            try { Invoke-BackupFromFlag } catch { Say ('Backup: ' + $_.Exception.Message) }
+        }
+    }
     $p.WaitForExit()
     exit $p.ExitCode
+}
+
+# ---- backups ---------------------------------------------------------------------------------------------------
+# The launcher's half of Hotwire's backups, as hotwire.sh does it, with one difference: Windows has no zstd, so an
+# archive is a zip, made and checked with what Windows already has. The plugin decides when a backup runs and, while
+# the server plays, copies what only the game can copy safely into backup\<identity>\.staging-<run>, then writes
+# BACKUP.flag. The launcher finishes it at the lowest priority: it adds the save (checked unchanged across the copy),
+# the plugins and the map, writes a MANIFEST of every file's SHA-256, zips it, checks every file in the zip against
+# the MANIFEST, rotates, and leaves a result for Hotwire to report. Between runs, before an update or a wipe, it backs
+# up the stopped server on its own. Nothing here can stop the server starting: a backup that fails says why in its
+# result and in backup\<identity>\backup.log.
+$backupConf = [IO.Path]::Combine($root, 'hotwire', 'backup.conf')
+$backupFlag = Join-Path $root 'BACKUP.flag'
+$sep = [string][IO.Path]::DirectorySeparatorChar
+
+function Get-BackupConf {
+    $c = @{}
+    if (Test-Path -LiteralPath $backupConf -PathType Leaf) {
+        foreach ($l in [IO.File]::ReadAllLines($backupConf)) {
+            $p = $l.Split(' ', 2)
+            if ($p.Count -eq 2 -and -not $c.ContainsKey($p[0])) { $c[$p[0]] = $p[1].Trim() }
+        }
+    }
+    return $c
+}
+function Get-BackupInt($conf, [string]$key, [long]$default) {
+    $v = [string]$conf[$key]
+    if ($v -match '\A[0-9]{1,9}\z') { return [long]$v }
+    return $default
+}
+function Get-BackupSwitch($conf, [string]$key, [string]$default) {
+    $v = [string]$conf[$key]
+    if ($v -eq '') { return $default }
+    return $v
+}
+
+# The save folder's name: a folder name, never a path, and never 0-3, which are Rust's own server.backup folders.
+function Get-BackupIdentity($conf) {
+    $id = [string]$conf['identity']
+    if (-not $id) { $id = [string](Read-Config).Values['server.identity'] }
+    if (-not $id) { $id = 'my_server_identity' }
+    if ($id -cnotmatch '\A[A-Za-z0-9_][A-Za-z0-9_.-]{0,63}\z' -or @('0', '1', '2', '3') -contains $id) { return $null }
+    return $id
+}
+
+# A framework folder Hotwire named in backup.conf, used only if it is inside this server.
+function Get-BackupDir($conf, [string]$key, [string]$default) {
+    $d = [string]$conf[$key]
+    if (-not $d) { $d = $default }
+    $full = [IO.Path]::GetFullPath($d)
+    if ($full.StartsWith($root.TrimEnd($sep) + $sep, [StringComparison]::OrdinalIgnoreCase) -and (Test-Path -LiteralPath $full -PathType Container)) { return $full }
+    return $null
+}
+
+function Add-BackupLog([string]$dest, [string]$line) {
+    try {
+        $f = Join-Path $dest 'backup.log'
+        [IO.File]::AppendAllText($f, (Get-UtcStamp ([DateTimeOffset]::UtcNow)) + ' ' + $line + "`n")
+        if ((Get-Item -LiteralPath $f).Length -gt 5242880) { Move-Item -LiteralPath $f -Destination ($f + '.1') -Force }
+    } catch { }
+}
+
+function Write-BackupResult([string]$dest, [string]$run, [string[]]$lines) {
+    try {
+        $dir = Join-Path $dest '.results'
+        if (-not (Test-Path -LiteralPath $dir)) { [void](New-Item -ItemType Directory -Force -Path $dir) }
+        $tmp = Join-Path $dir ('.' + $run + '.tmp')
+        [IO.File]::WriteAllText($tmp, ($lines -join "`n") + "`n", (New-Object Text.UTF8Encoding($false)))
+        Move-Item -LiteralPath $tmp -Destination (Join-Path $dir ($run + '.result')) -Force
+    } catch { }
+}
+
+function Get-FileSha256([string]$path) { return (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant() }
+
+# Copy a folder's files into another, keeping the tree; $skip is a top-level folder left out.
+function Copy-BackupTree([string]$from, [string]$to, [string]$skip) {
+    $base = $from.TrimEnd($sep)
+    foreach ($f in @(Get-ChildItem -LiteralPath $from -File -Recurse -Force -ErrorAction SilentlyContinue)) {
+        $rel = $f.FullName.Substring($base.Length + 1)
+        if ($skip -and ($rel -ieq $skip -or $rel.StartsWith($skip + $sep, [StringComparison]::OrdinalIgnoreCase))) { continue }
+        $target = Join-Path $to $rel
+        $folder = Split-Path -Parent $target
+        if (-not (Test-Path -LiteralPath $folder)) { [void](New-Item -ItemType Directory -Force -Path $folder) }
+        Copy-Item -LiteralPath $f.FullName -Destination $target -Force
+    }
+}
+
+# A zip of one file or of a whole folder, written beside its destination and checked against the MANIFEST before it
+# is renamed into place. Entry names use forward slashes, as zip expects.
+function New-BackupZip([string]$from, [string]$to, [switch]$Single) {
+    Add-Type -AssemblyName System.IO.Compression, System.IO.Compression.FileSystem
+    if (Test-Path -LiteralPath $to) { Remove-Item -LiteralPath $to -Force }
+    $zip = [IO.Compression.ZipFile]::Open($to, [IO.Compression.ZipArchiveMode]::Create)
+    try {
+        if ($Single) {
+            [void][IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zip, $from, (Split-Path -Leaf $from), [IO.Compression.CompressionLevel]::Optimal)
+        } else {
+            $base = $from.TrimEnd($sep)
+            foreach ($f in @(Get-ChildItem -LiteralPath $from -File -Recurse -Force | Sort-Object FullName)) {
+                $name = $f.FullName.Substring($base.Length + 1).Replace($sep, '/')
+                [void][IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zip, $f.FullName, $name, [IO.Compression.CompressionLevel]::Optimal)
+            }
+        }
+    } finally { $zip.Dispose() }
+}
+
+# Every file in the zip read back and hashed: true when each matches the MANIFEST and none is missing or extra.
+function Test-BackupZip([string]$path, $expected) {
+    Add-Type -AssemblyName System.IO.Compression, System.IO.Compression.FileSystem
+    $zip = [IO.Compression.ZipFile]::OpenRead($path)
+    try {
+        $seen = 0
+        foreach ($e in $zip.Entries) {
+            if ($e.FullName -eq 'MANIFEST') { continue }
+            $want = $expected[$e.FullName]
+            if (-not $want) { return $false }
+            $s = $e.Open()
+            $sha = [Security.Cryptography.SHA256]::Create()
+            try { $got = -join ($sha.ComputeHash($s) | ForEach-Object { $_.ToString('x2') }) } finally { $sha.Dispose(); $s.Dispose() }
+            if ($got -ne $want) { return $false }
+            $seen++
+        }
+        return $seen -eq $expected.Count
+    } catch { return $false } finally { $zip.Dispose() }
+}
+
+# Keeps: everything from the last recent hours; then the newest backup of each day for daily days, of each week for
+# weekly weeks, of each month for monthly months; the newest keep_wipes before-wipe backups; and always the newest.
+# Then the size cap, oldest first, the newest never. A map no backup names goes too.
+function Invoke-BackupRotate([string]$dest, $conf) {
+    $now = [DateTimeOffset]::UtcNow
+    $recent = (Get-BackupInt $conf 'keep_recent_hours' 24) * 3600
+    $daily = Get-BackupInt $conf 'keep_daily' 7; $weekly = Get-BackupInt $conf 'keep_weekly' 4
+    $monthly = Get-BackupInt $conf 'keep_monthly' 3; $wipes = Get-BackupInt $conf 'keep_wipes' 3
+    $cap = (Get-BackupInt $conf 'max_total_mb' 0) * 1048576
+    $nowMonth = $now.Year * 12 + $now.Month
+    $seen = @{}; $keep = New-Object 'System.Collections.Generic.List[string]'; $drop = New-Object 'System.Collections.Generic.List[string]'
+    $first = $true; $wipeCount = 0
+    $archives = @(Get-ChildItem -LiteralPath $dest -File | Where-Object { $_.Name -like '*.zip' -or $_.Name -like '*.tar.zst' } | Sort-Object Name -Descending)
+    foreach ($a in $archives) {
+        $stamp = ($a.Name -split '-', 2)[0]
+        if ($stamp -notmatch '\A\d{8}T\d{6}Z\z') { continue }
+        $when = [DateTime]::ParseExact($stamp, "yyyyMMdd'T'HHmmss'Z'", [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::AdjustToUniversal -bor [Globalization.DateTimeStyles]::AssumeUniversal)
+        $age = ($now.UtcDateTime - $when).TotalSeconds
+        if ($a.Name -like '*-before_wipe.*') {
+            $wipeCount++
+            if ($wipeCount -le $wipes -or $first) { $keep.Add($a.FullName) } else { $drop.Add($a.FullName) }
+            $first = $false; continue
+        }
+        $thursday = $when.AddDays(3 - (([int]$when.DayOfWeek + 6) % 7))
+        $d = 'd' + $when.ToString('yyyyMMdd'); $m = 'm' + $when.ToString('yyyyMM')
+        $w = 'w' + $thursday.Year + '-' + [Globalization.CultureInfo]::InvariantCulture.Calendar.GetWeekOfYear($thursday, [Globalization.CalendarWeekRule]::FirstFourDayWeek, [DayOfWeek]::Monday)
+        $k = $false
+        if ($first -or $age -lt $recent) { $k = $true }
+        elseif ($age -lt $daily * 86400 -and -not $seen.ContainsKey($d)) { $k = $true }
+        elseif ($age -lt $weekly * 7 * 86400 -and -not $seen.ContainsKey($w)) { $k = $true }
+        elseif (($nowMonth - ($when.Year * 12 + $when.Month)) -lt $monthly -and -not $seen.ContainsKey($m)) { $k = $true }
+        $first = $false
+        if ($k) { $keep.Add($a.FullName); $seen[$d] = 1; $seen[$w] = 1; $seen[$m] = 1 } else { $drop.Add($a.FullName) }
+    }
+    $removed = 0
+    foreach ($f in $drop) { Remove-BackupArchive $f; $removed++; Add-BackupLog $dest ('rotate: removed ' + (Split-Path -Leaf $f)) }
+    if ($cap -gt 0) {
+        $total = 0L
+        foreach ($f in @(Get-ChildItem -LiteralPath $dest -File | Where-Object { $_.Name -like '*.zip' -or $_.Name -like '*.tar.zst' })) { $total += $f.Length }
+        $maps = Join-Path $dest 'maps'
+        if (Test-Path -LiteralPath $maps) { foreach ($f in @(Get-ChildItem -LiteralPath $maps -File)) { $total += $f.Length } }
+        for ($i = $keep.Count - 1; $i -gt 0 -and $total -gt $cap; $i--) {
+            $total -= (Get-Item -LiteralPath $keep[$i]).Length
+            Remove-BackupArchive $keep[$i]; $removed++
+            Add-BackupLog $dest ('rotate: removed ' + (Split-Path -Leaf $keep[$i]) + ' (over the ' + $cap + ' byte cap)')
+        }
+    }
+    $maps = Join-Path $dest 'maps'
+    if (Test-Path -LiteralPath $maps) {
+        $named = @{}
+        foreach ($meta in @(Get-ChildItem -LiteralPath $dest -File -Filter '*.meta')) {
+            foreach ($l in [IO.File]::ReadAllLines($meta.FullName)) { if ($l.StartsWith('map ')) { $named[$l.Substring(4)] = 1 } }
+        }
+        foreach ($mf in @(Get-ChildItem -LiteralPath $maps -File -Filter '*.zip')) {
+            $name = $mf.Name.Substring(0, $mf.Name.Length - 4)
+            if (-not $named.ContainsKey($name)) { Remove-Item -LiteralPath $mf.FullName -Force; Add-BackupLog $dest ('rotate: removed map ' + $name + ' (no backup uses it)') }
+        }
+    }
+    return $removed
+}
+function Remove-BackupArchive([string]$f) {
+    Remove-Item -LiteralPath $f -Force -ErrorAction SilentlyContinue
+    $meta = ($f -replace '\.tar\.zst\z', '' -replace '\.zip\z', '') + '.meta'
+    Remove-Item -LiteralPath $meta -Force -ErrorAction SilentlyContinue
+}
+
+# One backup, start to finish, at the lowest priority. With a staging folder it completes a live backup Hotwire
+# prepared; without one, the server is stopped and this copies everything. True when it succeeded.
+function Invoke-BackupArchive([string]$trigger, [string]$run, [string]$staging, [string]$savName, [string]$savSize, [string]$savMtime, [string]$sets) {
+    $self = [Diagnostics.Process]::GetCurrentProcess()
+    $priority = $self.PriorityClass
+    try { $self.PriorityClass = [Diagnostics.ProcessPriorityClass]::Idle } catch { }
+    try {
+        $conf = Get-BackupConf
+        $started = Get-UtcStamp ([DateTimeOffset]::UtcNow)
+        $t0 = [DateTime]::UtcNow
+        if (-not $sets) {
+            $sets = 'world'
+            if ((Get-BackupSwitch $conf 'map' '1') -eq '1') { $sets += ',map' }
+            if ((Get-BackupSwitch $conf 'config' '1') -eq '1') { $sets += ',config' }
+            if ((Get-BackupSwitch $conf 'oxide' '1') -eq '1') { $sets += ',oxide' }
+        }
+        $setList = @($sets.Split(',') | Where-Object { $_ })
+        $setWords = $setList -join ' '
+        $id = Get-BackupIdentity $conf
+        if (-not $id) { Say ('Backup ' + $run + ': the save folder''s name is not usable, so nothing was backed up.'); return $false }
+        $saveDir = [IO.Path]::Combine($root, 'server', $id)
+        $dest = [IO.Path]::Combine($root, 'backup', $id)
+        foreach ($d in @($dest, (Join-Path $dest 'maps'), (Join-Path $dest '.results'))) { if (-not (Test-Path -LiteralPath $d)) { [void](New-Item -ItemType Directory -Force -Path $d) } }
+
+        # One backup at a time for this save folder; a second waits for no one.
+        $lock = $null
+        try { $lock = [IO.File]::Open((Join-Path $dest '.lock'), [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None) }
+        catch {
+            Add-BackupLog $dest ($run + ' refused: another backup is running')
+            Write-BackupResult $dest $run @(('run ' + $run), ('trigger ' + $trigger), 'status refused', 'code busy', ('started ' + $started), ('finished ' + (Get-UtcStamp ([DateTimeOffset]::UtcNow))))
+            if ($staging -and (Test-Path -LiteralPath $staging)) { Remove-Item -LiteralPath $staging -Recurse -Force -ErrorAction SilentlyContinue }
+            return $false
+        }
+        try {
+            # What a backup cut short left behind.
+            Get-ChildItem -LiteralPath $dest -Force | Where-Object { $_.Name -like '.work-*' -or $_.Name -like '*.part' } | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+            Add-BackupLog $dest ($run + ' start: trigger ' + $trigger + ', sets ' + $setWords)
+            $fail = ''; $failDetail = ''
+            $work = Join-Path $dest ('.work-' + $run)
+            $bytesIn = 0L; $bytesOut = 0L; $files = 0; $sha = ''; $newMap = ''; $mapName = ''; $archiveMs = 0
+
+            # The floor: never let a backup be what fills the disk.
+            $floor = (Get-BackupInt $conf 'min_free_mb' 5120) * 1048576
+            $free = (New-Object IO.DriveInfo ([IO.Path]::GetPathRoot($dest))).AvailableFreeSpace
+            $need = 0L
+            if (Test-Path -LiteralPath $saveDir) { foreach ($f in @(Get-ChildItem -LiteralPath $saveDir -File | Where-Object { $_.Name -like '*.sav' -or $_.Name -like '*.db' -or $_.Name -like '*.db-wal' })) { $need += $f.Length } }
+            if (($free - $need) -lt $floor) { $fail = 'disk_low'; $failDetail = 'free ' + $free + ', floor ' + $floor }
+
+            if (-not $fail) {
+                if ($staging) {
+                    if (-not (Test-Path -LiteralPath $staging)) { $fail = 'no_staging'; $failDetail = $staging }
+                    else { try { Move-Item -LiteralPath $staging -Destination $work -ErrorAction Stop } catch { $fail = 'no_staging'; $failDetail = 'could not take ' + $staging } }
+                } else {
+                    [void](New-Item -ItemType Directory -Force -Path $work)
+                    # Stopped: nothing is writing, so the files as they lie are consistent.
+                    if ($setList -contains 'world' -and (Test-Path -LiteralPath $saveDir)) {
+                        $db = [IO.Path]::Combine($work, 'world', 'db'); [void](New-Item -ItemType Directory -Force -Path $db)
+                        foreach ($f in @(Get-ChildItem -LiteralPath $saveDir -File | Where-Object { $_.Name -like '*.db' -or $_.Name -like '*.db-wal' })) { Copy-Item -LiteralPath $f.FullName -Destination $db -Force }
+                    }
+                    if ($setList -contains 'config' -and (Test-Path -LiteralPath (Join-Path $saveDir 'cfg'))) { Copy-BackupTree (Join-Path $saveDir 'cfg') (Join-Path $work 'cfg') '' }
+                    if ($setList -contains 'oxide') {
+                        foreach ($sub in @('config', 'data', 'lang')) {
+                            $src = Get-BackupDir $conf ($sub + '_dir') ([IO.Path]::Combine($root, 'oxide', $sub))
+                            # Hotwire's own data holds this server's panel keys: never in a backup.
+                            if ($src) { Copy-BackupTree $src ([IO.Path]::Combine($work, 'oxide', $sub)) 'Hotwire' }
+                        }
+                    }
+                }
+            }
+
+            # The save. Copied here because it can be large; checked unchanged across the copy.
+            if (-not $fail -and $setList -contains 'world') {
+                if (-not $savName) {
+                    $newest = @(Get-ChildItem -LiteralPath $saveDir -File -Filter '*.sav' -ErrorAction SilentlyContinue | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1)
+                    if ($newest.Count -gt 0) { $savName = $newest[0].Name }
+                }
+                $savPath = Join-Path $saveDir $savName
+                if ($savName -cnotmatch '\A[A-Za-z0-9_.-]+\.sav\z' -or -not (Test-Path -LiteralPath $savPath -PathType Leaf)) { $fail = 'no_save'; $failDetail = $(if ($savName) { $savName } else { 'none found' }) }
+                else {
+                    [void](New-Item -ItemType Directory -Force -Path (Join-Path $work 'world'))
+                    $stat = { $i = Get-Item -LiteralPath $savPath; [string]$i.Length + ' ' + [string]([DateTimeOffset]$i.LastWriteTimeUtc).ToUnixTimeSeconds() }
+                    $same = $false
+                    for ($try = 1; $try -le 2 -and -not $same; $try++) {
+                        $s1 = & $stat
+                        if ($savSize -and $s1 -ne ($savSize + ' ' + $savMtime)) { $s2 = 'moved' }
+                        else {
+                            try { Copy-Item -LiteralPath $savPath -Destination ([IO.Path]::Combine($work, 'world', $savName)) -Force -ErrorAction Stop; $s2 = & $stat } catch { $s2 = 'unreadable' }
+                        }
+                        if ($s1 -eq $s2) { $same = $true } else { $savSize = ''; Start-Sleep -Seconds 2 }
+                    }
+                    if (-not $same) { $fail = 'sav_changed'; $failDetail = $savName }
+                }
+            }
+            if (-not $fail -and $setList -contains 'oxide') {
+                $plugins = Get-BackupDir $conf 'plugins_dir' ([IO.Path]::Combine($root, 'oxide', 'plugins'))
+                if ($plugins) {
+                    $pd = [IO.Path]::Combine($work, 'oxide', 'plugins'); [void](New-Item -ItemType Directory -Force -Path $pd)
+                    foreach ($f in @(Get-ChildItem -LiteralPath $plugins -File -Filter '*.cs')) { Copy-Item -LiteralPath $f.FullName -Destination $pd -Force }
+                }
+            }
+            # The launcher's settings: hotwire.cfg, which holds no secret. hotwire-secrets.cfg is never backed up.
+            if (-not $fail -and $setList -contains 'config' -and (Test-Path -LiteralPath $cfg)) { Copy-Item -LiteralPath $cfg -Destination (Join-Path $work 'hotwire.cfg') -Force }
+
+            # The map: once per map, zipped on its own, named in every backup that needs it.
+            if (-not $fail -and $setList -contains 'map') {
+                $map = @(Get-ChildItem -LiteralPath $saveDir -File -Filter '*.map' -ErrorAction SilentlyContinue | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1)
+                if ($map.Count -gt 0) {
+                    $mapName = $map[0].Name
+                    $kept = [IO.Path]::Combine($dest, 'maps', $mapName + '.zip')
+                    if (-not (Test-Path -LiteralPath $kept)) {
+                        try {
+                            New-BackupZip $map[0].FullName ($kept + '.part') -Single
+                            $mapSha = @{}; $mapSha[$mapName] = Get-FileSha256 $map[0].FullName
+                            if (-not (Test-BackupZip ($kept + '.part') $mapSha)) { throw 'the map zip did not check out' }
+                            Move-Item -LiteralPath ($kept + '.part') -Destination $kept -Force; $newMap = $mapName
+                        } catch {
+                            Remove-Item -LiteralPath ($kept + '.part') -Force -ErrorAction SilentlyContinue
+                            Add-BackupLog $dest ($run + ': the map could not be kept (the backup goes on)'); $mapName = ''
+                        }
+                    }
+                }
+            }
+
+            $name = $run + '.zip'
+            if (-not $fail) {
+                $expected = @{}; $lines = New-Object 'System.Collections.Generic.List[string]'
+                foreach ($f in @(Get-ChildItem -LiteralPath $work -File -Recurse -Force | Sort-Object FullName)) {
+                    $rel = $f.FullName.Substring($work.TrimEnd($sep).Length + 1).Replace($sep, '/')
+                    $h = Get-FileSha256 $f.FullName
+                    $expected[$rel] = $h; $lines.Add($h + '  ./' + $rel); $bytesIn += $f.Length; $files++
+                }
+                $head = @(('run ' + $run), ('trigger ' + $trigger), ('identity ' + $id), ('save ' + $savName), ('map ' + $mapName), ('sets ' + $setWords), ('created ' + $started), ('launcher ' + $env:HOTWIRE_LAUNCHER_VERSION))
+                [IO.File]::WriteAllText((Join-Path $work 'MANIFEST'), (($head + $lines) -join "`n") + "`n", (New-Object Text.UTF8Encoding($false)))
+                $files++
+                $t1 = [DateTime]::UtcNow
+                $part = Join-Path $dest ($name + '.part')
+                try {
+                    New-BackupZip $work $part
+                    if (-not (Test-BackupZip $part $expected)) { throw 'a file in the zip does not match the MANIFEST' }
+                    Move-Item -LiteralPath $part -Destination (Join-Path $dest $name) -Force
+                    $archiveMs = [long]([DateTime]::UtcNow - $t1).TotalMilliseconds
+                    $bytesOut = (Get-Item -LiteralPath (Join-Path $dest $name)).Length
+                    $sha = 'sha256:' + (Get-FileSha256 (Join-Path $dest $name))
+                    [IO.File]::WriteAllText((Join-Path $dest ($run + '.meta')), ('run ' + $run + "`ntrigger " + $trigger + "`nmap " + $mapName + "`nsha256 " + $sha + "`nbytes " + $bytesOut + "`n"), (New-Object Text.UTF8Encoding($false)))
+                } catch {
+                    Remove-Item -LiteralPath $part -Force -ErrorAction SilentlyContinue
+                    $fail = 'archive_failed'; $failDetail = [string]$_.Exception.Message
+                }
+            }
+            if (Test-Path -LiteralPath $work) { Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue }
+            if ($staging -and (Test-Path -LiteralPath $staging)) { Remove-Item -LiteralPath $staging -Recurse -Force -ErrorAction SilentlyContinue }
+            if ($fail) { Add-BackupLog $dest ($run + ' failed: ' + $fail + ' ' + $failDetail) }
+
+            $removed = 0
+            if (-not $fail) { $removed = Invoke-BackupRotate $dest $conf }
+            $count = 0; $total = 0L
+            foreach ($f in @(Get-ChildItem -LiteralPath $dest -File | Where-Object { $_.Name -like '*.zip' -or $_.Name -like '*.tar.zst' })) { $count++; $total += $f.Length }
+            foreach ($f in @(Get-ChildItem -LiteralPath (Join-Path $dest 'maps') -File -ErrorAction SilentlyContinue)) { $total += $f.Length }
+            $freeNow = (New-Object IO.DriveInfo ([IO.Path]::GetPathRoot($dest))).AvailableFreeSpace
+            $status = 'ok'; if ($fail) { $status = 'failed' }; if ($fail -eq 'disk_low') { $status = 'refused' }
+            $dash = { param($v) if ([string]$v) { [string]$v } else { '-' } }
+            Write-BackupResult $dest $run @(('run ' + $run), ('trigger ' + $trigger), ('status ' + $status), ('code ' + (& $dash $fail)), ('sets ' + $setWords),
+                ('archive ' + $(if ($fail) { '-' } else { $name })), ('sha256 ' + (& $dash $sha)), ('bytes_in ' + $bytesIn), ('bytes_out ' + $bytesOut),
+                ('files ' + $files), ('archive_ms ' + $archiveMs), ('total_ms ' + [long]([DateTime]::UtcNow - $t0).TotalMilliseconds), ('map ' + (& $dash $mapName)),
+                ('new_map ' + (& $dash $newMap)), ('removed ' + $removed), ('archives ' + $count), ('stored_bytes ' + $total), ('free_bytes ' + $freeNow),
+                ('started ' + $started), ('finished ' + (Get-UtcStamp ([DateTimeOffset]::UtcNow))))
+            if ($fail) { Say ('Backup ' + $run + ' did not complete (' + $fail + '); see ' + (Join-Path $dest 'backup.log') + '.'); return $false }
+            Add-BackupLog $dest ($run + ' ok: ' + $name + ', ' + $bytesIn + ' bytes in, ' + $bytesOut + ' out, ' + $files + ' files, ' + $archiveMs + ' ms, ' + $sha + ', removed ' + $removed)
+            Say ('Backup ' + $run + ': ' + $name + ' (' + $bytesOut + ' bytes).')
+            return $true
+        } finally { $lock.Dispose() }
+    } finally { try { $self.PriorityClass = $priority } catch { } }
+}
+
+# A live backup Hotwire prepared: take the flag, then finish it.
+function Invoke-BackupFromFlag {
+    $claim = $backupFlag + '.work'
+    try { Move-Item -LiteralPath $backupFlag -Destination $claim -Force -ErrorAction Stop } catch { return }
+    $w = @{}
+    foreach ($l in [IO.File]::ReadAllLines($claim)) { $p = $l.Split(' ', 2); if ($p.Count -eq 2 -and -not $w.ContainsKey($p[0])) { $w[$p[0]] = $p[1].Trim() } }
+    Remove-Item -LiteralPath $claim -Force -ErrorAction SilentlyContinue
+    $run = [string]$w['run']; $trigger = [string]$w['trigger']; $size = [string]$w['save_size']; $mtime = [string]$w['save_mtime']; $sets = [string]$w['sets']
+    if ($run -cnotmatch '\A[0-9]{8}T[0-9]{6}Z-[a-z_]{1,24}\z') { Say 'Backup flag ignored: no usable run id.'; return }
+    if (@('scheduled', 'manual') -notcontains $trigger) { Say 'Backup flag ignored: unknown trigger.'; return }
+    if ($size -notmatch '\A[0-9]+\z' -or $mtime -notmatch '\A[0-9]+\z') { $size = ''; $mtime = '' }
+    if ($sets -cnotmatch '\A[a-z,]{0,40}\z') { $sets = '' }
+    $id = Get-BackupIdentity (Get-BackupConf)
+    if (-not $id) { return }
+    [void](Invoke-BackupArchive $trigger $run ([IO.Path]::Combine($root, 'backup', $id, '.staging-' + $run)) ([string]$w['save']) $size $mtime $sets)
+}
+
+# Between runs: before an update or a wipe, back up the stopped server. A wipe asks for its backup in WIPE.flag
+# ("backup 1"); an update backs up when Hotwire's backup settings say so. A forced wipe may not happen this start, so
+# its backup is taken in the wipe step once that is known.
+function Invoke-BackupBeforeLaunch {
+    if ($env:BACKUPS -eq '0') { return }
+    $trigger = ''
+    $flag = Join-Path $root 'WIPE.flag'
+    if (Test-Path -LiteralPath $flag) {
+        $w = @{}
+        foreach ($l in [IO.File]::ReadAllLines($flag)) { $p = $l.Trim().Split(' ', 2); if ($p.Count -eq 2 -and -not $w.ContainsKey($p[0])) { $w[$p[0]] = $p[1].Trim() } }
+        $done = ''; $state = [IO.Path]::Combine($root, 'hotwire', 'wipe-cycle')
+        if (Test-Path -LiteralPath $state) { $done = ([IO.File]::ReadAllText($state)).Trim() }
+        $live = (-not $w['cycle'] -or $w['cycle'] -ne $done) -and -not ($w['expires'] -match '\A[0-9]+\z' -and [long]$w['expires'] -lt [DateTimeOffset]::UtcNow.ToUnixTimeSeconds())
+        if ($w['backup'] -eq '1' -and $w['forced'] -ne '1' -and $live) { $trigger = 'before_wipe' }
+    }
+    if (-not $trigger -and $env:DO_UPDATE -eq '1') {
+        $conf = Get-BackupConf
+        if ((Get-BackupSwitch $conf 'enabled' '0') -eq '1' -and (Get-BackupSwitch $conf 'before_update' '1') -eq '1') { $trigger = 'before_update' }
+    }
+    if (-not $trigger) { return }
+    Say ('Backing up the stopped server before the ' + $(if ($trigger -eq 'before_wipe') { 'wipe' } else { 'update' }) + '...')
+    [void](Invoke-BackupArchive $trigger ([DateTime]::UtcNow.ToString("yyyyMMdd'T'HHmmss'Z'") + '-' + $trigger) '' '' '' '' '')
+}
+
+# ---- reports to AFKPanel -------------------------------------------------------------------------------------
+# The session report after each run and the launcher report when a crash streak stops the launcher, as hotwire.sh
+# sends them: the same envelope, signed with the launcher's own key (hotwire\keys.json, written by connect), and
+# never sent on the way to a start. A report is written to the spool and a sender drains it in the background; one
+# that cannot be sent waits there for a later try. Nothing here delays or stops the server.
+$spoolDir = Join-Path $root 'hotwire\launcher-spool'
+$spoolMax = 500
+$spoolDays = 7
+
+function Read-JsonFile([string]$path) {
+    try { if (Test-Path -LiteralPath $path -PathType Leaf) { return (Get-Content -LiteralPath $path -Raw | ConvertFrom-Json) } } catch { }
+    return $null
+}
+
+# The panel, the key and the connection a report belongs to; $null when this server is not connected.
+function Get-Reporting {
+    $connect = Read-JsonFile (Join-Path $root 'hotwire\connect.json')
+    $keys = Read-JsonFile (Join-Path $root 'hotwire\keys.json')
+    if (-not $connect -or -not $keys) { return $null }
+    $url = ([string]$connect.panel_url).TrimEnd('/')
+    if (-not $url -or -not $keys.key_id -or -not $keys.secret) { return $null }
+    # Which panel, and which server on it, a held report was made for. A report is never sent to another.
+    return @{ Url = $url; Key = [string]$keys.key_id; Secret = [string]$keys.secret; Origin = ($url + '|' + [string]$connect.server_id) }
+}
+
+function Get-HexSha256([byte[]]$bytes) {
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try { return -join ($sha.ComputeHash($bytes) | ForEach-Object { $_.ToString('x2') }) } finally { $sha.Dispose() }
+}
+
+function Get-HexHmac([string]$secret, [string]$text) {
+    $utf8 = New-Object Text.UTF8Encoding($false)
+    $hmac = New-Object Security.Cryptography.HMACSHA256 (, $utf8.GetBytes($secret))
+    try { return -join ($hmac.ComputeHash($utf8.GetBytes($text)) | ForEach-Object { $_.ToString('x2') }) } finally { $hmac.Dispose() }
+}
+
+function Get-UtcStamp([DateTimeOffset]$when) { return $when.UtcDateTime.ToString('yyyy-MM-ddTHH:mm:ssZ') }
+
+# Write one report to the spool: kind, report id, sent_at, payload, connection, one per line, as hotwire.sh does.
+function Add-SpoolReport([string]$kind, [string]$payload) {
+    $r = Get-Reporting
+    if (-not $r) { return }
+    if (-not (Test-Path -LiteralPath $spoolDir)) { [void](New-Item -ItemType Directory -Force -Path $spoolDir) }
+    $rid = [Guid]::NewGuid().ToString()
+    $now = [DateTimeOffset]::UtcNow
+    $file = Join-Path $spoolDir ([string]$now.ToUnixTimeSeconds() + '-' + $rid)
+    [IO.File]::WriteAllText($file + '.tmp', ($kind, $rid, (Get-UtcStamp $now), $payload, $r.Origin -join "`n") + "`n", (New-Object Text.UTF8Encoding($false)))
+    Move-Item -LiteralPath ($file + '.tmp') -Destination $file -Force
+    $held = @(Get-ChildItem -LiteralPath $spoolDir -File | Where-Object { -not $_.Name.StartsWith('.') -and -not $_.Name.EndsWith('.tmp') } | Sort-Object LastWriteTime)
+    if ($held.Count -gt $spoolMax) { $held | Select-Object -First ($held.Count - $spoolMax) | Remove-Item -Force -ErrorAction SilentlyContinue }
+}
+
+# POST one held report, signed now; the report id and sent_at stay as made. The HTTP status, or 0 for no answer.
+function Send-Report($r, [string]$kind, [string]$rid, [string]$sentAt, [string]$payload) {
+    $body = '{"contract":1,"report_id":"' + $rid + '","sent_at":"' + $sentAt + '","source":"script","source_version":"' + $env:HOTWIRE_LAUNCHER_VERSION + '","kind":"' + $kind + '","payload":' + $payload + '}'
+    $bytes = (New-Object Text.UTF8Encoding($false)).GetBytes($body)
+    $ts = [string][DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+    $nonceBytes = New-Object byte[] 16
+    $rng = [Security.Cryptography.RandomNumberGenerator]::Create(); try { $rng.GetBytes($nonceBytes) } finally { $rng.Dispose() }
+    $nonce = -join ($nonceBytes | ForEach-Object { $_.ToString('x2') })
+    $sig = Get-HexHmac $r.Secret ('POST /api/v1/report' + "`n" + $ts + "`n" + $nonce + "`n" + (Get-HexSha256 $bytes))
+    $headers = @{ 'X-Hotwire-Key' = $r.Key; 'X-Hotwire-Timestamp' = $ts; 'X-Hotwire-Nonce' = $nonce; 'X-Hotwire-Signature' = $sig }
+    try {
+        $response = Invoke-WebRequest -Uri ($r.Url + '/api/v1/report') -Method Post -Body $bytes -ContentType 'application/json' -Headers $headers -UseBasicParsing -TimeoutSec 15
+        return [int]$response.StatusCode
+    } catch {
+        $status = 0
+        try { if ($_.Exception.Response) { $status = [int]$_.Exception.Response.StatusCode } } catch { }
+        return $status
+    }
+}
+
+# Send what the spool holds, oldest first, at most 50 a pass: delete what was accepted; stop at no answer, 429 or a
+# 5xx; drop any other refusal, which the same bytes would get again; drop what is older than 7 days or was made for
+# another connection. One sender at a time; HOTWIRE_SEND_WAIT is how many seconds to wait for another to finish.
+function Invoke-Send {
+    $r = Get-Reporting
+    if (-not $r -or -not (Test-Path -LiteralPath $spoolDir)) { return }
+    $wait = 0; [void][int]::TryParse([string]$env:HOTWIRE_SEND_WAIT, [ref]$wait)
+    $deadline = (Get-Date).AddSeconds($wait)
+    $lock = $null
+    while ($null -eq $lock) {
+        try { $lock = [IO.File]::Open((Join-Path $spoolDir '.sending'), [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None) }
+        catch { if ((Get-Date) -ge $deadline) { return }; Start-Sleep -Seconds 1 }
+    }
+    try {
+        try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 } catch { }
+        $sent = 0; $dropped = 0; $expired = 0; $elsewhere = 0
+        $now = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+        foreach ($f in @(Get-ChildItem -LiteralPath $spoolDir -File | Where-Object { -not $_.Name.StartsWith('.') -and -not $_.Name.EndsWith('.tmp') } | Sort-Object LastWriteTime)) {
+            if ($sent -ge 50) { break }
+            $lines = [IO.File]::ReadAllLines($f.FullName)
+            if ($lines.Count -lt 4 -or -not $lines[0]) { Remove-Item -LiteralPath $f.FullName -Force; continue }
+            $made = 0L
+            if ([long]::TryParse(($f.Name -split '-', 2)[0], [ref]$made) -and ($now - $made) -gt ($spoolDays * 86400)) {
+                Remove-Item -LiteralPath $f.FullName -Force; $expired++; continue
+            }
+            if ($lines.Count -ge 5 -and $lines[4] -and $lines[4] -ne $r.Origin) { Remove-Item -LiteralPath $f.FullName -Force; $elsewhere++; continue }
+            $code = Send-Report $r $lines[0] $lines[1] $lines[2] $lines[3]
+            if ($code -ge 200 -and $code -lt 300) { Remove-Item -LiteralPath $f.FullName -Force; $sent++ }
+            elseif ($code -eq 0 -or $code -eq 429 -or $code -ge 500) { break }
+            else { Remove-Item -LiteralPath $f.FullName -Force; $dropped++; Say ('A held ' + $lines[0] + ' report was refused (HTTP ' + $code + ') and is dropped: sent again it would be refused again.') }
+        }
+        if ($sent -gt 0) { Say ('Sent ' + $sent + ' held report(s) to AFKPanel.') }
+        if ($expired -gt 0) { Say ('Dropped ' + $expired + ' report(s) held more than ' + $spoolDays + ' days.') }
+        if ($elsewhere -gt 0) { Say ('Dropped ' + $elsewhere + ' report(s) made for another panel or another server.') }
+    } finally { $lock.Dispose() }
+}
+
+# The report cmd asks for, from the environment: HOTWIRE_REPORT is session or launcher.
+function Invoke-Report {
+    $bool = { param($v) if ([string]$v -eq '1') { 'true' } else { 'false' } }
+    if ($env:HOTWIRE_REPORT -eq 'session') {
+        $started = [string]$env:HOTWIRE_STARTED_AT
+        if ($started -notmatch '\A\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ\z') { $started = Get-UtcStamp ([DateTimeOffset]::UtcNow) }
+        $exit = 0; [void][int]::TryParse([string]$env:HOTWIRE_RUST_EXIT, [ref]$exit)
+        $p = '{"started_at":"' + $started + '","ended_at":"' + (Get-UtcStamp ([DateTimeOffset]::UtcNow)) + '","exit_code":' + $exit + ',"crashed":' + (& $bool $env:HOTWIRE_CRASHED)
+        $acf = Join-Path $root 'steamapps\appmanifest_258550.acf'
+        if (Test-Path -LiteralPath $acf) {
+            $m = [regex]::Match([IO.File]::ReadAllText($acf), [char]34 + 'buildid' + [char]34 + '\s+' + [char]34 + '(\d+)' + [char]34)
+            if ($m.Success) { $p += ',"rust_build_id":"' + $m.Groups[1].Value + '"' }
+        }
+        $kept = (Test-Path -LiteralPath (Join-Path $root 'UPDATE.flag')) -or (Test-Path -LiteralPath (Join-Path $root 'VALIDATE.flag'))
+        $p += ',"update":{"attempted":' + (& $bool $env:HOTWIRE_UPDATE_ATTEMPTED) + ',"steam_ok":' + (& $bool $env:STEAM_OK) + ',"framework_ok":' + (& $bool $env:FRAMEWORK_OK) + ',"flag_kept":' + $(if ($kept) { 'true' } else { 'false' }) + '}}'
+        Add-SpoolReport 'session' $p
+    } elseif ($env:HOTWIRE_REPORT -eq 'launcher') {
+        $streak = 0; [void][int]::TryParse([string]$env:CRASH_STREAK, [ref]$streak)
+        $log = @(Get-ChildItem -LiteralPath (Join-Path $root 'logs') -Filter 'server_crash_*.txt' -File -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1)
+        $preserved = if ($log.Count -gt 0) { 'logs/' + $log[0].Name } else { '' }
+        $detail = [string]$streak + ' consecutive runs under ' + [string]$env:CRASH_SECONDS + 's'
+        Add-SpoolReport 'launcher' ('{"state":"stopped","reason":"crash_streak","detail":"' + $detail + '","crash_streak":' + $streak + ',"preserved_log":"' + $preserved + '"}')
+    }
 }
 
 try {
@@ -1550,6 +2184,9 @@ try {
         'load'   { Invoke-Load }
         'edits'  { Invoke-Edits }
         'launch' { Invoke-Launch }
+        'backup' { Invoke-BackupBeforeLaunch }
+        'report' { Invoke-Report }
+        'send'   { Invoke-Send }
         default  { Say ('Unknown HOTWIRE_MODE ' + $env:HOTWIRE_MODE); exit 2 }
     }
 } catch {

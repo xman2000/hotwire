@@ -6,9 +6,11 @@ no Rust experience.
 | Requirement | Value |
 | --- | --- |
 | Time | About 45 minutes, most of it downloading |
-| Free disk space | About 20 GB |
-| Memory | 8 GB for a server with plugins |
+| Free disk space | 15 GB, on an SSD if you can |
+| Memory | 12 GB free, more for a 6000 m map |
 | Access | An administrator account on the machine |
+
+The disk and memory figures are Facepunch's, from [Creating a server](https://wiki.facepunch.com/rust/Creating-a-server).
 
 Run every command in **PowerShell as Administrator** unless the step says otherwise.
 
@@ -91,7 +93,7 @@ The download is about 12 GB. When it finishes, `C:\rustserver\RustDedicated.exe`
 Oxide (uMod) lets the server run plugins. Hotwire is a plugin, so you need Oxide to connect to AFKPanel.
 
 ```powershell
-Invoke-WebRequest "https://umod.org/games/rust/download" -UserAgent "Mozilla/5.0" -OutFile C:\rustserver\OxideMod.zip
+Invoke-WebRequest "https://github.com/OxideMod/Oxide.Rust/releases/latest/download/Oxide.Rust.zip" -OutFile C:\rustserver\OxideMod.zip
 Expand-Archive C:\rustserver\OxideMod.zip -DestinationPath C:\rustserver -Force
 Remove-Item C:\rustserver\OxideMod.zip
 ```
@@ -164,14 +166,17 @@ tells a restart apart from an update, and stops a crash loop from filling the di
 The first start takes several minutes while the server generates the map. When the server appears in Rust's server
 browser under your name (or "My Untitled Rust Server" if you left it empty), it is working.
 
-This is a complete server. Everything so far is free and open source. The next steps connect it to AFKPanel.
+This is a complete server, and everything so far is free. The next steps connect it to AFKPanel.
 
 ## 7. Check that the machine can reach AFKPanel
 
-```powershell
-cd C:\rustserver
-.\hotwire-setup.bat doctor
-```
+1. Copy `hotwire-setup.bat` and `hotwire-setup.ps1`, from the download in step 6, into `C:\rustserver\`.
+2. Run `doctor`:
+
+   ```powershell
+   cd C:\rustserver
+   .\hotwire-setup.bat doctor
+   ```
 
 `doctor` checks that the machine signs requests correctly, that it can reach AFKPanel, that its clock is accurate
 enough, and that it can find your server. It changes nothing, so you can run it at any time.

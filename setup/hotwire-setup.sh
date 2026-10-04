@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-#  hotwire-setup -- install a Rust server on Ubuntu, connect it to Hotwire Panel, or check
+#  hotwire-setup -- install a Rust server on Ubuntu, connect it to AFKPanel, or check
 #  why it will not connect. The Linux sibling of hotwire-setup.ps1.
 #
 #  https://github.com/xman2000/hotwire            MIT (c) 2026 xman2000
@@ -28,7 +28,7 @@
 #
 set -uo pipefail
 
-VERSION="0.2.18"
+VERSION="0.2.19"
 DEFAULT_PANEL="https://afkpanel.com"
 
 # ---------------------------------------------------------------- output ----
@@ -152,13 +152,10 @@ read_state() { [ -f "$(state_file "$1")" ] && cat "$(state_file "$1")" || printf
 
 # The panel address must be https: over http the connection code and both of this server's signing secrets
 # would cross the network in the clear, and anything on the path could answer in the panel's place. The default
-# is already https, so this only ever trips an address someone typed. (The Windows installer has always checked
-# this; this one did not.)
+# is already https, so this only ever trips an address someone typed.
 #
-# It validates and prints NOTHING, and it is deliberately not called from inside panel_url. `die` runs `exit`, and
-# `url="$(panel_url ...)"` is a command substitution -- a subshell -- so exiting there killed the subshell and left
-# the script running with an empty url. Caught by running it on a real machine: the refusal printed and `doctor`
-# carried on underneath it. So the check belongs in the caller, where exit means exit.
+# Called by the caller, never from inside panel_url: `url="$(panel_url ...)"` is a subshell, where `die`'s exit
+# would end only the subshell and leave the script running with an empty url.
 assert_https_panel() {
     case "$1" in
         https://*) return 0 ;;
@@ -217,9 +214,9 @@ confirm() {  # never proceed on silence; an unattended run must pass --yes
 }
 
 # ------------------------------------------------------------ signing ----
-# The frozen canonical form (docs/CONTRACT.md in the panel repo):
+# The form AFKPanel checks a signature against, which never changes:
 #     <METHOD> <path>\n<timestamp>\n<nonce>\n<sha256 of the raw body>
-# Verified byte-for-byte against tests/Fixtures/contract/signature/conformance.json.
+# check_signing below reproduces AFKPanel's published test vector with it.
 sha256_hex() { printf '%s' "$1" | openssl dgst -sha256 | sed 's/^.*= *//'; }
 hmac_hex()   { printf '%s' "$2" | openssl dgst -sha256 -hmac "$1" | sed 's/^.*= *//'; }
 
@@ -274,7 +271,7 @@ check_panel() {
     code="$(curl -fsS -o /dev/null -w '%{http_code}' --max-time 10 "$url/up" 2>/dev/null)" || code=""
     if [ "$code" = "200" ]; then ok "panel is reachable at $url"; return 0; fi
 
-    # S1: this probe DOWNLOADS NOTHING and installs nothing -- '-o /dev/null' discards the body.
+    # This probe DOWNLOADS NOTHING and installs nothing -- '-o /dev/null' discards the body.
     # '--insecure' is used ONLY to tell "the panel is reachable but its TLS certificate was rejected"
     # apart from "the panel is unreachable", so the fix message can be precise. It never fetches code
     # and never relaxes TLS for any real request; the reachability check above uses full verification.
@@ -307,8 +304,7 @@ check_install() {
     fi
 }
 
-# The published conformance vector, copied from the panel's
-# tests/Fixtures/contract/signature/conformance.json. If this machine cannot reproduce the
+# AFKPanel's published test vector for request signing. If this machine cannot reproduce the
 # signature below, its canonicalisation is wrong -- not the panel's. Signing is the one thing that
 # fails invisibly: a canonicalisation one byte out is a 401 with no useful message, on a machine
 # nobody can reach inbound. So it is checked here rather than left to be discovered.
@@ -657,7 +653,6 @@ REPO_RAW="https://raw.githubusercontent.com/xman2000/hotwire/connect-and-report"
 LAUNCHER_URL="$REPO_RAW/launcher/hotwire.sh"
 CFG_URL="$REPO_RAW/launcher/hotwire.example.cfg"
 PLUGIN_URL="$REPO_RAW/src/Hotwire.cs"
-SETUP_URL="$REPO_RAW/setup/hotwire-setup.sh"
 GUIDE_URL="https://afkpanel.com/docs/install-linux"
 OXIDE_URL="https://github.com/OxideMod/Oxide.Rust/releases/latest/download/Oxide.Rust-linux.zip"
 OXIDE_RELEASES="https://api.github.com/repos/OxideMod/Oxide.Rust/releases/latest"
@@ -668,14 +663,13 @@ RUST_APPID="258550"
 # SHA-256 of launcher/hotwire.sh, launcher/hotwire.example.cfg and src/Hotwire.cs AS SERVED from the branch
 # above (the git blob, LF):
 #     git show HEAD:launcher/hotwire.sh | sha256sum
-# tools/build-release.sh refuses to build a release while any of them is stale.
-# !! REGENERATED AT RELEASE TIME -- NO AUTOMATION EXISTS YET !! Whenever either file changes on that
-# branch, these change in the same commit (and so does $PinnedHashes in hotwire-setup.ps1 for Hotwire.cs),
-# or every install stops at a hash mismatch. Third-party downloads (SteamCMD from Ubuntu's archive, Oxide
+# Whenever one of those files changes on that branch, its pin changes in the same commit (and so does
+# $PinnedHashes in hotwire-setup.ps1 for Hotwire.cs and hotwire.example.cfg), or every install stops at a
+# hash mismatch. tools/build-release.sh refuses to build a release while any pin is stale. Third-party downloads (SteamCMD from Ubuntu's archive, Oxide
 # from GitHub) are not pinned: Oxide is checked against the SHA-256 GitHub publishes for it instead.
-PIN_LAUNCHER="759453b7cc0d924b32303edf1e5a50db2661cfffa9a8455ce4168f659157822a"
-PIN_PLUGIN="ed48eeefa4e5667f108e79577e361b5ecae5eb130ba33df013d8ea83599a8e76"
-PIN_CFG="49de5e242c14418158c4796a23f2ca7b1c99eddcf0cdc3fd3e65c05cd94d9971"
+PIN_LAUNCHER="d29a80bfab5bb5eff03da3fcf4d832ef6e73e67a27dfc506f1e0d653a4fcb820"
+PIN_PLUGIN="047988a1f3b06fd9951bb2a4849c1768999e1ed8d12bdc951acaf301697cc3e8"
+PIN_CFG="121c1480f3f6edbb3f48790a0fd72abeff1c964d7cd3ef1608646663b1661f4c"
 
 # Rust's own floor (wiki.facepunch.com/rust/Creating-a-server), warned about and never enforced. A small
 # test server runs on less, and refusing would be guessing at what the reader wants.
@@ -1031,7 +1025,7 @@ show_state() {  # show_state <title>
         [ "${S[ntp]}" = 1 ] || sync="NOT kept in time automatically"
         if   [ "$abs" -le 30 ];  then check_line ok "Clock" "right (${abs}s from Steam's servers), $sync"
         elif [ "$abs" -le 300 ]; then check_line warn "Clock" "${abs}s out -- drifting, $sync"
-        else check_line fail "Clock" "${abs}s out -- Hotwire Panel would refuse every request"; fi
+        else check_line fail "Clock" "${abs}s out -- AFKPanel would refuse every request"; fi
     fi
 
     group "Rust"
@@ -1069,9 +1063,9 @@ show_state() {  # show_state <title>
     if [ "${S[plugin]}" = 1 ]; then check_line ok "Plugin" "Hotwire ${S[plugin_version]:-(version unread)}"
     elif [ "${S[plugin_no]}" = 1 ]; then check_line info "Plugin" "not installed -- you said no"
     else check_line no "Plugin" "not installed"; fi
-    if [ "${S[connected]}" = 1 ]; then check_line ok "Hotwire Panel" "connected as '$(json_get "$(read_state "$IROOT")" identity)'"
-    elif [ "${S[panel_no]}" = 1 ]; then check_line info "Hotwire Panel" "not connected -- you said no"
-    else check_line no "Hotwire Panel" "not connected"; fi
+    if [ "${S[connected]}" = 1 ]; then check_line ok "AFKPanel" "connected as '$(json_get "$(read_state "$IROOT")" identity)'"
+    elif [ "${S[panel_no]}" = 1 ]; then check_line info "AFKPanel" "not connected -- you said no"
+    else check_line no "AFKPanel" "not connected"; fi
 
     group "Firewall"
     if [ "${S[ports_chosen]}" = 1 ]; then check_line ok "Ports" "game ${S[game]}, query ${S[query]}, RCON ${S[rcon_port]}"
@@ -1097,8 +1091,15 @@ plan() {
     [ "${S[user]}" = 0 ] && PLAN+=("user|User|create '$IUSER' -- the server never runs as root")
     awk -v s="${S[swap]:-0}" 'BEGIN{exit !(s == 0)}' && ! declined swap && PLAN+=("swap|Swap|add a ${SWAP_GB} GB swap file")
     [ "${S[rust_done]}" = 0 ] && PLAN+=("rust|Rust server|$([ "${S[rust]}" = 1 ] && echo 'finish the download' || echo 'download it, about 6 GB')")
-    if [ "${S[oxide_no]}" = 0 ] && { [ "${S[oxide_done]}" = 0 ] || [ "${S[rust_done]}" = 0 ]; }; then
-        PLAN+=("oxide|Oxide|$([ "${S[oxide]}" = 1 ] && echo 'finish installing it' || echo 'install it, or say no for a vanilla server')")
+    # On another branch than the one chosen, or never asked and not on public: keep it or move it.
+    local branch_question=0
+    if [ "${S[rust_done]}" = 1 ] && [ -n "${S[branch]}" ] && { { [ -z "${S[chosen]}" ] && [ "${S[branch]}" != public ]; } || { [ -n "${S[chosen]}" ] && [ "${S[branch]}" != "${S[chosen]}" ]; }; }; then
+        branch_question=1
+        PLAN+=("branch|Steam branch|on '${S[branch]}'$([ -n "${S[chosen]}" ] && printf ", chosen '%s'" "${S[chosen]}") -- keep it or move it")
+    fi
+    # Also after a change of branch: that download puts the game's own files back over Oxide.
+    if [ "${S[oxide_no]}" = 0 ] && { [ "${S[oxide_done]}" = 0 ] || [ "${S[rust_done]}" = 0 ] || [ "$branch_question" = 1 ]; }; then
+        PLAN+=("oxide|Oxide|$(if [ "${S[oxide_done]}" = 1 ]; then echo 'put it back on if the branch changes'; elif [ "${S[oxide]}" = 1 ]; then echo 'finish installing it'; else echo 'install it, or say no for a vanilla server'; fi)")
     fi
     [ "${S[launcher]}" = 0 ] && [ "${S[launcher_no]}" = 0 ] && PLAN+=("launcher|Start script|install hotwire.sh, or say no to use your own")
     [ "${S[launcher]}" = 1 ] && reads_cfg && [ ! -f "$IROOT/hotwire.cfg" ] && PLAN+=("launcher|Start script|write hotwire.cfg, the settings hotwire.sh reads")
@@ -1108,7 +1109,7 @@ plan() {
     [ "${S[service]}" = 0 ] && [ "${S[service_no]}" = 0 ] && [ "${S[launcher_no]}" = 0 ] && PLAN+=("service|Service|start the server with the machine")
     [ "${S[ufw]}" = active ] && { [ "${S[game_open]}" = 0 ] || [ "${S[query_open]}" = 0 ] || [ "${S[ports_chosen]}" = 0 ]; } \
         && PLAN+=("firewall|Firewall|open this server's game and query ports in ufw")
-    [ "${S[connected]}" = 0 ] && [ "${S[panel_no]}" = 0 ] && PLAN+=("panel|Hotwire Panel|connect this server")
+    [ "${S[connected]}" = 0 ] && [ "${S[panel_no]}" = 0 ] && PLAN+=("panel|AFKPanel|connect this server")
     return 0
 }
 PLAN=()
@@ -1138,14 +1139,14 @@ declined_names() {
     [ "${S[plugin_no]}" = 1 ] && [ "${S[plugin]}" = 0 ] && n+=("the Hotwire plugin")
     [ "${S[service_no]}" = 1 ] && [ "${S[service]}" = 0 ] && n+=("the service")
     declined swap && awk -v s="${S[swap]:-0}" 'BEGIN{exit !(s == 0)}' && n+=("swap")
-    [ "${S[panel_no]}" = 1 ] && [ "${S[connected]}" = 0 ] && n+=("Hotwire Panel")
+    [ "${S[panel_no]}" = 1 ] && [ "${S[connected]}" = 0 ] && n+=("AFKPanel")
     local IFS=','; printf '%s' "${n[*]}" | sed 's/,/, /g'
 }
 
 # ------------------------------------------------------------- the steps --
 step_clock() {
     step "Clock"
-    why "Hotwire Panel refuses a signed request more than five minutes from its own clock, and says only" \
+    why "AFKPanel refuses a signed request more than five minutes from its own clock, and says only" \
         "that the time was wrong. Ubuntu keeps the clock right by itself once time sync is on."
     if ntp_synced; then ok "the clock is kept in time automatically"; return 0; fi
     confirm "Turn on automatic time sync (timedatectl set-ntp true)?" || { note "Left as it is."; return 0; }
@@ -1241,10 +1242,11 @@ choose_branch() {
 }
 BRANCH="public"
 
-steamcmd_locked() {  # the same lock hotwire.sh takes, so two servers' SteamCMD runs take turns
-    local lock="/home/$IUSER/.hotwire/steamcmd.lock"
-    as_user mkdir -p "/home/$IUSER/.hotwire" || die "preparing SteamCMD's lock in /home/$IUSER/.hotwire" \
-        "$IUSER could not create it" "check that /home/$IUSER belongs to $IUSER: sudo chown $IUSER:$IUSER /home/$IUSER"
+steamcmd_locked() {  # the same lock hotwire.sh takes ($HOME/.hotwire), so two servers' SteamCMD runs take turns
+    local home; home="$(getent passwd "$IUSER" | cut -d: -f6)"; home="${home:-/home/$IUSER}"
+    local lock="$home/.hotwire/steamcmd.lock"
+    as_user mkdir -p "$home/.hotwire" || die "preparing SteamCMD's lock in $home/.hotwire" \
+        "$IUSER could not create it" "check that $home belongs to $IUSER: sudo chown $IUSER:$IUSER $home"
     as_user flock -w 3600 "$lock" "$STEAMCMD_BIN" "$@"
 }
 
@@ -1252,13 +1254,83 @@ link_steamclient() {
     # RustDedicated loads Steam's client library from a path it does not create; without it the server
     # builds its whole map and then fails with an error that names nothing. hotwire.sh links it at every
     # start too; this covers a server started any other way.
-    local h="/home/$IUSER" arch
+    local h arch; h="$(getent passwd "$IUSER" | cut -d: -f6)"; h="${h:-/home/$IUSER}"
     for arch in 64 32; do
         local src="$h/.local/share/Steam/steamcmd/linux$arch/steamclient.so" dst="$h/.steam/sdk$arch/steamclient.so"
         [ -e "$dst" ] && continue
         [ -e "$src" ] || continue
         as_user mkdir -p "$h/.steam/sdk$arch" && as_user ln -s "$src" "$dst" && ok "linked steamclient.so (sdk$arch)"
     done
+}
+
+# The download itself, shared by a first install and a change of branch: resumes, retries, and checks what Steam
+# actually installed.
+rust_download() {
+    slow_warning "the download"
+    countdown 5 "Downloading Rust"
+    local tries=0 rc
+    while :; do
+        tries=$((tries + 1))
+        # -beta names the branch every time: Steam otherwise keeps an install on whatever it last had.
+        steamcmd_locked +force_install_dir "$IROOT" +login anonymous +app_update "$RUST_APPID" -beta "$BRANCH" validate +quit
+        rc=$?
+        # Ctrl+C. sudo runs the command in a terminal of its own (Ubuntu's sudo-rs does by default), so
+        # the interrupt reaches SteamCMD and comes back as its exit status, never as a signal to this
+        # script; without this, the retry below started the download again under the person stopping it.
+        if [ "$rc" = 130 ] || [ "$rc" = 143 ]; then
+            say ""; warn "Stopped. Nothing is half-written: run install again and the download carries on."; exit 130
+        fi
+        [ "$rc" = 0 ] && rust_complete && break
+        [ "$tries" -ge 3 ] && die "downloading Rust" "SteamCMD did not finish after $tries tries" \
+            "run install again: the download carries on from where it stopped"
+        warn "SteamCMD stopped before the download finished (SteamCMD often does on its first run); trying again"
+        sleep 5
+    done
+}
+
+# A finished server whose branch was never chosen here, or is not the one chosen. Enter keeps the branch it is on;
+# moving is a separate question that defaults to no, because leaving staging for public goes back to an older build.
+step_branch() {
+    step "Steam branch"
+    local installed chosen a
+    installed="$(rust_branch)"; chosen="$(rec_get branch)"
+    why "This server is on Steam's '$installed' branch.$([ -n "$chosen" ] && [ "$chosen" != "$installed" ] && printf " Install was last told it should be on '%s'." "$chosen")" "" \
+        "Moving to another branch downloads that branch's build over this one. If the saves matter, copy" \
+        "$IROOT/server somewhere safe first."
+    say "  ${C_BLD}public${C_OFF} is the live game; 'staging' is Facepunch's test build, and Oxide is made for public."
+    printf '  Branch [%s]: ' "$installed"
+    read_tty; a="$(printf '%s' "$TTY_LINE" | tr -d '[:space:]')"; a="${a:-$installed}"
+    [[ "$a" =~ ^[A-Za-z0-9_.-]{1,64}$ ]] || die "choosing a Steam branch" "'$a' is not a branch name" "run install again and press Enter to keep '$installed'"
+    if [ "$a" = "$installed" ]; then
+        rec_set branch "$installed"; ok "staying on '$installed'"; sync_launcher_branch; return 0
+    fi
+    if ! confirm "Move this server from '$installed' to '$a'?"; then
+        rec_set branch "$installed"; note "Left on '$installed'."; sync_launcher_branch; return 0
+    fi
+    rec_set branch "$a"; BRANCH="$a"
+    rust_download
+    ok "Rust build $(rust_build) is installed ($BRANCH)"
+    change "moved $IROOT from Steam's '$installed' branch to '$BRANCH'" "run install again and choose '$installed'"
+    # The download put the game's own files back over Oxide's, so the Oxide step puts Oxide on again.
+    rec_remove done oxide
+    link_steamclient
+    sync_launcher_branch
+}
+
+# Keeps hotwire.steam_branch in the hotwire.cfg install wrote in step with the branch chosen for this server.
+sync_launcher_branch() {
+    local c="$IROOT/hotwire.cfg" want have
+    want="$(rec_get branch)"; [ -n "$want" ] && [ -f "$c" ] && reads_cfg || return 0
+    have="$(cfg_get hotwire.steam_branch)"; have="${have:-public}"
+    [ "$have" = "$want" ] && return 0
+    if created "$c"; then
+        cp -p "$c" "$c.backup-$(date '+%Y%m%d-%H%M%S')"
+        cfg_set_file "$c" hotwire.steam_branch "$want" || die "setting hotwire.steam_branch in $c" "the write failed" "run install again"
+        own "$c"; ok "hotwire.cfg set to hotwire.steam_branch $want"
+        change "set hotwire.steam_branch $want in $c" "put back the .backup- copy beside it"
+    else
+        warn "hotwire.cfg is not one install wrote: set hotwire.steam_branch $want in it yourself"
+    fi
 }
 
 step_rust() {
@@ -1277,27 +1349,7 @@ step_rust() {
         confirm_default_yes "Download the Rust server ($BRANCH)?" || die "downloading Rust" "you said no" "run install again when you are ready"
     fi
     as_user mkdir -p "$IROOT" || die "creating $IROOT" "it could not be created as $IUSER" "check the folder above it belongs to $IUSER"
-
-    slow_warning "the download"
-    countdown 5 "Downloading Rust"
-    local tries=0
-    while :; do
-        tries=$((tries + 1))
-        # -beta names the branch every time: Steam otherwise keeps an install on whatever it last had.
-        steamcmd_locked +force_install_dir "$IROOT" +login anonymous +app_update "$RUST_APPID" -beta "$BRANCH" validate +quit
-        local rc=$?
-        # Ctrl+C. sudo runs the command in a terminal of its own (Ubuntu's sudo-rs does by default), so
-        # the interrupt reaches SteamCMD and comes back as its exit status, never as a signal to this
-        # script; without this, the retry below started the download again under the person stopping it.
-        if [ "$rc" = 130 ] || [ "$rc" = 143 ]; then
-            say ""; warn "Stopped. Nothing is half-written: run install again and the download carries on."; exit 130
-        fi
-        [ "$rc" = 0 ] && rust_complete && break
-        [ "$tries" -ge 3 ] && die "downloading Rust" "SteamCMD did not finish after $tries tries" \
-            "run install again: the download carries on from where it stopped"
-        warn "SteamCMD stopped before the download finished (SteamCMD often does on its first run); trying again"
-        sleep 5
-    done
+    rust_download
     ok "Rust build $(rust_build) is installed ($BRANCH)"
     change "downloaded Rust (app $RUST_APPID, $BRANCH) into $IROOT" "delete $IROOT (everything in it)"
     save_step rust
@@ -1615,7 +1667,7 @@ step_plugin() {
     if [ -f "$p" ]; then ok "oxide/plugins/Hotwire.cs is already here -- kept"; save_step plugin; return 0; fi
     if ! { done_step oxide && [ -f "$(oxide_dll)" ]; }; then note "Skipped: the plugin runs on Oxide, which is not installed."; return 0; fi
     why "The Hotwire plugin adds scheduled, announced restarts: it counts down in game, saves, and hands" \
-        "over to hotwire.sh. It is also what reports to Hotwire Panel, once you connect. Every schedule" \
+        "over to hotwire.sh. It is also what reports to AFKPanel, once you connect. Every schedule" \
         "ships switched off."
     [ -f "$IROOT/hotwire.sh" ] || { warn "there is no hotwire.sh: a scheduled restart quits the server, and your own start"; note "        script has to start it again."; }
     offer plugin "Install the Hotwire plugin?" || { note "Skipped. Run install again any time to add it."; return 0; }
@@ -1686,49 +1738,72 @@ step_firewall() {
         "  UDP $PORT_QUERY   the server browser -- without it the server is invisible" \
         "" "RCON (TCP $PORT_RCON) is deliberately not opened: it is remote control of the server. Reach it" \
         "over SSH, or allow only your own address: sudo ufw allow from YOUR.IP to any port $PORT_RCON proto tcp"
-    local need=()
+    local need=() p
     ufw_allows "$PORT_GAME" udp || need+=("$PORT_GAME")
     ufw_allows "$PORT_QUERY" udp || need+=("$PORT_QUERY")
-    [ "${#need[@]}" -gt 0 ] || { ok "both ports are already open"; return 0; }
-    confirm "Open UDP ${need[*]} in ufw?" || { note "Left as it is. Players cannot reach the server until they are open."; return 0; }
-    local p
-    for p in "${need[@]}"; do
-        ufw allow "$p/udp" comment "Rust ($IROOT)" >/dev/null && ok "opened UDP $p" \
-            && change "opened UDP $p in ufw" "sudo ufw delete allow $p/udp"
-    done
+    if [ "${#need[@]}" -eq 0 ]; then ok "both ports are already open"
+    elif confirm "Open UDP ${need[*]} in ufw?"; then
+        for p in "${need[@]}"; do
+            ufw allow "$p/udp" comment "Rust ($IROOT)" >/dev/null && ok "opened UDP $p" \
+                && change "opened UDP $p in ufw" "sudo ufw delete allow $p/udp"
+        done
+    else note "Left as it is. Players cannot reach the server until they are open."; fi
+    # Rust+, the phone companion app: the larger of the game and RCON ports, plus 67 (Facepunch's Rust+ page).
+    local app=$(( (PORT_GAME > PORT_RCON ? PORT_GAME : PORT_RCON) + 67 ))
+    if ufw_allows "$app" tcp; then ok "TCP $app (Rust+) is already open"; return 0; fi
+    say ""
+    note "  Rust+ lets players pair their phone with this server: https://wiki.facepunch.com/rust/rust-companion-server"
+    if confirm "Also open TCP $app for Rust+?"; then
+        ufw allow "$app/tcp" comment "Rust+ ($IROOT)" >/dev/null && ok "opened TCP $app (Rust+)" \
+            && change "opened TCP $app (Rust+) in ufw" "sudo ufw delete allow $app/tcp"
+    fi
 }
 
 step_panel() {
-    step "Hotwire Panel"
+    step "AFKPanel"
     if [ -f "$(state_file "$IROOT")" ]; then ok "connected already -- 'status' shows the details"; return 0; fi
-    why "Hotwire Panel shows this server from anywhere: whether it is up, its players, its logs, and the" \
+    why "AFKPanel shows this server from anywhere: whether it is up, its players, its logs, and the" \
         "restarts and updates it has done. The server never needs it -- if the panel is slow or gone," \
         "the server still starts, restarts and updates." "" \
         "You need a free account and a code from it; this waits while you get one."
-    offer panel "Connect this server to Hotwire Panel?" || { note "Skipped. Connect any time: sudo -u $IUSER $IROOT/hotwire-setup.sh connect"; return 0; }
+    local setup; setup="$(setup_path)"
+    if [ -z "$setup" ]; then note "Skipped: this setup script is not saved on this machine, so connect cannot run on its own."; note "Download hotwire-setup.sh, then: sudo -u $IUSER bash hotwire-setup.sh connect --root $IROOT"; return 0; fi
+    offer panel "Connect this server to AFKPanel?" || { note "Skipped. Connect any time: sudo -u $IUSER $setup connect --root $IROOT"; return 0; }
     # connect is its own run, as the server's user, so a mistyped or expired code ends only that run and
     # never the finished install around it.
     local args=(connect --root "$IROOT" --yes)
     [ -n "$PANEL" ] && args+=(--panel "$PANEL")
     # 8>&- : the install's machine-wide lock stays with the install, not with a connect left waiting for a code.
-    if as_user bash "$IROOT/hotwire-setup.sh" "${args[@]}" 8>&-; then save_step panel
-    else warn "not connected this time. Try again any time: sudo -u $IUSER $IROOT/hotwire-setup.sh connect"; fi
+    if as_user bash "$setup" "${args[@]}" 8>&-; then save_step panel
+    else warn "not connected this time. Try again any time: sudo -u $IUSER $setup connect --root $IROOT"; fi
 }
 
-# The setup script stays in the server folder, for doctor, connect, status and detach later.
+# The setup script is kept at /usr/local/sbin/hotwire-setup, owned by root, for doctor, connect, status, detach and
+# the next install. Not in the server folder: that belongs to the server's account, which every Oxide plugin runs as,
+# and the next `sudo ... install` would run whatever that account had written there.
+SETUP_KEPT="/usr/local/sbin/hotwire-setup"
+setup_path() {  # the copy connect runs: the kept one, else this file
+    if [ -f "$SETUP_KEPT" ]; then printf '%s' "$SETUP_KEPT"
+    elif [ -f "${BASH_SOURCE[0]:-}" ]; then readlink -f "${BASH_SOURCE[0]}"; fi
+}
 place_setup() {
-    local dst="$IROOT/hotwire-setup.sh" src="${BASH_SOURCE[0]:-}"
-    [ -f "$dst" ] && return 0
-    if [ -n "$src" ] && [ -f "$src" ] && head -c 4096 "$src" | grep -q 'hotwire-setup'; then
-        cp "$src" "$dst.hotwire-tmp"
-    else
-        # Run through a pipe (curl | bash): there is no file to copy, so the same script is fetched.
-        fetch "$SETUP_URL" "$dst.hotwire-tmp" "hotwire-setup.sh"
-        head -c 4096 "$dst.hotwire-tmp" | grep -q 'hotwire-setup' || { rm -f "$dst.hotwire-tmp"; warn "the fetched hotwire-setup.sh is not this script; not kept"; return 0; }
+    local src="${BASH_SOURCE[0]:-}" old="$IROOT/hotwire-setup.sh"
+    # An earlier install kept its copy in the server folder. It is this script's own file, so it goes.
+    if [ -f "$old" ] && created "$old"; then
+        rm -f "$old" && rec_remove created "$old" && ok "removed $old: setup is kept at $SETUP_KEPT now"
+        change "removed $old, the copy an earlier install kept in the server folder" "nothing needed: $SETUP_KEPT replaces it"
     fi
-    chmod 755 "$dst.hotwire-tmp" && mv -f "$dst.hotwire-tmp" "$dst" && own "$dst" && rec_add created "$dst"
-    ok "hotwire-setup.sh kept in $IROOT, for doctor, connect and detach later"
-    change "created $dst" "delete it"
+    # Run through a pipe there is no file to keep, and an unchecked download is never kept.
+    if [ -z "$src" ] || [ ! -f "$src" ] || ! head -c 4096 "$src" | grep -q 'hotwire-setup'; then
+        note "This setup script was not run from a file, so no copy is kept. To keep one:"
+        note "  curl -fsSLO https://afkpanel.com/get/hotwire-setup.sh && sudo install -m 755 hotwire-setup.sh $SETUP_KEPT"
+        return 0
+    fi
+    [ -f "$SETUP_KEPT" ] && cmp -s "$src" "$SETUP_KEPT" && return 0
+    install -o root -g root -m 755 "$src" "$SETUP_KEPT.hotwire-tmp" && mv -f "$SETUP_KEPT.hotwire-tmp" "$SETUP_KEPT" \
+        || { rm -f "$SETUP_KEPT.hotwire-tmp"; warn "could not keep a copy at $SETUP_KEPT"; return 0; }
+    ok "hotwire-setup $VERSION kept at $SETUP_KEPT, for doctor, connect and detach later"
+    change "wrote $SETUP_KEPT (hotwire-setup $VERSION)" "sudo rm $SETUP_KEPT"
 }
 
 show_finish() {
@@ -1759,7 +1834,7 @@ show_finish() {
     elif [ "${S[rust]}" = 1 ]; then
         say "  Start the server with your own start script. hotwire.sh is here any time: run install again."
     fi
-    note "  Run install again any time; the pre-flight decides what is left to do."
+    note "  Run install again any time ($([ -f "$SETUP_KEPT" ] && printf 'sudo hotwire-setup install' || printf 'sudo bash hotwire-setup.sh install')); the pre-flight decides what is left to do."
     [ -f "$(changes_log)" ] && note "  Every change install has made, and how to undo it: $(changes_log)"
 }
 
@@ -1832,9 +1907,9 @@ cmd_install() {
     fi
     show_plan
     if [ "${#PLAN[@]}" -eq 0 ]; then
-        say ""; ok "Nothing to do: this server is installed."; say ""; show_finish; return 0
+        say ""; ok "Nothing to do: this server is installed."; place_setup; say ""; show_finish; return 0
     fi
-    [ "${S[running]}" = 1 ] && { in_plan rust || in_plan oxide; } && die "installing into $IROOT" "the server in this folder is running" "stop it first: sudo systemctl stop $(unit_name)"
+    [ "${S[running]}" = 1 ] && { in_plan rust || in_plan branch || in_plan oxide; } && die "installing into $IROOT" "the server in this folder is running" "stop it first: sudo systemctl stop $(unit_name)"
     say ""
     confirm_default_yes "Go ahead?" || { say "  Nothing was changed."; return 0; }
     countdown 5 "Starting"
@@ -1851,6 +1926,7 @@ cmd_install() {
     registry_add
     in_plan swap     && step_swap
     in_plan rust     && step_rust
+    in_plan branch   && step_branch
     in_plan oxide    && step_oxide
     in_plan launcher && step_launcher
     in_plan rcon     && step_rcon
@@ -1868,7 +1944,7 @@ cmd_install() {
 # ---------------------------------------------------------------- help ----
 cmd_help() {
     cat <<'HELP'
-hotwire-setup -- install a Rust server, and connect it to Hotwire Panel
+hotwire-setup -- install a Rust server, and connect it to AFKPanel
 
   install   A Rust server on Ubuntu, from nothing: SteamCMD, Rust, Oxide, the start
             script, the RCON password, the plugin, a service, and the panel last.

@@ -17,7 +17,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Hotwire", "xman2000", "1.1.55")]
+    [Info("Hotwire", "xman2000", "1.1.56")]
     [Description("Scheduled restarts and updates. Announces, counts down, writes a flag, quits.")]
     internal class Hotwire : CovalencePlugin
     {
@@ -9055,9 +9055,13 @@ namespace Oxide.Plugins
             {
                 if (dir != null && Directory.Exists(dir))
                 {
-                    foreach (var f in new DirectoryInfo(dir).GetFiles("*.tar.zst")) { archives++; bytes += f.Length; }
+                    // The Linux launcher writes .tar.zst, the Windows launcher .zip; maps likewise .zst or .zip.
+                    foreach (var pattern in new[] { "*.tar.zst", "*.zip" })
+                        foreach (var f in new DirectoryInfo(dir).GetFiles(pattern)) { archives++; bytes += f.Length; }
                     var maps = Path.Combine(dir, "maps");
-                    if (Directory.Exists(maps)) foreach (var f in new DirectoryInfo(maps).GetFiles("*.zst")) bytes += f.Length;
+                    if (Directory.Exists(maps))
+                        foreach (var pattern in new[] { "*.zst", "*.zip" })
+                            foreach (var f in new DirectoryInfo(maps).GetFiles(pattern)) bytes += f.Length;
                 }
             }
             catch { }

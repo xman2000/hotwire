@@ -13,7 +13,7 @@ the server already has.
     python tools/convars.py <Assembly-CSharp.dll>                 curated list
     python tools/convars.py <Assembly-CSharp.dll> --all           everything
     python tools/convars.py <Assembly-CSharp.dll> --bat           launcher lines
-    python tools/convars.py <Assembly-CSharp.dll> --check <file>  audit a launcher
+    python tools/convars.py <Assembly-CSharp.dll> --check <file>  audit hotwire.example.cfg (or an old launcher)
     python tools/convars.py <Assembly-CSharp.dll> --json          panel catalogue
 
 WHAT "CURATED" MEANS HERE, AND WHY IT IS NOT A DUMP
@@ -45,7 +45,7 @@ that has quietly moved is worse than no comment, because somebody reads it and
 believes it.
 
 STATUS: run against a real Assembly-CSharp.dll on 2026-09-05 (1,623 convars),
-and used to curate launcher/hotwire.bat. Re-run --check after every Rust update.
+and used to curate launcher/hotwire.example.cfg. Re-run --check after every Rust update.
 """
 
 import json
@@ -663,8 +663,27 @@ def emit_bat(rows):
 CONVAR_IN_BAT = re.compile(r"\+([A-Za-z0-9_]+\.[A-Za-z0-9_]+)")
 
 
+# A setting line in hotwire.cfg: "name value", or "#name value" for one that is off and shows the game's default.
+CONVAR_IN_CFG = re.compile(r"^(#?)([A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z0-9_]+)+)\s+(.*)$")
+
+
+def _same_default(claimed, actual):
+    """Whether a default written in the file says the same as the build: 1 and true, 4.0 and 4, alike."""
+    def norm(value):
+        value = value.strip().strip('"\'').lower()
+        if value in ("true", "1"):
+            return "1"
+        if value in ("false", "0"):
+            return "0"
+        try:
+            return repr(float(value))
+        except ValueError:
+            return value
+    return norm(claimed) == norm(actual)
+
+
 def emit_check(rows, launcher_path):
-    """Audit a launcher against this build.
+    """Audit a launcher, or hotwire.example.cfg, against this build.
 
     The point of the whole exercise: after a Rust update, tell me which options
     in my launcher no longer exist, and which of my comments now claim a
@@ -682,6 +701,23 @@ def emit_check(rows, launcher_path):
         found = re.search(r"\[default:\s*([^\]]+)\]", line)
         if found:
             claimed = found.group(1).strip()
+
+        if launcher_path.endswith(".cfg"):
+            setting = CONVAR_IN_CFG.match(line.strip())
+            if not setting or setting.group(2).lower().startswith("hotwire."):
+                continue
+            checked += 1
+            off, name, value = setting.group(1) == "#", setting.group(2), setting.group(3).strip()
+            row = known.get(name.lower())
+            if row is None:
+                missing.append((name, off))
+            else:
+                # A setting that is off shows the game's default as its value; one that is on may say it in a comment.
+                said = value if off and value.strip('"') else claimed
+                if said and said.lower() != "unknown" and row["default"] != "UNKNOWN" and not _same_default(said, row["default"]):
+                    mismatched.append((name, said, row["default"]))
+            claimed = None
+            continue
 
         names = CONVAR_IN_BAT.findall(line)
         if not names:

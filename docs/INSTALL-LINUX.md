@@ -7,9 +7,11 @@ no Rust experience.
 | --- | --- |
 | Time | About 45 minutes, most of it downloading |
 | Operating system | A current Ubuntu LTS: 22.04, 24.04 or 26.04 |
-| Free disk space | About 20 GB |
-| Memory | 8 GB for a server with plugins |
+| Free disk space | 15 GB, on an SSD if you can |
+| Memory | 12 GB free, more for a 6000 m map |
 | Access | An account with `sudo` |
+
+The disk and memory figures are Facepunch's, from [Creating a server](https://wiki.facepunch.com/rust/Creating-a-server).
 
 The installer was tested on Ubuntu 26.04.
 
@@ -25,6 +27,9 @@ curl -fsSLO https://afkpanel.com/get/hotwire-setup.sh && sudo bash hotwire-setup
 ```
 
 The script is plain bash, saved in the folder where you ran that line, so you can read it first. It:
+
+- keeps a copy of itself at `/usr/local/sbin/hotwire-setup`, owned by root, for `doctor`, `connect`, `detach` and the
+  next install
 
 - installs the server into `/home/rust/server`, running as a `rust` user
 - uses Hotwire's launcher, a random map seed and a generated RCON password

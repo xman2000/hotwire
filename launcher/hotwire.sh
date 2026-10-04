@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # ==[ H O T W I R E ]===================================================
-#  Hotwire launcher for Linux, version 1.1.7-linux (2026-10-02)
+#  Hotwire launcher for Linux. Its version is HOTWIRE_LAUNCHER_VERSION below.
 #  Built by xman2000 and Claude.  MIT License.
 #  https://github.com/xman2000/hotwire
 #
@@ -15,15 +15,15 @@
 # ======================================================================
 
 # --- Launcher identity. Not settings; do not edit.
-#     HOTWIRE_LAUNCHER_HASH is stamped by tools/launcher-hash.sh at release and
-#     is left out of its own computation. The plugin recomputes the hash from
-#     these bytes to confirm this is an unmodified Hotwire launcher before it
-#     offers a launcher-editing feature. Capabilities, not the version number,
-#     are what a feature is gated on; settings_file says the settings are read
-#     from hotwire.cfg.
-HOTWIRE_LAUNCHER_VERSION="1.1.8-linux"
+#     The plugin reads these from oxide/data/Hotwire/launcher.json, which the
+#     launcher writes before every start. The capability list decides which
+#     features the plugin offers; settings_file says the settings are read from
+#     hotwire.cfg. HOTWIRE_LAUNCHER_HASH is stamped by tools/launcher-hash.sh at
+#     release and is left out of its own computation: AFKPanel shows whether
+#     this file is the released one, and nothing waits on that answer.
+HOTWIRE_LAUNCHER_VERSION="1.1.9-linux"
 HOTWIRE_LAUNCHER_CAPABILITIES="supervise,update,framework_verify,crash_backstop,log_rotate,convar_persist,wipe,backup,settings_file"
-HOTWIRE_LAUNCHER_HASH="eb679b45d74c1f4c6f06400bee5c074790e4695e3be78f4397c7b8197495a726"
+HOTWIRE_LAUNCHER_HASH="4f079d62333a6ff2011004da7142c6eb467e6bb19b367dac6ddec16aff10ef0f"
 
 # ======================================================================
 #  HOW THIS LAUNCHER WORKS
@@ -46,14 +46,13 @@ HOTWIRE_LAUNCHER_HASH="eb679b45d74c1f4c6f06400bee5c074790e4695e3be78f4397c7b8197
 #   .example files to begin. A hook that fails is logged, and the server
 #   starts anyway; check mode runs no hook.
 #
-#   THE PANEL NEVER REACHES IN. There is no inbound path: the plugin and the
+#   AFKPANEL NEVER REACHES IN. There is no inbound path: the plugin and the
 #   launcher speak only through local files (UPDATE.flag / VALIDATE.flag,
-#   WIPE.flag, CONVAR.request), and the launcher reports OUTWARD to the panel
-#   as the contract's `script` component -- signed with the script key,
-#   best-effort, spooled on failure, and never able to block or fail the
-#   server (rule 1). It reports only what only it knows: how a run ended, the
-#   update outcome, and a crash-streak stop. It sends findings and facts; a
-#   file never travels.
+#   WIPE.flag, CONVAR.request, BACKUP.flag). Once the server is connected, the
+#   launcher also reports outward, signed with its own key: how a run ended,
+#   the update outcome, and a crash-streak stop. A report that cannot be sent
+#   waits on disk for the next try, and nothing about reporting can delay or
+#   stop the server. Facts travel; files never do.
 #
 #   Requires: bash 4+, curl, unzip, and flock (util-linux); zstd for backups.
 #   jq is used for the Oxide SHA-256 verification when present; without it
@@ -76,7 +75,6 @@ APPID="258550"
 UPDATE_FLAG="UPDATE.flag"
 VALIDATE_FLAG="VALIDATE.flag"
 WIPE_FLAG="WIPE.flag"
-FRAMEWORK_FEED="https://assets.umod.org/games/rust.json"
 FRAMEWORK_RELEASES="https://api.github.com/repos/OxideMod/Oxide.Rust/releases/latest"
 FRAMEWORK_ASSET="Oxide.Rust-linux.zip"
 FRAMEWORK_URL="https://github.com/OxideMod/Oxide.Rust/releases/latest/download/Oxide.Rust-linux.zip"
@@ -174,7 +172,7 @@ LAUNCHER_STATE="$ROOT/oxide/data/Hotwire/launcher.json"
 CRASH_STREAK=0
 
 # ======================================================================
-# Section 4 -- reading hotwire.cfg and hotwire-secrets.cfg.
+# Reading hotwire.cfg and hotwire-secrets.cfg.
 #
 # Read as data, one line at a time, and never run. A line is a name, spaces,
 # then a value; a value with spaces is in double quotes and holds none inside;
@@ -321,6 +319,8 @@ load_config() {
                 else CFG_PROBLEMS+=("line $n: $name: $CFG_WHY; the default is used"); fi
                 continue
             fi
+            # A number goes on in base 10: bash reads a leading zero as octal, so "08" would stop the launcher.
+            case "$kind" in int|int1|seed|worldsize|port) [ -n "$CFG_VALUE" ] && CFG_VALUE="$((10#$CFG_VALUE))" ;; esac
             # For a launcher setting an empty value is its default, except the Steam branch, where empty means
             # "let Steam keep the last one". A server convar's empty value is the game's default, as the file says.
             if [ -z "$CFG_VALUE" ] && [ -n "${HW_SETTINGS[$lower]:-}" ] && [ "$kind" != word ]; then continue; fi
@@ -390,32 +390,37 @@ config_reload() {
 }
 
 # ======================================================================
-# Section 5 -- the RCON password, from hotwire-secrets.cfg. Read as data, like
-# hotwire.cfg; only rcon.password is taken from it.
+# The RCON password, from hotwire-secrets.cfg. Read as data, like
+# hotwire.cfg; only rcon.password is taken from it. Read before every start:
+# a problem stops the first start, and a later start keeps the last good
+# password and says so.
 # ======================================================================
+RCON_PASSWORD=""
 load_secrets() {
+    local raw line n=0 password="" why=""
     if [ ! -f "$SECRETS_CFG" ]; then
-        die "No hotwire-secrets.cfg beside the launcher. Copy hotwire-secrets.example.cfg to hotwire-secrets.cfg and set rcon.password."
+        why="No hotwire-secrets.cfg beside the launcher. Copy hotwire-secrets.example.cfg to hotwire-secrets.cfg and set rcon.password."
+    else
+        while IFS= read -r raw || [ -n "$raw" ]; do
+            n=$((n+1))
+            line="${raw%$'\r'}"; line="${line#"${line%%[![:space:]]*}"}"
+            [ -z "$line" ] && continue
+            [[ "$line" == '#'* ]] && continue
+            if ! cfg_line "$line"; then warn "hotwire-secrets.cfg line $n: $CFG_WHY; ignored."; continue; fi
+            if [ "${CFG_NAME,,}" = "rcon.password" ]; then password="$CFG_VALUE"
+            else warn "hotwire-secrets.cfg line $n: $CFG_NAME: only rcon.password belongs here; ignored."; fi
+        done < "$SECRETS_CFG"
+        if [ -z "$password" ]; then why="hotwire-secrets.cfg does not set rcon.password."
+        elif [ "$password" = "change_me" ]; then why="rcon.password is still the example 'change_me'. Set a real one in hotwire-secrets.cfg."
+        elif [ "${#password}" -lt "$RCON_PASSWORD_MIN" ]; then why="rcon.password is shorter than hotwire.rcon_password_min ($RCON_PASSWORD_MIN)."
+        fi
     fi
-    local raw line n=0
-    RCON_PASSWORD=""
-    while IFS= read -r raw || [ -n "$raw" ]; do
-        n=$((n+1))
-        line="${raw%$'\r'}"; line="${line#"${line%%[![:space:]]*}"}"
-        [ -z "$line" ] && continue
-        [[ "$line" == '#'* ]] && continue
-        if ! cfg_line "$line"; then warn "hotwire-secrets.cfg line $n: $CFG_WHY; ignored."; continue; fi
-        if [ "${CFG_NAME,,}" = "rcon.password" ]; then RCON_PASSWORD="$CFG_VALUE"
-        else warn "hotwire-secrets.cfg line $n: $CFG_NAME: only rcon.password belongs here; ignored."; fi
-    done < "$SECRETS_CFG"
-    if [ -z "$RCON_PASSWORD" ]; then
-        die "hotwire-secrets.cfg does not set rcon.password."
+    if [ -n "$why" ]; then
+        [ -z "$RCON_PASSWORD" ] && die "$why"
+        rule; bad "$why"; bad "Starting with the RCON password from the last start."; rule
+        return 0
     fi
-    if [ "$RCON_PASSWORD" = "change_me" ]; then
-        die "rcon.password is still the example 'change_me'. Set a real one in hotwire-secrets.cfg."
-    elif [ "${#RCON_PASSWORD}" -lt "$RCON_PASSWORD_MIN" ]; then
-        die "rcon.password is shorter than hotwire.rcon_password_min ($RCON_PASSWORD_MIN)."
-    fi
+    RCON_PASSWORD="$password"
     if [ -n "$(find "$SECRETS_CFG" -perm /o+r 2>/dev/null)" ]; then
         warn "hotwire-secrets.cfg can be read by every user on this machine. chmod 600 it."
     fi
@@ -453,7 +458,7 @@ preflight() {
 }
 
 # ======================================================================
-# Section 6a -- the "am I behind?" build check. Reads the installed build
+# The build check: is this install behind Steam? Reads the installed build
 # id from the appmanifest, and the public build id from steamcmd (behind
 # a non-blocking lock, cached). Any failure leaves both empty and decides
 # nothing on its own -- fail toward starting the server.
@@ -515,7 +520,7 @@ build_check() {
 }
 
 # ======================================================================
-# Section 6 -- decide whether to update this pass.
+# Whether this start also updates.
 # ======================================================================
 DO_UPDATE=0; DO_VALIDATE=0
 # Who decides updates on this pass. auto follows the Hotwire plugin: while it has an update scheduled it keeps
@@ -545,10 +550,11 @@ update_decision() {
         [ -e "$ROOT/$UPDATE_FLAG" ] && log "hotwire.update_mode is off; leaving $UPDATE_FLAG in place, not acting on it."
         return 0
     fi
+    # A validate asked for (VALIDATE.flag) is carried out in every mode that updates.
+    if [ -e "$ROOT/$VALIDATE_FLAG" ]; then log "$VALIDATE_FLAG found: updating and validating."; DO_UPDATE=1; DO_VALIDATE=1; return 0; fi
     [ "$UPDATE_EFFECTIVE" = "always" ] && { log "hotwire.update_mode is $UPDATE_MODE -- updating before launch."; DO_UPDATE=1; return 0; }
 
     # hotwire mode:
-    if [ -e "$ROOT/$VALIDATE_FLAG" ]; then DO_UPDATE=1; DO_VALIDATE=1; return 0; fi
     if [ -e "$ROOT/$UPDATE_FLAG" ]; then DO_UPDATE=1; return 0; fi
 
     # Not knowing is not the same as current: a server left on an old build turns every player away after a
@@ -575,7 +581,7 @@ update_decision() {
 }
 
 # ======================================================================
-# Section 6-steam -- run steamcmd under a blocking lock with a deadline.
+# SteamCMD, under a lock shared with every server on this machine, with a deadline.
 # ======================================================================
 STEAM_OK=0
 # A forced wipe waits on this update: WIPE.flag says forced, its cycle is not done and it has not expired.
@@ -625,9 +631,9 @@ manifest_marked_corrupt() {
 # its cache and asks Steam only on a miss, and Steam refuses an old Rust build's lists to an anonymous login ("Failed to
 # get manifest request code, 'Access Denied'", then "No connection"). The cache is shared by every server that uses this
 # SteamCMD, so one server's update can leave another, still on the old build, unable to update. Without Steam's install
-# record SteamCMD checks the files on disk against the new build and downloads what differs (measured on rust2: about
-# 0.8 GB, 133 s), which is what other server tools ship for this. Only SteamCMD's own log says why a run failed, so the
-# part one run added to it is read while this launcher still holds the SteamCMD lock: no other server's run is in it.
+# record SteamCMD checks the files on disk against the new build and downloads what differs (about 0.8 GB and 133 s,
+# measured on one server). Only SteamCMD's own log says why a run failed, so the part one run added to it is read while
+# this launcher still holds the SteamCMD lock: no other server's run is in it.
 STEAM_LOG_SIZES=(); INSTALLED_MANIFESTS=""; RECOVERY_SAVED=""
 steam_content_logs() {
     printf '%s\n' "$HOME/.local/share/Steam/logs/content_log.txt" "$HOME/Steam/logs/content_log.txt" \
@@ -686,6 +692,10 @@ steam_update() {
 }
 steam_update_attempts() {
     STEAM_OK=0
+    if [ ! -x "$STEAMCMD" ]; then
+        bad "SteamCMD is not at $STEAMCMD. Set hotwire.steamcmd in hotwire.cfg. Starting what is on disk."
+        return 0
+    fi
     mark_manifest_for_check
     local quick_retry_used=0 recovery_used=0 refused=0
     # A forced wipe rides this update, and the old build cannot take players once their game has updated: keep trying
@@ -730,7 +740,7 @@ steam_update_attempts() {
             continue
         fi
         if [ "$tries" -ge "$MAX_STEAM_TRIES" ] && [ "$(date +%s)" -ge "$deadline" ]; then
-            warn "steamcmd gave up after $tries attempts; launching what we have."
+            warn "steamcmd gave up after $tries attempts; starting what is on disk."
             return 0
         fi
         # Once per update, a try that left the install marked Files Corrupt is retried at once: Steam checks every
@@ -744,7 +754,7 @@ steam_update_attempts() {
     done
 }
 # ======================================================================
-# Section 6-framework -- install/refresh Oxide (the Linux build), with a
+# Oxide: install or refresh the Linux build, with a
 # skip-when-unchanged optimisation and a GitHub SHA-256 verification.
 # ======================================================================
 FRAMEWORK_OK=0
@@ -797,7 +807,8 @@ framework_update() {
 
     local zip="$ROOT/OxideMod.zip"
     [ -n "$sha" ] && log "Downloading Oxide ${tag:-latest} (will verify SHA-256)..." || log "Downloading Oxide (unverified)..."
-    if ! curl -fSL -A "Mozilla/5.0" "$from" --output "$zip" 2>/dev/null; then
+    # A stalled download gives up (under 1 byte a second for 2 minutes); a slow one carries on.
+    if ! curl -fSL -A "Mozilla/5.0" --connect-timeout 30 --speed-limit 1 --speed-time 120 "$from" --output "$zip" 2>/dev/null; then
         warn "Oxide download failed; keeping the current install."
         rm -f "$zip"; return 0
     fi
@@ -839,7 +850,7 @@ finalize_update() {
 }
 
 # ======================================================================
-# Section 7 -- build the launch arguments, and check them.
+# The server's arguments, and the option check.
 # ======================================================================
 ARGS=()
 build_args() {
@@ -913,14 +924,12 @@ JSON
 }
 
 # ======================================================================
-# Reporting to the panel -- kind: session and kind: launcher. The launcher is
-# the `script` component of the contract: it signs with the script key connect
-# wrote (hotwire/keys.json) and reports only what only it knows -- how a run
-# ended, the update outcome, and a crash-streak stop ("the most important report
-# in the contract"). Everything here is best-effort: a report that cannot be
-# sent is spooled and drained next boot, and nothing here ever blocks or fails
-# the server (rule 1). The plugin still reports the boot itself (ADR-0080), so
-# this is not "Last boot"; it is the update-and-exit account only the script has.
+# Reporting to AFKPanel: the session report after each run and the launcher
+# report when a crash streak stops it. Signed with the launcher's own key,
+# which connect wrote to hotwire/keys.json. The launcher reports only what
+# only it knows: how a run ended, the update outcome, and a crash-streak stop.
+# The plugin reports the boot itself. A report that cannot be sent waits in
+# the spool for a later try, and nothing here delays or stops the server.
 # ======================================================================
 _json_str() {  # a flat JSON string value: _json_str <file> <key>
     [ -f "$1" ] || return 0
@@ -989,7 +998,7 @@ _spool_write() {  # <kind> <payload> <rid> <sent_at>
 }
 
 # A report is written to the spool and sent from there, never on the way to a
-# start: the server never waits on the panel (house rule 1). spool_kick sends in
+# start: the server never waits on AFKPanel. spool_kick sends in
 # the background; spool_flush sends now, only where the launcher is about to stop
 # for good and nothing is waiting to start.
 hw_send() {  # <kind> <payload-json>
@@ -1096,17 +1105,30 @@ report_launcher_stopped() {  # <detail>
 # size live with wipe and are fenced out of the convar editor: a routine convar
 # edit must never be able to wipe a map.
 # ======================================================================
-# cfg_set <name> <value>: write one setting into hotwire.cfg. The line that sets
-# it is changed where it is; a setting that is off in the list (#name value) is
-# switched on in its place; anything else is added at the end. The value is
-# written in double quotes when it has spaces or is empty. The caller has already
-# checked the name and value; a double quote or a control character never reaches
-# here. The file is written whole and moved into place, keeping its permissions.
+# cfg_set <name> <value> [<name> <value>...]: write settings into hotwire.cfg,
+# all of them or none. The line that sets each is changed where it is; a setting
+# that is off in the list (#name value) is switched on in its place; anything
+# else is added at the end. A value is written in double quotes when it has
+# spaces or is empty. The caller has already checked every name and value; a
+# double quote or a control character never reaches here. The file is written
+# whole and moved into place, keeping its permissions.
 cfg_set() {
-    local name="$1" value="$2" tmp shown
-    [ -f "$CFG" ] || return 1
-    if [ -z "$value" ] || [[ "$value" == *[[:space:]]* ]]; then shown="\"$value\""; else shown="$value"; fi
+    local tmp next
+    [ -f "$CFG" ] && [ $(( $# % 2 )) -eq 0 ] || return 1
     tmp="$(mktemp "$ROOT/.hotwire.cfg.XXXXXX")" || return 1
+    next="$tmp.next"
+    cp "$CFG" "$tmp" || { rm -f "$tmp"; return 1; }
+    while [ $# -gt 0 ]; do
+        if ! _cfg_set_one "$1" "$2" < "$tmp" > "$next" || ! mv -f "$next" "$tmp"; then rm -f "$tmp" "$next"; return 1; fi
+        shift 2
+    done
+    chmod --reference="$CFG" "$tmp" 2>/dev/null
+    if [ -s "$tmp" ] && mv -f "$tmp" "$CFG"; then return 0; fi
+    rm -f "$tmp"; return 1
+}
+_cfg_set_one() {  # <name> <value>: stdin to stdout
+    local name="$1" value="$2" shown
+    if [ -z "$value" ] || [[ "$value" == *[[:space:]]* ]]; then shown="\"$value\""; else shown="$value"; fi
     # Through the environment, not -v: awk -v would read a backslash in the value
     # (\n in a description) as an escape.
     HW_NAME="$name" HW_LINE="$(printf '%-27s %s' "$name" "$shown")" awk '
@@ -1123,9 +1145,7 @@ cfg_set() {
             for (i = 1; i <= NR; i++) print (i == at ? line : rows[i])
             if (!at) print line
         }
-    ' "$CFG" > "$tmp" && chmod --reference="$CFG" "$tmp" 2>/dev/null
-    if [ -s "$tmp" ] && mv -f "$tmp" "$CFG"; then return 0; fi
-    rm -f "$tmp"; return 1
+    '
 }
 
 apply_wipe() {
@@ -1152,13 +1172,12 @@ apply_wipe() {
         rm -f "$flag"; warn "Wipe flag expired ($(date -u -d "@$expires" +%FT%TZ 2>/dev/null)); ignoring."; return 0
     fi
 
-    # Validate as plain integers before anything is written or deleted.
-    local why=""
-    case "$seed" in ''|*[!0-9]*) why="seed is not a whole number";; esac
-    if [ -z "$why" ] && [ -n "$size" ]; then
-        case "$size" in *[!0-9]*) why="size is not a whole number";; esac
-        [ -z "$why" ] && { [ "$size" -lt 1000 ] || [ "$size" -gt 6000 ]; } && why="size $size is outside 1000-6000"
+    # Checked by the same rules as hotwire.cfg before anything is written or deleted.
+    local why=""; CFG_WHY=""
+    if [ -z "$seed" ] || ! cfg_check seed "$seed"; then why="seed ${CFG_WHY:-is missing}"
+    elif [ -n "$size" ] && ! cfg_check worldsize "$size"; then why="size $CFG_WHY"
     fi
+    [ -z "$why" ] && seed="$((10#$seed))" && { [ -z "$size" ] || size="$((10#$size))"; }
     case "$bp" in keep|rename|delete) ;; *) [ -z "$why" ] && why="blueprints must be keep, rename or delete";; esac
     if [ -n "$why" ]; then
         rule; bad "Wipe CANCELLED: $why. Booting unchanged."; rule
@@ -1191,15 +1210,18 @@ apply_wipe() {
     fi
 
     rule; log "Wiping (cycle ${cycle:-none}): new seed $seed${size:+, size $size}, blueprints: $bp."
-    # 1) The map change first: write the new seed (and size) into settings. If this
-    #    cannot be done, cancel before touching anything else and boot unchanged.
-    if ! cfg_set server.seed "$seed"; then
-        rule; bad "Wipe CANCELLED: could not write the new seed. Booting unchanged."; rule
+    # 1) The map change first: write the new seed (and size) into settings, both or
+    #    neither. If that cannot be done, cancel before touching anything else and
+    #    boot unchanged.
+    local pairs=( server.seed "$seed" )
+    [ -n "$size" ] && pairs+=( server.worldsize "$size" )
+    if ! cfg_set "${pairs[@]}"; then
+        rule; bad "Wipe CANCELLED: could not write the new seed${size:+ and size} to hotwire.cfg. Booting unchanged."; rule
         printf 'cancelled: could not write seed\n' > "$WIPE_RESULT" 2>/dev/null || true
         rm -f "$flag"; return 0
     fi
     SERVER_SEED="$seed"
-    if [ -n "$size" ]; then cfg_set server.worldsize "$size"; SERVER_WORLDSIZE="$size"; fi
+    [ -n "$size" ] && SERVER_WORLDSIZE="$size"
 
     # 2) Blueprints, in the identity folder. Match by glob (the version in the name
     #    changes between builds). Never touch player.tokens.db.
@@ -1643,14 +1665,15 @@ backup_before_launch() {
 run_hook() {  # run_hook <file> <label>
     [ -f "$1" ] || return 0
     log "Running $2 ($(basename "$1"))..."
-    ( cd "$ROOT" && bash "$1" ) || warn "$(basename "$1") exited non-zero; carrying on."
+    # DO_UPDATE tells the hook whether this start updates: 1 or 0.
+    ( cd "$ROOT" && DO_UPDATE="${DO_UPDATE:-0}" bash "$1" ) || warn "$(basename "$1") exited non-zero; carrying on."
 }
 
 per_launch_prep() {
     UPDATE_ATTEMPTED=0
     # hotwire.cfg is read again before every start, so an edit takes effect on
     # the next restart without restarting the launcher.
-    [ -n "${CONFIG_LOADED:-}" ] && config_reload
+    [ -n "${CONFIG_LOADED:-}" ] && { config_reload; load_secrets; }
     CONFIG_LOADED=1
     init_reporting
     decide_update_mode
@@ -1658,7 +1681,7 @@ per_launch_prep() {
     # The installed build before any update this pass: framework_update compares with it (Oxide goes back over a new build).
     BUILD_BEFORE="$INSTALLED_BUILD"
     update_decision
-    # Check mode says what a normal start would do, rather than "Plain restart" (the owner's test, 2026-09-28).
+    # Check mode says what a normal start would do, rather than "Plain restart".
     if [ -n "$CHECK_ONLY" ]; then
         if [ "$DO_UPDATE" = "1" ]; then log "Check mode: a normal start would update here. Nothing is installed."
         else log "Check mode: a normal start would launch without updating."; fi
@@ -1692,7 +1715,7 @@ per_launch_prep() {
 }
 
 # ======================================================================
-# Section 8 -- the run loop.
+# The run loop.
 # ======================================================================
 run_loop() {
     while :; do
@@ -1727,7 +1750,9 @@ run_loop() {
             report_launcher_stopped "$CRASH_STREAK consecutive runs under ${CRASH_SECONDS}s"
             # Stopping for good: nothing waits to start, so this report goes now.
             spool_flush
-            exit 1
+            # Exit 0: this stop is on purpose. A systemd unit with Restart=on-failure restarts any other exit
+            # status, which would bring the crash loop straight back.
+            exit 0
         fi
 
         local delay="$RESTART_DELAY"
@@ -1750,7 +1775,7 @@ run_loop() {
 # ======================================================================
 # Main.
 # ======================================================================
-printf '%s%s H O T W I R E %s  launcher %s%s (linux)  --  %s\n' \
+printf '%s%s H O T W I R E %s  launcher %s%s%s\n' \
     "$C_BLD" "$C_CYN" "$C_OFF" "$C_BLD" "$HOTWIRE_LAUNCHER_VERSION" "$C_OFF"
 [ -n "$CHECK_ONLY" ] && log "Check mode: everything is checked, nothing is started."
 

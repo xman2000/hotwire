@@ -9,7 +9,7 @@
 #   dist/hotwire-windows.zip   the setup script (.bat + .ps1), hotwire.bat, the settings and hook examples, Hotwire.cs,
 #                              README.txt
 #   dist/hotwire-linux.zip     hotwire.sh, the settings and hook examples, Hotwire.cs, README.txt: Hotwire for a server
-#                              that is already installed (the start-script converter's first download, panel ADR-0204)
+#                              that is already installed (what the start-script converter on afkpanel.com sends people to)
 #   dist/hotwire-setup.sh      the Linux setup script
 #   dist/Hotwire.cs            the plugin
 #   dist/SHA256SUMS            sha256 of each of the above

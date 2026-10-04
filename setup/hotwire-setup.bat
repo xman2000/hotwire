@@ -1,6 +1,6 @@
 @echo off
 REM  hotwire-setup -- double-click this to install a Rust server, or to connect one to
-REM  Hotwire Panel. It shows a menu and asks before it does anything.
+REM  AFKPanel. It shows a menu and asks before it does anything.
 REM
 REM  All it does is start hotwire-setup.ps1, which sits beside it and does the work.
 REM

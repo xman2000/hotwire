@@ -21,9 +21,59 @@ differ; that is the design, not drift.
 Entries are newest first, so the two halves interleave: a plugin `1.1.2` can
 sit above a launcher `1.1.7`. Read the label, not the number.
 
-`hotwire check` prints the plugin's version. The launcher's is in the banner
-at the top of the file — it is a comment, not something it echoes, so read it
-rather than watch for it.
+`hotwire check` prints the plugin's version. Each launcher prints its own
+version as the first line when it starts.
+
+## Launchers 1.1.20 (Windows) and 1.1.9-linux, plugin 1.1.56, setup 0.1.18 (Windows) and 0.2.19 (Linux) — 2026-10-04
+
+**Backups on Windows. A launcher setting written with a leading zero no longer stops the launcher, a wipe writes its
+new map in one step, and both launchers get Oxide from GitHub.**
+
+- Windows: the launcher carries out the backups Hotwire asks for, as the Linux launcher does: while the server runs,
+  before an update and before a wipe. Windows has no zstd, so an archive is a `.zip`, made with what Windows already
+  has. Every file in it is read back and checked against the SHA-256s in its `MANIFEST` before it is kept. The same
+  free-space floor, rotation and results as on Linux.
+- Plugin 1.1.56: counts `.zip` archives and maps when it tells AFKPanel how much the backups take.
+
+- A number with a leading zero in `hotwire.cfg`, such as `hotwire.steamcmd_wait_minutes 08`, was accepted and then
+  read as an octal number: the Linux launcher stopped before starting the server, and the Windows launcher's
+  arithmetic went wrong. Every number is now read in base 10.
+- Linux: a wipe checks its seed and size by the same rules as `hotwire.cfg`, and writes both in one step. Before, a
+  size that could not be written left the new seed with the old size, and the result still said the size was applied.
+- Windows: after waiting `hotwire.steamcmd_wait_minutes` for another server's SteamCMD run, the launcher starts the
+  server with what is on disk, as the Linux launcher and the documentation say. Before, each wait counted as one
+  failed try, so a busy SteamCMD could hold the server for every try in turn.
+- Windows: a server folder with a bracket in its name, such as `C:\Rust (main)`, no longer stops the launcher with a
+  syntax error before the server starts.
+- Windows: the launcher prints its version when it starts.
+- Windows: Oxide comes from GitHub, as on Linux. The launcher compares the installed Oxide with GitHub's latest release,
+  downloads GitHub's file and checks it against the SHA-256 GitHub publishes. Setup does the same. uMod's feed, which
+  named the new Oxide over an hour late on a release day, is no longer asked.
+- A stalled Oxide download gives up after 2 minutes without data, and the server starts on what it has. A slow download
+  carries on.
+- When SteamCMD is not where `hotwire.steamcmd` says, the launcher says so and starts the server at once, instead of
+  trying five times.
+- Linux: `hotwire-secrets.cfg` is read before every start, as on Windows. A change that breaks a rule is reported and the
+  last good password is used.
+- Linux: when a crash streak stops the launcher, it exits with status 0, so a systemd service set to restart on failure
+  no longer starts the crash loop again.
+- Linux setup keeps its own copy at `/usr/local/sbin/hotwire-setup`, owned by root, instead of in the server folder,
+  which the server's account can change.
+- The install guides give Facepunch's figures: 12 GB of free memory and 15 GB of disk.
+- Windows: once connected, the launcher reports to AFKPanel as the Linux launcher does: how each run ended and what its
+  update did, and a stop after a crash streak. Reports are sent in the background and wait on disk when AFKPanel cannot
+  be reached.
+- Windows: when a forced wipe waits on the update, SteamCMD is tried for `hotwire.forced_wipe_steam_minutes` (15) past
+  the usual tries, as on Linux.
+- Linux: a validate asked for (`VALIDATE.flag`) now runs in `always` mode too; before, it was skipped and the request
+  deleted.
+- Linux: `hotwire-before.sh` and `hotwire-after.sh` can read `$DO_UPDATE`, as the Windows hooks can.
+- Linux setup offers to open the Rust+ port, and can move a finished server to another Steam branch.
+- The example `hotwire.cfg` gives the Rust+ port rule from Facepunch's documentation: the larger of `server.port` and
+  `rcon.port`, plus 67.
+- `tools/convars.py --check` reads `hotwire.example.cfg` again; it had been checking none of its lines.
+- Setup calls the panel AFKPanel, and on Linux takes the SteamCMD lock in the server account's real home folder.
+- Comments and documentation brought up to date with what the launchers do.
 
 ## Plugin 1.1.55, setup 0.1.17 (Windows) and 0.2.18 (Linux) — 2026-10-04
 

@@ -36,7 +36,7 @@ Hotwire never creates or changes these files.
 
 ## Tell an update from a restart (Windows)
 
-On Windows, `hotwire-before.bat` can read `DO_UPDATE`: `1` when this start will update Rust and Oxide, `0` when it
+`hotwire-before` can read `DO_UPDATE`: `1` when this start will update Rust and Oxide, `0` when it
 will not. This runs one backup before an update and a lighter one on a plain restart:
 
 ```bat
@@ -49,7 +49,7 @@ if "%DO_UPDATE%"=="1" (
 exit /b 0
 ```
 
-On Linux, `hotwire-before.sh` cannot read `DO_UPDATE`.
+On Linux, `hotwire-before.sh` reads it as `$DO_UPDATE`. Requires launcher 1.1.9-linux or later.
 
 ## Examples
 

@@ -43,19 +43,17 @@ Rust does not start without an RCON password. Hotwire's launcher reads it from `
 | Example value | `change_me` is refused |
 | Other lines | Comments (`#`) only. Any other setting is ignored. |
 
-The launcher does not start while the password breaks a rule, and says which rule. On Windows, a change that breaks a
-rule while the launcher runs is reported, and the server starts with the last good password.
+The launcher does not start while the password breaks a rule, and says which rule. A change that breaks a rule while
+the launcher runs is reported, and the server starts with the last good password.
 
 ## Change the password
 
 1. Edit `hotwire-secrets.cfg`.
 2. Save the new password in your password manager.
-3. Restart the server.
+3. Restart the server. The launcher reads the file again before every start.
 
-| Platform | The new password is used |
-| --- | --- |
-| Windows | At the next start |
-| Linux | When `hotwire.sh` is started again |
+Requires launcher 1.1.9-linux or later on Linux; an older Linux launcher reads the file only when `hotwire.sh` itself
+is started.
 
 ## Keep it private
 

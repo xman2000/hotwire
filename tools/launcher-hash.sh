@@ -2,17 +2,17 @@
 #
 # launcher-hash.sh -- compute, stamp, or verify a Hotwire launcher's code hash.
 #
-# The code hash is the launcher's identity: a SHA-256 over everything EXCEPT
-#   (a) the admin's SETTINGS block (between the BEGIN/END markers), and
-#   (b) the HOTWIRE_LAUNCHER_HASH declaration line itself.
-# So an admin editing settings never changes the hash, and the file can carry
-# its own hash. The plugin recomputes this exact value from the launcher's bytes
-# to confirm it is an unmodified Hotwire launcher before offering a
-# launcher-editing feature.
+# The code hash is the launcher's identity: a SHA-256 over everything except
+# the HOTWIRE_LAUNCHER_HASH declaration line itself, so the file can carry its
+# own hash. The plugin recomputes this exact value from the launcher's bytes and
+# AFKPanel shows whether the launcher is the released file; nothing is refused
+# on the answer. The settings live in hotwire.cfg, so the launchers no longer
+# carry a SETTINGS block; the step that drops one stays, so the hash of an older
+# launcher is computed the same way as before.
 #
 # The algorithm must match the plugin's byte for byte:
 #   - split on LF, treating CRLF as LF (hotwire.bat is checked out with CRLF);
-#   - drop each SETTINGS block (inclusive of both marker lines; hotwire.bat has two);
+#   - drop each SETTINGS block, if any (inclusive of both marker lines);
 #   - drop the line beginning HOTWIRE_LAUNCHER_HASH= ;
 #   - strip trailing whitespace from each remaining line;
 #   - join with LF and SHA-256 the result.

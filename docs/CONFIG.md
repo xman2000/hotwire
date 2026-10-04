@@ -277,7 +277,7 @@ Reporting to AFKPanel. Nothing is sent until the Rust server has been connected 
 
 ## Backups
 
-Requires Hotwire 1.1.41 or later, the Linux launcher 1.1.0 or later, and an AFKPanel plan that includes backups. Off until `Back up this server` is `true`. `hotwire backup` says which of the three is missing.
+Requires Hotwire 1.1.41 or later (1.1.56 on Windows), the Linux launcher 1.1.0 or the Windows launcher 1.1.20 or later, and an AFKPanel plan that includes backups. Off until `Back up this server` is `true`. `hotwire backup` says which of the three is missing.
 
 ```json
 "Backups": {
@@ -303,7 +303,7 @@ Requires Hotwire 1.1.41 or later, the Linux launcher 1.1.0 or later, and an AFKP
 
 | Rule | Value |
 | --- | --- |
-| Where | `backup/<save folder name>/` in the server folder: `<UTC time>-<why>.tar.zst`, a `.meta` file beside it, `backup.log`. The map file is in `maps/`, once per map. Nothing is sent anywhere. |
+| Where | `backup/<save folder name>/` in the server folder: `<UTC time>-<why>.tar.zst` on Linux or `<UTC time>-<why>.zip` on Windows, a `.meta` file beside it, `backup.log`. The map file is in `maps/`, once per map. Nothing is sent anywhere. |
 | The world | The save and the game's databases, copied through the game's own connection right after Rust's save, a few milliseconds per frame, so the copy is consistent while players play |
 | The server config | The save folder's `cfg` (owners, moderators, bans, `serverauto.cfg`) and the launcher's settings |
 | Oxide | `oxide/plugins`, `config`, `data` and `lang`. Never `oxide/data/Hotwire`, which holds the AFKPanel keys. |

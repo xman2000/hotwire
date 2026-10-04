@@ -10,8 +10,8 @@ there and how they stay right.
 the file itself. It reports each convar's name, type and default.
 
 **The workflow after a Rust update**, for whoever maintains this repo: copy
-`RustDedicated_Data\\Managed\\Assembly-CSharp.dll` off a server, run `--check`
-against `launcher/hotwire.bat`, and fix whatever it reports. Then the launcher
+`RustDedicated_Data/Managed/Assembly-CSharp.dll` off a server, run `--check`
+against `launcher/hotwire.example.cfg`, and fix whatever it reports. Then the settings list
 is correct again for everyone who uses it, without any of them running
 anything.
 
@@ -21,11 +21,12 @@ venv\Scripts\pip install dnfile
 
 venv\Scripts\python tools\convars.py <dll>                 curated list
 venv\Scripts\python tools\convars.py <dll> --all           everything
-venv\Scripts\python tools\convars.py <dll> --bat           launcher lines
-venv\Scripts\python tools\convars.py <dll> --check <bat>   audit a launcher
+venv\Scripts\python tools\convars.py <dll> --json          the panel's autocomplete list
+venv\Scripts\python tools\convars.py <dll> --check launcher\hotwire.example.cfg
+                                                         audit the settings list
 ```
 
-**`--check` is the one that earns its keep.** It reads a launcher and reports
+**`--check` is the one that earns its keep.** It reads `hotwire.example.cfg` and reports
 every convar in it that no longer exists in the installed build, and every
 comment whose claimed default the build disagrees with. Run it after a Rust
 update and it turns a mystery outage into a two-line diff.

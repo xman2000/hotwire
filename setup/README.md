@@ -7,7 +7,7 @@ or removing anything defaults to no.
 | file | platform |
 |---|---|
 | `hotwire-setup.bat` + `hotwire-setup.ps1` | Windows. Double-click the `.bat`; the `.ps1` does the work. |
-| `hotwire-setup.sh` | Linux. Connect only — installing on Linux is still [the guide](../docs/INSTALL-LINUX.md). |
+| `hotwire-setup.sh` | Ubuntu. `sudo bash hotwire-setup.sh install`, then the same `doctor`, `connect`, `status` and `detach`. See [the guide](../docs/INSTALL-LINUX.md). |
 
 ## Windows
 
@@ -25,7 +25,7 @@ or removing anything defaults to no.
    - is the clock right (against Steam's servers, so it never contacts the panel)
    - is Hotwire installed: `hotwire.bat` and `hotwire.cfg` here, `Hotwire.cs` in `oxide\plugins`
    - is the RCON password in `hotwire-secrets.cfg` one `hotwire.bat` will accept
-   - is it connected to Hotwire Panel, and as what
+   - is it connected to AFKPanel, and as what
 6. Pick from the menu. It suggests the next step from what it found.
 
 Windows usually hides file extensions, so you may see two files both called `hotwire-setup`. The one
@@ -49,7 +49,7 @@ built for it:
   them and you choose. `-Yes` never picks one: run from the server's folder or pass `-Root`.
 - **Each server gets its own ports.** Setup looks at which ports other servers and running programs
   already use, and suggests the next free set (Enter accepts, or type a game port). It writes them into
-  `hotwire.bat` and opens exactly those. Sets are 100 apart — 28015, 28115, 28215 — so one server's Rust+
+  `hotwire.cfg` and opens exactly those. Sets are 100 apart — 28015, 28115, 28215 — so one server's Rust+
   port never lands on the next one's game port.
 - **Each server's firewall rules carry its port and folder** in their name, so one server's rules can be
   removed without touching another's.
@@ -82,7 +82,7 @@ nothing broken, and running it again simply carries on.
 - **Nothing is unpacked over a running server.** If the server in that folder is running, install
   stops and says how to stop it.
 - **A download is checked before it is used.** SteamCMD's zip must hold exactly `steamcmd.exe`. Oxide's
-  must contain `Oxide.Rust.dll`, every file must sit inside `RustDedicated_Data`, and it must be the
+  must match the SHA-256 GitHub publishes for it, must contain `Oxide.Rust.dll`, every file must sit inside `RustDedicated_Data`, and it must be the
   Windows build. The start script, its settings list and the plugin must be the files they claim to be.
 - **Low disk space is a question, not a warning.** Under 15 GB free, the Rust download defaults to *no*.
 - **A mistyped panel code does not end the install.** The rest stays done; connect later from the menu.
@@ -119,7 +119,7 @@ exact way to undo it. The last screen shows where that file is. In short:
 
 ```
 install   SteamCMD, Rust, Oxide, the start script, an RCON password, the firewall,
-          the Hotwire plugin, and connecting to Hotwire Panel               (Windows)
+          the Hotwire plugin, and connecting to AFKPanel               (Windows)
 doctor    check this machine is ready to connect. read-only, changes nothing
 connect   connect to the panel. asks for the code; nothing is written until you confirm
 status    which server this is, and what it is connected to
@@ -137,7 +137,7 @@ It runs in four parts, and only the third one changes anything:
    otherwise `C:\rustserver` unless you type another.
 2. **Pre-flight**: a read-only check of everything below. That covers the machine (Administrator,
    memory, disk, the clock against Steam's servers), SteamCMD, Rust and its branch, Oxide, the start
-   script, the plugin, the RCON password and Hotwire Panel. It also checks Windows Firewall on this
+   script, the plugin, the RCON password and AFKPanel. It also checks Windows Firewall on this
    server's ports, and there *open* means open on the network the machine is actually on: a rule that
    only covers Private networks does not count on a Public connection. A **flight plan** then lists only
    what is missing. A finished server gets an empty plan and nothing happens.
@@ -151,12 +151,12 @@ It runs in four parts, and only the third one changes anything:
 | 2 | Where the server goes (see above) | nothing yet |
 | 3 | SteamCMD into `C:\steamcmd`, where `hotwire.bat` looks for it | reuses one already there |
 | 4 | The Rust server, app 258550, about 12 GB. **Asks which branch first:** public (the game everyone plays), staging (Facepunch's test build), or a branch typed by name. The choice is kept, used for every download, and written into `hotwire.cfg` as `hotwire.steam_branch` | the server folder |
-| 5 | Oxide, checked to be the Windows build and a real archive before it is unpacked. Defaults to yes; no leaves a vanilla server, and the start script is set up to stay vanilla | the server folder |
+| 5 | Oxide, from its GitHub release, checked against the SHA-256 GitHub publishes, and checked to be the Windows build and a real archive before it is unpacked. Defaults to yes; no leaves a vanilla server, and the start script is set up to stay vanilla | the server folder |
 | 6 | **Start script**: `hotwire.bat`, as released, and `hotwire.cfg`, the settings it reads, with this server's ports, `hotwire.install_framework 0` when there is no Oxide, the chosen `hotwire.steam_branch`, and `hotwire.steamcmd` when SteamCMD is not in `C:\steamcmd`. Keeps the list as `hotwire.example.cfg`. Asks for ports first if none are chosen. Defaults to yes; no means you use your own start script, and step 8 is skipped | `hotwire.bat`, `hotwire.cfg`; existing ones are left alone |
 | 7 | **Hotwire plugin**, asked separately, defaults to yes. Scheduled, announced restarts. Skipped without Oxide | `oxide\plugins\Hotwire.cs` |
 | 8 | **RCON password**, walked through: type your own (hidden, twice, checked against the launcher's rules), or press Enter for 32 random letters and digits, shown once and copied to the clipboard | `hotwire-secrets.cfg`, readable only by Administrators and you; an existing valid one is left alone, an invalid one replaced only if you say yes |
 | 9 | **Windows Firewall**: opens this server's game and query ports, and its Rust+ port only if asked. Asks for ports first if none are chosen | rules named for the port and the server's folder, in the group `Hotwire` |
-| 10 | **Hotwire Panel**, asked last, defaults to yes. Yes runs `connect`; no changes nothing | only if yes: the files under *doctor and connect* |
+| 10 | **AFKPanel**, asked last, defaults to yes. Yes runs `connect`; no changes nothing | only if yes: the files under *doctor and connect* |
 
 **A server already on another branch** — Steam keeps an install on the last branch that machine used —
 gets a *Steam branch* step: Enter keeps the branch it is on, and moving to another is a separate question
