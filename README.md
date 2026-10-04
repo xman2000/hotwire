@@ -49,7 +49,7 @@ Hotwire schedules restarts, updates and wipes for a Rust dedicated server. It an
    hotwire add update  20:00 first Thursday
    ```
 
-To update or remove the plugin, see [docs/PLUGIN.md](docs/PLUGIN.md). To install a Rust server from nothing, see [docs/INSTALL-WINDOWS.md](docs/INSTALL-WINDOWS.md) or [docs/INSTALL-LINUX.md](docs/INSTALL-LINUX.md).
+To update or remove the plugin, see [docs/PLUGIN.md](docs/PLUGIN.md). To install a Rust server from nothing, see [docs/INSTALL-WINDOWS.md](docs/INSTALL-WINDOWS.md) or [docs/INSTALL-LINUX.md](docs/INSTALL-LINUX.md). For a server on a Pterodactyl or Pelican host, see [docs/INSTALL-PTERODACTYL.md](docs/INSTALL-PTERODACTYL.md).
 
 ## Permissions
 
@@ -208,6 +208,7 @@ setup/hotwire-setup.sh          Linux: the same
 CHANGELOG.md                    what is in each release
 docs/INSTALL-WINDOWS.md         a server from nothing, on Windows
 docs/INSTALL-LINUX.md           a server from nothing, on Ubuntu
+docs/INSTALL-PTERODACTYL.md     the plugin on a Pterodactyl or Pelican host
 docs/SWITCH-TO-HOTWIRE.md       a server you already run
 docs/PLUGIN.md                  add, update or remove the plugin
 docs/LAUNCHER.md                the launcher
