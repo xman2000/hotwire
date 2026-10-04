@@ -17,7 +17,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Hotwire", "xman2000", "1.1.54")]
+    [Info("Hotwire", "xman2000", "1.1.55")]
     [Description("Scheduled restarts and updates. Announces, counts down, writes a flag, quits.")]
     internal class Hotwire : CovalencePlugin
     {
@@ -428,6 +428,14 @@ namespace Oxide.Plugins
             // fight. The bar is the warning; chat is the punctuation.
             [JsonProperty("Start the countdown this many seconds before")]
             public int StartSeconds = 3600;
+
+            // On a Pterodactyl or Pelican server every start installs the newest
+            // Rust and the newest Oxide. When AFKPanel says a new Rust build is
+            // out and Oxide's release for it is not, a scheduled restart waits for
+            // Oxide, up to this many hours, then restarts anyway. 0 never waits.
+            // A restart asked for by hand or from AFKPanel never waits.
+            [JsonProperty("On a Pterodactyl or Pelican server, hold a scheduled restart for Oxide (hours)")]
+            public int HoldForOxideHours = 2;
 
             // 60, 30, 15, 10, 5, 2 and 1 minutes, then 30, 20 and 10 seconds,
             // then every second to zero. Sparse where nothing is at stake and
@@ -1108,6 +1116,10 @@ namespace Oxide.Plugins
             // is a short announced restart, not a scheduled entry.
             if (ScanWipeRetry(now)) return;
 
+            // A scheduled restart held for Oxide (a Pterodactyl or Pelican server
+            // on update day) starts as soon as the hold no longer applies.
+            if (ScanHeldRestart(now)) return;
+
             // A forced wipe waits for the release itself (AFKPanel's release check), not only for the clock.
             if (ScanForcedWipes(now, start)) return;
 
@@ -1143,6 +1155,19 @@ namespace Oxide.Plugins
                 {
                     BeginCountdown(_oneShotTarget.Value, true, _oneShotValidate, null, "oneshot:" + _oneShotReason);
                     _oneShotTarget = null;
+                    return;
+                }
+            }
+
+            if (best != null && !best.IsWipe)
+            {
+                string holdWhy;
+                if (HoldForOxide(out holdWhy))
+                {
+                    _heldRestart = best;
+                    _heldTarget = bestTarget;
+                    _heldSinceUtc = DateTime.UtcNow;
+                    Puts($"Scheduled {(best.IsUpdate ? "update" : "restart")} held: {holdWhy}. It runs when Oxide's release is out, or after {_config.Countdown.HoldForOxideHours} h.");
                     return;
                 }
             }
@@ -3280,7 +3305,7 @@ namespace Oxide.Plugins
                 if (_panel != null || _panelFileStamp != DateTime.MinValue || _panelState == "not started")
                 {
                     if (_panel != null) Puts("panel.json is gone, so this server is no longer connected. Reporting stopped.");
-                    else Puts("Not connected to a panel. Nothing is sent. (hotwire-setup connect connects this server.)");
+                    else Puts("Not connected to a panel. Nothing is sent. (To connect: hotwire connect <code> in this console, with the code from AFKPanel's Connect a server.)");
                 }
                 _panel = null;
                 _panelFileStamp = DateTime.MinValue;
@@ -3963,6 +3988,7 @@ namespace Oxide.Plugins
             try { var fps = AverageFps(); if (fps >= 0) payload["fps"] = fps; } catch { }
             try { var cpu = AverageCpuPercent(); if (cpu >= 0) payload["cpu_percent"] = cpu; } catch { }
             try { AddServerInfo(payload); } catch { }
+            try { var c = ContainerReport(); if (c != null) payload["container"] = c; } catch { }
             try { var v = InstalledFrameworkVersion(); if (v != null) payload["oxide_version"] = v; } catch { }
             try { var p = server.Protocol; if (!string.IsNullOrEmpty(p)) payload["rust_protocol"] = p; } catch { }
             try { var b = InstalledBuildId(); if (b != null) payload["rust_build_id"] = b; } catch { }
@@ -6124,6 +6150,75 @@ namespace Oxide.Plugins
                     return;
             }
         }
+
+        #region Pterodactyl and Pelican
+
+        // A server run by Wings, the daemon both Pterodactyl and Pelican use. Both
+        // panels set P_SERVER_UUID in every server's container, and Wings sets
+        // SERVER_MEMORY, the container's memory limit in MB (0 for none). Only
+        // Pterodactyl sets P_SERVER_LOCATION, so the two panels are not told apart.
+        private static bool OnWingsHost() => !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("P_SERVER_UUID"));
+
+        private static int? WingsMemoryLimitMb()
+        {
+            int mb;
+            return int.TryParse(Environment.GetEnvironmentVariable("SERVER_MEMORY"), NumberStyles.Integer, CultureInfo.InvariantCulture, out mb) && mb > 0 ? mb : (int?)null;
+        }
+
+        // For the heartbeat: that the server is on a Wings host, and its memory
+        // limit. Never the other variables: on these hosts every egg setting, the
+        // RCON password included, is in the environment.
+        private static JObject ContainerReport()
+        {
+            if (!OnWingsHost()) return null;
+            var o = new JObject { ["host"] = "wings" };
+            var mb = WingsMemoryLimitMb();
+            if (mb != null) o["memory_limit_mb"] = mb.Value;
+            return o;
+        }
+
+        private ScheduleEntry _heldRestart;
+        private DateTime _heldTarget;
+        private DateTime? _heldSinceUtc;
+
+        // Whether a scheduled restart should wait: on a Wings host, where a start
+        // installs the newest Rust and Oxide, while AFKPanel says (within ten
+        // minutes) a new Rust build is out and Oxide's release for it is not.
+        // No answer means no hold: the panel's silence never stops a restart.
+        private bool HoldForOxide(out string why)
+        {
+            why = null;
+            if (!OnWingsHost() || _config.Countdown.HoldForOxideHours <= 0) return false;
+            var now = DateTime.UtcNow;
+            var updFresh = _updHeardUtc != null && now - _updHeardUtc.Value <= TimeSpan.FromMinutes(10);
+            var gateFresh = _gateHeardUtc != null && now - _gateHeardUtc.Value <= TimeSpan.FromMinutes(10);
+            if (!updFresh || !gateFresh || !_updRust || _gateReady) return false;
+            why = "a new Rust build (" + _gateBuild + ") is out and Oxide's release for it is not, and on this host a restart installs both";
+            return true;
+        }
+
+        private bool ScanHeldRestart(DateTime now)
+        {
+            if (_heldRestart == null) return false;
+            string why;
+            var waited = DateTime.UtcNow - (_heldSinceUtc ?? DateTime.UtcNow);
+            var giveUp = waited >= TimeSpan.FromHours(Math.Max(0, _config.Countdown.HoldForOxideHours));
+            if (!giveUp && HoldForOxide(out why)) return true;
+
+            var entry = _heldRestart;
+            _heldRestart = null;
+            _heldSinceUtc = null;
+            // The original time if it is still ahead, otherwise ten minutes' warning.
+            var target = _heldTarget > now.AddSeconds(60) ? _heldTarget : now.AddMinutes(10);
+            Puts(giveUp
+                ? $"Held {(entry.IsUpdate ? "update" : "restart")} goes ahead after {_config.Countdown.HoldForOxideHours} h without Oxide's release."
+                : $"Held {(entry.IsUpdate ? "update" : "restart")} goes ahead: Oxide's release is out, or nothing new is.");
+            string updWhy;
+            BeginCountdown(target, entry.IsUpdate || RestartInstallsUpdates(entry, out updWhy), entry.IsValidate, entry, entry.Key);
+            return true;
+        }
+
+        #endregion
 
         #region Plugin updates from the panel
 

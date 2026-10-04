@@ -28,7 +28,7 @@
 #
 set -uo pipefail
 
-VERSION="0.2.17"
+VERSION="0.2.18"
 DEFAULT_PANEL="https://afkpanel.com"
 
 # ---------------------------------------------------------------- output ----
@@ -674,7 +674,7 @@ RUST_APPID="258550"
 # or every install stops at a hash mismatch. Third-party downloads (SteamCMD from Ubuntu's archive, Oxide
 # from GitHub) are not pinned: Oxide is checked against the SHA-256 GitHub publishes for it instead.
 PIN_LAUNCHER="759453b7cc0d924b32303edf1e5a50db2661cfffa9a8455ce4168f659157822a"
-PIN_PLUGIN="502106397e49a4b5e961021626ab1ce9521272df629ae10e9100a385f8eccdc4"
+PIN_PLUGIN="ed48eeefa4e5667f108e79577e361b5ecae5eb130ba33df013d8ea83599a8e76"
 PIN_CFG="49de5e242c14418158c4796a23f2ca7b1c99eddcf0cdc3fd3e65c05cd94d9971"
 
 # Rust's own floor (wiki.facepunch.com/rust/Creating-a-server), warned about and never enforced. A small

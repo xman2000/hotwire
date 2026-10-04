@@ -25,6 +25,20 @@ sit above a launcher `1.1.7`. Read the label, not the number.
 at the top of the file — it is a comment, not something it echoes, so read it
 rather than watch for it.
 
+## Plugin 1.1.55, setup 0.1.17 (Windows) and 0.2.18 (Linux) — 2026-10-04
+
+**On a Pterodactyl or Pelican server, Hotwire says so to AFKPanel, and on a Rust update day a scheduled restart waits
+for Oxide.**
+
+- Hotwire tells AFKPanel when the server runs under Wings, the daemon both Pterodactyl and Pelican use, and the server's
+  memory limit there. Nothing else from the server's environment is sent.
+- These hosts install the newest Rust and the newest Oxide on every start. When AFKPanel says a new Rust build is out
+  and Oxide's release for it is not, a scheduled restart now waits for Oxide's release, up to 2 hours, then goes ahead.
+  A new setting, `On a Pterodactyl or Pelican server, hold a scheduled restart for Oxide (hours)`, changes the 2; `0`
+  never waits. A restart asked for by hand or from AFKPanel never waits.
+- When the plugin is not connected, its console line now says how to connect from the console:
+  `hotwire connect <code>`.
+
 ## Plugin 1.1.54, setup 0.1.16 (Windows) and 0.2.17 (Linux) — 2026-10-04
 
 **AFKPanel can update a plugin to uMod's current file, and undo the update, and the plugin keeps a copy and puts it back

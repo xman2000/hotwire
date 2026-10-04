@@ -136,6 +136,7 @@ A wipe is a restart that also leaves the launcher `WIPE.flag` with the next map'
 ```json
 "Countdown": {
   "Start the countdown this many seconds before": 3600,
+  "On a Pterodactyl or Pelican server, hold a scheduled restart for Oxide (hours)": 2,
   "Announce when this many seconds remain": [
     3600, 1800, 900, 600, 300, 120, 60,
     30, 20, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1
@@ -147,6 +148,7 @@ A wipe is a restart that also leaves the launcher `WIPE.flag` with the next map'
 | Key | Meaning |
 | --- | --- |
 | `Start the countdown this many seconds before` | How long before the entry's time the countdown begins. `hotwire now` with no seconds uses it too. |
+| `On a Pterodactyl or Pelican server, hold a scheduled restart for Oxide (hours)` | On these hosts every start installs the newest Rust and Oxide. When AFKPanel says a new Rust build is out and Oxide's release for it is not, a scheduled restart waits for Oxide's release, up to this many hours, then goes ahead. When it goes ahead at its original time, that time stands; later than that, the countdown is ten minutes. `0` never waits. A restart asked for with `hotwire now` or from AFKPanel never waits, and a server with no answer from AFKPanel never waits. |
 | `Announce when this many seconds remain` | The moments announced in chat. The status bar, where there is one, updates its text once a minute. |
 | `Seconds between the last announcement and the kick` | The pause before players are kicked |
 
