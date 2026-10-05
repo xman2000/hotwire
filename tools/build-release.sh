@@ -61,8 +61,8 @@ it from your old start script at https://afkpanel.com/get-started, or copy
 hotwire.example.cfg. The RCON password goes in hotwire-secrets.cfg (copy
 hotwire-secrets.example.cfg).
 
-To update the launcher: close its window first, then replace hotwire.bat and hotwire.ps1
-together.
+To update the launcher: replace hotwire.ps1; it takes over at the next restart. When
+hotwire.bat changes too, close the launcher's window first, then replace both.
 
 The guide: https://afkpanel.com/docs/install-windows
 TXT

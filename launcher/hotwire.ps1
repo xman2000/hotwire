@@ -1,12 +1,10 @@
-# hotwire.ps1: the PowerShell half of the Hotwire launcher for Windows. hotwire.bat runs it with -File for each step,
-# and HOTWIRE_MODE picks the part to run:
-#   load    read hotwire.cfg and hotwire-secrets.cfg, check every line, pass the launcher's settings to cmd, and
-#           save the server's arguments for the start
-#   edits   apply a wipe or a permanent convar the plugin asked for, by writing hotwire.cfg
-#   launch  start RustDedicated.exe with those arguments and wait for it to exit
-#   backup  back up the stopped server before an update or a wipe, when one is asked for
-#   report  write a session or launcher report to the spool
-#   send    send the spool's reports to AFKPanel
+# hotwire.ps1: the Hotwire launcher for Windows. hotwire.bat starts it, and starts it again when it exits with 75,
+# which is how a hotwire.ps1 replaced while the server runs takes over at the next restart. PowerShell reads this whole
+# file before it runs, so replacing it while the launcher runs is safe.
+#
+# It starts the Rust server and starts it again when it exits; it updates Rust and Oxide when the update mode says so,
+# carries out the wipes and permanent convars the plugin asks for, finishes the backups the plugin prepares, and
+# reports to AFKPanel once connected. See docs/LAUNCHER.md.
 #
 # Settings are read as data, one line at a time, and never run. A line is a name, spaces, then a value. A value
 # with spaces goes in double quotes and cannot contain one; no control characters. Each value is checked before
@@ -15,19 +13,21 @@
 # the first start, and a later restart keeps the last good settings. The rules match hotwire.sh line for line.
 # Windows PowerShell 5.1, ASCII only.
 $ErrorActionPreference = 'Stop'
-# The release this file belongs to. hotwire.bat must be the same one: the two agree on how each step is passed.
-$LauncherVersion = '1.1.23'
-$root = $env:HOTWIRE_ROOT
+# Who this launcher is, for the plugin: written to oxide\data\Hotwire\launcher.json before every start. The plugin
+# offers only the features in the capability list; settings_file means the settings come from hotwire.cfg.
+$LauncherVersion = '1.1.24'
+$LauncherCapabilities = 'supervise,update,framework_verify,crash_backstop,log_rotate,convar_persist,wipe,backup,settings_file'
+$root = $PSScriptRoot
 $cfg = Join-Path $root 'hotwire.cfg'
 $secretsCfg = Join-Path $root 'hotwire-secrets.cfg'
 $argsFile = Join-Path $root 'hotwire\launch-args.json'
 
-# Messages go to stderr, because in load mode stdout carries the settings to cmd.
+# Messages go straight to the window (stderr), because the settings step hands its settings over on stdout.
 function Say([string]$message) { [Console]::Error.WriteLine('[' + (Get-Date -Format 'yyyy-MM-dd HH:mm:ss') + '] ' + $message) }
 function Rule { [Console]::Error.WriteLine('========================================================') }
 
-# hotwire.<name>: cmd variable, kind, default. cmd receives these, so each kind is checked to contain nothing cmd
-# treats as syntax.
+# hotwire.<name>: environment variable, kind, default. Some reach SteamCMD's command line, so each kind is checked to
+# contain nothing a command line treats as syntax.
 $hwSettings = @{
     'hotwire.update_mode'              = @('UPDATE_MODE', 'mode', 'auto')
     'hotwire.steamcmd'                 = @('STEAMCMD', 'steamcmd', 'C:\steamcmd\steamcmd.exe')
@@ -145,7 +145,7 @@ function Read-Config {
                 else { $r.Problems.Add('line ' + $n + ': ' + $name + ': ' + $why + '; the default is used') }
                 continue
             }
-            # Numbers are passed on in base 10: cmd reads a leading zero as octal, so 08 would break its arithmetic.
+            # Numbers are passed on in base 10, so a leading zero never changes one.
             $value = $p.Value
             if ($value -ne '' -and @('int', 'int1', 'seed', 'worldsize', 'port') -contains $kind) { $value = [string][long]$value }
             $r.Values[$lower] = $value
@@ -236,14 +236,6 @@ function Format-Arg([string]$arg) {
 
 # ---- load ----------------------------------------------------------------------------------------------------
 function Invoke-Load {
-    if ([string]$env:HOTWIRE_LAUNCHER_VERSION -ne $LauncherVersion) {
-        Rule
-        Say ('hotwire.ps1 is version ' + $LauncherVersion + ', hotwire.bat is ' + $env:HOTWIRE_LAUNCHER_VERSION + '.')
-        Say 'Replace both from the same release. Not starting.'
-        Rule
-        Write-Output 'HWSET HW_LOAD=mismatch'
-        return
-    }
     $first = $env:HOTWIRE_FIRST -eq '1'
     $quiet = $env:HOTWIRE_QUIET -eq '1'
     $r = Read-Config
@@ -307,8 +299,8 @@ function Invoke-Load {
         [IO.File]::WriteAllText($argsFile, (ConvertTo-Json -InputObject ([string[]](Get-ServerArgs $r)) -Compress))
     }
     foreach ($key in $hwSettings.Keys) { Write-Output ('HWSET ' + $hwSettings[$key][0] + '=' + (Get-HwValue $r $key)) }
-    # The password stays in this process's environment, as in the old launcher, base64-encoded so cmd handles
-    # only letters, digits, + / and =.
+    # The password stays in this process's environment, as in the old launcher, base64-encoded so the environment
+    # holds only letters, digits, + / and =.
     Write-Output ('HWSET HOTWIRE_RCON64=' + [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($secret.Password)))
     Write-Output 'HWSET HW_LOAD=ok'
 }
@@ -522,7 +514,7 @@ function Invoke-Launch {
         }
     }
     $p.WaitForExit()
-    exit $p.ExitCode
+    return $p.ExitCode
 }
 
 # ---- backups ---------------------------------------------------------------------------------------------------
@@ -1043,7 +1035,7 @@ function Invoke-Send {
     } finally { $lock.Dispose() }
 }
 
-# Writes the report cmd asks for: HOTWIRE_REPORT is session or launcher.
+# Writes the report HOTWIRE_REPORT names: session or launcher.
 function Invoke-Report {
     $bool = { param($v) if ([string]$v -eq '1') { 'true' } else { 'false' } }
     if ($env:HOTWIRE_REPORT -eq 'session') {
@@ -1068,18 +1060,730 @@ function Invoke-Report {
     }
 }
 
-try {
-    switch ($env:HOTWIRE_MODE) {
-        'load'   { Invoke-Load }
-        'edits'  { Invoke-Edits }
-        'launch' { Invoke-Launch }
-        'backup' { Invoke-BackupBeforeLaunch }
-        'report' { Invoke-Report }
-        'send'   { Invoke-Send }
-        default  { Say ('Unknown HOTWIRE_MODE ' + $env:HOTWIRE_MODE); exit 2 }
+# ---- the launcher ----------------------------------------------------------------------------------------------
+# What hotwire.bat did in cmd up to 1.1.23, step for step: read the settings, decide whether to update, update Rust
+# and Oxide, run the hooks, apply a wipe or a permanent convar, start the server, report, and start it again.
+
+$AppId = '258550'
+$UpdateFlag = 'UPDATE.flag'
+$ValidateFlag = 'VALIDATE.flag'
+$WipeFlag = 'WIPE.flag'
+# Where code comes from is fixed here and never read from hotwire.cfg: other tools may write that file, and a data
+# file must not decide what is downloaded or run.
+$FrameworkVersionFile = [IO.Path]::Combine($root, 'RustDedicated_Data', 'Managed', 'Oxide.Rust.dll')
+$FrameworkUrl = 'https://github.com/OxideMod/Oxide.Rust/releases/latest/download/Oxide.Rust.zip'
+$FrameworkReleases = 'https://api.github.com/repos/OxideMod/Oxide.Rust/releases/latest'
+$FrameworkAsset = 'Oxide.Rust.zip'
+$LogFile = [IO.Path]::Combine($root, 'logs', 'server_log.txt')
+$UpdateStamp = [IO.Path]::Combine($root, 'logs', 'last_update.txt')
+$HookBefore = Join-Path $root 'hotwire-before.bat'
+$HookAfter = Join-Path $root 'hotwire-after.bat'
+$Acf = [IO.Path]::Combine($root, 'steamapps', 'appmanifest_' + $AppId + '.acf')
+$LauncherBat = Join-Path $root 'hotwire.bat'
+$script:LauncherExit = 0
+
+# A launcher setting as a number, from what the settings step handed over; $default when it is not a number.
+function Get-Num([string]$name, [long]$default = 0) {
+    $v = [Environment]::GetEnvironmentVariable($name)
+    $n = 0L
+    if ([long]::TryParse([string]$v, [ref]$n)) { return $n }
+    return $default
+}
+function Get-Env([string]$name) { return [string][Environment]::GetEnvironmentVariable($name) }
+
+# Waits for a key, as cmd's pause did, so a message that stops the launcher stays on screen. Without a console to
+# read from it returns at once.
+function Wait-Key {
+    [Console]::Error.WriteLine('Press any key to continue . . .')
+    try { [void][Console]::ReadKey($true) } catch { }
+}
+
+# The settings step's answer: its HWSET lines become this process's environment, which every other step reads.
+# Returns ok, fatal (a first read that must stop) or kept (a later read failed; the last good settings stay).
+function Import-Settings([switch]$Quiet) {
+    $env:HOTWIRE_QUIET = $(if ($Quiet) { '1' } else { '' })
+    $state = ''
+    foreach ($line in @(Invoke-Load)) {
+        $text = [string]$line
+        if (-not $text.StartsWith('HWSET ')) { continue }
+        $pair = $text.Substring(6); $i = $pair.IndexOf('=')
+        if ($i -lt 1) { continue }
+        $name = $pair.Substring(0, $i); $value = $pair.Substring($i + 1)
+        if ($name -eq 'HW_LOAD') { $state = $value } else { [Environment]::SetEnvironmentVariable($name, $value) }
     }
+    $env:HOTWIRE_QUIET = ''
+    return $state
+}
+
+# The installed build, from Steam's install record; '' when it cannot be read.
+function Get-InstalledBuild {
+    try {
+        if (Test-Path -LiteralPath $Acf) {
+            $q = [char]34
+            $m = [regex]::Match([IO.File]::ReadAllText($Acf), $q + 'buildid' + $q + '\s+' + $q + '(\d+)' + $q)
+            if ($m.Success) { return $m.Groups[1].Value }
+        }
+    } catch { }
+    return ''
+}
+
+# Steam's current build on the branch, through one SteamCMD run, cached for hotwire.build_check_hours. buildid also
+# appears under every depot, so this finds "branches", then the branch, then the buildid inside it: the first buildid
+# in the output belongs to a depot. Skipped, not waited for, while another server holds SteamCMD. '' when unknown.
+function Get-PublicBuild([string]$branch, [long]$hours) {
+    $cache = [IO.Path]::Combine($root, 'logs', 'build_check.txt')
+    $out = [IO.Path]::Combine($root, 'logs', '.appinfo.tmp')
+    $sc = Get-Env 'STEAMCMD'
+    try {
+        if (Test-Path -LiteralPath $cache) {
+            $age = ((Get-Date) - (Get-Item -LiteralPath $cache).LastWriteTime).TotalHours
+            if ($age -lt $hours) { return ([IO.File]::ReadAllText($cache)).Trim() }
+        }
+        if (-not (Test-Path -LiteralPath $sc)) { return '' }
+        $lock = $null
+        try { $lock = [IO.File]::Open((Join-Path (Split-Path -Parent $sc) 'hotwire-steamcmd.lock'), [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None) } catch { return '' }
+        try {
+            $p = Start-Process -FilePath $sc -ArgumentList @('+login', 'anonymous', '+app_info_update', '1', '+app_info_print', $AppId, '+quit') -RedirectStandardOutput $out -NoNewWindow -PassThru
+            if (-not $p.WaitForExit(180000)) { try { $p.Kill() } catch { }; return '' }
+            if (-not (Test-Path -LiteralPath $out)) { return '' }
+            $q = [char]34
+            $t = [IO.File]::ReadAllText($out)
+            $i = $t.IndexOf($q + 'branches' + $q)
+            if ($i -lt 0) { return '' }
+            $j = $t.IndexOf($q + $branch + $q, $i)
+            if ($j -lt 0) { return '' }
+            $m = [regex]::Match($t.Substring($j), $q + 'buildid' + $q + '\s+' + $q + '(\d+)' + $q)
+            if (-not $m.Success) { return '' }
+            [IO.File]::WriteAllText($cache, $m.Groups[1].Value)
+            return $m.Groups[1].Value
+        } finally {
+            Remove-Item -LiteralPath $out -Force -ErrorAction SilentlyContinue
+            $lock.Dispose()
+        }
+    } catch { return '' }
+}
+
+# Fast Rust updates. Steam updates a game by patching its files, and Oxide has replaced some of them, so on a modded
+# server Steam's first try at a new build fails with "Corrupt game files" (state 0x486). Steam then marks the install
+# Files Corrupt in steamapps\appmanifest (StateFlags bit 128), and its next run checks every file and succeeds. Setting
+# that mark before the first try skips the failed one. Steam does not document this record, so exactly one line is
+# changed, the change is checked before it is saved, a copy is kept in hotwire\, and if Steam ignores the mark the
+# update takes its usual second try.
+function Set-FastRustMark {
+    if (-not (Test-Path -LiteralPath $Acf)) { return }
+    $q = [char]34; $nl = [char]10
+    $re = '\A\s*' + $q + 'StateFlags' + $q + '\s+' + $q + '4' + $q + '\s*\z'
+    $lines = [IO.File]::ReadAllText($Acf).Split($nl); $hit = @()
+    for ($i = 0; $i -lt $lines.Length; $i++) { if ($lines[$i].TrimEnd([char]13) -match $re) { $hit += $i } }
+    if ($hit.Count -ne 1) { Say 'Fast Rust updates: Steam''s install record has an unexpected format, so it is left unchanged.'; return }
+    $new = [string[]]$lines.Clone(); $new[$hit[0]] = $lines[$hit[0]].Replace($q + '4' + $q, $q + '132' + $q); $tmp = $Acf + '.hotwire-tmp'
+    try {
+        [IO.File]::WriteAllText($tmp, [string]::Join($nl, $new))
+        $back = [IO.File]::ReadAllText($tmp).Split($nl); $diff = 0
+        for ($i = 0; $i -lt $lines.Length; $i++) { if ($back[$i] -ne $lines[$i]) { $diff++ } }
+        if ($back.Length -ne $lines.Length -or $diff -ne 1) { throw 'unexpected' }
+        $dir = Join-Path $root 'hotwire'; if (-not (Test-Path -LiteralPath $dir)) { [void](New-Item -ItemType Directory -Path $dir) }
+        Copy-Item -LiteralPath $Acf -Destination (Join-Path $dir 'appmanifest-before-update.acf') -Force
+        [IO.File]::Replace($tmp, $Acf, [NullString]::Value)
+        Say 'Fast Rust updates: Steam will check every game file before this update, so it finishes in one try.'
+    } catch {
+        Remove-Item -LiteralPath $tmp -ErrorAction SilentlyContinue
+        Say 'Fast Rust updates: Steam''s install record could not be changed, so it is left as it was.'
+    }
+}
+
+# Whether Steam marked the install Files Corrupt (StateFlags bit 128).
+function Test-FilesCorrupt {
+    try {
+        $m = [regex]::Match([IO.File]::ReadAllText($Acf), 'StateFlags' + [char]34 + '\s+' + [char]34 + '([0-9]+)')
+        return ($m.Success -and ([int64]$m.Groups[1].Value -band 128))
+    } catch { return $false }
+}
+
+# One SteamCMD update run, one at a time on this machine. Servers can share one SteamCMD, and two runs at once are not
+# known to be safe, so the run first opens hotwire-steamcmd.lock beside steamcmd.exe, unshared; Windows releases an
+# open file when its process ends, however it ends, and hotwire-setup uses the same lock. Returns SteamCMD's exit
+# code, 97 after waiting hotwire.steamcmd_wait_minutes for another server, or 96 when Steam refused a file list of
+# the installed build: SteamCMD reads those from a cache every server using it shares, asks Steam only when they are
+# missing, and Steam refuses an old Rust build's lists to an anonymous login.
+function Invoke-SteamUpdate([bool]$validate) {
+    $sc = Get-Env 'STEAMCMD'; $q = [char]34
+    $a = '+force_install_dir ' + $q + $root + $q + ' +login anonymous +app_update ' + $AppId
+    $branch = Get-Env 'STEAM_BRANCH'
+    if (-not [string]::IsNullOrWhiteSpace($branch)) { $a = $a + ' -beta ' + $branch }
+    if ($validate) { $a = $a + ' validate' }
+    $a = $a + ' +quit'
+    $wait = Get-Num 'STEAMCMD_WAIT_MINUTES' 60
+    $deadline = (Get-Date).AddMinutes($wait)
+    $lock = Join-Path (Split-Path -Parent $sc) 'hotwire-steamcmd.lock'; $h = $null; $said = $false
+    while ($null -eq $h) {
+        try { $h = [IO.File]::Open($lock, [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None) }
+        catch {
+            if ((Get-Date) -gt $deadline) { Say ('Another server has been using SteamCMD for over ' + $wait + ' minutes. Not waiting any longer.'); return 97 }
+            if (-not $said) { Say 'Another server is using SteamCMD. Waiting for it to finish...'; $said = $true }
+            Start-Sleep -Seconds 5
+        }
+    }
+    try {
+        $lg = Join-Path (Split-Path -Parent $sc) 'logs\content_log.txt'; $before = 0
+        if (Test-Path -LiteralPath $lg) { $before = (Get-Item -LiteralPath $lg).Length }
+        $inst = @()
+        if (Test-Path -LiteralPath $Acf) { foreach ($x in [regex]::Matches([IO.File]::ReadAllText($Acf), $q + 'manifest' + $q + '\s+' + $q + '([0-9]+)' + $q)) { $inst += $x.Groups[1].Value } }
+        $p = Start-Process -FilePath $sc -ArgumentList $a -NoNewWindow -Wait -PassThru
+        $code = $p.ExitCode
+        if ($code -ne 0 -and (Get-Env 'RECOVER_REFUSED_UPDATE') -eq '1' -and $inst.Count -gt 0 -and (Test-Path -LiteralPath $lg)) {
+            $len = (Get-Item -LiteralPath $lg).Length
+            if ($len -lt $before) { $before = 0 }
+            if ($len -gt $before) {
+                $fs = [IO.File]::Open($lg, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
+                try { [void]$fs.Seek($before, [IO.SeekOrigin]::Begin); $n = [int][Math]::Min($len - $before, 4194304); $buf = New-Object byte[] $n; [void]$fs.Read($buf, 0, $n) } finally { $fs.Dispose() }
+                foreach ($line in [Text.Encoding]::UTF8.GetString($buf).Split([char]10)) {
+                    if ($line.Contains('Failed to get manifest request code') -and $line.Contains('Access Denied')) {
+                        $mm = [regex]::Match($line, 'Manifest: ([0-9]+)')
+                        if ($mm.Success -and ($inst -contains $mm.Groups[1].Value)) { $code = 96 }
+                    }
+                }
+            }
+        }
+        return $code
+    } finally { $h.Dispose() }
+}
+
+# A refused update: without Steam's install record SteamCMD compares the files on disk with the new build and
+# downloads what differs, so the record is moved to hotwire\ and the update runs once more. True when it was moved.
+function Move-RefusedRecord {
+    if (-not (Test-Path -LiteralPath $Acf)) { return $false }
+    try {
+        $dir = Join-Path $root 'hotwire'
+        if (-not (Test-Path -LiteralPath $dir)) { [void](New-Item -ItemType Directory -Path $dir) }
+        Move-Item -LiteralPath $Acf -Destination (Join-Path $dir 'appmanifest-refused.acf') -Force
+        Say 'Steam no longer serves the installed Rust build''s file list, so this update cannot patch it.'
+        Say 'Setting Steam''s install record aside and updating again: Steam checks the files on disk and downloads what changed.'
+        return $true
+    } catch { return $false }
+}
+
+# After a refused update that still failed: if Steam left no usable install record, the old one is put back.
+function Restore-RefusedRecord {
+    $saved = [IO.Path]::Combine($root, 'hotwire', 'appmanifest-refused.acf')
+    if (-not (Test-Path -LiteralPath $saved)) { return }
+    $b = Get-InstalledBuild
+    if ($b -eq '' -or $b -eq '0') {
+        Copy-Item -LiteralPath $saved -Destination $Acf -Force
+        Say 'The update did not finish. Steam''s install record is restored.'
+    }
+}
+
+# The forced wipe this update must carry, as a Unix deadline and a clock time, or $null. The flag must say forced,
+# its cycle must not be done, and it must not have expired.
+function Get-ForcedWipeDeadline {
+    $minutes = Get-Num 'FORCED_WIPE_STEAM_MINUTES' 15
+    $flag = Join-Path $root $WipeFlag
+    if ($minutes -eq 0 -or -not (Test-Path -LiteralPath $flag)) { return $null }
+    try {
+        $w = @{}
+        foreach ($l in [IO.File]::ReadAllLines($flag)) { $p = $l.Trim().Split(' ', 2); if ($p.Count -eq 2 -and -not $w.ContainsKey($p[0])) { $w[$p[0]] = $p[1].Trim() } }
+        $now = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds(); $done = ''
+        $state = [IO.Path]::Combine($root, 'hotwire', 'wipe-cycle')
+        if (Test-Path -LiteralPath $state) { $done = ([IO.File]::ReadAllText($state)).Trim() }
+        $ok = ($w['forced'] -eq '1') -and -not ($w['cycle'] -and $w['cycle'] -eq $done) -and -not ($w['expires'] -match '\A[0-9]+\z' -and [long]$w['expires'] -lt $now)
+        if (-not $ok) { return $null }
+        return @{ Deadline = $now + 60 * $minutes; Until = (Get-Date).AddMinutes($minutes).ToString('HH:mm') }
+    } catch { return $null }
+}
+
+# Rust through SteamCMD, with its retries. True when SteamCMD finished the update.
+function Update-Rust([bool]$validate, [string]$installed, [string]$public) {
+    $sc = Get-Env 'STEAMCMD'
+    if ((Get-Env 'FAST_RUST_UPDATES') -eq '1' -and (Get-Env 'INSTALL_FRAMEWORK') -ne '0' -and $installed -and $public -and [long]$installed -lt [long]$public) {
+        Set-FastRustMark
+    }
+    $forced = Get-ForcedWipeDeadline
+    if ($forced) { Say ('A forced wipe needs this update: if SteamCMD fails, it is retried until ' + $forced.Until + '.') }
+    if (-not (Test-Path -LiteralPath $sc)) {
+        Say ('SteamCMD is not at ' + $sc + '. Set hotwire.steamcmd in hotwire.cfg. Starting without updating.')
+        return $false
+    }
+    $maxTries = Get-Num 'MAX_STEAM_TRIES' 5
+    $tries = 0; $quickUsed = $false; $recoveryUsed = $false
+    while ($true) {
+        $tries++
+        $code = Invoke-SteamUpdate $validate
+        if ($code -eq 0) {
+            if ($recoveryUsed) { Say 'The update finished without the old file list. The old install record is kept in hotwire\appmanifest-refused.acf.' }
+            return $true
+        }
+        if ($code -eq 97) { break }
+        Say ('SteamCMD failed (attempt ' + $tries + ' of ' + $maxTries + ').')
+        if ($code -eq 96 -and -not $recoveryUsed -and (Move-RefusedRecord)) { $recoveryUsed = $true; continue }
+        if ($tries -ge $maxTries) {
+            if (-not $forced -or [DateTimeOffset]::UtcNow.ToUnixTimeSeconds() -ge $forced.Deadline) { break }
+            Say ('A forced wipe needs this update: trying SteamCMD again until ' + $forced.Until + '.')
+        }
+        # Once per update: if a try left the install marked Files Corrupt, try again at once. Steam checks every file
+        # on the next run, so waiting would change nothing.
+        if (-not $quickUsed -and (Test-Path -LiteralPath $Acf) -and (Test-FilesCorrupt)) {
+            $quickUsed = $true
+            Say 'Steam marked the game files for a full check; trying again now.'
+            continue
+        }
+        Start-Sleep -Seconds (Get-Num 'STEAM_RETRY_SECONDS' 60)
+    }
+    Say 'SteamCMD failed. Starting without the update.'
+    if ($recoveryUsed) { Restore-RefusedRecord }
+    return $false
+}
+
+# Oxide. One request for GitHub's latest Oxide release gives both its tag, compared with the installed Oxide, and its
+# download, checked against the SHA-256 GitHub publishes. uMod's feed is not used: it has named the old Oxide for over
+# an hour after GitHub had the new one. Oxide is third-party and changes with every Rust release, so Hotwire has no
+# hash of its own to pin it to; the SHA-256 proves the file is the one GitHub holds for the release, not who built
+# it. True when Oxide is in place afterwards.
+function Update-Oxide([string]$buildBefore) {
+    if ((Get-Env 'INSTALL_FRAMEWORK') -eq '0') {
+        Say 'Vanilla server: hotwire.install_framework is 0, so Oxide is not installed.'
+        return $true
+    }
+    $from = $FrameworkUrl; $sha = ''; $tag = ''
+    try {
+        try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 } catch { }
+        $r = Invoke-RestMethod -Uri $FrameworkReleases -TimeoutSec 25 -Headers @{ Accept = 'application/vnd.github+json' }
+        $t = [string]$r.tag_name
+        if ($t -match '\Av?[0-9]+(\.[0-9]+)+\z') { $tag = $t.TrimStart('v') }
+        $asset = @($r.assets | Where-Object { $_.name -eq $FrameworkAsset })[0]
+        $d = [string]$asset.digest; $u = [string]$asset.browser_download_url
+        if ($u -like 'https://github.com/*') {
+            $from = $u
+            if ($d.Length -eq 71 -and $d -like 'sha256:*') { $sha = $d.Substring(7).ToLower() }
+        }
+    } catch { }
+    if ((Get-Env 'VERIFY_FRAMEWORK') -eq '0') { $sha = '' }
+
+    # If SteamCMD changed the installed build, the game's own managed files were just rewritten, so Oxide must be
+    # extracted over them whatever its version. Skipping the extract is safe only when the build did not change.
+    $buildAfter = Get-InstalledBuild
+    $extract = $true
+    if ((Get-Env 'SKIP_UNCHANGED_FRAMEWORK') -eq '1' -and $buildBefore -and $buildAfter) {
+        if ($buildBefore -ne $buildAfter) {
+            Say ('Rust changed from build ' + $buildBefore + ' to ' + $buildAfter + ', so Oxide is installed again.')
+        } elseif (-not $tag) {
+            Say 'GitHub did not return Oxide''s latest version, so the installed one cannot be compared. Installing Oxide.'
+        } else {
+            # The first three parts of the installed Oxide's file version, such as 2.0.7801.0, against GitHub's tag,
+            # such as 2.0.7801.
+            $v = ''
+            try { if (Test-Path -LiteralPath $FrameworkVersionFile) { $v = [string](Get-Item -LiteralPath $FrameworkVersionFile).VersionInfo.FileVersion } } catch { }
+            if ([string]::IsNullOrWhiteSpace($v)) {
+                Say 'Could not read the installed Oxide''s version. Installing Oxide.'
+            } else {
+                $vn = (($v.Trim() -split '\.') + @('0', '0', '0'))[0..2] -join '.'
+                $ln = (($tag.Trim() -split '\.') + @('0', '0', '0'))[0..2] -join '.'
+                Say ('Oxide: installed ' + $vn + ', GitHub ' + $ln)
+                if ($vn -eq $ln) {
+                    Say 'Rust and Oxide are both unchanged, so Oxide is not installed again.'
+                    $extract = $false
+                }
+            }
+        }
+    }
+    if (-not $extract) { return $true }
+
+    if ((Get-Env 'VERIFY_FRAMEWORK') -eq '1' -and -not $sha) { Say 'GitHub did not return Oxide''s SHA-256, so this download cannot be checked.' }
+    if ($sha) { Say ('Downloading Oxide ' + $tag + ' from GitHub and checking its SHA-256.') } else { Say 'Downloading Oxide from GitHub without a check.' }
+    $zip = Join-Path $root 'OxideMod.zip'
+    try {
+        # curl -f fails on an HTTP error instead of saving the error page, which would otherwise be extracted over a
+        # working install. It gives up on a stalled download (under 1 byte a second for 2 minutes), not a slow one.
+        # curl.exe by name: in Windows PowerShell, curl is another command. Started as its own process so its
+        # progress reaches the window.
+        $q = [char]34
+        $c = Start-Process -FilePath 'curl.exe' -ArgumentList ('-fSL -A Mozilla/5.0 --connect-timeout 30 --speed-limit 1 --speed-time 120 ' + $q + $from + $q + ' --output ' + $q + $zip + $q) -NoNewWindow -Wait -PassThru
+        if ($c.ExitCode -ne 0) { Say 'Oxide download failed. Starting with the Oxide already installed.'; return $false }
+        if ($sha) {
+            $got = (Get-FileHash -Algorithm SHA256 -LiteralPath $zip).Hash.ToLower()
+            if ($got -ne $sha) {
+                Say ('Downloaded SHA-256: ' + $got)
+                Say ('The download does not match GitHub''s SHA-256 for Oxide ' + $tag + ' (' + $sha + '). It is not installed: the')
+                Say 'server starts with the Oxide it has, and the next restart tries again.'
+                return $false
+            }
+            Say ('SHA-256 matches GitHub''s for Oxide ' + $tag + '.')
+        }
+        try { Expand-Archive -Force -LiteralPath $zip -DestinationPath $root } catch { Say 'Oxide could not be extracted.'; return $false }
+        return $true
+    } finally {
+        Remove-Item -LiteralPath $zip -Force -ErrorAction SilentlyContinue
+    }
+}
+
+# One of your own hook files, in a cmd of its own, so its variables and any exit stay inside it. False when it failed.
+function Invoke-Hook([string]$path) {
+    $p = Start-Process -FilePath 'cmd.exe' -ArgumentList ('/d /c call ' + [char]34 + $path + [char]34) -NoNewWindow -Wait -PassThru
+    return ($p.ExitCode -eq 0)
+}
+
+# Keep the previous log: -logfile empties the file on every start, so without this a restart would erase the log of
+# what went wrong. A crash loop restarts every few seconds, and trimming to hotwire.log_keep would soon delete the log
+# that explains it, so the first log of a crash streak is saved as server_crash_*, which the trim never deletes. Later
+# crashes in the streak rotate normally: they repeat the first, and keeping them all would fill the disk.
+function Move-ServerLog([long]$crashStreak) {
+    if ((Get-Env 'ROTATE_LOGS') -eq '0' -or -not (Test-Path -LiteralPath $LogFile)) { return }
+    try {
+        $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
+        $name = 'server_log_' + $stamp + '.txt'
+        if ($crashStreak -eq 1) { $name = 'server_crash_' + $stamp + '.txt' }
+        Move-Item -LiteralPath $LogFile -Destination ([IO.Path]::Combine($root, 'logs', $name)) -Force
+        Get-ChildItem -Path ([IO.Path]::Combine($root, 'logs', 'server_log_*.txt')) | Sort-Object LastWriteTime -Descending |
+            Select-Object -Skip (Get-Num 'LOG_KEEP' 14) | Remove-Item -Force
+    } catch { Say ('Could not rotate the server log: ' + $_.Exception.Message) }
+}
+
+# Tells the plugin which launcher started the server: version, code hash, capabilities and path, in
+# oxide\data\Hotwire\launcher.json. The hash is the one stamped in hotwire.bat, which covers hotwire.bat and this file.
+# If writing fails, only AFKPanel's view of the launcher is affected.
+function Write-LauncherState {
+    try {
+        $h = ''
+        $m = [regex]::Match([IO.File]::ReadAllText($LauncherBat), '(?m)^HOTWIRE_LAUNCHER_HASH=.?([0-9a-f]{64})')
+        if ($m.Success) { $h = $m.Groups[1].Value }
+        $state = [IO.Path]::Combine($root, 'oxide', 'data', 'Hotwire', 'launcher.json')
+        [void](New-Item -ItemType Directory -Force -Path (Split-Path -Parent $state))
+        $o = [ordered]@{ version = $LauncherVersion; hash = $h; capabilities = $LauncherCapabilities; platform = 'windows'; path = $LauncherBat; update_mode = (Get-Env 'UPDATE_MODE') }
+        [IO.File]::WriteAllText($state, ($o | ConvertTo-Json))
+    } catch { }
+}
+
+# Sends held reports in a separate process, so the server starts without waiting for AFKPanel.
+function Start-BackgroundSend {
+    try {
+        $env:HOTWIRE_MODE = 'send'; $env:HOTWIRE_SEND_WAIT = '0'
+        $q = [char]34
+        [void](Start-Process -FilePath 'powershell.exe' -ArgumentList ('-NoProfile -NonInteractive -ExecutionPolicy Bypass -File ' + $q + $PSCommandPath + $q) -NoNewWindow)
+    } catch { } finally { $env:HOTWIRE_MODE = ''; $env:HOTWIRE_SEND_WAIT = '' }
+}
+
+# Sends held reports now, waiting up to a minute for a sender already running: the launcher is about to stop.
+function Send-Now {
+    try { $env:HOTWIRE_SEND_WAIT = '60'; Invoke-Send } catch { } finally { $env:HOTWIRE_SEND_WAIT = '' }
+}
+
+# The file's own size and time when it started, so a replaced hotwire.ps1 is noticed before the next start.
+function Get-SelfStamp {
+    try { $i = Get-Item -LiteralPath $PSCommandPath; return [string]$i.Length + ':' + [string]$i.LastWriteTimeUtc.Ticks } catch { return '' }
+}
+
+function Invoke-Main([string[]]$argv) {
+    $checkOnly = @($argv | Where-Object { $_ -eq 'check' }).Count -gt 0
+    $env:CHECK_ONLY = $(if ($checkOnly) { '1' } else { '' })
+    $env:HOTWIRE_ROOT = $root
+    $env:HOTWIRE_LAUNCHER_VERSION = $LauncherVersion
+    $env:HOTWIRE_LAUNCHER_CAPABILITIES = $LauncherCapabilities
+    $env:APPID = $AppId
+    $env:WIPE_FLAG = $WipeFlag
+    $env:LOGFILE = $LogFile
+    Say ('Hotwire launcher ' + $LauncherVersion + ' (Windows)')
+
+    if (-not (Test-Path -LiteralPath (Join-Path $root 'RustDedicated.exe'))) {
+        Rule
+        Say 'No RustDedicated.exe in:'
+        Say ('  ' + $root)
+        Say 'hotwire.bat and hotwire.ps1 must be in the same folder as RustDedicated.exe.'
+        Say 'If they are, Rust is not fully installed.'
+        Rule
+        Wait-Key; $script:LauncherExit = 1; return
+    }
+    Set-Location -LiteralPath $root
+    [Environment]::CurrentDirectory = $root
+    $logs = Join-Path $root 'logs'
+    if (-not (Test-Path -LiteralPath $logs)) { try { [void](New-Item -ItemType Directory -Path $logs) } catch { } }
+    if (-not (Test-Path -LiteralPath $logs)) {
+        Rule
+        Say ('Cannot create ' + $logs)
+        Say 'Old server logs and the update stamp are kept there. Without it, a crash leaves no log to read and the'
+        Say 'update backstop never runs.'
+        Say 'Check the permissions on the server folder.'
+        Rule
+        Wait-Key; $script:LauncherExit = 1; return
+    }
+
+    $self = Get-SelfStamp
+    $crashStreak = 0L
+    $first = $true
+    while ($true) {
+        # ---- read hotwire.cfg and hotwire-secrets.cfg --------------------------------------------------------------
+        # On the first read, a missing file or a bad save folder, map or port stops the launcher with the reason.
+        # Later reads keep the last good settings instead.
+        $env:HOTWIRE_FIRST = $(if ($first) { '1' } else { '' })
+        $load = ''
+        try { $load = Import-Settings } catch { Say ('Could not read the settings: ' + $_.Exception.Message) }
+        if ($first -and $load -ne 'ok') { Say 'Not starting.'; Wait-Key; $script:LauncherExit = 1; return }
+        $first = $false
+        $env:HOTWIRE_FIRST = ''
+
+        $updateAttempted = $false; $steamOk = $false; $frameworkOk = $false
+        $branchName = Get-Env 'STEAM_BRANCH'; if (-not $branchName) { $branchName = 'public' }
+        $mode = Get-Env 'UPDATE_MODE'
+
+        try {
+            # ---- who decides updates on this start ---------------------------------------------------------------------
+            # In auto mode the Hotwire plugin rewrites UPDATE.schedule in the server folder every 15 minutes while it has
+            # an update scheduled. If that file is missing, over two hours old or unreadable, nothing is scheduling
+            # updates, so this start updates as in always mode, which keeps the server joinable.
+            $effective = $mode
+            if ($mode -eq 'auto') {
+                $effective = 'always'
+                $marker = Join-Path $root 'UPDATE.schedule'
+                try { if ((Test-Path -LiteralPath $marker) -and (((Get-Date) - (Get-Item -LiteralPath $marker).LastWriteTime).TotalHours -lt 2)) { $effective = 'hotwire' } } catch { }
+                if ($effective -eq 'hotwire') { Say 'hotwire.update_mode is auto: the Hotwire plugin schedules updates.' }
+                else { Say 'hotwire.update_mode is auto, and the Hotwire plugin has no update schedule.' }
+            }
+
+            # ---- the installed build and Steam's ----------------------------------------------------------------------
+            # If anything here fails, both builds are unknown and the usual rules apply.
+            $installed = ''; $public = ''
+            $checkHours = Get-Num 'BUILD_CHECK_HOURS' 6
+            if ($checkHours -ne 0) {
+                # When flags decide updates, the answer must be current: a cached answer from before a Rust release
+                # would start the old build. The cache is used only during a crash streak.
+                $hours = $checkHours
+                if ($effective -ne 'always' -and $effective -ne 'off' -and $crashStreak -eq 0) { $hours = 0 }
+                $installed = Get-InstalledBuild
+                $public = Get-PublicBuild $branchName $hours
+                if (-not $installed) {
+                    Say 'Rust build: cannot read the installed build from'
+                    Say ('  ' + $Acf)
+                } elseif (-not $public) {
+                    Say ('Rust build: installed ' + $installed + '. Steam did not answer, so the usual rules apply.')
+                } elseif ($installed -eq $public) {
+                    Say ('Rust build: installed ' + $installed + ', ' + $branchName + ' ' + $public + '. Up to date.')
+                } elseif ([long]$installed -gt [long]$public) {
+                    Say ('Rust build: installed ' + $installed + ', ' + $branchName + ' ' + $public + '. This server is newer than')
+                    Say ('Steam''s ' + $branchName + ' branch, so it is on another branch, such as staging. The next update moves')
+                    Say ('it to ' + $branchName + ', as hotwire.steam_branch says.')
+                } else {
+                    Rule
+                    Say ('Rust build: installed ' + $installed)
+                    Say ('            ' + $branchName + '    ' + $public)
+                    Say 'A NEWER BUILD IS AVAILABLE.'
+                    Say 'Players'' games update themselves, so once the new build changes the protocol, this server turns them away.'
+                    if ($effective -eq 'off') { Say 'hotwire.update_mode is off, so the launcher does not update it.' }
+                    elseif ($effective -eq 'hotwire' -and (Get-Env 'UPDATE_ON_NEW_BUILD') -ne '1') { Say ('Create ' + $UpdateFlag + ' in ' + $root + ' to update on the next start.') }
+                    else { Say 'A normal start updates the server before starting it.' }
+                    Rule
+                }
+            }
+
+            # ---- update or plain restart ------------------------------------------------------------------------------
+            # UPDATE.flag updates Rust with SteamCMD, then Oxide, then starts; VALIDATE.flag does the same and has
+            # SteamCMD check every file of the install. You, a scheduled task, or the plugin can create either flag.
+            $doUpdate = $false; $doValidate = $false
+            $updateFlagPath = Join-Path $root $UpdateFlag; $validateFlagPath = Join-Path $root $ValidateFlag
+            if ($effective -eq 'off') {
+                Say 'hotwire.update_mode is off: not updating.'
+                if (Test-Path -LiteralPath $updateFlagPath) { Say ($UpdateFlag + ' is left in place and ignored.') }
+                if (Test-Path -LiteralPath $validateFlagPath) { Say ($ValidateFlag + ' is left in place and ignored.') }
+            } else {
+                if ($effective -eq 'always') { $doUpdate = $true; Say ('hotwire.update_mode is ' + $mode + ': updating before the start.') }
+                if (Test-Path -LiteralPath $updateFlagPath) { $doUpdate = $true; Say ($UpdateFlag + ' found: updating before the start.') }
+                if (Test-Path -LiteralPath $validateFlagPath) { $doUpdate = $true; $doValidate = $true; Say ($ValidateFlag + ' found: updating and checking every file.') }
+                if ($effective -ne 'always' -and -not $doUpdate) {
+                    # A newer build on Steam is checked before the day count: a server that is behind updates now, and
+                    # one that is current is left alone however long it has been. Unknown is not the same as current: a
+                    # server left on an old build turns every player away after a Rust release, so when the build cannot
+                    # be checked, the launcher updates. A server on a newer build than Steam's, as on a test branch, is
+                    # not behind.
+                    if ((Get-Env 'UPDATE_ON_NEW_BUILD') -eq '1') {
+                        if (-not $installed -or -not $public) {
+                            $doUpdate = $true
+                            Say 'Updating: could not check whether this install has Steam''s current build.'
+                        } elseif ($installed -ne $public -and [long]$installed -lt [long]$public) {
+                            $doUpdate = $true
+                            Say ('Updating: installed build ' + $installed + ' is behind Steam''s ' + $public + '.')
+                        }
+                    }
+                    # The backstop: in hotwire mode, after hotwire.max_days_without_update days with no update, update.
+                    # A missing stamp counts as no update ever, so a new install updates on its first start. Days are
+                    # rounded down, so 13.6 days do not trigger a 14-day backstop half a day early.
+                    $maxDays = Get-Num 'MAX_DAYS_WITHOUT_UPDATE' 14
+                    if (-not $doUpdate -and $maxDays -ne 0) {
+                        $days = 9999
+                        try { if (Test-Path -LiteralPath $UpdateStamp) { $days = [long][math]::Floor(((Get-Date) - (Get-Item -LiteralPath $UpdateStamp).LastWriteTime).TotalDays) } } catch { }
+                        if ($days -ge $maxDays) {
+                            $doUpdate = $true
+                            Rule
+                            Say ('No update in ' + $days + ' days: updating now.')
+                            Say 'A server that never updates turns players away after a Rust release. To update on a schedule'
+                            Say 'instead, set hotwire.update_mode always in hotwire.cfg, or schedule updates in the plugin.'
+                            Rule
+                        }
+                    }
+                }
+            }
+
+            if ($checkOnly) {
+                if ($doUpdate) { Say 'Check mode: a normal start would update here. Nothing is installed.' }
+                else { Say 'Check mode: a normal start would not update.' }
+                $doUpdate = $false
+            }
+            $env:DO_UPDATE = $(if ($doUpdate) { '1' } else { '0' })
+
+            if (-not $checkOnly) {
+                # Back up the stopped server before an update or a wipe changes it.
+                try { Invoke-BackupBeforeLaunch } catch { Say ('Backup: ' + $_.Exception.Message) }
+                # hotwire-before.bat runs before every start, ahead of any update. If it fails, the launcher says so and
+                # starts anyway. Check mode runs no hooks.
+                if (Test-Path -LiteralPath $HookBefore) {
+                    Say 'Running hotwire-before.bat...'
+                    if (-not (Invoke-Hook $HookBefore)) { Say 'hotwire-before.bat failed; starting anyway.' }
+                }
+            }
+
+            if ($doUpdate) {
+                $updateAttempted = $true
+                $steamOk = Update-Rust $doValidate $installed $public
+                $frameworkOk = Update-Oxide $installed
+
+                # Delete the flags and reset the backstop only when the update completed: deleting a flag after a
+                # failure would make the next restart skip the update, and resetting the stamp on every failed try would
+                # stop the backstop from ever running. The backstop reads the stamp's modified time; the text is for
+                # people.
+                if ($steamOk -and $frameworkOk) {
+                    foreach ($f in @($updateFlagPath, $validateFlagPath)) { if (Test-Path -LiteralPath $f) { Remove-Item -LiteralPath $f -Force -ErrorAction SilentlyContinue } }
+                    try { [IO.File]::WriteAllText($UpdateStamp, 'Last update: ' + (Get-Date -Format 'yyyy-MM-dd HH:mm:ss') + "`r`n") } catch { }
+                    # Both can fail on permissions even though the update worked: a flag that stays makes every restart
+                    # update, and a missing stamp makes the backstop treat the server as never updated.
+                    if (Test-Path -LiteralPath $updateFlagPath) {
+                        Say ('WARNING: ' + $UpdateFlag + ' could not be deleted after a successful update, so every restart will update.')
+                        Say 'Check the permissions on the server folder.'
+                    }
+                    if (Test-Path -LiteralPath $validateFlagPath) {
+                        Say ('WARNING: ' + $ValidateFlag + ' could not be deleted after a successful update, so every restart will check')
+                        Say 'every file, which is slow. Check the permissions on the server folder.'
+                    }
+                    if (-not (Test-Path -LiteralPath $UpdateStamp)) {
+                        Say 'WARNING: could not write the update stamp at'
+                        Say ('  ' + $UpdateStamp)
+                        Say 'The backstop reads it, so it will treat this server as never updated.'
+                    }
+                } else {
+                    Rule
+                    Say 'The update did not complete.'
+                    Say ('Any ' + $UpdateFlag + ' or ' + $ValidateFlag + ' is kept and the update stamp is not reset, so the next start tries again.')
+                    Rule
+                }
+
+                # hotwire-after.bat runs after every update attempt, successful or not.
+                if (Test-Path -LiteralPath $HookAfter) {
+                    Say 'Running hotwire-after.bat...'
+                    if (-not (Invoke-Hook $HookAfter)) { Say 'hotwire-after.bat failed; starting anyway.' }
+                }
+            } elseif (-not $checkOnly) {
+                Say 'Restarting without updating Rust or Oxide.'
+            }
+        } catch {
+            # Nothing before the start may keep the server from starting.
+            Say ('Before the start: ' + $_.Exception.Message + ' Starting anyway.')
+        }
+
+        # ---- wipes and permanent convars --------------------------------------------------------------------------------
+        # When AFKPanel asks for a wipe or a permanent convar, the plugin leaves WIPE.flag or CONVAR.request in the
+        # server folder. Between runs, while the server is stopped, every value is checked, written into hotwire.cfg,
+        # and the file is read again so this start uses it. Check mode changes nothing.
+        if ($checkOnly) {
+            Say 'Check mode: the server is not started.'
+            $script:LauncherExit = 0; return
+        }
+        if ((Test-Path -LiteralPath (Join-Path $root $WipeFlag)) -or (Test-Path -LiteralPath (Join-Path $root 'CONVAR.request'))) {
+            try { Invoke-Edits } catch { Say ('Wipe or convar: ' + $_.Exception.Message) }
+            try { [void](Import-Settings -Quiet) } catch { Say ('Could not read the settings: ' + $_.Exception.Message) }
+        }
+
+        # ---- start ------------------------------------------------------------------------------------------------------
+        Move-ServerLog $crashStreak
+        Write-LauncherState
+        Start-BackgroundSend
+        Say 'Starting the server...'
+        $startedAt = Get-UtcStamp ([DateTimeOffset]::UtcNow)
+        $runStart = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+        $rustExit = 0
+        try { $rustExit = Invoke-Launch } catch { Say ('Could not start the server: ' + $_.Exception.Message); $rustExit = -1 }
+        $runSeconds = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds() - $runStart
+
+        $crashed = $runSeconds -lt (Get-Num 'CRASH_SECONDS' 60)
+        if ($crashed) { $crashStreak++ } else { $crashStreak = 0 }
+
+        # The session report: how this run ended and what its update did, written to the spool and sent in the
+        # background.
+        $env:HOTWIRE_REPORT = 'session'; $env:HOTWIRE_STARTED_AT = $startedAt; $env:HOTWIRE_RUST_EXIT = [string]$rustExit
+        $env:HOTWIRE_CRASHED = $(if ($crashed) { '1' } else { '0' })
+        $env:HOTWIRE_UPDATE_ATTEMPTED = $(if ($updateAttempted) { '1' } else { '0' })
+        $env:STEAM_OK = $(if ($steamOk) { '1' } else { '0' }); $env:FRAMEWORK_OK = $(if ($frameworkOk) { '1' } else { '0' })
+        $env:CRASH_STREAK = [string]$crashStreak
+        try { Invoke-Report } catch { }
+        $env:HOTWIRE_REPORT = ''
+
+        if ((Get-Env 'RESTART_ON_EXIT') -eq '0') {
+            Say ('Server exited after ' + $runSeconds + 's. hotwire.restart_on_exit is 0, so it is not restarted.')
+            Send-Now
+            $script:LauncherExit = 0; return
+        }
+        Start-BackgroundSend
+
+        $maxStreak = Get-Num 'MAX_CRASH_STREAK' 10
+        if ($maxStreak -ne 0 -and $crashStreak -ge $maxStreak) {
+            # The launcher report: the launcher has stopped for good, which a missing heartbeat cannot tell apart from a
+            # network outage. Nothing is waiting to start, so it is sent now.
+            $env:HOTWIRE_REPORT = 'launcher'
+            try { Invoke-Report } catch { }
+            $env:HOTWIRE_REPORT = ''
+            Send-Now
+            Rule
+            Say ('STOPPED. ' + $maxStreak + ' crashes in a row, each under ' + (Get-Num 'CRASH_SECONDS' 60) + 's. The server does not start, and')
+            Say 'restarting it again will not help.'
+            Say ''
+            Say 'Read the log from the first crash:'
+            Say ('  ' + [IO.Path]::Combine($root, 'logs', 'server_crash_*.txt'))
+            Say 'Common causes: a bad setting in hotwire.cfg, a port already in use, or a corrupt save. With more than one'
+            Say 'server on this machine, check that each has its own ports in hotwire.cfg. A second copy of this launcher'
+            Say 'already running causes this too.'
+            Say ''
+            Say 'To keep restarting instead, set hotwire.max_crash_streak 0 in hotwire.cfg.'
+            Rule
+            Wait-Key; $script:LauncherExit = 1; return
+        }
+
+        # Back off, so a broken setting does not restart the server four times a minute forever, or run
+        # hotwire-before.bat that often, which is costly when it makes a backup.
+        $delay = Get-Num 'RESTART_DELAY' 15
+        if ((Get-Env 'CRASH_BACKOFF') -ne '0') {
+            if ($crashStreak -ge 2) { $delay = 30 }
+            if ($crashStreak -ge 3) { $delay = 60 }
+            if ($crashStreak -ge 4) { $delay = 120 }
+            if ($crashStreak -ge 5) { $delay = 300 }
+        }
+        if ($crashStreak -gt 0) {
+            Say ('Server exited after ' + $runSeconds + 's, which counts as a crash.')
+            if ($maxStreak -eq 0) { Say ('Crash ' + $crashStreak + '. Retrying in ' + $delay + 's.') }
+            else { Say ('Crash ' + $crashStreak + ' of ' + $maxStreak + '. Retrying in ' + $delay + 's.') }
+        } else {
+            Say ('Server exited. Restarting in ' + $delay + 's. Press Ctrl+C to stop.')
+        }
+        Start-Sleep -Seconds $delay
+
+        # A hotwire.ps1 replaced while the server ran takes over here: hotwire.bat starts it again (exit 75), as if the
+        # window had been opened again.
+        if ((Get-SelfStamp) -ne $self) {
+            Say 'hotwire.ps1 has changed: starting the new copy.'
+            $script:LauncherExit = 75; return
+        }
+    }
+}
+
+try {
+    if ($env:HOTWIRE_MODE -eq 'send') { Invoke-Send; exit 0 }
+    Invoke-Main $args
+    exit $script:LauncherExit
 } catch {
-    Say ('hotwire.ps1 (' + $env:HOTWIRE_MODE + '): ' + $_.Exception.Message)
+    Say ('hotwire.ps1: ' + $_.Exception.Message)
     exit 1
 }
-exit 0

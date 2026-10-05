@@ -24,6 +24,21 @@ sit above a launcher `1.1.7`. Read the label, not the number.
 `hotwire check` prints the plugin's version. Each launcher prints its own
 version as the first line when it starts.
 
+## Launcher 1.1.24 (Windows), setup 0.1.22 (Windows) — 2026-10-05
+
+**The whole Windows launcher is in hotwire.ps1. hotwire.bat is a short starter that stays the same between releases,
+so most updates replace only hotwire.ps1, and it can be replaced while the launcher runs: the new copy takes over at
+the next restart.**
+
+- Everything hotwire.bat did in cmd now runs in PowerShell: reading the settings, deciding whether to update, updating
+  Rust and Oxide, the hooks, wipes, permanent convars, log rotation, starting the server, the reports and the restart
+  loop. What it decides and what it prints are unchanged.
+- hotwire.bat checks hotwire.ps1 is there, starts it, and starts it again when it exits with 75, which hotwire.ps1
+  does when it finds itself replaced.
+- A message that stops the launcher waits for a key, as before; with no console to read from, the launcher exits.
+- Setup recognises the new hotwire.bat.
+- Moving to 1.1.24 replaces hotwire.bat too: close the launcher's window first.
+
 ## Launcher 1.1.23 (Windows), setup 0.1.21 (Windows) and 0.2.21 (Linux) — 2026-10-05
 
 **The plugin's file moved from src/Hotwire.cs to plugin/Hotwire.cs.** Both setup scripts download it from there. The

@@ -42,7 +42,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$Version = '0.1.21'
+$Version = '0.1.22'
 
 # Captured here: inside a function, $PSBoundParameters describes that function, not this script.
 $SteamCmdGiven = $PSBoundParameters.ContainsKey('SteamCmd')
@@ -102,8 +102,8 @@ $PluginUrl = 'https://raw.githubusercontent.com/xman2000/hotwire/connect-and-rep
 # SteamCMD is reported as "unverified (third-party)" rather than blocked, so the
 # omission is never silent.
 $PinnedHashes = @{
-    'hotwire.bat' = '9a2c07c6be63d9f60e67813b7b415119bbcd10447e0c902f332aa165728d4cd0'
-    'hotwire.ps1' = '845cfad78f4890529511144dea51af5b7f0aa262af4397d3ecb6c9e958e7146d'
+    'hotwire.bat' = '2c568029c80bbd8e245fec4bea369a093750f1258b8c661f6f25d5d795a17d94'
+    'hotwire.ps1' = 'dac259b912fcd48ebc67d4a194717fb7b3d49fccb1de6508077839a219a8ab06'
     'Hotwire.cs'  = '61c80cc0cc9ce73366e33679e5118b6b0827fb96fe86522fa5ad3e710ee2bcb4'
     'hotwire.example.cfg' = '121c1480f3f6edbb3f48790a0fd72abeff1c964d7cd3ef1608646663b1661f4c'
 }
@@ -538,7 +538,11 @@ function New-PortSet([int]$Game, [int]$Query, [int]$Rcon) {
 function Test-CfgLauncher([string]$d) {
     $launcher = Join-Path $d 'hotwire.bat'
     if (-not (Test-Path -LiteralPath $launcher)) { return $false }
-    try { return [regex]::IsMatch([IO.File]::ReadAllText($launcher), '(?m)^set "HOTWIRE_LAUNCHER_CAPABILITIES=[^"]*settings_file') } catch { return $false }
+    # 1.1.16 to 1.1.23 carry their capabilities in hotwire.bat; from 1.1.24 hotwire.bat only starts hotwire.ps1.
+    try {
+        $text = [IO.File]::ReadAllText($launcher)
+        return [regex]::IsMatch($text, '(?m)^set "HOTWIRE_LAUNCHER_CAPABILITIES=[^"]*settings_file') -or [regex]::IsMatch($text, '(?m)^REM HOTWIRE-PART hotwire\.ps1\r?$')
+    } catch { return $false }
 }
 
 # A setting's value in hotwire.cfg, from the last line that sets it, quotes taken off; $null when none does.
@@ -1906,7 +1910,7 @@ function Install-Launcher([string]$d) {
         Confirm-DownloadHash $download 'hotwire.bat' 'the Hotwire launcher'
         try { $text = [System.IO.File]::ReadAllText($download) }
         finally { Remove-Item -LiteralPath $download -Force -ErrorAction SilentlyContinue }
-        if ($text -notmatch '(?m)^set "HOTWIRE_LAUNCHER_CAPABILITIES=[^"]*settings_file') {
+        if ($text -notmatch '(?m)^set "HOTWIRE_LAUNCHER_CAPABILITIES=[^"]*settings_file' -and $text -notmatch '(?m)^REM HOTWIRE-PART hotwire\.ps1\r?$') {
             Stop-Politely "checking the downloaded hotwire.bat" "it is not a launcher that reads hotwire.cfg" `
                 "nothing was written; download this setup script again, then run install again"
         }

@@ -247,12 +247,15 @@ Both servers can share `C:\steamcmd`. The launchers take turns using it.
 
 ## Update the launcher
 
-Replace the launcher only while it is stopped. cmd reads `hotwire.bat` while it runs, so a file replaced under a
-running launcher runs part of the old version and part of the new one.
+Most updates replace only `hotwire.ps1`:
+
+1. Replace `hotwire.ps1` with the new one. The launcher can keep running: it starts the new copy at the next restart.
+
+When a release also changes `hotwire.bat`, close the launcher's window first, because cmd reads `hotwire.bat` while
+it runs:
 
 1. Close the launcher's window. The server stops with it.
-2. Replace `hotwire.bat` and `hotwire.ps1` with the two files from one release. Keep your `hotwire.cfg`,
-   `hotwire-secrets.cfg` and hook files.
+2. Replace `hotwire.bat` and `hotwire.ps1`. Keep your `hotwire.cfg`, `hotwire-secrets.cfg` and hook files.
 3. Run `hotwire.bat check`, then `hotwire.bat`.
 
-The launcher refuses to start when `hotwire.ps1` is missing or comes from another release, and says which.
+Moving to launcher 1.1.24 from an older one changes both files.

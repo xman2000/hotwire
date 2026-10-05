@@ -4,7 +4,7 @@ The launcher starts the Rust server and relaunches it whenever it exits. It upda
 
 | Platform | File | Runs under |
 | --- | --- | --- |
-| Windows | `hotwire.bat` and `hotwire.ps1` | cmd, with PowerShell and curl, which ship with Windows 10 and later |
+| Windows | `hotwire.bat` and `hotwire.ps1` | Windows PowerShell 5.1 and curl, which ship with Windows 10 and later. `hotwire.bat` only starts `hotwire.ps1`. |
 | Linux | `hotwire.sh` | bash, on Ubuntu 22.04 or later |
 
 The launcher's own folder is the server folder: the one that holds `RustDedicated` and `oxide/`. A copied server folder runs its own server, never the original's.
@@ -235,13 +235,14 @@ Your own commands, such as a backup before every start, go in `hotwire-before` (
 
 ## Update the launcher
 
-On Windows, replace the launcher only while it is stopped: cmd reads `hotwire.bat` while it runs, and a file replaced under it runs part of each version.
+On Windows, from 1.1.24:
 
-1. Close the launcher's window. The server stops with it.
-2. Replace `hotwire.bat` and `hotwire.ps1` with the two files from one release.
-3. Run `hotwire.bat check`, then `hotwire.bat`.
+1. Replace `hotwire.ps1`. The launcher can be running: it starts the new copy at the next restart and says so.
+2. Replace `hotwire.bat` only when a release changes it, and only with the launcher's window closed: cmd reads `hotwire.bat` while it runs.
 
-Launcher 1.1.22 and later keep the PowerShell in `hotwire.ps1`: some antivirus software blocks PowerShell that a script reads out of itself and runs. The launcher refuses to start when `hotwire.ps1` is missing or from another release, and says which. The code hash covers both files.
+Moving to 1.1.24 from an older launcher replaces `hotwire.bat` too, so close the window first, replace both files, run `hotwire.bat check`, then `hotwire.bat`.
+
+`hotwire.bat` refuses to start when `hotwire.ps1` is missing. The code hash covers both files.
 
 ## Check
 
@@ -255,7 +256,7 @@ A run shorter than `hotwire.crash_seconds` is a crash: a Rust server takes minut
 | --- | --- |
 | The first of a streak | Keeps its log as `logs/server_crash_<stamp>.txt`, which log rotation never removes |
 | Each one after | Waits longer: `hotwire.restart_delay`, then 30, 60, 120 and 300 seconds, with `hotwire.crash_backoff` on |
-| `hotwire.max_crash_streak` in a row | Stops, prints why, names the crash log. On Windows it holds the window open; under a scheduled task with no console it waits rather than exits. On a machine with more than one server, the message points at two servers on one port. |
+| `hotwire.max_crash_streak` in a row | Stops, prints why, names the crash log. On Windows it holds the window open until a key is pressed; with no console to read from, it exits. On a machine with more than one server, the message points at two servers on one port. |
 | A successful run | Resets the streak |
 
 ## What it does not do
