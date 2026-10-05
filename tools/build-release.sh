@@ -34,18 +34,18 @@ pin_check launcher/hotwire.sh "$(grep -oP "^PIN_LAUNCHER=\"\K[0-9a-f]{64}" setup
 pin_check plugin/Hotwire.cs "$(grep -oP "^\s*'Hotwire.cs'\s*=\s*'\K[0-9a-f]{64}" setup/hotwire-setup.ps1)" hotwire-setup.ps1
 pin_check launcher/hotwire.bat "$(grep -oP "^\s*'hotwire.bat'\s*=\s*'\K[0-9a-f]{64}" setup/hotwire-setup.ps1)" hotwire-setup.ps1
 pin_check launcher/hotwire.ps1 "$(grep -oP "^\s*'hotwire.ps1'\s*=\s*'\K[0-9a-f]{64}" setup/hotwire-setup.ps1)" hotwire-setup.ps1
-pin_check launcher/hotwire.example.cfg "$(grep -oP "^PIN_CFG=\"\K[0-9a-f]{64}" setup/hotwire-setup.sh)" hotwire-setup.sh
-pin_check launcher/hotwire.example.cfg "$(grep -oP "^\s*'hotwire.example.cfg'\s*=\s*'\K[0-9a-f]{64}" setup/hotwire-setup.ps1)" hotwire-setup.ps1
+pin_check examples/hotwire.example.cfg "$(grep -oP "^PIN_CFG=\"\K[0-9a-f]{64}" setup/hotwire-setup.sh)" hotwire-setup.sh
+pin_check examples/hotwire.example.cfg "$(grep -oP "^\s*'hotwire.example.cfg'\s*=\s*'\K[0-9a-f]{64}" setup/hotwire-setup.ps1)" hotwire-setup.ps1
 [ "$fail" = 0 ] || { echo "Not building: fix the pins, then commit." >&2; exit 1; }
 
 blob setup/hotwire-setup.bat     | crlf > dist/windows/hotwire-setup.bat
 blob setup/hotwire-setup.ps1     | crlf > dist/windows/hotwire-setup.ps1
 blob launcher/hotwire.bat        | crlf > dist/windows/hotwire.bat
 blob launcher/hotwire.ps1        | crlf > dist/windows/hotwire.ps1
-blob launcher/hotwire.example.cfg | crlf > dist/windows/hotwire.example.cfg
-blob launcher/hotwire-secrets.example.cfg | crlf > dist/windows/hotwire-secrets.example.cfg
-blob launcher/hotwire-before.example.bat | crlf > dist/windows/hotwire-before.example.bat
-blob launcher/hotwire-after.example.bat | crlf > dist/windows/hotwire-after.example.bat
+blob examples/hotwire.example.cfg | crlf > dist/windows/hotwire.example.cfg
+blob examples/hotwire-secrets.example.cfg | crlf > dist/windows/hotwire-secrets.example.cfg
+blob examples/hotwire-before.example.bat | crlf > dist/windows/hotwire-before.example.bat
+blob examples/hotwire-after.example.bat | crlf > dist/windows/hotwire-after.example.bat
 blob plugin/Hotwire.cs > dist/windows/Hotwire.cs
 crlf > dist/windows/README.txt <<'TXT'
 Hotwire for Windows
@@ -72,10 +72,10 @@ rm -rf dist/windows
 # The Linux launcher with its examples. zip keeps each file's mode, so hotwire.sh unzips runnable.
 mkdir -p dist/linux
 blob launcher/hotwire.sh > dist/linux/hotwire.sh
-blob launcher/hotwire.example.cfg > dist/linux/hotwire.example.cfg
-blob launcher/hotwire-secrets.example.cfg > dist/linux/hotwire-secrets.example.cfg
-blob launcher/hotwire-before.example.sh > dist/linux/hotwire-before.example.sh
-blob launcher/hotwire-after.example.sh > dist/linux/hotwire-after.example.sh
+blob examples/hotwire.example.cfg > dist/linux/hotwire.example.cfg
+blob examples/hotwire-secrets.example.cfg > dist/linux/hotwire-secrets.example.cfg
+blob examples/hotwire-before.example.sh > dist/linux/hotwire-before.example.sh
+blob examples/hotwire-after.example.sh > dist/linux/hotwire-after.example.sh
 blob plugin/Hotwire.cs > dist/linux/Hotwire.cs
 cat > dist/linux/README.txt <<'TXT'
 Hotwire for Linux, for a Rust server you already run

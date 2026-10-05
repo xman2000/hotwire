@@ -3,6 +3,7 @@ launcher/secrets.bat
 secrets.bat
 hotwire-secrets.cfg
 launcher/hotwire-secrets.cfg
+examples/hotwire-secrets.cfg
 *.secret
 .env
 

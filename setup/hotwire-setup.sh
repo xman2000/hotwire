@@ -28,7 +28,7 @@
 #
 set -uo pipefail
 
-VERSION="0.2.22"
+VERSION="0.2.23"
 DEFAULT_PANEL="https://afkpanel.com"
 
 # ---------------------------------------------------------------- output ----
@@ -651,7 +651,7 @@ cmd_detach() {
 
 REPO_RAW="https://raw.githubusercontent.com/xman2000/hotwire/connect-and-report"
 LAUNCHER_URL="$REPO_RAW/launcher/hotwire.sh"
-CFG_URL="$REPO_RAW/launcher/hotwire.example.cfg"
+CFG_URL="$REPO_RAW/examples/hotwire.example.cfg"
 PLUGIN_URL="$REPO_RAW/plugin/Hotwire.cs"
 GUIDE_URL="https://afkpanel.com/docs/install-linux"
 OXIDE_URL="https://github.com/OxideMod/Oxide.Rust/releases/latest/download/Oxide.Rust-linux.zip"
@@ -660,7 +660,7 @@ OXIDE_ASSET="Oxide.Rust-linux.zip"
 STEAMCMD_BIN="/usr/games/steamcmd"
 RUST_APPID="258550"
 
-# SHA-256 of launcher/hotwire.sh, launcher/hotwire.example.cfg and plugin/Hotwire.cs AS SERVED from the branch
+# SHA-256 of launcher/hotwire.sh, examples/hotwire.example.cfg and plugin/Hotwire.cs AS SERVED from the branch
 # above (the git blob, LF):
 #     git show HEAD:launcher/hotwire.sh | sha256sum
 # Whenever one of those files changes on that branch, its pin changes in the same commit (and so does

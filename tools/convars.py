@@ -45,7 +45,7 @@ that has quietly moved is worse than no comment, because somebody reads it and
 believes it.
 
 STATUS: run against a real Assembly-CSharp.dll on 2026-09-05 (1,623 convars),
-and used to curate launcher/hotwire.example.cfg. Re-run --check after every Rust update.
+and used to curate examples/hotwire.example.cfg. Re-run --check after every Rust update.
 """
 
 import json

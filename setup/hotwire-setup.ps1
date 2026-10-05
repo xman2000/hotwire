@@ -42,7 +42,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$Version = '0.1.23'
+$Version = '0.1.24'
 
 # Captured here: inside a function, $PSBoundParameters describes that function, not this script.
 $SteamCmdGiven = $PSBoundParameters.ContainsKey('SteamCmd')
@@ -77,7 +77,7 @@ $LauncherUrl = 'https://raw.githubusercontent.com/xman2000/hotwire/connect-and-r
 $LauncherPs1Url = 'https://raw.githubusercontent.com/xman2000/hotwire/connect-and-report/launcher/hotwire.ps1'
 # The settings list the launcher reads from (1.1.16 and later): kept as hotwire.example.cfg, and copied into this
 # server's hotwire.cfg with its ports, map and branch filled in.
-$CfgUrl = 'https://raw.githubusercontent.com/xman2000/hotwire/connect-and-report/launcher/hotwire.example.cfg'
+$CfgUrl = 'https://raw.githubusercontent.com/xman2000/hotwire/connect-and-report/examples/hotwire.example.cfg'
 $PluginUrl = 'https://raw.githubusercontent.com/xman2000/hotwire/connect-and-report/plugin/Hotwire.cs'
 
 # ---------------------------------------------------------------------------
@@ -91,7 +91,7 @@ $PluginUrl = 'https://raw.githubusercontent.com/xman2000/hotwire/connect-and-rep
 # LF line endings here even though it is checked out -- and finally saved -- with
 # CRLF. Compute a value as: (read file, replace CRLF with LF, sha256).
 #
-# Whenever launcher/hotwire.bat, launcher/hotwire.ps1, launcher/hotwire.example.cfg or plugin/Hotwire.cs
+# Whenever launcher/hotwire.bat, launcher/hotwire.ps1, examples/hotwire.example.cfg or plugin/Hotwire.cs
 # changes on the branch the URLs above point at, these values MUST change in the
 # same commit, or every install aborts with a hash mismatch. tools/build-release.sh
 # refuses to build a release while any of them is stale. A value must match what

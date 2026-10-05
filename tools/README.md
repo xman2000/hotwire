@@ -11,7 +11,7 @@ the file itself. It reports each convar's name, type and default.
 
 **The workflow after a Rust update**, for whoever maintains this repo: copy
 `RustDedicated_Data/Managed/Assembly-CSharp.dll` off a server, run `--check`
-against `launcher/hotwire.example.cfg`, and fix whatever it reports. Then the settings list
+against `examples/hotwire.example.cfg`, and fix whatever it reports. Then the settings list
 is correct again for everyone who uses it, without any of them running
 anything.
 

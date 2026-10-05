@@ -200,9 +200,9 @@ The launcher starts the Rust server, relaunches it when it exits, and updates it
 plugin/Hotwire.cs               the plugin
 launcher/hotwire.bat            the launcher for Windows
 launcher/hotwire.sh             the launcher for Linux
-launcher/hotwire.example.cfg    every setting both launchers read; copy to hotwire.cfg
-launcher/hotwire-secrets.example.cfg   copy to hotwire-secrets.cfg for the RCON password; never committed
-launcher/hotwire-*.example.*    your own commands before a start and after an update
+examples/hotwire.example.cfg    every setting both launchers read; copy to hotwire.cfg
+examples/hotwire-secrets.example.cfg   copy to hotwire-secrets.cfg for the RCON password; never committed
+examples/hotwire-*.example.*    your own commands before a start and after an update
 setup/hotwire-setup.ps1         Windows: install a server, connect it, check it
 setup/hotwire-setup.sh          Linux: the same
 CHANGELOG.md                    what is in each release

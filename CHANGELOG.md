@@ -24,6 +24,11 @@ sit above a launcher `1.1.7`. Read the label, not the number.
 `hotwire check` prints the plugin's version. Each launcher prints its own
 version as the first line when it starts.
 
+## Setup 0.1.24 (Windows) and 0.2.23 (Linux) — 2026-10-05
+
+**The example files moved from launcher/ to examples/:** hotwire.example.cfg, hotwire-secrets.example.cfg and the
+hook examples. Both setup scripts download the settings list from there. The files and the downloads are unchanged.
+
 ## Launchers 1.1.25 (Windows) and 1.1.10-linux, plugin 1.1.58, setup 0.1.23 (Windows) and 0.2.22 (Linux) — 2026-10-05
 
 **Launchers no longer carry their own code hash. The plugin works out the hash from the launcher's files and sends it,
