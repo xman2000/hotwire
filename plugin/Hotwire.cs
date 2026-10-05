@@ -17,7 +17,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Hotwire", "xman2000", "1.1.58")]
+    [Info("Hotwire", "xman2000", "1.1.59")]
     [Description("Scheduled restarts and updates. Announces, counts down, writes a flag, quits.")]
     internal class Hotwire : CovalencePlugin
     {
@@ -2297,10 +2297,19 @@ namespace Oxide.Plugins
             return true;
         }
 
-        private void CancelCountdown(string by)
+        // skipOccurrence: an explicit cancel (the panel's, hotwire cancel, the menu) calls off this occurrence of the entry,
+        // so the next scan does not arm it again ten seconds later; the entry's next occurrence runs as usual. An edit or
+        // a disable that stops a countdown does not: a rescheduled entry may still be due later the same day.
+        private void CancelCountdown(string by, bool skipOccurrence = false)
         {
             if (!_countdownActive) return;
             if (_shuttingDown) return;
+
+            if (skipOccurrence && _countdownEntry != null && !string.IsNullOrEmpty(_countdownKey))
+            {
+                _lastFired[_countdownKey] = DateTime.Now;
+                try { Interface.Oxide.DataFileSystem.WriteObject(LastFiredFile, _lastFired); } catch { }
+            }
 
             _countdownTimer?.Destroy();
             _countdownTimer = null;
@@ -3582,7 +3591,7 @@ namespace Oxide.Plugins
             else if (code == 401 && message.StartsWith("Unknown or revoked", StringComparison.Ordinal))
                 problem = "the panel no longer accepts this server's key. The server was retired in the panel, " +
                           "or another machine was connected in its place. To connect this one again, make a code in the panel " +
-                          "and run hotwire-setup connect in this folder.";
+                          "and run hotwire connect <code> in this console (or hotwire-setup connect in this folder).";
             else if (code == 401 && message.StartsWith("Replayed", StringComparison.Ordinal))
                 problem = "the panel saw a repeated request. It retries by itself.";
             else if (code == 401)
@@ -5936,7 +5945,7 @@ namespace Oxide.Plugins
                 case "countdown.cancel":
                     if (_shuttingDown) { status = "refused"; result = "too late: the server is already shutting down"; return; }
                     if (!_countdownActive) { status = "done"; result = "no countdown was running"; return; }
-                    CancelCountdown("the panel");
+                    CancelCountdown("the panel", skipOccurrence: true);
                     _scheduleCheckDue = DateTime.MinValue;
                     status = "done"; result = "countdown canceled";
                     return;
@@ -10912,7 +10921,7 @@ namespace Oxide.Plugins
                 if (!Allowed(player, PermCancel)) return;
                 if (_shuttingDown) Reply(player, "TooLateToCancel");
                 else if (!_countdownActive) Reply(player, "NoCountdownRunning");
-                else CancelCountdown(player.Name);
+                else CancelCountdown(player.Name, skipOccurrence: true);
                 DrawMenu(player);
                 return;
             }
@@ -11559,7 +11568,7 @@ namespace Oxide.Plugins
             if (!Allowed(player, PermCancel)) return;
             if (_shuttingDown) { Reply(player, "TooLateToCancel"); return; }
             if (!_countdownActive) { Reply(player, "NothingToCancel"); return; }
-            CancelCountdown(player.Name);
+            CancelCountdown(player.Name, skipOccurrence: true);
         }
 
         private void CmdAdd(IPlayer player, string[] args)

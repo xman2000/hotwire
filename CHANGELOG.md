@@ -24,6 +24,18 @@ sit above a launcher `1.1.7`. Read the label, not the number.
 `hotwire check` prints the plugin's version. Each launcher prints its own
 version as the first line when it starts.
 
+## Plugin 1.1.59, setup 0.1.25 (Windows) and 0.2.24 (Linux) — unreleased
+
+**Cancelling a scheduled restart, update or wipe calls off that occurrence.** Before, `hotwire cancel`, the menu's
+Cancel and AFKPanel's Cancel countdown stopped the countdown, and the schedule started it again about ten seconds later.
+The entry's next occurrence runs as usual. Switching an entry off or editing it still stops its countdown without
+skipping anything, so an entry moved to later the same day still runs. Cancelling a forced wipe's countdown calls off
+that month's forced wipe.
+
+- When AFKPanel no longer accepts a server's key, the console now says to run `hotwire connect <code>` in the server
+  console, or `hotwire-setup connect` in the server folder. A server on a host panel has no shell for the second.
+- Setup pins the new plugin.
+
 ## Setup 0.1.24 (Windows) and 0.2.23 (Linux) — 2026-10-05
 
 **The example files moved from launcher/ to examples/:** hotwire.example.cfg, hotwire-secrets.example.cfg and the
