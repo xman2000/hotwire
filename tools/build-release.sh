@@ -3,8 +3,7 @@
 # build-release.sh -- build the files a Hotwire release offers, into dist/.
 #
 # Run by .github/workflows/release.yml on a tag, and by hand to check it. Refuses to build when a setup script's pin
-# does not match the file it pins, or a launcher's stamped code hash is stale: a release with either would stop every
-# install at a hash mismatch.
+# does not match the file it pins: a release with one would stop every install at a hash mismatch.
 #
 #   dist/hotwire-windows.zip   the setup script (.bat + .ps1), hotwire.bat and hotwire.ps1, the settings and hook examples, Hotwire.cs,
 #                              README.txt
@@ -37,8 +36,7 @@ pin_check launcher/hotwire.bat "$(grep -oP "^\s*'hotwire.bat'\s*=\s*'\K[0-9a-f]{
 pin_check launcher/hotwire.ps1 "$(grep -oP "^\s*'hotwire.ps1'\s*=\s*'\K[0-9a-f]{64}" setup/hotwire-setup.ps1)" hotwire-setup.ps1
 pin_check launcher/hotwire.example.cfg "$(grep -oP "^PIN_CFG=\"\K[0-9a-f]{64}" setup/hotwire-setup.sh)" hotwire-setup.sh
 pin_check launcher/hotwire.example.cfg "$(grep -oP "^\s*'hotwire.example.cfg'\s*=\s*'\K[0-9a-f]{64}" setup/hotwire-setup.ps1)" hotwire-setup.ps1
-for f in launcher/hotwire.bat launcher/hotwire.sh; do tools/launcher-hash.sh check "$f" >/dev/null || { echo "STALE CODE HASH: $f" >&2; fail=1; }; done
-[ "$fail" = 0 ] || { echo "Not building: fix the pins or run tools/launcher-hash.sh stamp, then commit." >&2; exit 1; }
+[ "$fail" = 0 ] || { echo "Not building: fix the pins, then commit." >&2; exit 1; }
 
 blob setup/hotwire-setup.bat     | crlf > dist/windows/hotwire-setup.bat
 blob setup/hotwire-setup.ps1     | crlf > dist/windows/hotwire-setup.ps1

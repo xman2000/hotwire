@@ -15,7 +15,7 @@
 $ErrorActionPreference = 'Stop'
 # Who this launcher is, for the plugin: written to oxide\data\Hotwire\launcher.json before every start. The plugin
 # offers only the features in the capability list; settings_file means the settings come from hotwire.cfg.
-$LauncherVersion = '1.1.24'
+$LauncherVersion = '1.1.25'
 $LauncherCapabilities = 'supervise,update,framework_verify,crash_backstop,log_rotate,convar_persist,wipe,backup,settings_file'
 $root = $PSScriptRoot
 $cfg = Join-Path $root 'hotwire.cfg'
@@ -1438,17 +1438,15 @@ function Move-ServerLog([long]$crashStreak) {
     } catch { Say ('Could not rotate the server log: ' + $_.Exception.Message) }
 }
 
-# Tells the plugin which launcher started the server: version, code hash, capabilities and path, in
-# oxide\data\Hotwire\launcher.json. The hash is the one stamped in hotwire.bat, which covers hotwire.bat and this file.
-# If writing fails, only AFKPanel's view of the launcher is affected.
+# Tells the plugin which launcher started the server: version, capabilities and path, in
+# oxide\data\Hotwire\launcher.json. The plugin works out the launcher's code hash from hotwire.bat and the file it
+# names (this one), and AFKPanel compares it with the released launchers'. If writing fails, only AFKPanel's view of
+# the launcher is affected.
 function Write-LauncherState {
     try {
-        $h = ''
-        $m = [regex]::Match([IO.File]::ReadAllText($LauncherBat), '(?m)^HOTWIRE_LAUNCHER_HASH=.?([0-9a-f]{64})')
-        if ($m.Success) { $h = $m.Groups[1].Value }
         $state = [IO.Path]::Combine($root, 'oxide', 'data', 'Hotwire', 'launcher.json')
         [void](New-Item -ItemType Directory -Force -Path (Split-Path -Parent $state))
-        $o = [ordered]@{ version = $LauncherVersion; hash = $h; capabilities = $LauncherCapabilities; platform = 'windows'; path = $LauncherBat; update_mode = (Get-Env 'UPDATE_MODE') }
+        $o = [ordered]@{ version = $LauncherVersion; capabilities = $LauncherCapabilities; platform = 'windows'; path = $LauncherBat; update_mode = (Get-Env 'UPDATE_MODE') }
         [IO.File]::WriteAllText($state, ($o | ConvertTo-Json))
     } catch { }
 }

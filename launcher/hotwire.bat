@@ -9,8 +9,9 @@ REM    hotwire.bat          start the server, and restart it when it exits
 REM    hotwire.bat check    check the settings and report; start nothing
 REM
 REM  hotwire.ps1 can be replaced while the launcher runs: it takes over at
-REM  the next restart. Nothing above the HOTWIRE-PART line changes between
-REM  releases, because cmd reads this file while it runs.
+REM  the next restart. This file does not change between releases, because
+REM  cmd reads it while it runs. The HOTWIRE-PART line names the file the
+REM  launcher's code hash covers besides this one.
 REM ======================================================================
 if not exist "%~dp0hotwire.ps1" (
     echo hotwire.ps1 is missing. Put it beside hotwire.bat, then run hotwire.bat again.
@@ -22,4 +23,3 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0hotwire.ps1" %*
 if errorlevel 75 if not errorlevel 76 goto run
 exit /b %errorlevel%
 REM HOTWIRE-PART hotwire.ps1
-HOTWIRE_LAUNCHER_HASH="24cf295c0b9e371742931fa7f12e348a78b4ec3fb6fe63235a48be6421193931"

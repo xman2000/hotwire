@@ -18,12 +18,11 @@
 #     The plugin reads these from oxide/data/Hotwire/launcher.json, which the
 #     launcher writes before every start. The capability list decides which
 #     features the plugin offers; settings_file says the settings are read from
-#     hotwire.cfg. HOTWIRE_LAUNCHER_HASH is stamped by tools/launcher-hash.sh at
-#     release and is left out of its own computation: AFKPanel shows whether
-#     this file is the released one, and nothing waits on that answer.
-HOTWIRE_LAUNCHER_VERSION="1.1.9-linux"
+#     hotwire.cfg. The plugin works out this file's code hash itself, and
+#     AFKPanel compares it with the released launchers'; nothing waits on that
+#     answer.
+HOTWIRE_LAUNCHER_VERSION="1.1.10-linux"
 HOTWIRE_LAUNCHER_CAPABILITIES="supervise,update,framework_verify,crash_backstop,log_rotate,convar_persist,wipe,backup,settings_file"
-HOTWIRE_LAUNCHER_HASH="4f079d62333a6ff2011004da7142c6eb467e6bb19b367dac6ddec16aff10ef0f"
 
 # ======================================================================
 #  HOW THIS LAUNCHER WORKS
@@ -902,10 +901,9 @@ rotate_log() {
 }
 
 # ======================================================================
-# The launcher's identity file, for the plugin to read. The plugin
-# recomputes the code hash from this launcher's bytes to confirm it is
-# unmodified, and reads the capability list to know what features it may
-# offer. Written before each launch; harmless if no plugin reads it yet.
+# The launcher's identity file, for the plugin to read. The plugin works out
+# the code hash from this launcher's bytes, and reads the capability list to
+# know what features it may offer. Written before each launch; harmless if no plugin reads it yet.
 # ======================================================================
 write_launcher_state() {
     local dir; dir="$(dirname "$LAUNCHER_STATE")"
@@ -914,7 +912,6 @@ write_launcher_state() {
     cat > "$LAUNCHER_STATE" 2>/dev/null <<JSON || true
 {
   "version": "$HOTWIRE_LAUNCHER_VERSION",
-  "hash": "$HOTWIRE_LAUNCHER_HASH",
   "capabilities": "$HOTWIRE_LAUNCHER_CAPABILITIES",
   "platform": "linux",
   "update_mode": "$UPDATE_MODE",

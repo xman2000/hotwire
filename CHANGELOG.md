@@ -24,6 +24,17 @@ sit above a launcher `1.1.7`. Read the label, not the number.
 `hotwire check` prints the plugin's version. Each launcher prints its own
 version as the first line when it starts.
 
+## Launchers 1.1.25 (Windows) and 1.1.10-linux, plugin 1.1.58, setup 0.1.23 (Windows) and 0.2.22 (Linux) — 2026-10-05
+
+**Launchers no longer carry their own code hash. The plugin works out the hash from the launcher's files and sends it,
+and AFKPanel compares it with the released launchers' to show whether a server runs one.** hotwire.bat no longer
+changes between releases, and an update that replaces only hotwire.ps1 still reads as a released launcher.
+
+- hotwire.bat, hotwire.sh and the launcher.json they write have no hash. tools/launcher-hash.sh only computes one;
+  the release build no longer checks stamps.
+- Plugin 1.1.58 sends the hash it works out as code_hash, in the form sha256:<hex>. Launchers from before keep their stamped hash, and the
+  plugin still says whether it matches.
+
 ## Launcher 1.1.24 (Windows), setup 0.1.22 (Windows) — 2026-10-05
 
 **The whole Windows launcher is in hotwire.ps1. hotwire.bat is a short starter that stays the same between releases,

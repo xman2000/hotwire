@@ -242,7 +242,7 @@ On Windows, from 1.1.24:
 
 Moving to 1.1.24 from an older launcher replaces `hotwire.bat` too, so close the window first, replace both files, run `hotwire.bat check`, then `hotwire.bat`.
 
-`hotwire.bat` refuses to start when `hotwire.ps1` is missing. The code hash covers both files.
+`hotwire.bat` refuses to start when `hotwire.ps1` is missing. AFKPanel shows whether a server runs a released launcher by comparing the plugin's hash of both files with the released ones'; it never refuses anything on that.
 
 ## Check
 

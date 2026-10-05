@@ -17,7 +17,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Hotwire", "xman2000", "1.1.57")]
+    [Info("Hotwire", "xman2000", "1.1.58")]
     [Description("Scheduled restarts and updates. Announces, counts down, writes a flag, quits.")]
     internal class Hotwire : CovalencePlugin
     {
@@ -4028,12 +4028,12 @@ namespace Oxide.Plugins
             };
         }
 
-        // The launcher writes oxide/data/Hotwire/launcher.json with its version, hash and
-        // capabilities. We recompute the launcher's code hash from its own bytes (the same
-        // way tools/launcher-hash.sh does) so the panel can tell an unmodified Hotwire
-        // launcher from a modified or foreign one, and gate launcher-editing features on
-        // what it actually advertises -- capabilities, not a version number. This is the
-        // panel's confirmation that a "persist" or a wipe will really be carried out.
+        // The launcher writes oxide/data/Hotwire/launcher.json with its version and
+        // capabilities (and, before Windows 1.1.25 and Linux 1.1.10, a stamped hash). The
+        // plugin works out the launcher's code hash from its own files, the same way
+        // tools/launcher-hash.sh does, and sends it as code_hash: AFKPanel compares it with the
+        // released launchers' to show whether this one is released. What the launcher is asked
+        // to do follows its capabilities, never the hash.
         private JObject LauncherIdentity()
         {
             var file = Path.Combine(Interface.Oxide.DataDirectory, "Hotwire", "launcher.json");
@@ -4051,18 +4051,20 @@ namespace Oxide.Plugins
                 if (t.Length > 0) caps.Add(t);
             }
 
-            // Verified only when the launcher file is present AND its recomputed hash matches
-            // what it declared: whether this is the stock file. A fact for the panel to show;
-            // it does not decide what the launcher is asked to do (LauncherCan).
-            var verified = false;
+            // code_hash: the launcher's code hash as worked out here, left out when its files cannot be read.
+            // verified: whether it matches a hash the launcher stamped on itself, which only launchers
+            // before Windows 1.1.25 and Linux 1.1.10 carry. Facts for AFKPanel to show; neither decides
+            // what the launcher is asked to do (LauncherCan).
+            var computed = "";
             try
             {
-                if (!string.IsNullOrEmpty(path) && !string.IsNullOrEmpty(declaredHash) && File.Exists(path))
-                    verified = string.Equals(CachedLauncherHash(path), declaredHash, StringComparison.OrdinalIgnoreCase);
+                if (!string.IsNullOrEmpty(path) && File.Exists(path)) computed = CachedLauncherHash(path);
             }
             catch { }
+            var verified = computed.Length > 0 && !string.IsNullOrEmpty(declaredHash)
+                && string.Equals(computed, declaredHash, StringComparison.OrdinalIgnoreCase);
 
-            return new JObject
+            var identity = new JObject
             {
                 ["version"] = (string)declared["version"] ?? "",
                 ["platform"] = (string)declared["platform"] ?? "",
@@ -4070,6 +4072,9 @@ namespace Oxide.Plugins
                 ["capabilities"] = caps,
                 ["verified"] = verified,
             };
+            // In the contract's one hash form; left out when the launcher's files could not be read.
+            if (computed.Length > 0) identity["code_hash"] = "sha256:" + computed.ToLowerInvariant();
+            return identity;
         }
 
         // The launcher's hash, worked out again only when a file in it changes (its path, size or last write time): the
