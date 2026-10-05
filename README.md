@@ -7,7 +7,7 @@ Hotwire schedules restarts, updates and wipes for a Rust dedicated server. It an
 | Rust server | The game, `RustDedicated`, that players connect to |
 | Machine | The computer the Rust server runs on |
 | Server folder | The folder that holds `RustDedicated`, `oxide/` and the launcher |
-| Hotwire | The plugin (`Hotwire.cs`) and the launcher (`hotwire.bat` or `hotwire.sh`) |
+| Hotwire | The plugin (`Hotwire.cs`) and the launcher (`hotwire.bat` with `hotwire.ps1` on Windows, `hotwire.sh` on Linux) |
 | AFKPanel | The web panel at https://afkpanel.com that a Hotwire server can report to |
 
 ## What it does
@@ -198,7 +198,8 @@ The launcher starts the Rust server, relaunches it when it exits, and updates it
 
 ```
 plugin/Hotwire.cs               the plugin
-launcher/hotwire.bat            the launcher for Windows
+launcher/hotwire.bat            starts the Windows launcher; the same in every release
+launcher/hotwire.ps1            the launcher for Windows
 launcher/hotwire.sh             the launcher for Linux
 examples/hotwire.example.cfg    every setting both launchers read; copy to hotwire.cfg
 examples/hotwire-secrets.example.cfg   copy to hotwire-secrets.cfg for the RCON password; never committed

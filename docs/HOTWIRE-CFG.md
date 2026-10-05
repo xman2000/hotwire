@@ -1,7 +1,7 @@
 # hotwire.cfg
 
-`hotwire.cfg` holds every setting for your server and for Hotwire's launcher. It sits beside `hotwire.bat` or
-`hotwire.sh`. The RCON password is not in it: see [The RCON password file](https://afkpanel.com/docs/rcon-password).
+`hotwire.cfg` holds every setting for your server and for Hotwire's launcher. It sits beside the launcher:
+`hotwire.bat` and `hotwire.ps1` on Windows, `hotwire.sh` on Linux. The RCON password is not in it: see [The RCON password file](https://afkpanel.com/docs/rcon-password).
 
 ## Get the file
 
@@ -104,7 +104,7 @@ Each is off in the file and shows the value used.
 | `hotwire.steam_tries` | 5 | SteamCMD attempts before starting what is on disk |
 | `hotwire.steam_retry_seconds` | 60 | Seconds between SteamCMD attempts |
 | `hotwire.steamcmd_wait_minutes` | 60 | Minutes to wait for another server's SteamCMD run |
-| `hotwire.forced_wipe_steam_minutes` | 15 | Launchers 1.1.20 (Windows) and 1.1.6-linux or later: when a forced wipe waits on the update, keep trying SteamCMD this many minutes. 0 = only `hotwire.steam_tries`. |
+| `hotwire.forced_wipe_steam_minutes` | 15 | Launchers 1.1.25 (Windows) and 1.1.6-linux or later: when a forced wipe waits on the update, keep trying SteamCMD this many minutes. 0 = only `hotwire.steam_tries`. |
 | `hotwire.install_framework` | 1 | Install and refresh Oxide with the server. 0 = never touch it. |
 | `hotwire.skip_unchanged_framework` | 1 | Skip re-extracting Oxide when neither it nor the game changed |
 | `hotwire.verify_framework` | 1 | Check Oxide against the SHA-256 GitHub publishes |

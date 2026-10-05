@@ -23,8 +23,8 @@ or removing anything defaults to no.
 5. It checks five things first, and changes nothing while it does:
    - is a Rust server installed in this folder, and which build
    - is the clock right (against Steam's servers, so it never contacts the panel)
-   - is Hotwire installed: `hotwire.bat` and `hotwire.cfg` here, `Hotwire.cs` in `oxide\plugins`
-   - is the RCON password in `hotwire-secrets.cfg` one `hotwire.bat` will accept
+   - is Hotwire installed: `hotwire.bat`, `hotwire.ps1` and `hotwire.cfg` here, `Hotwire.cs` in `oxide\plugins`
+   - is the RCON password in `hotwire-secrets.cfg` one the launcher will accept
    - is it connected to AFKPanel, and as what
 6. Pick from the menu. It suggests the next step from what it found.
 
@@ -54,12 +54,12 @@ built for it:
 - **Each server's firewall rules carry its port and folder** in their name, so one server's rules can be
   removed without touching another's.
 - **SteamCMD takes turns.** Servers can share `C:\steamcmd`. Every SteamCMD run, setup's and every
-  `hotwire.bat`'s, holds a lock file beside `steamcmd.exe`; another run waits and says so. Windows releases
+  launcher's, holds a lock file beside `steamcmd.exe`; another run waits and says so. Windows releases
   the lock when the process ends, however it ends.
 - **A copied server folder is recognised.** The panel connection records the folder it was made in.
   `connect` in a copy asks whether to connect it as a new, separate server instead of taking over the
   original's place in the panel, which would silence the original. The menu and `status` say when a
-  connection was copied. `hotwire.bat` follows its own folder, so a copy runs the copy.
+  connection was copied. The launcher follows its own folder, so a copy runs the copy.
 - **The panel name defaults to the computer name plus the folder name**, for example `BOX-rust-dev`, so
   two servers can be told apart there.
 
@@ -90,8 +90,8 @@ nothing broken, and running it again simply carries on.
 ## What it will never overwrite
 
 - **A Rust server it did not install.**
-- **An existing `hotwire.bat`, `hotwire.cfg`, `Hotwire.cs` or valid `hotwire-secrets.cfg`.** They are kept as
-  they are. The one exception is a `hotwire.cfg` that install created: its `hotwire.install_framework` and
+- **An existing `hotwire.bat`, `hotwire.ps1`, `hotwire.cfg`, `Hotwire.cs` or valid `hotwire-secrets.cfg`.** They are
+  kept as they are. The one exception is a `hotwire.cfg` that install created: its `hotwire.install_framework` and
   `hotwire.steam_branch` lines are kept in step with Oxide and the chosen branch, after a copy is saved. A
   `hotwire.bat` from before 1.1.16, which keeps its settings inside itself, is left as it is; the start-script
   converter at https://afkpanel.com/get-started moves its settings into `hotwire.cfg`.
@@ -111,7 +111,7 @@ exact way to undo it. The last screen shows where that file is. In short:
 |---|---|
 | one server's firewall rules | the `Remove-NetFirewallRule -DisplayName '...'` lines in that server's `changes.log` (as Administrator). `-Group Hotwire` would remove **every** server's rules |
 | Oxide | copy the files from `hotwire\backups\*-before-oxide\` back into the server folder |
-| the start script, plugin or password | delete `hotwire.bat` and `hotwire.cfg`, `oxide\plugins\Hotwire.cs` or `hotwire-secrets.cfg` |
+| the start script, plugin or password | delete `hotwire.bat`, `hotwire.ps1` and `hotwire.cfg`, `oxide\plugins\Hotwire.cs` or `hotwire-secrets.cfg` |
 | connecting to the panel | `hotwire-setup.bat detach`, then revoke the keys in the panel |
 | everything | delete the server folder, and `C:\steamcmd` if no other server uses it |
 
@@ -149,10 +149,10 @@ It runs in four parts, and only the third one changes anything:
 |---|---|---|
 | 1 | Windows, PowerShell 5.1, Administrator, memory, **the clock** | only if the clock is out and you say yes (`w32tm /resync`) |
 | 2 | Where the server goes (see above) | nothing yet |
-| 3 | SteamCMD into `C:\steamcmd`, where `hotwire.bat` looks for it | reuses one already there |
+| 3 | SteamCMD into `C:\steamcmd`, where the launcher looks for it | reuses one already there |
 | 4 | The Rust server, app 258550, about 12 GB. **Asks which branch first:** public (the game everyone plays), staging (Facepunch's test build), or a branch typed by name. The choice is kept, used for every download, and written into `hotwire.cfg` as `hotwire.steam_branch` | the server folder |
 | 5 | Oxide, from its GitHub release, checked against the SHA-256 GitHub publishes, and checked to be the Windows build and a real archive before it is unpacked. Defaults to yes; no leaves a vanilla server, and the start script is set up to stay vanilla | the server folder |
-| 6 | **Start script**: `hotwire.bat`, as released, and `hotwire.cfg`, the settings it reads, with this server's ports, `hotwire.install_framework 0` when there is no Oxide, the chosen `hotwire.steam_branch`, and `hotwire.steamcmd` when SteamCMD is not in `C:\steamcmd`. Keeps the list as `hotwire.example.cfg`. Asks for ports first if none are chosen. Defaults to yes; no means you use your own start script, and step 8 is skipped | `hotwire.bat`, `hotwire.cfg`; existing ones are left alone |
+| 6 | **Start script**: `hotwire.bat` and `hotwire.ps1`, as released, and `hotwire.cfg`, the settings it reads, with this server's ports, `hotwire.install_framework 0` when there is no Oxide, the chosen `hotwire.steam_branch`, and `hotwire.steamcmd` when SteamCMD is not in `C:\steamcmd`. Keeps the list as `hotwire.example.cfg`. Asks for ports first if none are chosen. Defaults to yes; no means you use your own start script, and step 8 is skipped | `hotwire.bat`, `hotwire.ps1`, `hotwire.cfg`; existing ones are left alone, and a missing `hotwire.ps1` is added |
 | 7 | **Hotwire plugin**, asked separately, defaults to yes. Scheduled, announced restarts. Skipped without Oxide | `oxide\plugins\Hotwire.cs` |
 | 8 | **RCON password**, walked through: type your own (hidden, twice, checked against the launcher's rules), or press Enter for 32 random letters and digits, shown once and copied to the clipboard | `hotwire-secrets.cfg`, readable only by Administrators and you; an existing valid one is left alone, an invalid one replaced only if you say yes |
 | 9 | **Windows Firewall**: opens this server's game and query ports, and its Rust+ port only if asked. Asks for ports first if none are chosen | rules named for the port and the server's folder, in the group `Hotwire` |

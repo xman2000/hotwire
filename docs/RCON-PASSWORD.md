@@ -52,7 +52,7 @@ the launcher runs is reported, and the server starts with the last good password
 2. Save the new password in your password manager.
 3. Restart the server. The launcher reads the file again before every start.
 
-Requires launcher 1.1.9-linux or later on Linux; an older Linux launcher reads the file only when `hotwire.sh` itself
+Requires launcher 1.1.10-linux or later on Linux; an older Linux launcher reads the file only when `hotwire.sh` itself
 is started.
 
 ## Keep it private

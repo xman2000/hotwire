@@ -49,7 +49,7 @@ if "%DO_UPDATE%"=="1" (
 exit /b 0
 ```
 
-On Linux, `hotwire-before.sh` reads it as `$DO_UPDATE`. Requires launcher 1.1.9-linux or later.
+On Linux, `hotwire-before.sh` reads it as `$DO_UPDATE`. Requires launcher 1.1.10-linux or later.
 
 ## Examples
 

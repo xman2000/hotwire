@@ -235,8 +235,8 @@ The server keeps running.
 
 The setup script does this for you. By hand, the second server needs:
 
-1. Its own folder, for example `C:\rust-dev`, with its own `hotwire.bat`, `hotwire.cfg` and `hotwire-secrets.cfg`.
-   You can copy the first server's folder: `hotwire.bat` follows its own folder, so the copy runs the copy. If you plan to connect the
+1. Its own folder, for example `C:\rust-dev`, with its own `hotwire.bat`, `hotwire.ps1`, `hotwire.cfg` and
+   `hotwire-secrets.cfg`. You can copy the first server's folder: the launcher follows its own folder, so the copy runs the copy. If you plan to connect the
    copy, do not copy `hotwire\connect.json` and the keys, or run `connect` in the copy and choose to connect it as a
    new server.
 2. Its own ports. In the second `hotwire.cfg`, set `server.port`, `server.queryport` and `rcon.port`, for example to
@@ -258,4 +258,4 @@ it runs:
 2. Replace `hotwire.bat` and `hotwire.ps1`. Keep your `hotwire.cfg`, `hotwire-secrets.cfg` and hook files.
 3. Run `hotwire.bat check`, then `hotwire.bat`.
 
-Moving to launcher 1.1.24 from an older one changes both files.
+Moving to launcher 1.1.25 from an older one changes both files.

@@ -29,7 +29,7 @@ The launcher's settings, and the default when `hotwire.cfg` leaves one out:
 | `hotwire.update_mode` | `auto` | See Update modes |
 | `hotwire.steamcmd` | Windows `C:\steamcmd\steamcmd.exe`; Linux `/usr/games/steamcmd` | SteamCMD. Several servers may share one. |
 | `hotwire.steamcmd_wait_minutes` | `60` | How long to wait for another server's SteamCMD run before starting as is |
-| `hotwire.forced_wipe_steam_minutes` | `15` | Launchers 1.1.20 (Windows) and 1.1.6-linux or later: when a forced wipe waits on the update, keep trying SteamCMD this long before starting what is on disk. `0` = only `hotwire.steam_tries` |
+| `hotwire.forced_wipe_steam_minutes` | `15` | Launchers 1.1.25 (Windows) and 1.1.6-linux or later: when a forced wipe waits on the update, keep trying SteamCMD this long before starting what is on disk. `0` = only `hotwire.steam_tries` |
 | `hotwire.steam_branch` | `public` | The Steam branch. Empty lets Steam keep the install on its current branch. |
 | `hotwire.max_days_without_update` | `14` | `hotwire` mode's backstop. `0` turns it off. |
 | `hotwire.update_on_new_build` | `1` | `hotwire` mode updates when Steam's build is ahead |
@@ -159,7 +159,7 @@ A wipe comes from the plugin as `WIPE.flag`, one `key value` per line: the new s
 ## Backups
 
 The plugin decides when a backup runs and, right after Rust's save, copies what only the game can copy safely. The
-launcher does the rest, at the lowest priority. Requires launcher 1.1.20 on Windows or 1.1.0-linux.
+launcher does the rest, at the lowest priority. Requires launcher 1.1.25 on Windows or 1.1.0-linux.
 
 | Step | What the launcher does |
 | --- | --- |
@@ -175,7 +175,7 @@ launcher does the rest, at the lowest priority. Requires launcher 1.1.20 on Wind
 ## Reports to AFKPanel
 
 Once the server is connected, the launcher reports what only it knows, signed with its own key from `hotwire/keys.json`.
-Requires launcher 1.1.20 on Windows; every Linux launcher that reads `hotwire.cfg` does it.
+Requires launcher 1.1.25 on Windows; every Linux launcher that reads `hotwire.cfg` does it.
 
 | Report | Sent |
 | --- | --- |
@@ -235,12 +235,12 @@ Your own commands, such as a backup before every start, go in `hotwire-before` (
 
 ## Update the launcher
 
-On Windows, from 1.1.24:
+On Windows, from 1.1.25:
 
 1. Replace `hotwire.ps1`. The launcher can be running: it starts the new copy at the next restart and says so.
 2. Replace `hotwire.bat` only when a release changes it, and only with the launcher's window closed: cmd reads `hotwire.bat` while it runs.
 
-Moving to 1.1.24 from an older launcher replaces `hotwire.bat` too, so close the window first, replace both files, run `hotwire.bat check`, then `hotwire.bat`.
+Moving to 1.1.25 from an older launcher replaces `hotwire.bat` too, so close the window first, replace both files, run `hotwire.bat check`, then `hotwire.bat`.
 
 `hotwire.bat` refuses to start when `hotwire.ps1` is missing. AFKPanel shows whether a server runs a released launcher by comparing the plugin's hash of both files with the released ones'; it never refuses anything on that.
 

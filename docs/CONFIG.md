@@ -86,7 +86,7 @@ An entry added with `hotwire add` is on at once. An entry added from the menu's 
 
 ## Wipes
 
-Requires the Hotwire launcher, unmodified: Windows 1.1.17 or later, Linux 1.1.4 or later. On a start script, or a modified or older launcher, a wipe entry is reported with that problem and never fires.
+Requires the Hotwire launcher: Windows 1.1.17 or later, Linux 1.1.4 or later. On a start script, or an older launcher, a wipe entry is reported with that problem and never fires.
 
 A wipe is a restart that also leaves the launcher `WIPE.flag` with the next map's seed. Every server starts with one forced wipe, switched off, with a random seed and a random size between 3500 and 4500; it is added once, and a deleted one is not added back. The entry has the recurrence fields above and these:
 
@@ -277,7 +277,7 @@ Reporting to AFKPanel. Nothing is sent until the Rust server has been connected 
 
 ## Backups
 
-Requires Hotwire 1.1.41 or later (1.1.56 on Windows), the Linux launcher 1.1.0 or the Windows launcher 1.1.20 or later, and an AFKPanel plan that includes backups. Off until `Back up this server` is `true`. `hotwire backup` says which of the three is missing.
+Requires Hotwire 1.1.41 or later (1.1.58 on Windows), the Linux launcher 1.1.0 or the Windows launcher 1.1.25 or later, and an AFKPanel plan that includes backups. Off until `Back up this server` is `true`. `hotwire backup` says which of the three is missing.
 
 ```json
 "Backups": {
