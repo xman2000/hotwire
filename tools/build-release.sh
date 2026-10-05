@@ -30,9 +30,9 @@ pin_check() { # <file> <pinned hash> <where>
     local got; got=$(blob "$1" | sha)
     if [ "$got" != "$2" ]; then echo "STALE PIN: $3 pins $1 as $2, the commit has $got" >&2; fail=1; fi
 }
-pin_check src/Hotwire.cs "$(grep -oP "^PIN_PLUGIN=\"\K[0-9a-f]{64}" setup/hotwire-setup.sh)" hotwire-setup.sh
+pin_check plugin/Hotwire.cs "$(grep -oP "^PIN_PLUGIN=\"\K[0-9a-f]{64}" setup/hotwire-setup.sh)" hotwire-setup.sh
 pin_check launcher/hotwire.sh "$(grep -oP "^PIN_LAUNCHER=\"\K[0-9a-f]{64}" setup/hotwire-setup.sh)" hotwire-setup.sh
-pin_check src/Hotwire.cs "$(grep -oP "^\s*'Hotwire.cs'\s*=\s*'\K[0-9a-f]{64}" setup/hotwire-setup.ps1)" hotwire-setup.ps1
+pin_check plugin/Hotwire.cs "$(grep -oP "^\s*'Hotwire.cs'\s*=\s*'\K[0-9a-f]{64}" setup/hotwire-setup.ps1)" hotwire-setup.ps1
 pin_check launcher/hotwire.bat "$(grep -oP "^\s*'hotwire.bat'\s*=\s*'\K[0-9a-f]{64}" setup/hotwire-setup.ps1)" hotwire-setup.ps1
 pin_check launcher/hotwire.ps1 "$(grep -oP "^\s*'hotwire.ps1'\s*=\s*'\K[0-9a-f]{64}" setup/hotwire-setup.ps1)" hotwire-setup.ps1
 pin_check launcher/hotwire.example.cfg "$(grep -oP "^PIN_CFG=\"\K[0-9a-f]{64}" setup/hotwire-setup.sh)" hotwire-setup.sh
@@ -48,7 +48,7 @@ blob launcher/hotwire.example.cfg | crlf > dist/windows/hotwire.example.cfg
 blob launcher/hotwire-secrets.example.cfg | crlf > dist/windows/hotwire-secrets.example.cfg
 blob launcher/hotwire-before.example.bat | crlf > dist/windows/hotwire-before.example.bat
 blob launcher/hotwire-after.example.bat | crlf > dist/windows/hotwire-after.example.bat
-blob src/Hotwire.cs > dist/windows/Hotwire.cs
+blob plugin/Hotwire.cs > dist/windows/Hotwire.cs
 crlf > dist/windows/README.txt <<'TXT'
 Hotwire for Windows
 
@@ -78,7 +78,7 @@ blob launcher/hotwire.example.cfg > dist/linux/hotwire.example.cfg
 blob launcher/hotwire-secrets.example.cfg > dist/linux/hotwire-secrets.example.cfg
 blob launcher/hotwire-before.example.sh > dist/linux/hotwire-before.example.sh
 blob launcher/hotwire-after.example.sh > dist/linux/hotwire-after.example.sh
-blob src/Hotwire.cs > dist/linux/Hotwire.cs
+blob plugin/Hotwire.cs > dist/linux/Hotwire.cs
 cat > dist/linux/README.txt <<'TXT'
 Hotwire for Linux, for a Rust server you already run
 
@@ -99,6 +99,6 @@ touch -d "$(git log -1 --format=%cI HEAD)" dist/linux/*
 rm -rf dist/linux
 
 blob setup/hotwire-setup.sh > dist/hotwire-setup.sh
-blob src/Hotwire.cs > dist/Hotwire.cs
+blob plugin/Hotwire.cs > dist/Hotwire.cs
 (cd dist && sha256sum hotwire-windows.zip hotwire-linux.zip hotwire-setup.sh Hotwire.cs > SHA256SUMS)
 cat dist/SHA256SUMS

@@ -3,7 +3,7 @@
 # Needs the .NET 8 SDK. Usage: tests/plugin-signing/run.sh
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
-src="$here/../../src/Hotwire.cs"
+src="$here/../../plugin/Hotwire.cs"
 
 extract() { awk -v name="#region $1" 'index($0, name){on=1; next} on && /#endregion/{exit} on{print}' "$src"; }
 signing="$(extract "Panel signing")"

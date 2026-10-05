@@ -26,7 +26,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
         run: |
-          plugin=$(grep -oP 'Info\("Hotwire", "xman2000", "\K[0-9.]+' src/Hotwire.cs)
+          plugin=$(grep -oP 'Info\("Hotwire", "xman2000", "\K[0-9.]+' plugin/Hotwire.cs)
           {
             echo "Plugin ${plugin}. Download and install: https://afkpanel.com/get-started"
             echo

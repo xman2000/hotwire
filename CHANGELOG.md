@@ -24,6 +24,11 @@ sit above a launcher `1.1.7`. Read the label, not the number.
 `hotwire check` prints the plugin's version. Each launcher prints its own
 version as the first line when it starts.
 
+## Launcher 1.1.23 (Windows), setup 0.1.21 (Windows) and 0.2.21 (Linux) — 2026-10-05
+
+**The plugin's file moved from src/Hotwire.cs to plugin/Hotwire.cs.** Both setup scripts download it from there. The
+plugin is unchanged; the launcher changes only where its header names the file.
+
 ## Launcher 1.1.22 (Windows), plugin 1.1.57, setup 0.1.20 (Windows) and 0.2.20 (Linux) — 2026-10-05
 
 **The Windows launcher keeps its PowerShell in hotwire.ps1, beside hotwire.bat. Launcher 1.1.20 and 1.1.21 read it out

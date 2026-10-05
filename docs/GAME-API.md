@@ -228,7 +228,7 @@ carries the countdown by itself.
 `tools/convars.py` reads convar names and defaults out of a server's `Assembly-CSharp.dll`; the launcher's
 option list and the defaults beside it come from that. Nothing else in the plugin depends on the assembly.
 
-More usefully: **the scheduler and status code in `src/Hotwire.cs` reference no Facepunch type**; the
+More usefully: **the scheduler and status code in `plugin/Hotwire.cs` reference no Facepunch type**; the
 admin menu, confined to one region, is the exception.
 Everything goes through Covalence and `Oxide.Core`, because a
 wrong guess at a Facepunch signature is a compile error, and a plugin that

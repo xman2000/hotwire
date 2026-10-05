@@ -42,7 +42,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$Version = '0.1.20'
+$Version = '0.1.21'
 
 # Captured here: inside a function, $PSBoundParameters describes that function, not this script.
 $SteamCmdGiven = $PSBoundParameters.ContainsKey('SteamCmd')
@@ -78,7 +78,7 @@ $LauncherPs1Url = 'https://raw.githubusercontent.com/xman2000/hotwire/connect-an
 # The settings list the launcher reads from (1.1.16 and later): kept as hotwire.example.cfg, and copied into this
 # server's hotwire.cfg with its ports, map and branch filled in.
 $CfgUrl = 'https://raw.githubusercontent.com/xman2000/hotwire/connect-and-report/launcher/hotwire.example.cfg'
-$PluginUrl = 'https://raw.githubusercontent.com/xman2000/hotwire/connect-and-report/src/Hotwire.cs'
+$PluginUrl = 'https://raw.githubusercontent.com/xman2000/hotwire/connect-and-report/plugin/Hotwire.cs'
 
 # ---------------------------------------------------------------------------
 # Pinned SHA-256 of the FIRST-PARTY files this script downloads and then runs,
@@ -91,7 +91,7 @@ $PluginUrl = 'https://raw.githubusercontent.com/xman2000/hotwire/connect-and-rep
 # LF line endings here even though it is checked out -- and finally saved -- with
 # CRLF. Compute a value as: (read file, replace CRLF with LF, sha256).
 #
-# Whenever launcher/hotwire.bat, launcher/hotwire.ps1, launcher/hotwire.example.cfg or src/Hotwire.cs
+# Whenever launcher/hotwire.bat, launcher/hotwire.ps1, launcher/hotwire.example.cfg or plugin/Hotwire.cs
 # changes on the branch the URLs above point at, these values MUST change in the
 # same commit, or every install aborts with a hash mismatch. tools/build-release.sh
 # refuses to build a release while any of them is stale. A value must match what
@@ -102,8 +102,8 @@ $PluginUrl = 'https://raw.githubusercontent.com/xman2000/hotwire/connect-and-rep
 # SteamCMD is reported as "unverified (third-party)" rather than blocked, so the
 # omission is never silent.
 $PinnedHashes = @{
-    'hotwire.bat' = '309e96a5cd33e7efb29d36a30bdd5e24b63a190f7f8430eed7be36aee5e6ff89'
-    'hotwire.ps1' = 'ff1a4846377b8aa4fdda90b35953fc52f9e809126df93f5bdce329a86adcbfc6'
+    'hotwire.bat' = '9a2c07c6be63d9f60e67813b7b415119bbcd10447e0c902f332aa165728d4cd0'
+    'hotwire.ps1' = '845cfad78f4890529511144dea51af5b7f0aa262af4397d3ecb6c9e958e7146d'
     'Hotwire.cs'  = '61c80cc0cc9ce73366e33679e5118b6b0827fb96fe86522fa5ad3e710ee2bcb4'
     'hotwire.example.cfg' = '121c1480f3f6edbb3f48790a0fd72abeff1c964d7cd3ef1608646663b1661f4c'
 }
@@ -2004,7 +2004,7 @@ function Install-Plugin([string]$d) {
     if (-not $info.Success) {
         Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
         Stop-Politely "checking the downloaded Hotwire.cs" "it is not the Hotwire plugin" `
-            "nothing was written; download src\Hotwire.cs by hand from $($Docs['Hotwire (source)'])"
+            "nothing was written; download plugin\Hotwire.cs by hand from $($Docs['Hotwire (source)'])"
     }
     Move-FileIntoPlace $tmp $plugin
     Add-Created $d $plugin

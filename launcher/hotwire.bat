@@ -30,7 +30,7 @@ REM  before every start, with this file's code hash (HOTWIRE_LAUNCHER_HASH,
 REM  near the end). The plugin offers only the features in the capability
 REM  list; settings_file means the settings come from hotwire.cfg. AFKPanel
 REM  shows whether the hash matches a release, and nothing depends on it.
-set "HOTWIRE_LAUNCHER_VERSION=1.1.22"
+set "HOTWIRE_LAUNCHER_VERSION=1.1.23"
 set "HOTWIRE_LAUNCHER_CAPABILITIES=supervise,update,framework_verify,crash_backstop,log_rotate,convar_persist,wipe,backup,settings_file"
 echo [%date% %time%] Hotwire launcher %HOTWIRE_LAUNCHER_VERSION% (Windows)
 
@@ -112,7 +112,7 @@ REM     folder can be copied, because the launcher works on its own folder,
 REM     but change the ports in the copy before starting it.
 REM
 REM  PLUGIN
-REM     Optional: src\Hotwire.cs at the address above. It schedules
+REM     Optional: plugin\Hotwire.cs at the address above. It schedules
 REM     restarts, warns players with a countdown, and writes UPDATE.flag
 REM     when a scheduled restart includes an update. The plugin and the
 REM     launcher talk only through files in the server folder:
@@ -1103,4 +1103,4 @@ REM     file and each file named on a HOTWIRE-PART line, in that order.
 REM ======================================================================
 exit /b 0
 REM HOTWIRE-PART hotwire.ps1
-HOTWIRE_LAUNCHER_HASH="931582437e34a851238b81724e0530298749f2d02a240a773bfdf9444b87d70a"
+HOTWIRE_LAUNCHER_HASH="63b4b0c820ea4965f85f4118c0a54d271660a0e09c0c3bf9261435ad59e7b330"

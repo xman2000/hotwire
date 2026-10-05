@@ -197,7 +197,7 @@ The launcher starts the Rust server, relaunches it when it exits, and updates it
 ## Layout
 
 ```
-src/Hotwire.cs                  the plugin
+plugin/Hotwire.cs               the plugin
 launcher/hotwire.bat            the launcher for Windows
 launcher/hotwire.sh             the launcher for Linux
 launcher/hotwire.example.cfg    every setting both launchers read; copy to hotwire.cfg

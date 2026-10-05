@@ -8,7 +8,7 @@ using Newtonsoft.Json.Linq;
 
 namespace PluginSigning
 {
-    // Every check runs the plugin's own code, copied out of src/Hotwire.cs by run.sh.
+    // Every check runs the plugin's own code, copied out of plugin/Hotwire.cs by run.sh.
     internal static class Program
     {
         private static int _failed;

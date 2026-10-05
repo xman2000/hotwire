@@ -16,7 +16,7 @@
 # Windows PowerShell 5.1, ASCII only.
 $ErrorActionPreference = 'Stop'
 # The release this file belongs to. hotwire.bat must be the same one: the two agree on how each step is passed.
-$LauncherVersion = '1.1.22'
+$LauncherVersion = '1.1.23'
 $root = $env:HOTWIRE_ROOT
 $cfg = Join-Path $root 'hotwire.cfg'
 $secretsCfg = Join-Path $root 'hotwire-secrets.cfg'
