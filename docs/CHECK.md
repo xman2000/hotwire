@@ -54,7 +54,7 @@ Each is listed as `line <number>: <reason>`. The rest of the file is used.
 
 | Message | Meaning |
 | --- | --- |
-| `<name> is not in hotwire.cfg's list of convars. Is it spelled right?` | Rust ignores a name it does not know. Check the spelling. A setting from a newer Rust build or a mod can be correct. |
+| `<name> is not in hotwire.cfg's list of convars. Check the spelling.` | Rust ignores a name it does not know. A setting from a newer Rust build or a mod can be correct. |
 | `hotwire-secrets.cfg can be read by every user on this machine. chmod 600 it.` | Linux: run `chmod 600 hotwire-secrets.cfg` |
 
 `hotwire.check_options 0` turns off the spelling check.

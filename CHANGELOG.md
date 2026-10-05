@@ -24,6 +24,14 @@ sit above a launcher `1.1.7`. Read the label, not the number.
 `hotwire check` prints the plugin's version. Each launcher prints its own
 version as the first line when it starts.
 
+## Launcher 1.1.21 (Windows), setup 0.1.19 (Windows) — 2026-10-05
+
+**The Windows launcher's comments and messages are rewritten to be shorter and plainer. Nothing it does has changed.**
+
+- Every comment and every message the launcher prints was reworded; each message keeps its meaning.
+- The comment on how the plugin and the launcher talk now lists every file they exchange.
+- Setup pins the new launcher.
+
 ## Launchers 1.1.20 (Windows) and 1.1.9-linux, plugin 1.1.56, setup 0.1.18 (Windows) and 0.2.19 (Linux) — 2026-10-04
 
 **Backups on Windows. A launcher setting written with a leading zero no longer stops the launcher, a wipe writes its

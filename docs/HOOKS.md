@@ -22,7 +22,7 @@ Hotwire never creates or changes these files.
    | Linux | `hotwire-after.example.sh` | `hotwire-after.sh` |
 
 2. Add your commands. The examples in the file are commented out: remove the `REM` or `#` to use one.
-3. Restart the server. The launcher logs `Running the before-start hook` when it runs the file.
+3. Restart the server. The launcher logs `Running hotwire-before.bat...` when it runs the file.
 
 ## How a hook runs
 
