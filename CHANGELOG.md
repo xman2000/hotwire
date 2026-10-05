@@ -24,6 +24,22 @@ sit above a launcher `1.1.7`. Read the label, not the number.
 `hotwire check` prints the plugin's version. Each launcher prints its own
 version as the first line when it starts.
 
+## Launcher 1.1.22 (Windows), plugin 1.1.57, setup 0.1.20 (Windows) and 0.2.20 (Linux) — 2026-10-05
+
+**The Windows launcher keeps its PowerShell in hotwire.ps1, beside hotwire.bat. Launcher 1.1.20 and 1.1.21 read it out
+of hotwire.bat and ran it as text, and an antivirus on a test machine blocked that as malicious, so the launcher could not read its
+settings and the server did not start.**
+
+- hotwire.bat runs hotwire.ps1 as a file for each step. Copy both, from the same release.
+- The launcher refuses to start when hotwire.ps1 is missing or comes from another release, and says which.
+- When hotwire.ps1 gives no answer, the launcher says an antivirus may have blocked it.
+- The launcher's code hash covers both files: hotwire.bat names hotwire.ps1 on a HOTWIRE-PART line. Plugin 1.1.57
+  computes it the same way, so AFKPanel shows a released 1.1.22 as released.
+- Setup downloads hotwire.ps1 with hotwire.bat, checks it against its pin, and adds it beside a hotwire.bat that names
+  it. The Windows download has both.
+- The install guide and docs/LAUNCHER.md say how to update the launcher: close its window first, then replace both
+  files.
+
 ## Launcher 1.1.21 (Windows), setup 0.1.19 (Windows) — 2026-10-05
 
 **The Windows launcher's comments and messages are rewritten to be shorter and plainer. Nothing it does has changed.**

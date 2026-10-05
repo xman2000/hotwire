@@ -181,7 +181,7 @@ Each switch is in the config's `Panel` section. `hotwire check` shows what is be
 
 | Platform | File | Settings |
 | --- | --- | --- |
-| Windows | `hotwire.bat` | `hotwire.cfg` beside it |
+| Windows | `hotwire.bat` and `hotwire.ps1` | `hotwire.cfg` beside them |
 | Linux | `hotwire.sh` | `hotwire.cfg` beside it |
 
 The launcher starts the Rust server, relaunches it when it exits, and updates it only when the plugin's schedule, a newer Steam build or a backstop says so. It carries out the wipes the plugin schedules. Neither half needs the other: the plugin restarts a server on its own, and the launcher runs without the plugin. See [docs/LAUNCHER.md](docs/LAUNCHER.md) and [docs/HOTWIRE-CFG.md](docs/HOTWIRE-CFG.md).

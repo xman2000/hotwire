@@ -42,7 +42,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$Version = '0.1.19'
+$Version = '0.1.20'
 
 # Captured here: inside a function, $PSBoundParameters describes that function, not this script.
 $SteamCmdGiven = $PSBoundParameters.ContainsKey('SteamCmd')
@@ -73,6 +73,8 @@ $OxideZipUrl = 'https://github.com/OxideMod/Oxide.Rust/releases/latest/download/
 # Hotwire itself, from the branch this script ships on, checked against the pins below. GitHub serves
 # these with LF line endings, which cmd.exe misreads in a .bat, so the launcher is saved with CRLF.
 $LauncherUrl = 'https://raw.githubusercontent.com/xman2000/hotwire/connect-and-report/launcher/hotwire.bat'
+# The launcher's PowerShell (1.1.22 and later), run as a file beside hotwire.bat.
+$LauncherPs1Url = 'https://raw.githubusercontent.com/xman2000/hotwire/connect-and-report/launcher/hotwire.ps1'
 # The settings list the launcher reads from (1.1.16 and later): kept as hotwire.example.cfg, and copied into this
 # server's hotwire.cfg with its ports, map and branch filled in.
 $CfgUrl = 'https://raw.githubusercontent.com/xman2000/hotwire/connect-and-report/launcher/hotwire.example.cfg'
@@ -89,7 +91,7 @@ $PluginUrl = 'https://raw.githubusercontent.com/xman2000/hotwire/connect-and-rep
 # LF line endings here even though it is checked out -- and finally saved -- with
 # CRLF. Compute a value as: (read file, replace CRLF with LF, sha256).
 #
-# Whenever launcher/hotwire.bat, launcher/hotwire.example.cfg or src/Hotwire.cs
+# Whenever launcher/hotwire.bat, launcher/hotwire.ps1, launcher/hotwire.example.cfg or src/Hotwire.cs
 # changes on the branch the URLs above point at, these values MUST change in the
 # same commit, or every install aborts with a hash mismatch. tools/build-release.sh
 # refuses to build a release while any of them is stale. A value must match what
@@ -100,8 +102,9 @@ $PluginUrl = 'https://raw.githubusercontent.com/xman2000/hotwire/connect-and-rep
 # SteamCMD is reported as "unverified (third-party)" rather than blocked, so the
 # omission is never silent.
 $PinnedHashes = @{
-    'hotwire.bat' = 'f49dc86e97f64150b0f4816c2369352da3ac9377989e09f23a239b0333b671c0'
-    'Hotwire.cs'  = '047988a1f3b06fd9951bb2a4849c1768999e1ed8d12bdc951acaf301697cc3e8'
+    'hotwire.bat' = '309e96a5cd33e7efb29d36a30bdd5e24b63a190f7f8430eed7be36aee5e6ff89'
+    'hotwire.ps1' = 'ff1a4846377b8aa4fdda90b35953fc52f9e809126df93f5bdce329a86adcbfc6'
+    'Hotwire.cs'  = '61c80cc0cc9ce73366e33679e5118b6b0827fb96fe86522fa5ad3e710ee2bcb4'
     'hotwire.example.cfg' = '121c1480f3f6edbb3f48790a0fd72abeff1c964d7cd3ef1608646663b1661f4c'
 }
 
@@ -1834,6 +1837,7 @@ function Install-Launcher([string]$d) {
 
     if ($hasLauncher -and -not ((Test-CfgLauncher $d) -and -not (Test-Path -LiteralPath $cfg))) {
         Write-Ok "hotwire.bat is already here -- kept"
+        Install-LauncherPs1 $d
         if (-not (Test-CfgLauncher $d)) {
             Write-Note "It keeps its settings inside itself. The start-script converter at https://afkpanel.com/get-started"
             Write-Note "moves them into hotwire.cfg, which Hotwire 1.1.16 and later read."
@@ -1911,6 +1915,7 @@ function Install-Launcher([string]$d) {
         Add-Created $d $launcher
         Add-Change "created $launcher" "delete hotwire.bat"
     }
+    Install-LauncherPs1 $d
 
     # The list of settings, kept as hotwire.example.cfg, and this server's copy of it, hotwire.cfg.
     $download = Join-Path $d 'hotwire.example.cfg.hotwire-tmp'
@@ -1940,6 +1945,24 @@ function Install-Launcher([string]$d) {
     Write-Ok ("hotwire.cfg written" + $(if ($vanilla) { ' for a vanilla server' } else { '' }) + ", with this server's ports")
     Add-Change "created $cfg (ports$(if ($seed) { ", server.seed $seed" })$(if ($vanilla) { ', hotwire.install_framework 0' }))" "delete hotwire.cfg"
     Save-Record $d 'launcher'
+}
+
+# hotwire.ps1, for a hotwire.bat that names it (1.1.22 and later): downloaded and checked like the launcher, when it
+# is missing. An existing one is left alone: it is replaced together with hotwire.bat, never on its own.
+function Install-LauncherPs1([string]$d) {
+    $launcher = Join-Path $d 'hotwire.bat'
+    $ps1 = Join-Path $d 'hotwire.ps1'
+    if (-not (Test-Path -LiteralPath $launcher) -or (Test-Path -LiteralPath $ps1)) { return }
+    if (-not ([System.IO.File]::ReadAllText($launcher) -match '(?m)^REM HOTWIRE-PART hotwire\.ps1\r?$')) { return }
+    $download = "$ps1.hotwire-tmp"
+    [void](Invoke-Download $LauncherPs1Url $download "the Hotwire launcher's PowerShell")
+    Confirm-DownloadHash $download 'hotwire.ps1' "the Hotwire launcher's PowerShell"
+    try { $text = [System.IO.File]::ReadAllText($download) }
+    finally { Remove-Item -LiteralPath $download -Force -ErrorAction SilentlyContinue }
+    Write-FileAtomic $ps1 $text
+    Add-Created $d $ps1
+    Add-Change "created $ps1" "delete hotwire.ps1"
+    Write-Ok "hotwire.ps1 written beside hotwire.bat"
 }
 
 # ----------------------------------------------------------- 7. the plugin --

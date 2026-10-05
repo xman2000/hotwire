@@ -15,6 +15,10 @@
 #   - drop each SETTINGS block, if any (inclusive of both marker lines);
 #   - drop the line beginning HOTWIRE_LAUNCHER_HASH= ;
 #   - strip trailing whitespace from each remaining line;
+#   - then the same for each file named on a "REM HOTWIRE-PART <name>" line, in
+#     the order those lines appear; the file sits beside the launcher (the
+#     Windows launcher keeps its PowerShell in hotwire.ps1). A missing part
+#     is an error, never an empty one;
 #   - join with LF and SHA-256 the result.
 #
 # Usage:
@@ -30,16 +34,31 @@ set -uo pipefail
 BEGIN_MARKER="=== HOTWIRE SETTINGS BEGIN ==="
 END_MARKER="=== HOTWIRE SETTINGS END ==="
 
-compute() {
-    local file="$1"
-    [ -f "$file" ] || { echo "no such file: $file" >&2; exit 2; }
+normalise() {
     awk -v b="$BEGIN_MARKER" -v e="$END_MARKER" '
         { sub(/\r$/, "") }
         index($0, b) { skip=1 }
         skip==1 { if (index($0, e)) { skip=0 }; next }
         /^HOTWIRE_LAUNCHER_HASH=/ { next }
         { sub(/[ \t]+$/, ""); print }
-    ' "$file" | sha256sum | cut -d' ' -f1
+    ' "$1"
+}
+
+parts() {
+    tr -d '\r' < "$1" | sed -n -E 's/^REM HOTWIRE-PART ([A-Za-z0-9_.-]+)$/\1/p'
+}
+
+compute() {
+    local file="$1" dir part
+    [ -f "$file" ] || { echo "no such file: $file" >&2; exit 2; }
+    dir="$(dirname "$file")"
+    for part in $(parts "$file"); do
+        [ -f "$dir/$part" ] || { echo "missing part beside $file: $part" >&2; exit 2; }
+    done
+    {
+        normalise "$file"
+        for part in $(parts "$file"); do normalise "$dir/$part"; done
+    } | sha256sum | cut -d' ' -f1
 }
 
 stamp() {

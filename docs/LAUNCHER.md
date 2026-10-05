@@ -4,7 +4,7 @@ The launcher starts the Rust server and relaunches it whenever it exits. It upda
 
 | Platform | File | Runs under |
 | --- | --- | --- |
-| Windows | `hotwire.bat` | cmd, with PowerShell and curl, which ship with Windows 10 and later |
+| Windows | `hotwire.bat` and `hotwire.ps1` | cmd, with PowerShell and curl, which ship with Windows 10 and later |
 | Linux | `hotwire.sh` | bash, on Ubuntu 22.04 or later |
 
 The launcher's own folder is the server folder: the one that holds `RustDedicated` and `oxide/`. A copied server folder runs its own server, never the original's.
@@ -232,6 +232,16 @@ Every setting is one line. A setting that is off starts with `#` and shows the g
    | Linux | `./hotwire.sh check` | `./hotwire.sh` |
 
 Your own commands, such as a backup before every start, go in `hotwire-before` (before every start) and `hotwire-after` (after an update), beside the launcher. See [Run your own commands](HOOKS.md).
+
+## Update the launcher
+
+On Windows, replace the launcher only while it is stopped: cmd reads `hotwire.bat` while it runs, and a file replaced under it runs part of each version.
+
+1. Close the launcher's window. The server stops with it.
+2. Replace `hotwire.bat` and `hotwire.ps1` with the two files from one release.
+3. Run `hotwire.bat check`, then `hotwire.bat`.
+
+Launcher 1.1.22 and later keep the PowerShell in `hotwire.ps1`: some antivirus software blocks PowerShell that a script reads out of itself and runs. The launcher refuses to start when `hotwire.ps1` is missing or from another release, and says which. The code hash covers both files.
 
 ## Check
 

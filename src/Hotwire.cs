@@ -17,7 +17,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Hotwire", "xman2000", "1.1.56")]
+    [Info("Hotwire", "xman2000", "1.1.57")]
     [Description("Scheduled restarts and updates. Announces, counts down, writes a flag, quits.")]
     internal class Hotwire : CovalencePlugin
     {
@@ -4072,32 +4072,60 @@ namespace Oxide.Plugins
             };
         }
 
-        // The launcher's hash, worked out again only when the file changes (its path, size or last write time).
-        // Hashing it on every heartbeat created about 460 KB of garbage each time for the game's collector to clear.
-        private string _launcherHashPath;
-        private long _launcherHashLength = -1;
-        private DateTime _launcherHashWritten;
+        // The launcher's hash, worked out again only when a file in it changes (its path, size or last write time): the
+        // launcher and each part it names, such as hotwire.ps1 beside hotwire.bat. Hashing them on every heartbeat
+        // created about 460 KB of garbage each time for the game's collector to clear.
+        private string _launcherHashKey;
+        private List<string> _launcherHashParts = new List<string>();
         private string _launcherHash;
+
+        private static string FileStamp(string path)
+        {
+            var info = new FileInfo(path);
+            return info.Exists ? info.Length + ":" + info.LastWriteTimeUtc.Ticks : "-";
+        }
 
         private string CachedLauncherHash(string path)
         {
-            var info = new FileInfo(path);
-            var length = info.Length;
-            var written = info.LastWriteTimeUtc;
-            if (_launcherHash == null || path != _launcherHashPath || length != _launcherHashLength || written != _launcherHashWritten)
+            var key = new StringBuilder(path).Append('|').Append(FileStamp(path));
+            foreach (var part in _launcherHashParts) key.Append('|').Append(part).Append('=').Append(FileStamp(part));
+            if (_launcherHash == null || key.ToString() != _launcherHashKey)
             {
-                _launcherHash = ComputeLauncherHash(path);
-                _launcherHashPath = path;
-                _launcherHashLength = length;
-                _launcherHashWritten = written;
+                List<string> parts;
+                _launcherHash = ComputeLauncherHash(path, out parts);
+                _launcherHashParts = parts;
+                key = new StringBuilder(path).Append('|').Append(FileStamp(path));
+                foreach (var part in parts) key.Append('|').Append(part).Append('=').Append(FileStamp(part));
+                _launcherHashKey = key.ToString();
             }
             return _launcherHash;
         }
 
-        // Must match tools/launcher-hash.sh byte for byte: drop the SETTINGS block (both
-        // markers inclusive) and the HOTWIRE_LAUNCHER_HASH line, right-trim each remaining
-        // line, join with a newline after each, and SHA-256 the result.
-        private static string ComputeLauncherHash(string path)
+        // Must match tools/launcher-hash.sh byte for byte: for the launcher, then for each file named on a
+        // "REM HOTWIRE-PART <name>" line (beside the launcher, in order), drop the SETTINGS block (both markers
+        // inclusive) and the HOTWIRE_LAUNCHER_HASH line, right-trim each remaining line, and add it with a newline;
+        // then SHA-256 the result. A missing part gives "", which never matches.
+        private static readonly Regex LauncherPartLine = new Regex(@"^REM HOTWIRE-PART ([A-Za-z0-9_.-]+)$");
+
+        private static string ComputeLauncherHash(string path, out List<string> parts)
+        {
+            parts = new List<string>();
+            var sb = new StringBuilder();
+            var names = AppendLauncherLines(sb, path);
+            var dir = Path.GetDirectoryName(path) ?? "";
+            foreach (var name in names)
+            {
+                var part = Path.Combine(dir, name);
+                parts.Add(part);
+                if (!File.Exists(part)) return "";
+                AppendLauncherLines(sb, part);
+            }
+            using (var sha = SHA256.Create())
+                return Hex(sha.ComputeHash(Encoding.UTF8.GetBytes(sb.ToString())));
+        }
+
+        // Adds one file's lines as the hash reads them, and returns the parts it names.
+        private static List<string> AppendLauncherLines(StringBuilder sb, string path)
         {
             const string begin = "=== HOTWIRE SETTINGS BEGIN ===";
             const string end = "=== HOTWIRE SETTINGS END ===";
@@ -4106,11 +4134,13 @@ namespace Oxide.Plugins
             // A file ending in \n yields a trailing empty element that awk never sees as a record.
             if (count > 0 && lines[count - 1].Length == 0) count--;
 
-            var sb = new StringBuilder();
+            var names = new List<string>();
             var skip = false;
             for (var i = 0; i < count; i++)
             {
                 var line = lines[i];
+                var named = LauncherPartLine.Match(line);
+                if (named.Success) names.Add(named.Groups[1].Value);
                 if (line.IndexOf(begin, StringComparison.Ordinal) >= 0) skip = true;
                 if (skip)
                 {
@@ -4121,8 +4151,7 @@ namespace Oxide.Plugins
                 sb.Append(line.TrimEnd(' ', '\t'));
                 sb.Append('\n');
             }
-            using (var sha = SHA256.Create())
-                return Hex(sha.ComputeHash(Encoding.UTF8.GetBytes(sb.ToString())));
+            return names;
         }
 
         // Frames the engine actually ran since the last heartbeat, divided by the

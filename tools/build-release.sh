@@ -6,7 +6,7 @@
 # does not match the file it pins, or a launcher's stamped code hash is stale: a release with either would stop every
 # install at a hash mismatch.
 #
-#   dist/hotwire-windows.zip   the setup script (.bat + .ps1), hotwire.bat, the settings and hook examples, Hotwire.cs,
+#   dist/hotwire-windows.zip   the setup script (.bat + .ps1), hotwire.bat and hotwire.ps1, the settings and hook examples, Hotwire.cs,
 #                              README.txt
 #   dist/hotwire-linux.zip     hotwire.sh, the settings and hook examples, Hotwire.cs, README.txt: Hotwire for a server
 #                              that is already installed (what the start-script converter on afkpanel.com sends people to)
@@ -34,6 +34,7 @@ pin_check src/Hotwire.cs "$(grep -oP "^PIN_PLUGIN=\"\K[0-9a-f]{64}" setup/hotwir
 pin_check launcher/hotwire.sh "$(grep -oP "^PIN_LAUNCHER=\"\K[0-9a-f]{64}" setup/hotwire-setup.sh)" hotwire-setup.sh
 pin_check src/Hotwire.cs "$(grep -oP "^\s*'Hotwire.cs'\s*=\s*'\K[0-9a-f]{64}" setup/hotwire-setup.ps1)" hotwire-setup.ps1
 pin_check launcher/hotwire.bat "$(grep -oP "^\s*'hotwire.bat'\s*=\s*'\K[0-9a-f]{64}" setup/hotwire-setup.ps1)" hotwire-setup.ps1
+pin_check launcher/hotwire.ps1 "$(grep -oP "^\s*'hotwire.ps1'\s*=\s*'\K[0-9a-f]{64}" setup/hotwire-setup.ps1)" hotwire-setup.ps1
 pin_check launcher/hotwire.example.cfg "$(grep -oP "^PIN_CFG=\"\K[0-9a-f]{64}" setup/hotwire-setup.sh)" hotwire-setup.sh
 pin_check launcher/hotwire.example.cfg "$(grep -oP "^\s*'hotwire.example.cfg'\s*=\s*'\K[0-9a-f]{64}" setup/hotwire-setup.ps1)" hotwire-setup.ps1
 for f in launcher/hotwire.bat launcher/hotwire.sh; do tools/launcher-hash.sh check "$f" >/dev/null || { echo "STALE CODE HASH: $f" >&2; fail=1; }; done
@@ -42,6 +43,7 @@ for f in launcher/hotwire.bat launcher/hotwire.sh; do tools/launcher-hash.sh che
 blob setup/hotwire-setup.bat     | crlf > dist/windows/hotwire-setup.bat
 blob setup/hotwire-setup.ps1     | crlf > dist/windows/hotwire-setup.ps1
 blob launcher/hotwire.bat        | crlf > dist/windows/hotwire.bat
+blob launcher/hotwire.ps1        | crlf > dist/windows/hotwire.ps1
 blob launcher/hotwire.example.cfg | crlf > dist/windows/hotwire.example.cfg
 blob launcher/hotwire-secrets.example.cfg | crlf > dist/windows/hotwire-secrets.example.cfg
 blob launcher/hotwire-before.example.bat | crlf > dist/windows/hotwire-before.example.bat
@@ -53,15 +55,19 @@ Hotwire for Windows
 To install a server: right-click hotwire-setup.bat and choose Run as administrator.
 It checks this machine, then asks before each step. Keep hotwire-setup.ps1 beside it.
 
-To add Hotwire to a server you already run: put hotwire.bat beside RustDedicated.exe
-and Hotwire.cs in oxide\plugins. Your settings go in hotwire.cfg: make it from your
-old start script at https://afkpanel.com/get-started, or copy hotwire.example.cfg.
-The RCON password goes in hotwire-secrets.cfg (copy hotwire-secrets.example.cfg).
+To add Hotwire to a server you already run: put hotwire.bat and hotwire.ps1 beside
+RustDedicated.exe and Hotwire.cs in oxide\plugins. Your settings go in hotwire.cfg: make
+it from your old start script at https://afkpanel.com/get-started, or copy
+hotwire.example.cfg. The RCON password goes in hotwire-secrets.cfg (copy
+hotwire-secrets.example.cfg).
+
+To update the launcher: close its window first, then replace hotwire.bat and hotwire.ps1
+together.
 
 The guide: https://afkpanel.com/docs/install-windows
 TXT
 touch -d "$(git log -1 --format=%cI HEAD)" dist/windows/*
-(cd dist/windows && zip -qX ../hotwire-windows.zip hotwire-setup.bat hotwire-setup.ps1 hotwire.bat hotwire.example.cfg \
+(cd dist/windows && zip -qX ../hotwire-windows.zip hotwire-setup.bat hotwire-setup.ps1 hotwire.bat hotwire.ps1 hotwire.example.cfg \
     hotwire-secrets.example.cfg hotwire-before.example.bat hotwire-after.example.bat Hotwire.cs README.txt)
 rm -rf dist/windows
 
