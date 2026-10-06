@@ -29,6 +29,7 @@ The launcher's settings, and the default when `hotwire.cfg` leaves one out:
 | `hotwire.update_mode` | `auto` | See Update modes |
 | `hotwire.steamcmd` | Windows `C:\steamcmd\steamcmd.exe`; Linux `/usr/games/steamcmd` | SteamCMD. Several servers may share one. |
 | `hotwire.steamcmd_wait_minutes` | `60` | How long to wait for another server's SteamCMD run before starting as is |
+| `hotwire.steamcmd_update_minutes` | `60` | Launchers 1.1.27 (Windows) and 1.1.12-linux or later: the longest one SteamCMD update may run before it is stopped and the installed build starts. `0` = no limit |
 | `hotwire.forced_wipe_steam_minutes` | `15` | Launchers 1.1.25 (Windows) and 1.1.6-linux or later: when a forced wipe waits on the update, keep trying SteamCMD this long before starting what is on disk. `0` = only `hotwire.steam_tries` |
 | `hotwire.steam_branch` | `public` | The Steam branch. Empty lets Steam keep the install on its current branch. |
 | `hotwire.max_days_without_update` | `14` | `hotwire` mode's backstop. `0` turns it off. |

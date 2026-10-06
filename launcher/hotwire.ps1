@@ -15,7 +15,7 @@
 $ErrorActionPreference = 'Stop'
 # Who this launcher is, for the plugin: written to oxide\data\Hotwire\launcher.json before every start. The plugin
 # offers only the features in the capability list; settings_file means the settings come from hotwire.cfg.
-$LauncherVersion = '1.1.26'
+$LauncherVersion = '1.1.27'
 $LauncherCapabilities = 'supervise,update,framework_verify,crash_backstop,log_rotate,convar_persist,wipe,wipe_same_map,wipe_custom_map,backup,settings_file'
 $root = $PSScriptRoot
 $cfg = Join-Path $root 'hotwire.cfg'
@@ -40,6 +40,7 @@ $hwSettings = @{
     'hotwire.steam_tries'              = @('MAX_STEAM_TRIES', 'int1', '5')
     'hotwire.steam_retry_seconds'      = @('STEAM_RETRY_SECONDS', 'int', '60')
     'hotwire.steamcmd_wait_minutes'    = @('STEAMCMD_WAIT_MINUTES', 'int', '60')
+    'hotwire.steamcmd_update_minutes'  = @('STEAMCMD_UPDATE_MINUTES', 'int', '60')
     'hotwire.forced_wipe_steam_minutes' = @('FORCED_WIPE_STEAM_MINUTES', 'int', '15')
     'hotwire.install_framework'        = @('INSTALL_FRAMEWORK', 'bool', '1')
     'hotwire.skip_unchanged_framework' = @('SKIP_UNCHANGED_FRAMEWORK', 'bool', '1')
@@ -112,6 +113,13 @@ function Test-CfgValue([string]$kind, [string]$v) {
     return ''
 }
 
+# One line that is not used as written: for check, and for AFKPanel through launcher.json.
+function Add-CfgNote($r, [int]$n, [string]$name, [bool]$critical, [string]$what) {
+    $shown = 'line ' + $n + ': '; if ($name) { $shown = $shown + $name + ': ' }
+    $r.Problems.Add($shown + $what)
+    $r.Report.Add([ordered]@{ line = $n; setting = $name; critical = $critical; problem = $what })
+}
+
 # Reads hotwire.cfg: what it sets, and every line not used.
 function Read-Config {
     $r = @{
@@ -119,7 +127,10 @@ function Read-Config {
         Problems = New-Object 'System.Collections.Generic.List[string]'
         Fatal = New-Object 'System.Collections.Generic.List[string]'
         Unknown = New-Object 'System.Collections.Generic.List[string]'
+        # The same lines for AFKPanel, in launcher.json: line, setting, critical, problem. Never a value.
+        Report = New-Object 'System.Collections.Generic.List[object]'
     }
+    $used = @{}
     if (-not (Test-Path -LiteralPath $cfg -PathType Leaf)) { $r.Missing = $true; $r.Fatal.Add('hotwire.cfg is missing'); return $r }
     $n = 0; $listed = $true
     foreach ($raw in [IO.File]::ReadAllLines($cfg)) {
@@ -132,28 +143,48 @@ function Read-Config {
         if ($off.Success) { if ($listed) { $r.Known[$off.Groups[1].Value.ToLowerInvariant()] = 1 }; continue }
         if ($line -eq '' -or $line.StartsWith('#')) { continue }
         $p = Read-CfgLine $line
-        if ($p.Why) { $r.Problems.Add('line ' + $n + ': ' + $p.Why); continue }
+        if ($p.Why) {
+            # A line whose value cannot be read is not used, so a setting it names keeps its default. For the settings
+            # that decide which server this is (save folder, map, ports) that is a different server, so it is marked.
+            $nm = [regex]::Match($line, '^([A-Za-z][A-Za-z0-9_]*(\.[A-Za-z0-9_]+)+)(\s|$)')
+            $named = ''; $k = $null
+            if ($nm.Success) {
+                $named = $nm.Groups[1].Value; $ln = $named.ToLowerInvariant()
+                if ($hwSettings.ContainsKey($ln)) { $k = $hwSettings[$ln][1] } elseif ($cvSettings.ContainsKey($ln)) { $k = $cvSettings[$ln][0] }
+            }
+            if ($k) { Add-CfgNote $r $n $named ($criticalKinds -contains $k) ($p.Why + '; the line is not used, so the default is') }
+            else { Add-CfgNote $r $n $named $false $p.Why }
+            continue
+        }
         $name = $p.Name; $lower = $name.ToLowerInvariant()
         if ($listed) { $r.Known[$lower] = 1 }
-        if ($lower -eq 'rcon.password') { $r.Problems.Add('line ' + $n + ': rcon.password: belongs in hotwire-secrets.cfg, never here; ignored'); continue }
+        if ($lower -eq 'rcon.password') { Add-CfgNote $r $n 'rcon.password' $false 'belongs in hotwire-secrets.cfg, never here; ignored'; continue }
         $kind = $null
         if ($hwSettings.ContainsKey($lower)) { $kind = $hwSettings[$lower][1] } elseif ($cvSettings.ContainsKey($lower)) { $kind = $cvSettings[$lower][0] }
         if ($kind) {
             $why = Test-CfgValue $kind $p.Value
             if ($why) {
-                if ($criticalKinds -contains $kind) { $r.Fatal.Add('line ' + $n + ': ' + $name + ': ' + $why) }
-                else { $r.Problems.Add('line ' + $n + ': ' + $name + ': ' + $why + '; the default is used') }
+                if ($criticalKinds -contains $kind) {
+                    $r.Fatal.Add('line ' + $n + ': ' + $name + ': ' + $why)
+                    $r.Report.Add([ordered]@{ line = $n; setting = $name; critical = $true; problem = ($why + '; the settings from the last good read are used') })
+                }
+                else { Add-CfgNote $r $n $name $false ($why + '; the default is used') }
                 continue
             }
             # Numbers are passed on in base 10, so a leading zero never changes one.
             $value = $p.Value
             if ($value -ne '' -and @('int', 'int1', 'seed', 'worldsize', 'port') -contains $kind) { $value = [string][long]$value }
+            # Set twice: the later line is the one used. A wipe or a saved convar edits the first, so the two disagree.
+            if ($used.ContainsKey($lower)) { Add-CfgNote $r $n $name ($criticalKinds -contains $kind) ('also set on line ' + $used[$lower] + '; line ' + $n + ' is used') }
+            $used[$lower] = $n
             $r.Values[$lower] = $value
             continue
         }
-        if ($lower.StartsWith('hotwire.')) { $r.Problems.Add('line ' + $n + ': ' + $name + ': not a launcher setting; ignored'); continue }
+        if ($lower.StartsWith('hotwire.')) { Add-CfgNote $r $n $name $false 'not a launcher setting; ignored'; continue }
         # Any other Rust convar is passed through unchanged. Empty means the default.
         if ($p.Value -eq '') { continue }
+        if ($used.ContainsKey($lower)) { Add-CfgNote $r $n $name $false ('also set on line ' + $used[$lower] + '; line ' + $n + ' is used') }
+        $used[$lower] = $n
         $r.Extra[$lower] = @($name, $p.Value)
     }
     foreach ($k in $r.Extra.Keys) { if (-not $r.Known.ContainsKey($k)) { $r.Unknown.Add($r.Extra[$k][0]) } }
@@ -1260,7 +1291,22 @@ function Invoke-SteamUpdate([bool]$validate) {
         if (Test-Path -LiteralPath $lg) { $before = (Get-Item -LiteralPath $lg).Length }
         $inst = @()
         if (Test-Path -LiteralPath $Acf) { foreach ($x in [regex]::Matches([IO.File]::ReadAllText($Acf), $q + 'manifest' + $q + '\s+' + $q + '([0-9]+)' + $q)) { $inst += $x.Groups[1].Value } }
-        $p = Start-Process -FilePath $sc -ArgumentList $a -NoNewWindow -Wait -PassThru
+        # Bounded by hotwire.steamcmd_update_minutes (0: no limit): a SteamCMD that hangs would otherwise keep this server
+        # down and hold the lock every other server on the machine waits for. Returns 95 when it was stopped.
+        $p = Start-Process -FilePath $sc -ArgumentList $a -NoNewWindow -PassThru
+        # Reading the handle now keeps the exit code: Windows PowerShell 5.1 can lose it for a process started this way.
+        [void]$p.Handle
+        $limit = Get-Num 'STEAMCMD_UPDATE_MINUTES' 60
+        if ($limit -gt 0) {
+            if (-not $p.WaitForExit([int]([Math]::Min([long]$limit * 60000, [int]::MaxValue)))) {
+                # SteamCMD and anything it started, so the next update does not meet a SteamCMD still running.
+                try { [void](& taskkill.exe /T /F /PID $p.Id 2>&1) } catch { }
+                try { if (-not $p.HasExited) { $p.Kill() } } catch { }
+                Say ('SteamCMD did not finish within ' + $limit + ' minutes (hotwire.steamcmd_update_minutes) and was stopped.')
+                return 95
+            }
+        }
+        $p.WaitForExit()
         $code = $p.ExitCode
         if ($code -ne 0 -and (Get-Env 'RECOVER_REFUSED_UPDATE') -eq '1' -and $inst.Count -gt 0 -and (Test-Path -LiteralPath $lg)) {
             $len = (Get-Item -LiteralPath $lg).Length
@@ -1345,6 +1391,7 @@ function Update-Rust([bool]$validate, [string]$installed, [string]$public) {
             return $true
         }
         if ($code -eq 97) { break }
+        if ($code -eq 95) { Say 'Starting what is on disk. The next update carries on from what was downloaded.'; break }
         Say ('SteamCMD failed (attempt ' + $tries + ' of ' + $maxTries + ').')
         if ($code -eq 96 -and -not $recoveryUsed -and (Move-RefusedRecord)) { $recoveryUsed = $true; continue }
         if ($tries -ge $maxTries) {
@@ -1477,8 +1524,12 @@ function Write-LauncherState {
     try {
         $state = [IO.Path]::Combine($root, 'oxide', 'data', 'Hotwire', 'launcher.json')
         [void](New-Item -ItemType Directory -Force -Path (Split-Path -Parent $state))
-        $o = [ordered]@{ version = $LauncherVersion; capabilities = $LauncherCapabilities; platform = 'windows'; path = $LauncherBat; update_mode = (Get-Env 'UPDATE_MODE') }
-        [IO.File]::WriteAllText($state, ($o | ConvertTo-Json))
+        # hotwire.cfg's lines that are not used as written: the plugin passes them to AFKPanel, which raises them as a
+        # problem. The setting's name and what is wrong, never its value. At most 20.
+        $problems = @()
+        try { $problems = @((Read-Config).Report | Select-Object -First 20) } catch { }
+        $o = [ordered]@{ version = $LauncherVersion; capabilities = $LauncherCapabilities; platform = 'windows'; path = $LauncherBat; update_mode = (Get-Env 'UPDATE_MODE'); config_problems = $problems }
+        [IO.File]::WriteAllText($state, (ConvertTo-Json -InputObject $o -Depth 4))
     } catch { }
 }
 

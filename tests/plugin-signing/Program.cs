@@ -217,7 +217,7 @@ namespace PluginSigning
             var n = Extracted.PanelNonce();
             Check("nonce is 32 lowercase hex characters", Regex.IsMatch(n, "^[0-9a-f]{32}$"), n);
 
-            // ---- HW-1 / ADR-0085: the panel's signed response. The plugin must verify a wrapped
+            // ---- The panel's signed response. The plugin must verify a wrapped
             // answer byte-for-byte with the panel (App\Support\HotwireSignature::responseCanonical /
             // signResponse), and fail closed on anything it cannot verify.
             var rv = (JObject)v["response"];

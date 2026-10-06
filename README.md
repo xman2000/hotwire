@@ -108,6 +108,9 @@ In chat or in the server console. `hw` is a short form. Bare `hotwire` is `statu
 | `hotwire set <restart\|update> <index> <time\|pattern\|updates\|from\|validate> <value>` | `hotwire.edit` | Edit one in place |
 | `hotwire remove <restart\|update> <index>` | `hotwire.edit` | Remove one |
 | `hotwire enable\|disable <restart\|update> <index>` | `hotwire.edit` | Turn one on or off |
+| `hotwire backup` | `hotwire.status` | Whether backups can run, and the last one |
+| `hotwire backup now` | `hotwire.edit` | Back up now, if the plan and the launcher allow it |
+| `hotwire connect <code> [panel address]` | Server console, RCON or an admin | Connect this server to AFKPanel with a connect code, from where `hotwire-setup` cannot run, such as a host panel's console |
 
 | Rule | Value |
 | --- | --- |
@@ -136,7 +139,7 @@ Where [AdvancedStatus](https://codefling.com/plugins/advanced-status) is install
 
 ## Reporting to AFKPanel
 
-Optional. Nothing is sent until the Rust server is connected with `hotwire-setup connect`, which writes `oxide/data/Hotwire/panel.json`. See [Connect a server](https://afkpanel.com/docs/connect-a-server).
+Optional. Nothing is sent until the Rust server is connected with `hotwire-setup connect`, or `hotwire connect <code>` in the server console, which writes `oxide/data/Hotwire/panel.json`. See [Connect a server](https://afkpanel.com/docs/connect-a-server).
 
 | Sent | When |
 | --- | --- |
@@ -157,7 +160,7 @@ Optional. Nothing is sent until the Rust server is connected with `hotwire-setup
 | Never | Why |
 | --- | --- |
 | A plugin's file or source | Only its hash and size travel |
-| A password | Every request is signed with the server's key; the key never leaves the machine |
+| The RCON password | It stays in `hotwire-secrets.cfg` on the machine, and only the launcher reads it, to start Rust. Hotwire does not use RCON, and a console line that shows the password is masked before it is sent. |
 | A report from a copied server folder | The plugin reports only from the folder that was connected |
 | A change to what the server does because AFKPanel is slow, down or wrong | Reporting runs beside the schedule, never in front of it |
 

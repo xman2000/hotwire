@@ -200,6 +200,7 @@ Off by default. On, the plugin polls the release feed and, when a new Oxide rele
   "Forced wipe: give up this many hours after the release moment": 6.0,
   "Forced wipe: go without AFKPanel's release check after this many minutes of silence": 30,
   "Default forced wipe added": true,
+  "Update entries merged into restarts": true,
   "Name shown in chat announcements": "Server Manager",
   "Name color (hex)": "#e0995e"
 }
@@ -215,12 +216,13 @@ Off by default. On, the plugin polls the release feed and, when a new Oxide rele
 | `Forced wipe: give up this many hours after the release moment` | See Wipes |
 | `Forced wipe: go without AFKPanel's release check after this many minutes of silence` | See Wipes |
 | `Default forced wipe added` | Set once the plugin has added the default forced wipe. `false` adds it again on the next load if the server has no forced wipe. |
+| `Update entries merged into restarts` | Set once the plugin has turned older update entries into restarts that install updates. Leave it as it is. |
 | `Name shown in chat announcements` | The name players see: *Server Manager: Scheduled restart in 4 minutes*. Empty drops the prefix. |
 | `Name color (hex)` | The name's colour. Empty drops the markup. |
 
 ## Panel
 
-Reporting to AFKPanel. Nothing is sent until the Rust server has been connected with `hotwire-setup connect`, which writes `oxide/data/Hotwire/panel.json`; without that file this section does nothing. `hotwire-setup detach` removes it. See [Connect a server](https://afkpanel.com/docs/connect-a-server).
+Reporting to AFKPanel. Nothing is sent until the Rust server has been connected with `hotwire-setup connect`, or `hotwire connect <code>` in the server console, which writes `oxide/data/Hotwire/panel.json`; without that file this section does nothing. `hotwire-setup detach` removes it. See [Connect a server](https://afkpanel.com/docs/connect-a-server).
 
 ```json
 "Panel": {
@@ -236,11 +238,21 @@ Reporting to AFKPanel. Nothing is sent until the Rust server has been connected 
   "Send the map image": true,
   "Render the map image if Rust+ has not": true,
   "Send the map layout": true,
-  "Send player positions for the panel's live map": true,
-  "Send player positions every this many seconds": 30,
   "Report the schedule": true,
   "Accept schedule changes from the panel": true,
-  "Accept plugin updates from the panel": true
+  "Accept plugin updates from the panel": true,
+  "Send the Oxide log": true,
+  "Keep unsent reports and log lines for this many days": 7,
+  "Send the server console": true,
+  "Send the log every this many seconds": 60,
+  "Send who is online, and player joins and leaves": true,
+  "Send chat": true,
+  "Send in-game reports when the panel asks for them": true,
+  "Send player joins, leaves and chat every this many seconds": 30,
+  "Send player positions for the panel's live map": true,
+  "Send player positions every this many seconds": 30,
+  "Report each plugin's server time": true,
+  "Send plugin server time every this many seconds": 60
 }
 ```
 
@@ -258,8 +270,18 @@ Reporting to AFKPanel. Nothing is sent until the Rust server has been connected 
 | `Send the map image` | The picture Rust draws for Rust+, once per map, a few MB. AFKPanel is asked first, so a restart on the same map sends nothing. | |
 | `Render the map image if Rust+ has not` | With Rust+ off (`app.port -1`) the plugin asks the game to draw the picture, once per map, 2 minutes after the start | |
 | `Send the map layout` | Landmarks, roads, rails, rivers, power lines, the train tunnels and the underwater labs' rooms: what the world generator made, 100 to 200 KB, once per map and again after 7 days. Never players or bases. | |
+| `Send the Oxide log` | Oxide's log lines. Card numbers and SSNs are masked first, and Steam IDs are removed below the "identified" sharing level. The log file on this machine stays the full record. | |
+| `Keep unsent reports and log lines for this many days` | How long reports and log lines that could not reach AFKPanel are kept on this machine | Up to 90 |
+| `Send the server console` | What the game server writes to its console that Oxide does not: saves, joins and leaves, Rust's own warnings and errors. IP addresses, card numbers and SSNs are masked, and Steam IDs below the "identified" level. Chat never goes this way. | |
+| `Send the log every this many seconds` | How often log lines are sent. AFKPanel may ask for a longer interval, never a shorter one. | 10 or more |
+| `Send who is online, and player joins and leaves` | By Steam ID and name, only at the "identified" sharing level. Below it only the player count leaves this machine. | |
+| `Send chat` | What players say, with its channel. Only at the "identified" level, only while the account's plan includes chat, with card numbers and SSNs masked. Chat commands are never sent. | |
+| `Send in-game reports when the panel asks for them` | F7 reports: who reported whom, the kind, the subject and the message. Only when the account has them turned on and the level is "identified". `false` keeps them on this server. | |
+| `Send player joins, leaves and chat every this many seconds` | How often they are sent. AFKPanel may ask for a longer interval, never a shorter one. | 10 or more |
 | `Send player positions for the panel's live map` | Where each awake, living player stands, and whether they are hidden from other players, for AFKPanel's map. Sent only when AFKPanel says the account's plan includes the live map, and never at the "counts only" sharing level. | |
 | `Send player positions every this many seconds` | While anyone is playing; once more when the last player leaves | 30 or more |
+| `Report each plugin's server time` | How much of the server's time each plugin used, and the memory allocated while it ran: plugin names and numbers only | |
+| `Send plugin server time every this many seconds` | AFKPanel may ask for a longer interval, never a shorter one | 30 or more |
 | `Report the schedule` | Every restart, update and wipe entry, its next time and any problem, the countdown settings, and the running countdown; sent when any of it changes | |
 | `Accept schedule changes from the panel` | Lets AFKPanel add, edit, enable, disable and remove entries. Each change is checked as a chat command is, and refused if the schedule changed in game since AFKPanel last saw it. `false` keeps the schedule editable in game only; a restart, update or wipe now, and cancelling a countdown, follow `Accept commands from the panel`. | |
 | `Accept plugin updates from the panel` | Lets AFKPanel update a plugin to uMod's current file, and undo that update. Hotwire downloads the file from umod.org by the plugin's file name and installs it only if its SHA-256 is the one AFKPanel named. It first copies the plugin's file, its config (`oxide/config/<name>.json`) and its data (`oxide/data/<name>.json` and `oxide/data/<name>/`) to `oxide/data/Hotwire/plugin-backups/<name>/`, replacing the previous copy, and puts them back if the new file has not loaded within 3 minutes. Refused while a restart is counting down, while another plugin is being changed, for Hotwire itself, and when the copy would be larger than 50 MB. `false` means plugin files change only by hand. | |
@@ -276,7 +298,7 @@ Reporting to AFKPanel. Nothing is sent until the Rust server has been connected 
 | Console says | Meaning | Do |
 | --- | --- | --- |
 | clock is more than five minutes out | The machine's clock is wrong | Set it to synchronise automatically |
-| no longer accepts this server's key | The server was retired in AFKPanel, or another machine was connected in its place | Make a connect code in AFKPanel and run `hotwire-setup connect` again |
+| no longer accepts this server's key | The server was retired in AFKPanel, or another machine was connected in its place | Make a connect code in AFKPanel and run `hotwire-setup connect` again, or `hotwire connect <code>` in the server console |
 | could not reach the panel | The network or AFKPanel is down | Nothing; it keeps trying and the Rust server is unaffected |
 | refused the signature, or malformed | A bug | Report it with the plugin version |
 
@@ -368,6 +390,8 @@ In chat or in the server console. `hw` is a short form.
 | `hotwire remove <restart\|update> <index>` | `hotwire.edit` | Remove one |
 | `hotwire enable\|disable <restart\|update> <index>` | `hotwire.edit` | Turn one on or off |
 | `hotwire backup` | `hotwire.status` | Whether backups can run, and the last one |
+| `hotwire backup now` | `hotwire.edit` | Back up now, if the plan and the launcher allow it |
+| `hotwire connect <code> [panel address]` | Server console, RCON or an admin | Connect this server to AFKPanel with a connect code, from where `hotwire-setup` cannot run, such as a host panel's console |
 
 | Rule | Value |
 | --- | --- |

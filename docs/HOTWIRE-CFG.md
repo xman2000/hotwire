@@ -32,6 +32,14 @@ server.maxplayers    100
 
 A line that breaks a rule is ignored, and `check` names it. See [Check your settings](https://afkpanel.com/docs/check-your-settings).
 
+| Problem | What happens |
+| --- | --- |
+| A line breaks a rule, such as `server.identity my world` without quotes | The line is ignored and the default is used. For the settings marked **Stops the start** below, that is a different save, map or port. |
+| A setting on two lines | The later line is used. A wipe or a convar saved from AFKPanel changes the first. |
+
+From launchers 1.1.27 (Windows) and 1.1.12-linux, with Hotwire 1.1.62, AFKPanel shows these lines as a problem on the
+server's page, with the line number and the setting. It never receives the value.
+
 ## When a change takes effect
 
 The launcher reads `hotwire.cfg` again before every start, so an edit takes effect at the next restart. There is no
@@ -104,6 +112,7 @@ Each is off in the file and shows the value used.
 | `hotwire.steam_tries` | 5 | SteamCMD attempts before starting what is on disk |
 | `hotwire.steam_retry_seconds` | 60 | Seconds between SteamCMD attempts |
 | `hotwire.steamcmd_wait_minutes` | 60 | Minutes to wait for another server's SteamCMD run |
+| `hotwire.steamcmd_update_minutes` | 60 | Launchers 1.1.27 (Windows) and 1.1.12-linux or later: the longest one SteamCMD update may run. Past it SteamCMD is stopped and the installed build starts; the next update carries on from what was downloaded. 0 = no limit. |
 | `hotwire.forced_wipe_steam_minutes` | 15 | Launchers 1.1.25 (Windows) and 1.1.6-linux or later: when a forced wipe waits on the update, keep trying SteamCMD this many minutes. 0 = only `hotwire.steam_tries`. |
 | `hotwire.install_framework` | 1 | Install and refresh Oxide with the server. 0 = never touch it. |
 | `hotwire.skip_unchanged_framework` | 1 | Skip re-extracting Oxide when neither it nor the game changed |

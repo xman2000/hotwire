@@ -102,7 +102,7 @@ def build_method_owners(md):
 
 # Accepted on the command line but not declared as a convar anywhere in the
 # assembly, so a plain "is it in this build" test reports it missing. Listing
-# it here is not a guess: the reference server passes it and its RCON works.
+# it here is not a guess: a test server passes it and its RCON works.
 # Getting this wrong is the most damaging mistake the checker could make --
 # telling somebody to delete the line that secures their RCON.
 COMMAND_LINE_ONLY = {"rcon.password"}
@@ -363,7 +363,7 @@ def named_args(blob):
 
 
 def emit_json(rows, build_note):
-    """The catalogue the panel ships as autocomplete (hotwire-panel ADR-0151).
+    """The catalogue the panel ships as autocomplete.
 
     Convars only -- never commands. The panel's convar editor is fenced to
     convars now, so a catalogue that offered a command would be offering

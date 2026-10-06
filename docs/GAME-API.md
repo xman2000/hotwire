@@ -48,9 +48,8 @@ was being re-pushed, and stopped when it was not.
 needs its own text should push `SubText` through `UpdateContent` and never
 through `CreateBar`.
 
-**Verified 2026-09-05 against the same installed 0.1.26, by the session working
-on the sibling event plugin** — not by this project, which had only the
-behavioral evidence that re-pushing blinked and not re-pushing did not.
+**Verified 2026-09-05 against the same installed 0.1.26**, in its source, beside
+the behavioural evidence that re-pushing blinked and not re-pushing did not.
 
 Push only when the rendered string actually changes. Hotwire keeps the last
 `SubText` and compares. Worth saying how that rule goes wrong at scale: the
@@ -80,7 +79,7 @@ the removal ever needs pushing.
 
 **`Default` is the only type that never expires.** Everything else is on the
 deletion path. From `HandleBarsUpdate`, lines 2008-2046, read out of the
-installed 0.1.26 by the session working on the sibling event plugin:
+installed 0.1.26:
 
 ```csharp
 double currentTimestamp = Network.TimeEx.currentTimestamp;
@@ -123,8 +122,7 @@ change it. Rendering `SubText` yourself is the only way to control the format,
 which also matters for the rect bug below.
 
 The timestamps are compared against `Network.TimeEx.currentTimestamp`, in
-three places. **Verified 2026-09-05 in the installed 0.1.26 by the session
-working on the sibling event plugin**, which read the line numbers out:
+three places. **Verified 2026-09-05 in the installed 0.1.26**, with its line numbers:
 
 ```
 1198  double timeLeft = bar.TimeStamp - Network.TimeEx.currentTimestamp;

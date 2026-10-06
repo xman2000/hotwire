@@ -17,7 +17,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Hotwire", "xman2000", "1.1.61")]
+    [Info("Hotwire", "xman2000", "1.1.62")]
     [Description("Scheduled restarts and updates. Announces, counts down, writes a flag, quits.")]
     internal class Hotwire : CovalencePlugin
     {
@@ -2252,7 +2252,7 @@ namespace Oxide.Plugins
             _scheduleCheckDue = DateTime.MinValue;
         }
 
-        // An update asked for while a countdown runs (ADR-0090): the running countdown becomes an update, and moves
+        // An update asked for while a countdown runs: the running countdown becomes an update, and moves
         // earlier when the update was asked for sooner. Players hear the new kind and time once, as a fresh start.
         private void JoinCountdown(int seconds, bool validate)
         {
@@ -3485,7 +3485,7 @@ namespace Oxide.Plugins
         // understood the request and said no to its content (400, 413, 422): the
         // same bytes would be refused again, so the caller lets it go rather than
         // letting it block everything behind it.
-        // signedResponse opts this request into a signed answer (HW-1): the panel
+        // signedResponse opts this request into a signed answer: the panel
         // wraps the real body and signs it, and onAccepted runs only if that
         // signature verifies. Used for the answers the plugin acts on -- commands,
         // bans, the sharing level -- where a forged reply would be dangerous. A
@@ -4048,7 +4048,7 @@ namespace Oxide.Plugins
             return payload;
         }
 
-        // What this plugin is configured to send, and the sharing level it is applying (ADR-0142). The panel uses it to
+        // What this plugin is configured to send, and the sharing level it is applying. The panel uses it to
         // tell "switched off here" from "nothing arrived yet", so a blank section on the panel can say which it is.
         // Config only -- the plugin's intent -- never proof a kind was sent; the panel still applies its own report policy.
         private JObject ReportingConfigSnapshot()
@@ -4116,8 +4116,30 @@ namespace Oxide.Plugins
             };
             // In the contract's one hash form; left out when the launcher's files could not be read.
             if (computed.Length > 0) identity["code_hash"] = "sha256:" + computed.ToLowerInvariant();
+            // hotwire.cfg's lines the launcher could not use as written (launchers 1.1.27 / 1.1.12-linux): a setting
+            // written twice, or a line it could not read. The setting's name and what is wrong, never its value; passed
+            // on bounded, so AFKPanel can raise it. Left out when the launcher does not say.
+            var problems = declared["config_problems"] as JArray;
+            if (problems != null)
+            {
+                var list = new JArray();
+                foreach (var item in problems.OfType<JObject>().Take(20))
+                {
+                    var line = item["line"];
+                    list.Add(new JObject
+                    {
+                        ["line"] = line != null && line.Type == JTokenType.Integer ? (int)line : 0,
+                        ["setting"] = Clip((string)item["setting"] ?? "", 128),
+                        ["critical"] = item["critical"] != null && item["critical"].Type == JTokenType.Boolean && (bool)item["critical"],
+                        ["problem"] = Clip((string)item["problem"] ?? "", 300),
+                    });
+                }
+                identity["config_problems"] = list;
+            }
             return identity;
         }
+
+        private static string Clip(string text, int max) => text.Length > max ? text.Substring(0, max) : text;
 
         // The launcher's hash, worked out again only when a file in it changes (its path, size or last write time): the
         // launcher and each part it names, such as hotwire.ps1 beside hotwire.bat. Hashing them on every heartbeat
@@ -4653,7 +4675,7 @@ namespace Oxide.Plugins
         private string _markersJson, _markersSentJson;
         private int _markerCount;
 
-        // The raidable zones active now: Raidable Bases (ADR-0097) and Abandoned Bases (ADR-0055), each from its own
+        // The raidable zones active now: Raidable Bases and Abandoned Bases, each from its own
         // hooks. Keyed by rounded position, so an ended raid removes exactly the one it added, and one set because the
         // panel draws them the same way -- it labels the plugin's own unlabelled marker at that spot, and the circle is
         // already coloured by whatever put it there.
@@ -4847,7 +4869,7 @@ namespace Oxide.Plugins
         // `object` parameter explicitly (HookMethod.HasMatchingSignature: `parameterType.FullName == "System.Object"`)
         // and invokes a non-exact match.
         //
-        // The order is RaidableBases 3.1.8's `hookObjects` property, verified against warren's copy: Location,
+        // The order is RaidableBases 3.1.8's `hookObjects` property, verified against its source: Location,
         // Options.Level, AllowPVP, ID, 0f, 0f, loadTime, ownerId, GetOwner(), GetRaiders(), GetIntruders(), Entities,
         // BaseName, spawnDateTime, despawnDateTime, ProtectionRadius, GetLootAmountCounted(). We read four of them, and
         // must declare up to the last one we read.
@@ -4876,8 +4898,8 @@ namespace Oxide.Plugins
         // Abandoned Bases (nivex, 2.2.7) makes an inactive player's base raidable, and marks it with the same kind of
         // unlabelled circle Raidable Bases uses -- so the panel needs the same help to name it. Its hooks carry
         // object[11] { center, radius, AllowPVP, intruders, intruderIds, entities, privs, canDropBackpack, automatedEvent,
-        // attackEvent, guid }, verified against warren's copy; we read the first two. Declared positionally for the reason
-        // ADR-0054 exists, and `object` because OnAbandonedBaseDespawn is also fired with a plain List of entities, which
+        // attackEvent, guid }, verified against its source; we read the first two. Declared positionally, because Oxide
+        // passes a hook's object[] as its argument list, and `object` because OnAbandonedBaseDespawn is also fired with a plain List of entities, which
         // would throw against a typed first parameter.
         //
         // An abandoned base has no difficulty and no name to give: the panel labels it "Abandoned Base".
@@ -5796,7 +5818,7 @@ namespace Oxide.Plugins
             // repeated after the server came back up is exactly the harm this
             // stops.
             //
-            // Kept per panel (ADR-0090): two panels number their commands from their
+            // Kept per panel: two panels number their commands from their
             // own counters, so the same id from another panel is a different
             // command. A bare id is from before 1.1.51 and still counts, until it
             // is two days old.
@@ -6077,12 +6099,8 @@ namespace Oxide.Plugins
 
                     // THE FENCE: a convar, and never a console command.
                     //
-                    // server.Command(name, value) is a general console executor, not a convar setter. Until this
-                    // check existed, a dotted name that was not one of the five refused above reached anything the
-                    // build exposes -- on a current build that is global.quit, server.stop, admin.kickall,
-                    // entity.deleteby ("Destroy all entities created by provided users") and inventory.resetbp
-                    // ("Resets all blueprints for the specified player"). Two of those are permanent, and the panel's
-                    // own threat model said none of them was reachable.
+                    // server.Command(name, value) is a general console executor, not a convar setter, so a name that
+                    // is not a convar is never passed to it.
                     //
                     // The engine already knows the difference and will say so: ConsoleSystem.Command.Variable is true
                     // for a convar and false for a command. Asking it is exact for THIS build, which a list of names
@@ -6408,7 +6426,7 @@ namespace Oxide.Plugins
                 var before = plugins.Find(name);
                 var beforeError = PluginError(name);
                 // Oxide's folder watcher does not see a file moved into place (Linux,
-                // measured on rust2), so the reload is asked for. Its loader compiles
+                // measured on a test server), so the reload is asked for. Its loader compiles
                 // the new file before it unloads the running one, so a file that does
                 // not compile leaves the old version running.
                 try { PutPluginFile(name, bytes); Interface.Oxide.ReloadPlugin(name); }

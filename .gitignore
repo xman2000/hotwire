@@ -24,19 +24,14 @@ __pycache__/
 .DS_Store
 Thumbs.db
 
-# The internal brief. Describes one production server in detail;
-# public repo, so it stays out of it. See BRIEF.md for the public version.
+# Working notes, kept on disk and out of the repo.
 HANDOFF.md
-
-# Working notes. Useful to whoever is building this; noise to anyone
-# using it. Kept on disk, out of the repo.
 BRIEF.md
 CLAUDE.md
 docs/OPEN-QUESTIONS.md
 docs/RESEARCH.md
 
-# The decisions. They live in the private panel repository
-# (hotwire-panel/docs/hotwire/DECISIONS.md) and never in this public one.
+# Design notes, kept out of the repo.
 docs/DECISIONS.md
 
 # Test build output

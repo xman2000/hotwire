@@ -21,7 +21,7 @@
 #     hotwire.cfg. The plugin works out this file's code hash itself, and
 #     AFKPanel compares it with the released launchers'; nothing waits on that
 #     answer.
-HOTWIRE_LAUNCHER_VERSION="1.1.11-linux"
+HOTWIRE_LAUNCHER_VERSION="1.1.12-linux"
 HOTWIRE_LAUNCHER_CAPABILITIES="supervise,update,framework_verify,crash_backstop,log_rotate,convar_persist,wipe,wipe_same_map,wipe_custom_map,backup,settings_file"
 
 # ======================================================================
@@ -93,7 +93,7 @@ set_defaults() {
     SERVER_LEVEL="Procedural Map"; SERVER_LEVELURL=""; RCON_WEB="1"
     UPDATE_MODE="auto"
     STEAMCMD="/usr/games/steamcmd"; STEAM_BRANCH="public"
-    MAX_DAYS_WITHOUT_UPDATE="14"; MAX_STEAM_TRIES="5"; STEAM_RETRY_SECONDS="60"; STEAMCMD_WAIT_MINUTES="60"; FORCED_WIPE_STEAM_MINUTES="15"
+    MAX_DAYS_WITHOUT_UPDATE="14"; MAX_STEAM_TRIES="5"; STEAM_RETRY_SECONDS="60"; STEAMCMD_WAIT_MINUTES="60"; STEAMCMD_UPDATE_MINUTES="60"; FORCED_WIPE_STEAM_MINUTES="15"
     BUILD_CHECK_HOURS="6"; UPDATE_ON_NEW_BUILD="1"; FAST_RUST_UPDATES="0"; RECOVER_REFUSED_UPDATE="1"
     INSTALL_FRAMEWORK="1"; SKIP_UNCHANGED_FRAMEWORK="1"; VERIFY_FRAMEWORK="1"
     RESTART_ON_EXIT="1"; RESTART_DELAY="15"; CRASH_SECONDS="60"; MAX_CRASH_STREAK="10"; CRASH_BACKOFF="1"
@@ -195,6 +195,7 @@ declare -A HW_SETTINGS=(
     [hotwire.steam_tries]="MAX_STEAM_TRIES int1"
     [hotwire.steam_retry_seconds]="STEAM_RETRY_SECONDS int"
     [hotwire.steamcmd_wait_minutes]="STEAMCMD_WAIT_MINUTES int"
+    [hotwire.steamcmd_update_minutes]="STEAMCMD_UPDATE_MINUTES int"
     [hotwire.forced_wipe_steam_minutes]="FORCED_WIPE_STEAM_MINUTES int"
     [hotwire.install_framework]="INSTALL_FRAMEWORK bool"
     [hotwire.skip_unchanged_framework]="SKIP_UNCHANGED_FRAMEWORK bool"
@@ -231,6 +232,7 @@ declare -A CV_SETTINGS=(
 CFG_PROBLEMS=()   # "line N: name: why" for every line that was not used
 CFG_FATAL=()      # the ones that stop a start
 CFG_UNKNOWN=()    # convar names not in the file's own list, for the option check
+CFG_REPORT=()     # the same problems for AFKPanel: "line<TAB>setting<TAB>critical 0|1<TAB>what", in launcher.json
 
 # cfg_line <text> -> CFG_NAME, CFG_VALUE; or CFG_WHY and a non-zero return.
 cfg_line() {
@@ -280,17 +282,23 @@ cfg_check() {
 # The settings that turn into a different server when defaulted.
 cfg_critical() { case "$1" in identity|seed|worldsize|port|url) return 0 ;; esac; return 1; }
 
+# cfg_note <line> <setting> <critical 0|1> <what>: one line that is not used as written, for check and for AFKPanel.
+cfg_note() {
+    CFG_PROBLEMS+=("line $1: ${2:+$2: }$4")
+    CFG_REPORT+=("$1"$'\t'"$2"$'\t'"$3"$'\t'"$4")
+}
+
 # load_config: read hotwire.cfg into the settings. Returns non-zero when a
 # critical line failed (CFG_FATAL), in which case nothing is changed.
 load_config() {
-    CFG_PROBLEMS=(); CFG_FATAL=(); CFG_UNKNOWN=()
+    CFG_PROBLEMS=(); CFG_FATAL=(); CFG_UNKNOWN=(); CFG_REPORT=()
     if [ ! -f "$CFG" ]; then
         CFG_FATAL+=("hotwire.cfg is missing")
         return 1
     fi
-    local -A staged=() extra=() known=()
+    local -A staged=() extra=() known=() used=()
     local -a order=()
-    local n=0 raw line name lower spec var kind listed=1
+    local n=0 raw line name lower spec var kind listed=1 crit
     while IFS= read -r raw || [ -n "$raw" ]; do
         n=$((n+1))
         line="${raw%$'\r'}"
@@ -304,18 +312,32 @@ load_config() {
         fi
         [ -z "$line" ] && continue
         [[ "$line" == '#'* ]] && continue
-        if ! cfg_line "$line"; then CFG_PROBLEMS+=("line $n: $CFG_WHY"); continue; fi
+        if ! cfg_line "$line"; then
+            # A line whose value cannot be read is not used, so a setting it names keeps its default. For the settings
+            # that decide which server this is (save folder, map, ports) that is a different server, so it is marked.
+            crit=0; spec=""
+            [ -n "$CFG_NAME" ] && spec="${HW_SETTINGS[${CFG_NAME,,}]:-${CV_SETTINGS[${CFG_NAME,,}]:-}}"
+            if [ -n "$spec" ]; then
+                cfg_critical "${spec#* }" && crit=1
+                cfg_note "$n" "$CFG_NAME" "$crit" "$CFG_WHY; the line is not used, so the default is"
+            else
+                cfg_note "$n" "$CFG_NAME" 0 "$CFG_WHY"
+            fi
+            continue
+        fi
         name="$CFG_NAME"; lower="${name,,}"
         [ "$listed" = 1 ] && known[$lower]=1
         if [ "$lower" = "rcon.password" ]; then
-            CFG_PROBLEMS+=("line $n: rcon.password: belongs in hotwire-secrets.cfg, never here; ignored"); continue
+            cfg_note "$n" rcon.password 0 "belongs in hotwire-secrets.cfg, never here; ignored"; continue
         fi
         spec="${HW_SETTINGS[$lower]:-${CV_SETTINGS[$lower]:-}}"
         if [ -n "$spec" ]; then
             var="${spec%% *}"; kind="${spec#* }"
             if ! cfg_check "$kind" "$CFG_VALUE"; then
-                if cfg_critical "$kind"; then CFG_FATAL+=("line $n: $name: $CFG_WHY")
-                else CFG_PROBLEMS+=("line $n: $name: $CFG_WHY; the default is used"); fi
+                if cfg_critical "$kind"; then
+                    CFG_FATAL+=("line $n: $name: $CFG_WHY")
+                    CFG_REPORT+=("$n"$'\t'"$name"$'\t'1$'\t'"$CFG_WHY; the settings from the last good read are used")
+                else cfg_note "$n" "$name" 0 "$CFG_WHY; the default is used"; fi
                 continue
             fi
             # A number goes on in base 10: bash reads a leading zero as octal, so "08" would stop the launcher.
@@ -323,15 +345,23 @@ load_config() {
             # For a launcher setting an empty value is its default, except the Steam branch, where empty means
             # "let Steam keep the last one". A server convar's empty value is the game's default, as the file says.
             if [ -z "$CFG_VALUE" ] && [ -n "${HW_SETTINGS[$lower]:-}" ] && [ "$kind" != word ]; then continue; fi
+            # Set twice: the later line is the one used. A wipe or a saved convar edits the first, so the two disagree.
+            if [ -n "${used[$lower]:-}" ]; then
+                crit=0; cfg_critical "$kind" && crit=1
+                cfg_note "$n" "$name" "$crit" "also set on line ${used[$lower]}; line $n is used"
+            fi
+            used[$lower]=$n
             staged[$var]="$CFG_VALUE"
             continue
         fi
         if [[ "$lower" == hotwire.* ]]; then
-            CFG_PROBLEMS+=("line $n: $name: not a launcher setting; ignored"); continue
+            cfg_note "$n" "$name" 0 "not a launcher setting; ignored"; continue
         fi
         # Any other Rust convar, passed through as it is. Empty means the default.
         [ -z "$CFG_VALUE" ] && continue
         [ -z "${extra[$lower]+x}" ] && order+=("$lower")
+        [ -n "${used[$lower]:-}" ] && cfg_note "$n" "$name" 0 "also set on line ${used[$lower]}; line $n is used"
+        used[$lower]=$n
         extra[$lower]="$name"$'\t'"$CFG_VALUE"
     done < "$CFG"
     [ "${#CFG_FATAL[@]}" -gt 0 ] && return 1
@@ -722,7 +752,23 @@ steam_update_attempts() {
         exec 8>"$STEAM_LOCK" || { warn "Could not open the steamcmd lock."; return 0; }
         if flock -w $(( STEAMCMD_WAIT_MINUTES * 60 )) 8; then
             note_steam_logs
-            "$STEAMCMD" "${args[@]}"; local rc=$?
+            # Bounded by hotwire.steamcmd_update_minutes (0: no limit): a SteamCMD that hangs would otherwise keep this
+            # server down and hold the lock every other server on the machine waits for. timeout stops SteamCMD and the
+            # program it starts (the whole process group).
+            local rc limited=0
+            if [ "${STEAMCMD_UPDATE_MINUTES:-0}" -gt 0 ] 2>/dev/null && command -v timeout >/dev/null 2>&1; then
+                limited=1
+                timeout --kill-after=30 $(( STEAMCMD_UPDATE_MINUTES * 60 )) "$STEAMCMD" "${args[@]}"; rc=$?
+            else
+                "$STEAMCMD" "${args[@]}"; rc=$?
+            fi
+            # timeout answers 124 when it stopped SteamCMD, 137 when SteamCMD needed killing after that.
+            if [ "$limited" = 1 ] && { [ "$rc" = "124" ] || [ "$rc" = "137" ]; }; then
+                exec 8>&-
+                bad "SteamCMD did not finish within $STEAMCMD_UPDATE_MINUTES min (hotwire.steamcmd_update_minutes) and was stopped."
+                warn "Starting what is on disk. The next update carries on from what was downloaded."
+                return 0
+            fi
             refused=0; [ "$rc" != "0" ] && update_refused_installed && refused=1
             exec 8>&-
             if [ "$rc" = "0" ]; then STEAM_OK=1; ok "steamcmd finished."; return 0; fi
@@ -915,9 +961,24 @@ write_launcher_state() {
   "capabilities": "$HOTWIRE_LAUNCHER_CAPABILITIES",
   "platform": "linux",
   "update_mode": "$UPDATE_MODE",
-  "path": "$self"
+  "path": "$self",
+  "config_problems": [$(config_problems_json)]
 }
 JSON
+}
+
+# hotwire.cfg's lines that are not used as written, as JSON for launcher.json: the plugin passes them to AFKPanel, which
+# raises them as a problem. The setting's name and what is wrong, never its value. At most 20.
+json_text() { local s="$1"; s="${s//\\/\\\\}"; s="${s//\"/\\\"}"; printf '"%s"' "$s"; }
+config_problems_json() {
+    local entry line name crit what sep="" i=0
+    for entry in "${CFG_REPORT[@]}"; do
+        [ "$i" -ge 20 ] && break
+        IFS=$'\t' read -r line name crit what <<< "$entry"
+        printf '%s{"line": %d, "setting": %s, "critical": %s, "problem": %s}' "$sep" "$line" "$(json_text "$name")" \
+            "$([ "$crit" = 1 ] && echo true || echo false)" "$(json_text "$what")"
+        sep=", "; i=$((i+1))
+    done
 }
 
 # ======================================================================

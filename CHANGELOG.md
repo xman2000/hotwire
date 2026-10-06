@@ -24,6 +24,33 @@ sit above a launcher `1.1.7`. Read the label, not the number.
 `hotwire check` prints the plugin's version. Each launcher prints its own
 version as the first line when it starts.
 
+## Plugin 1.1.62, launchers 1.1.27 (Windows) and 1.1.12-linux, setup 0.1.28 (Windows) and 0.2.27 (Linux) — unreleased
+
+**AFKPanel shows the lines in hotwire.cfg that are not used as written.**
+
+- Both launchers find a setting written on two lines, and a line they cannot read, such as
+  `server.identity my world` without quotes or `server.port 28025 # second server`. Before, `check` listed them and the
+  server started on the default without saying so anywhere else, which for the save folder, the map or a port is a
+  different server.
+- The launcher puts these lines in `oxide/data/Hotwire/launcher.json`: the line number, the setting, whether it decides
+  which server this is, and what is wrong. Never the value. The plugin passes them to AFKPanel with its heartbeat.
+- For a setting on two lines the later line is used, as before. A wipe or a convar saved from AFKPanel still changes the
+  first, so remove one of the two.
+
+**A SteamCMD update has a time limit.**
+
+- `hotwire.steamcmd_update_minutes`, default 60, 0 for no limit. Past it the launcher stops SteamCMD and starts the
+  installed build; the next update carries on from what was downloaded. Before, a SteamCMD that hung kept the server
+  down and held the lock every other server on the machine waits for.
+
+**Docs.**
+
+- `docs/CONFIG.md` lists every plugin setting, including the log, console, player, chat, in-game report and plugin time
+  switches, and `hotwire connect`, `hotwire backup` and `hotwire backup now`.
+- `docs/INSTALL-LINUX.md`: the install by hand now uses the launcher, so updates, wipes and backups work the same as
+  with the installer.
+- README: the RCON password stays on the machine; only the launcher reads it.
+
 ## Plugin 1.1.61, setup 0.1.27 (Windows) and 0.2.26 (Linux) — unreleased
 
 **The in-game menu matches AFKPanel's schedule screen more closely.**
