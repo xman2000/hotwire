@@ -24,6 +24,22 @@ sit above a launcher `1.1.7`. Read the label, not the number.
 `hotwire check` prints the plugin's version. Each launcher prints its own
 version as the first line when it starts.
 
+## Plugin 1.1.60, launchers 1.1.26 (Windows) and 1.1.11-linux, setup 0.1.26 (Windows) and 0.2.25 (Linux) — unreleased
+
+**A wipe always starts a new world, and a wipe entry can keep its seed or load a custom map.**
+
+- `Same seed every wipe` on a wipe entry keeps the seed after the wipe instead of drawing a new one, for servers that
+  play the same map every wipe. Off, as before, a seed you set is used once and the next one is drawn.
+- `Custom map URL` on a wipe entry makes each wipe load that custom map (`server.levelurl`) fresh. Empty, the map is
+  generated from the seed. A wipe with a seed on a server that had a custom map clears `server.levelurl`.
+- The launchers set the old world aside at every wipe: Rust loads a save named after the map, so the same seed or the
+  same custom map would have brought the old world back. Every `*.sav`, `*.sav.<n>` and `*.navmesh` in the save folder
+  is renamed `*.wiped-<date>`, and a custom map's downloaded `.map` too. Nothing is deleted.
+- A wipe entry can name the AFKPanel template it came from (`Template`). Hotwire does not read it.
+- Both launchers list two new capabilities, `wipe_same_map` and `wipe_custom_map`. On an older launcher, an entry that
+  keeps its seed or names a custom map is reported with that problem and does not fire.
+- Setup pins the new plugin and launchers.
+
 ## Plugin 1.1.59, setup 0.1.25 (Windows) and 0.2.24 (Linux) — unreleased
 
 **Cancelling a scheduled restart, update or wipe calls off that occurrence.** Before, `hotwire cancel`, the menu's

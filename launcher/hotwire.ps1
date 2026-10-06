@@ -15,8 +15,8 @@
 $ErrorActionPreference = 'Stop'
 # Who this launcher is, for the plugin: written to oxide\data\Hotwire\launcher.json before every start. The plugin
 # offers only the features in the capability list; settings_file means the settings come from hotwire.cfg.
-$LauncherVersion = '1.1.25'
-$LauncherCapabilities = 'supervise,update,framework_verify,crash_backstop,log_rotate,convar_persist,wipe,backup,settings_file'
+$LauncherVersion = '1.1.26'
+$LauncherCapabilities = 'supervise,update,framework_verify,crash_backstop,log_rotate,convar_persist,wipe,wipe_same_map,wipe_custom_map,backup,settings_file'
 $root = $PSScriptRoot
 $cfg = Join-Path $root 'hotwire.cfg'
 $secretsCfg = Join-Path $root 'hotwire-secrets.cfg'
@@ -393,7 +393,7 @@ function Invoke-Edits {
             if ($parts.Count -eq 2 -and -not $w.ContainsKey($parts[0])) { $w[$parts[0]] = $parts[1].Trim() }
         }
         $seed = [string]$w['seed']; $size = [string]$w['size']; $bp = [string]$w['blueprints']; $cycle = [string]$w['cycle']; $expires = [string]$w['expires']
-        $forced = [string]$w['forced']; $armedBuild = [string]$w['armed_build']
+        $forced = [string]$w['forced']; $armedBuild = [string]$w['armed_build']; $levelUrl = [string]$w['levelurl']
         if (-not $bp) { $bp = 'keep' }
         $done = ''
         if ($cycle -and (Test-Path -LiteralPath $cycleFile)) { $done = ([IO.File]::ReadAllText($cycleFile)).Trim() }
@@ -412,15 +412,22 @@ function Invoke-Edits {
             if ($seed -notmatch '^\d{1,10}$' -or [long]$seed -gt 2147483647) { $why = 'seed is not a whole number from 0 to 2147483647' }
             elseif ($size -and ($size -notmatch '^\d{1,5}$' -or [int]$size -lt 1000 -or [int]$size -gt 6000)) { $why = 'size is not a whole number from 1000 to 6000' }
             elseif ('keep', 'rename', 'delete' -notcontains $bp) { $why = 'blueprints must be keep, rename or delete' }
+            elseif ($levelUrl -and ($levelUrl -cnotmatch '^https?://\S+$' -or $levelUrl -match '["''`$\\]' -or $levelUrl.Length -gt 500)) { $why = 'the map address must be an http:// or https:// address with no quote, $ or backslash' }
             # A forced wipe's backup waits until the update is known to have arrived (above).
             if (-not $why -and $forced -eq '1' -and $w['backup'] -eq '1' -and $env:BACKUPS -ne '0') {
                 Say 'Backing up the stopped server before the wipe...'
                 [void](Invoke-BackupArchive 'before_wipe' ([DateTime]::UtcNow.ToString("yyyyMMdd'T'HHmmss'Z'") + '-before_wipe') '' '' '' '' '')
             }
+            # The map change first, all of it or none: a custom map is its address; a generated map is its seed (and
+            # size), and a custom map set before is cleared, or Rust would keep loading it.
             if (-not $why) {
-                $pairs = @(, @('server.seed', $seed))
-                if ($size) { $pairs += , @('server.worldsize', $size) }
-                if (-not (Set-CfgValues $pairs)) { $why = 'could not write the new seed' }
+                if ($levelUrl) { $pairs = @(, @('server.levelurl', $levelUrl)) }
+                else {
+                    $pairs = @(, @('server.seed', $seed))
+                    if ($size) { $pairs += , @('server.worldsize', $size) }
+                    if ([string](Read-Config).Values['server.levelurl']) { $pairs += , @('server.levelurl', '') }
+                }
+                if (-not (Set-CfgValues $pairs)) { $why = 'could not write the new map' }
             }
             if ($why) {
                 Rule; Say ('Wipe cancelled: ' + $why + '. Starting without wiping.'); Rule
@@ -433,6 +440,24 @@ function Invoke-Edits {
                 if (-not $identity) { $identity = 'my_server_identity' }
                 $count = 0
                 $folder = Join-Path $root ('server\' + $identity)
+                # A fresh world, even on the same map. Rust names a save after its map (level, size, seed and protocol,
+                # or a custom map's file name) and loads that save if it exists, so the same seed or the same custom map
+                # would bring the old world back. Every world save in the folder is set aside (renamed, never deleted):
+                # the .sav, its numbered copies and its .navmesh. A custom map's downloaded copy goes too, so a map
+                # changed at the same address is fetched again; a generated map's .map stays.
+                $setAside = 0
+                if (Test-Path -LiteralPath $folder) {
+                    $wstamp = Get-Date -Format 'yyyyMMdd-HHmmss'
+                    foreach ($f in @(Get-ChildItem -LiteralPath $folder -File)) {
+                        $n = $f.Name
+                        if ($n.Contains('.wiped-')) { continue }
+                        $isWorld = $n.EndsWith('.sav') -or $n -match '\.sav\.[0-9]' -or $n.EndsWith('.navmesh')
+                        $isCustomMap = $levelUrl -and $n.EndsWith('.map') -and $n -cnotmatch '^[a-z0-9]+\.[0-9]+\.[0-9]+\.[0-9]+\.map$'
+                        if (-not ($isWorld -or $isCustomMap)) { continue }
+                        Rename-Item -LiteralPath $f.FullName -NewName ($n + '.wiped-' + $wstamp)
+                        $setAside++
+                    }
+                }
                 if ($bp -ne 'keep' -and (Test-Path -LiteralPath $folder)) {
                     $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
                     foreach ($f in @(Get-ChildItem -LiteralPath $folder -Filter 'player.blueprints.*.db' -File)) {
@@ -449,8 +474,14 @@ function Invoke-Edits {
                 Remove-Item -LiteralPath $flag -Force
                 $sizeText = 'unchanged'; if ($size) { $sizeText = $size }
                 $bpText = 'kept'; if ($bp -ne 'keep') { $bpText = $bp + ' (' + $count + ' file(s))' }
-                [IO.File]::WriteAllText($result, 'applied: seed ' + $seed + ' size ' + $sizeText + ' blueprints ' + $bpText + "`n")
-                Say ('Wipe applied: seed ' + $seed + ', size ' + $sizeText + ', blueprints ' + $bpText + '. The new world generates on this start; the old save is left on disk.')
+                if ($levelUrl) {
+                    [IO.File]::WriteAllText($result, 'applied: map ' + $levelUrl + ' blueprints ' + $bpText + "`n")
+                    $mapText = 'custom map ' + $levelUrl
+                } else {
+                    [IO.File]::WriteAllText($result, 'applied: seed ' + $seed + ' size ' + $sizeText + ' blueprints ' + $bpText + "`n")
+                    $mapText = 'seed ' + $seed + ', size ' + $sizeText
+                }
+                Say ('Wipe applied: ' + $mapText + ', blueprints ' + $bpText + '. A new world starts on this start; ' + $setAside + ' old world file(s) were renamed *.wiped-* and left on disk.')
             }
         }
     }

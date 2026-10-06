@@ -101,6 +101,9 @@ A wipe is a restart that also leaves the launcher `WIPE.flag` with the next map'
 | `Wipe as soon as the update is out (before 19:00 London)` | Forced wipes only: start as soon as AFKPanel's release check opens, even before 19:00 London | `false` |
 | `Random size after each wipe` | Draw `Size` from the range below when the entry is saved and again after each wipe | `false` |
 | `Random size: smallest`, `Random size: largest` | The range, 1000 to 6000, smallest first | 3500, 4500 |
+| `Same seed every wipe` | Keep `Seed` after a wipe instead of drawing a new one, so every wipe brings the same map back fresh. Requires launcher 1.1.26 (Windows) or 1.1.11 (Linux) or later. | `false` |
+| `Custom map URL` | The `http://` or `https://` address of a custom `.map` file. Set, each wipe loads this map fresh and `Seed` and `Size` are not used. Empty, the map is generated from the seed. Requires launcher 1.1.26 (Windows) or 1.1.11 (Linux) or later. | Empty |
+| `Template` | The AFKPanel template the entry was made from. Hotwire does not read it. | Empty |
 
 ```json
 "Wipes": [

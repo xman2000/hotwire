@@ -42,7 +42,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$Version = '0.1.25'
+$Version = '0.1.26'
 
 # Captured here: inside a function, $PSBoundParameters describes that function, not this script.
 $SteamCmdGiven = $PSBoundParameters.ContainsKey('SteamCmd')
@@ -103,8 +103,8 @@ $PluginUrl = 'https://raw.githubusercontent.com/xman2000/hotwire/connect-and-rep
 # omission is never silent.
 $PinnedHashes = @{
     'hotwire.bat' = 'b9736417a79def9c2744cd61c2aaa3c19d83a96226390c4a1a1eeda361ee4293'
-    'hotwire.ps1' = '24859db7e3319f0b5e3037b7cbc467809c75be0a7642c8c3aa1533b9b88f85e8'
-    'Hotwire.cs'  = '439f0a88e0cb8a9e4a373ee3e1cdd28de7a94f8d7a0c6bf05de4514bb6c18851'
+    'hotwire.ps1' = '0f5ec623836a7fb79298dae0a41ab812265b03b9277e7f71876df3a58ec19339'
+    'Hotwire.cs'  = '46811b5301d0bf2cf3787fd5098047c2fb240968715997a194d01e077c2136c0'
     'hotwire.example.cfg' = '121c1480f3f6edbb3f48790a0fd72abeff1c964d7cd3ef1608646663b1661f4c'
 }
 

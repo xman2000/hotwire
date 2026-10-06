@@ -190,8 +190,7 @@ The launcher starts the Rust server, relaunches it when it exits, and updates it
 
 | Not done | Note |
 | --- | --- |
-| Wipe a custom (`levelurl`) map | A wipe changes the seed; a custom map has none |
-| Remove old saves after a wipe | They stay on disk |
+| Remove old saves after a wipe | They are renamed `*.wiped-<date>` and stay on disk |
 | Hold a restart for a live event | It does not know about your events |
 
 ## Layout

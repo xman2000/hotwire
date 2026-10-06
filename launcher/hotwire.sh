@@ -21,8 +21,8 @@
 #     hotwire.cfg. The plugin works out this file's code hash itself, and
 #     AFKPanel compares it with the released launchers'; nothing waits on that
 #     answer.
-HOTWIRE_LAUNCHER_VERSION="1.1.10-linux"
-HOTWIRE_LAUNCHER_CAPABILITIES="supervise,update,framework_verify,crash_backstop,log_rotate,convar_persist,wipe,backup,settings_file"
+HOTWIRE_LAUNCHER_VERSION="1.1.11-linux"
+HOTWIRE_LAUNCHER_CAPABILITIES="supervise,update,framework_verify,crash_backstop,log_rotate,convar_persist,wipe,wipe_same_map,wipe_custom_map,backup,settings_file"
 
 # ======================================================================
 #  HOW THIS LAUNCHER WORKS
@@ -1149,8 +1149,9 @@ apply_wipe() {
     local flag="$ROOT/$WIPE_FLAG"
     [ -f "$flag" ] || return 0
     local seed size bp cycle expires now
-    local forced armed_build
+    local forced armed_build levelurl
     seed="$(grep -m1  '^seed '       "$flag" | awk '{print $2}')"
+    levelurl="$(grep -m1 '^levelurl ' "$flag" | awk '{print $2}')"
     size="$(grep -m1  '^size '       "$flag" | awk '{print $2}')"
     bp="$(grep -m1    '^blueprints ' "$flag" | awk '{print $2}')"
     cycle="$(grep -m1 '^cycle '      "$flag" | awk '{print $2}')"
@@ -1173,6 +1174,7 @@ apply_wipe() {
     local why=""; CFG_WHY=""
     if [ -z "$seed" ] || ! cfg_check seed "$seed"; then why="seed ${CFG_WHY:-is missing}"
     elif [ -n "$size" ] && ! cfg_check worldsize "$size"; then why="size $CFG_WHY"
+    elif [ -n "$levelurl" ] && { ! cfg_check url "$levelurl" || [[ "$levelurl" == *[\"\'\`\$\\]* ]]; }; then why="map address ${CFG_WHY:-has a quote, \$ or backslash}"
     fi
     [ -z "$why" ] && seed="$((10#$seed))" && { [ -z "$size" ] || size="$((10#$size))"; }
     case "$bp" in keep|rename|delete) ;; *) [ -z "$why" ] && why="blueprints must be keep, rename or delete";; esac
@@ -1206,24 +1208,57 @@ apply_wipe() {
         fi
     fi
 
-    rule; log "Wiping (cycle ${cycle:-none}): new seed $seed${size:+, size $size}, blueprints: $bp."
-    # 1) The map change first: write the new seed (and size) into settings, both or
-    #    neither. If that cannot be done, cancel before touching anything else and
-    #    boot unchanged.
-    local pairs=( server.seed "$seed" )
-    [ -n "$size" ] && pairs+=( server.worldsize "$size" )
+    local mapwords="new seed $seed${size:+, size $size}"
+    [ -n "$levelurl" ] && mapwords="custom map $levelurl"
+    rule; log "Wiping (cycle ${cycle:-none}): $mapwords, blueprints: $bp."
+    # 1) The map change first: write the new map into settings, all of it or none.
+    #    A custom map is its address; a generated map is its seed (and size), and
+    #    a custom map set before is cleared, or Rust would keep loading it. If that
+    #    cannot be done, cancel before touching anything else and boot unchanged.
+    local pairs
+    if [ -n "$levelurl" ]; then
+        pairs=( server.levelurl "$levelurl" )
+    else
+        pairs=( server.seed "$seed" )
+        [ -n "$size" ] && pairs+=( server.worldsize "$size" )
+        [ -n "$SERVER_LEVELURL" ] && pairs+=( server.levelurl "" )
+    fi
     if ! cfg_set "${pairs[@]}"; then
-        rule; bad "Wipe CANCELLED: could not write the new seed${size:+ and size} to hotwire.cfg. Booting unchanged."; rule
-        printf 'cancelled: could not write seed\n' > "$WIPE_RESULT" 2>/dev/null || true
+        rule; bad "Wipe CANCELLED: could not write the new map to hotwire.cfg. Booting unchanged."; rule
+        printf 'cancelled: could not write the new map\n' > "$WIPE_RESULT" 2>/dev/null || true
         rm -f "$flag"; return 0
     fi
-    SERVER_SEED="$seed"
-    [ -n "$size" ] && SERVER_WORLDSIZE="$size"
+    if [ -n "$levelurl" ]; then
+        SERVER_LEVELURL="$levelurl"
+    else
+        SERVER_SEED="$seed"; SERVER_LEVELURL=""
+        [ -n "$size" ] && SERVER_WORLDSIZE="$size"
+    fi
 
-    # 2) Blueprints, in the identity folder. Match by glob (the version in the name
-    #    changes between builds). Never touch player.tokens.db.
+    # 2) A fresh world, even on the same map. Rust names a save after its map (level,
+    #    size, seed and protocol, or a custom map's file name) and loads that save if
+    #    it exists, so the same seed or the same custom map would bring the old world
+    #    back. Every world save in the identity folder is set aside (renamed, never
+    #    deleted): the .sav, its numbered copies and its .navmesh. A custom map's
+    #    downloaded copy goes too, so a map changed at the same address is fetched
+    #    again; a generated map's .map stays, as Rust builds the same one anyway.
     local identity="${SERVER_IDENTITY:-my_server_identity}" bpmsg="kept"
-    local idir="$ROOT/server/$identity"
+    local idir="$ROOT/server/$identity" set_aside=0
+    if [ -d "$idir" ]; then
+        local wstamp g; wstamp="$(date +%Y%m%d-%H%M%S)"
+        for g in "$idir"/*.sav "$idir"/*.sav.[0-9]* "$idir"/*.navmesh "$idir"/*.map; do
+            [ -f "$g" ] || continue
+            case "$(basename "$g")" in *.wiped-*) continue ;; esac
+            if [[ "$g" == *.map ]]; then
+                [ -n "$levelurl" ] || continue
+                [[ "$(basename "$g")" =~ ^[a-z0-9]+\.[0-9]+\.[0-9]+\.[0-9]+\.map$ ]] && continue
+            fi
+            mv -f "$g" "$g.wiped-$wstamp" && set_aside=$((set_aside + 1))
+        done
+    fi
+
+    # 3) Blueprints, in the identity folder. Match by glob (the version in the name
+    #    changes between builds). Never touch player.tokens.db.
     if [ "$bp" != "keep" ] && [ -d "$idir" ]; then
         local stamp f cnt=0; stamp="$(date +%Y%m%d-%H%M%S)"
         for f in "$idir"/player.blueprints.*.db; do
@@ -1234,12 +1269,16 @@ apply_wipe() {
         bpmsg="$bp ($cnt file(s))"
     fi
 
-    # 3) Record the cycle and clear the flag last, so a crash mid-wipe re-runs safely.
+    # 4) Record the cycle and clear the flag last, so a crash mid-wipe re-runs safely.
     [ -n "$cycle" ] && { mkdir -p "$(dirname "$WIPE_STATE")" 2>/dev/null; printf '%s' "$cycle" > "$WIPE_STATE" 2>/dev/null || true; }
     rm -f "$flag"
-    printf 'applied: seed %s size %s blueprints %s (%s)\n' "$seed" "${size:-unchanged}" "$bp" "$bpmsg" > "$WIPE_RESULT" 2>/dev/null || true
+    if [ -n "$levelurl" ]; then
+        printf 'applied: map %s blueprints %s (%s)\n' "$levelurl" "$bp" "$bpmsg" > "$WIPE_RESULT" 2>/dev/null || true
+    else
+        printf 'applied: seed %s size %s blueprints %s (%s)\n' "$seed" "${size:-unchanged}" "$bp" "$bpmsg" > "$WIPE_RESULT" 2>/dev/null || true
+    fi
     WIPE_APPLIED=1
-    ok "Wipe applied: seed $seed${size:+, size $size}, blueprints $bpmsg. The new world generates on this boot; the old save is left on disk."
+    ok "Wipe applied: $mapwords, blueprints $bpmsg. A new world starts on this boot; $set_aside old world file(s) were renamed *.wiped-* and left on disk."
 }
 
 # ======================================================================

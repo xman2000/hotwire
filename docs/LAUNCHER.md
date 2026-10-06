@@ -138,13 +138,14 @@ Measured on one Linux server: about 0.8 GB downloaded, 133 seconds.
 
 ## Wipes
 
-A wipe comes from the plugin as `WIPE.flag`, one `key value` per line: the new seed, a size if it changes, what to do with blueprints, a cycle id and an expiry. Between runs the launcher:
+A wipe comes from the plugin as `WIPE.flag`, one `key value` per line: the new seed, a size if it changes, a custom map's address (`levelurl`) if there is one, what to do with blueprints, a cycle id and an expiry. Between runs the launcher:
 
-1. Checks every value: a number where a number belongs, one of the allowed words for blueprints.
-2. Writes `server.seed` (and `server.worldsize`) into `hotwire.cfg`.
-3. Renames or deletes the `player.blueprints.*.db` files as asked. `player.tokens.db`, the Rust+ pairings, is never touched.
-4. Records the cycle id, so the same wipe can never run twice.
-5. Clears the flag and starts the server. The old save stays on disk.
+1. Checks every value: a number where a number belongs, an `http://` or `https://` address with no quote, `$` or backslash, one of the allowed words for blueprints.
+2. Writes the new map into `hotwire.cfg`: `server.levelurl` for a custom map, or `server.seed` (and `server.worldsize`) for a generated one, clearing a `server.levelurl` set before.
+3. Sets the old world aside. Rust names a save after its map and loads it if it exists, so the same seed or the same custom map would bring the old world back. Every `*.sav`, `*.sav.<n>` and `*.navmesh` in the save folder is renamed `*.wiped-<date>`; for a custom map, its downloaded `.map` too, so a map changed at the same address is fetched again. Nothing is deleted.
+4. Renames or deletes the `player.blueprints.*.db` files as asked. `player.tokens.db`, the Rust+ pairings, is never touched.
+5. Records the cycle id, so the same wipe can never run twice.
+6. Clears the flag and starts the server on a new world.
 
 | Rule | Value |
 | --- | --- |
@@ -155,6 +156,7 @@ A wipe comes from the plugin as `WIPE.flag`, one `key value` per line: the new s
 | A forced wipe (`forced 1` and the build the plugin armed on) | Applied only if the update changed the installed build. Otherwise the flag stays, the old map starts, and `WIPE.result` says `deferred`, so the plugin tries again. |
 | The before-wipe backup | Taken only once the build is known to have changed, not on every try |
 | Which launchers wipe | One that lists `wipe` among its capabilities. A changed launcher still wipes; AFKPanel shows that it is not the released file. |
+| The same map again, or a custom map | Needs `wipe_same_map` or `wipe_custom_map` among the capabilities: launcher 1.1.26 (Windows), 1.1.11 (Linux) or later |
 
 ## Backups
 

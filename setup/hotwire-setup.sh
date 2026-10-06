@@ -28,7 +28,7 @@
 #
 set -uo pipefail
 
-VERSION="0.2.24"
+VERSION="0.2.25"
 DEFAULT_PANEL="https://afkpanel.com"
 
 # ---------------------------------------------------------------- output ----
@@ -667,8 +667,8 @@ RUST_APPID="258550"
 # $PinnedHashes in hotwire-setup.ps1 for Hotwire.cs and hotwire.example.cfg), or every install stops at a
 # hash mismatch. tools/build-release.sh refuses to build a release while any pin is stale. Third-party downloads (SteamCMD from Ubuntu's archive, Oxide
 # from GitHub) are not pinned: Oxide is checked against the SHA-256 GitHub publishes for it instead.
-PIN_LAUNCHER="0c07a999c61ec39b64f30ad9d04cdeac66d43725bcd2be6baea30a6f606cb334"
-PIN_PLUGIN="439f0a88e0cb8a9e4a373ee3e1cdd28de7a94f8d7a0c6bf05de4514bb6c18851"
+PIN_LAUNCHER="b215fdcee69fb1a430f18fd98fb731cc65330844448b60f779bc4320995069b7"
+PIN_PLUGIN="46811b5301d0bf2cf3787fd5098047c2fb240968715997a194d01e077c2136c0"
 PIN_CFG="121c1480f3f6edbb3f48790a0fd72abeff1c964d7cd3ef1608646663b1661f4c"
 
 # Rust's own floor (wiki.facepunch.com/rust/Creating-a-server), warned about and never enforced. A small

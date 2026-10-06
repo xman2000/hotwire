@@ -17,7 +17,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Hotwire", "xman2000", "1.1.59")]
+    [Info("Hotwire", "xman2000", "1.1.60")]
     [Description("Scheduled restarts and updates. Announces, counts down, writes a flag, quits.")]
     internal class Hotwire : CovalencePlugin
     {
@@ -405,6 +405,20 @@ namespace Oxide.Plugins
             [JsonProperty("Random size: largest")]
             public int RandomSizeMax = 4500;
 
+            // The same seed every wipe: the seed is not drawn again after a wipe, so the same map comes back fresh each
+            // time. Off, a seed set here is used once and the next wipe's seed is drawn.
+            [JsonProperty("Same seed every wipe")]
+            public bool KeepSeed = false;
+
+            // A custom map: the address of its .map file. Set, the wipe loads this map instead of a generated one, and the
+            // seed and size are not used. Empty, the map is generated from the seed.
+            [JsonProperty("Custom map URL")]
+            public string MapUrl = "";
+
+            // The AFKPanel template this entry was made from, so the panel can find it again. Hotwire does not read it.
+            [JsonProperty("Template")]
+            public string Template = "";
+
             [JsonIgnore] public override bool IsUpdate => true;
             [JsonIgnore] public override bool IsWipe => true;
         }
@@ -784,6 +798,7 @@ namespace Oxide.Plugins
         private bool _countdownIsWipe;
         private string _wipeSeed = "";
         private string _wipeSize = "";
+        private string _wipeMapUrl = "";
         private string _wipeBlueprints = "keep";
         private string _wipeCycle = "";
         private bool _wipeBackup;
@@ -1024,6 +1039,8 @@ namespace Oxide.Plugins
                     return new Problem("ErrBadSize", w.Size);
                 if (w.RandomSize && (w.RandomSizeMin < 1000 || w.RandomSizeMax > 6000 || w.RandomSizeMin > w.RandomSizeMax))
                     return new Problem("ErrBadSizeRange", w.RandomSizeMin, w.RandomSizeMax);
+                if (!ValidMapUrl(w.MapUrl)) return new Problem("ErrBadMapUrl", w.MapUrl);
+                if ((w.Template ?? "").Length > 64) return new Problem("ErrBadTemplate");
                 var bp = (w.Blueprints ?? "").Trim().ToLowerInvariant();
                 if (bp != "keep" && bp != "rename" && bp != "delete")
                     return new Problem("ErrBadBlueprints", w.Blueprints);
@@ -1637,6 +1654,7 @@ namespace Oxide.Plugins
             public DateTime LastAttemptUtc;
             public string Seed = "";
             public string Size = "";
+            public string MapUrl = "";
             // Armed through AFKPanel's release check: the build it named, so a retry knows whether the update landed.
             public bool Gated;
             public string GateBuild = "";
@@ -1652,6 +1670,13 @@ namespace Oxide.Plugins
             var bytes = new byte[4];
             using (var rng = RandomNumberGenerator.Create()) rng.GetBytes(bytes);
             return (lo + (int)(BitConverter.ToUInt32(bytes, 0) % (uint)(hi - lo + 1))).ToString(CultureInfo.InvariantCulture);
+        }
+
+        // A custom map's address: http or https, no spaces or quotes, at most 500 characters. Empty is a generated map.
+        private static bool ValidMapUrl(string url)
+        {
+            var u = (url ?? "").Trim();
+            return u.Length == 0 || (u.Length <= 500 && Regex.IsMatch(u, "^https?://[^\\s\"'`$\\\\]+$"));
         }
 
         private static string DrawSeed()
@@ -1704,7 +1729,11 @@ namespace Oxide.Plugins
         // Why a wipe entry cannot run on this server, in words, or null.
         private string WipeBlocker(WipeEntry w)
         {
-            return LauncherCan("wipe") ? null : T("ErrLauncherCannotWipe", null);
+            if (!LauncherCan("wipe")) return T("ErrLauncherCannotWipe", null);
+            // The same world twice needs a launcher that sets the old save aside, or the old world loads again.
+            if (w.KeepSeed && !LauncherCan("wipe_same_map")) return T("ErrLauncherCannotWipeSameMap", null);
+            if (!string.IsNullOrWhiteSpace(w.MapUrl) && !LauncherCan("wipe_custom_map")) return T("ErrLauncherCannotWipeCustomMap", null);
+            return null;
         }
 
         private WipeEntry FindWipeEntry(string id)
@@ -1726,6 +1755,7 @@ namespace Oxide.Plugins
             if (pending != null && !string.IsNullOrEmpty(pending.Seed)) _wipeSeed = pending.Seed;
             if (string.IsNullOrWhiteSpace(e.Seed)) { e.Seed = _wipeSeed; SaveConfig(); }
             _wipeSize = pending != null ? pending.Size : (e.Size ?? "").Trim();
+            _wipeMapUrl = pending != null ? (pending.MapUrl ?? "") : (e.MapUrl ?? "").Trim();
             _wipeBlueprints = string.IsNullOrWhiteSpace(e.Blueprints) ? "keep" : e.Blueprints.Trim().ToLowerInvariant();
             _wipeBackup = e.Backup;
             _wipeForced = forced;
@@ -1741,7 +1771,7 @@ namespace Oxide.Plugins
                 ArmedAtUtc = armedAt, WindowEndUtc = _wipeWindowEndUtc ?? nowUtc.AddHours(2),
                 // The attempt is the restart, not the countdown before it: the next try is measured from there.
                 Attempts = (pending != null ? pending.Attempts : 0) + 1, LastAttemptUtc = target.ToUniversalTime(),
-                Seed = _wipeSeed, Size = _wipeSize,
+                Seed = _wipeSeed, Size = _wipeSize, MapUrl = _wipeMapUrl,
                 Gated = pending != null ? pending.Gated : gateBuild != null,
                 GateBuild = pending != null ? pending.GateBuild : (gateBuild ?? "")
             };
@@ -1905,11 +1935,13 @@ namespace Oxide.Plugins
                 var e = FindWipeEntry(_wipePending.EntryId);
                 if (word2 == "applied" || launcherCycle == _wipePending.Cycle)
                 {
-                    Puts($"Wipe {_wipePending.Cycle} applied by the launcher (seed {_wipePending.Seed}).");
+                    Puts(string.IsNullOrEmpty(_wipePending.MapUrl)
+                        ? $"Wipe {_wipePending.Cycle} applied by the launcher (seed {_wipePending.Seed})."
+                        : $"Wipe {_wipePending.Cycle} applied by the launcher (custom map {_wipePending.MapUrl}).");
                     if (e != null)
                     {
-                        // The next map is always known: a fresh seed for next time, unless the admin sets one.
-                        e.Seed = DrawSeed();
+                        // The next map is always known: a fresh seed for next time, unless this entry keeps its seed.
+                        if (!e.KeepSeed) e.Seed = DrawSeed();
                         if (e.RandomSize) e.Size = DrawSize(e);
                         SaveConfig();
                     }
@@ -2476,6 +2508,7 @@ namespace Oxide.Plugins
             var body = new StringBuilder();
             body.Append("seed ").Append(_wipeSeed).Append('\n');
             if (!string.IsNullOrEmpty(_wipeSize)) body.Append("size ").Append(_wipeSize).Append('\n');
+            if (!string.IsNullOrEmpty(_wipeMapUrl)) body.Append("levelurl ").Append(_wipeMapUrl).Append('\n');
             body.Append("blueprints ").Append(_wipeBlueprints).Append('\n');
             body.Append("cycle ").Append(_wipeCycle).Append('\n');
             body.Append("expires ").Append(expires).Append('\n');
@@ -5411,6 +5444,9 @@ namespace Oxide.Plugins
                 o["random_size"] = w.RandomSize;
                 o["random_size_min"] = w.RandomSizeMin;
                 o["random_size_max"] = w.RandomSizeMax;
+                o["keep_seed"] = w.KeepSeed;
+                o["map_url"] = string.IsNullOrWhiteSpace(w.MapUrl) ? null : w.MapUrl.Trim();
+                o["template"] = string.IsNullOrWhiteSpace(w.Template) ? null : w.Template.Trim();
                 if (w.Forced) o["clock"] = "Europe/London";
             }
             return o;
@@ -5581,6 +5617,7 @@ namespace Oxide.Plugins
                         tw.Seed = dw.Seed; tw.Size = dw.Size; tw.Blueprints = dw.Blueprints; tw.Backup = dw.Backup;
                         tw.Forced = dw.Forced; tw.WipeAnyway = dw.WipeAnyway; tw.WipeEarly = dw.WipeEarly;
                         tw.RandomSize = dw.RandomSize; tw.RandomSizeMin = dw.RandomSizeMin; tw.RandomSizeMax = dw.RandomSizeMax;
+                        tw.KeepSeed = dw.KeepSeed; tw.MapUrl = dw.MapUrl; tw.Template = dw.Template;
                         NormalizeWipeEntry(tw);
                     }
                     status = "done"; result = "changed: " + Describe(target, null);
@@ -5713,6 +5750,9 @@ namespace Oxide.Plugins
                 int rangeN;
                 if (fields["random_size_min"] != null && int.TryParse(((string)fields["random_size_min"] ?? "").Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out rangeN)) w.RandomSizeMin = rangeN;
                 if (fields["random_size_max"] != null && int.TryParse(((string)fields["random_size_max"] ?? "").Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out rangeN)) w.RandomSizeMax = rangeN;
+                if (fields["keep_seed"] != null) w.KeepSeed = BoolArg(fields, "keep_seed");
+                if (fields["map_url"] != null) w.MapUrl = ((string)fields["map_url"] ?? "").Trim();
+                if (fields["template"] != null) w.Template = ((string)fields["template"] ?? "").Trim();
                 // A wipe always has a next map: an empty seed is drawn here, and a random size, so the panel can show it.
                 if (string.IsNullOrWhiteSpace(w.Seed)) w.Seed = DrawSeed();
                 // A random size is drawn again only when there is none yet or the range no longer holds it, so editing
@@ -5982,6 +6022,7 @@ namespace Oxide.Plugins
 
                     _wipeSeed = seed;
                     _wipeSize = size;
+                    _wipeMapUrl = "";
                     _wipeBlueprints = bp;
                     _wipeCycle = cycle;
                     _wipeBackup = args["backup"] == null ? _config.Backups.BeforeWipe : BoolArg(args, "backup");   // default: the config's "Back up before a wipe"
@@ -12130,6 +12171,10 @@ namespace Oxide.Plugins
                 ["ErrBadBlueprints"] = "\"{0}\" is not a blueprint action. Use keep, rename or delete.",
                 ["ErrNoLondonZone"] = "This machine has no Europe/London time zone, so the forced wipe's release moment cannot be worked out.",
                 ["ErrLauncherCannotWipe"] = "The launcher on this server cannot wipe: it needs a Hotwire launcher with the wipe capability.",
+                ["ErrLauncherCannotWipeSameMap"] = "The same seed every wipe needs Hotwire launcher 1.1.26 (Windows) or 1.1.11 (Linux) or later: an older one would load the old world again.",
+                ["ErrLauncherCannotWipeCustomMap"] = "A custom map needs Hotwire launcher 1.1.26 (Windows) or 1.1.11 (Linux) or later.",
+                ["ErrBadMapUrl"] = "{0} is not a map address: use an http or https address with no spaces or quotes, at most 500 characters.",
+                ["ErrBadTemplate"] = "A template name is at most 64 characters.",
                 ["ErrBadDate"] = "\"{0}\" is not a valid date. Use yyyy-MM-dd.",
                 ["ErrNoDays"] = "No days are selected.",
                 ["ErrNoDaysGiven"] = "No days were given.",
