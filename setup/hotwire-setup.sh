@@ -28,7 +28,7 @@
 #
 set -uo pipefail
 
-VERSION="0.2.25"
+VERSION="0.2.26"
 DEFAULT_PANEL="https://afkpanel.com"
 
 # ---------------------------------------------------------------- output ----
@@ -668,7 +668,7 @@ RUST_APPID="258550"
 # hash mismatch. tools/build-release.sh refuses to build a release while any pin is stale. Third-party downloads (SteamCMD from Ubuntu's archive, Oxide
 # from GitHub) are not pinned: Oxide is checked against the SHA-256 GitHub publishes for it instead.
 PIN_LAUNCHER="b215fdcee69fb1a430f18fd98fb731cc65330844448b60f779bc4320995069b7"
-PIN_PLUGIN="46811b5301d0bf2cf3787fd5098047c2fb240968715997a194d01e077c2136c0"
+PIN_PLUGIN="48531fe20f14984b733914d5f6ca1d62289ce581e0a15682d0dc4b0538f85d2d"
 PIN_CFG="121c1480f3f6edbb3f48790a0fd72abeff1c964d7cd3ef1608646663b1661f4c"
 
 # Rust's own floor (wiki.facepunch.com/rust/Creating-a-server), warned about and never enforced. A small

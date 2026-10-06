@@ -13,7 +13,7 @@ The plugin's settings are in `oxide/config/Hotwire.json`, in the server folder. 
 
 Two of the three lists. A restart relaunches the server, and with `Install updates if available` (on by default) it also installs a new Rust build or Oxide release when AFKPanel says one is out, or when AFKPanel cannot say. An update entry always leaves the launcher `UPDATE.flag`, so the next start installs the current Rust build and the Oxide that matches it. The third list, wipes, is below.
 
-From 1.1.49 the plugin moves its update entries into the restarts once, set to install updates if available; a validating update entry stays where it is. `hotwire add update` still adds an update entry.
+From 1.1.49 the plugin moves its update entries into the restarts once, set to install updates if available; a validating update entry stays where it is. From 1.1.61 nothing adds an update entry: `hotwire add` and the menu add restarts. An update entry already in the file stays, and can be changed or removed.
 
 ```json
 "Restarts": [
@@ -71,15 +71,17 @@ hotwire add restart 05:00                       daily
 hotwire add restart 05:00 weekdays
 hotwire add restart 03:00 Tue                   every Tuesday
 hotwire add restart 05:00 Mon,Thu
-hotwire add update  20:00 first Thursday        Rust's monthly update
-hotwire add update  04:00 last Friday
+hotwire add restart 20:00 first Thursday        Rust's monthly update
+hotwire add restart 04:00 last Friday
 hotwire add restart 05:00 day 15
 hotwire add restart 05:00 every 2 days
-hotwire add update  02:00 once 2026-12-24
+hotwire add restart 02:00 once 2026-12-24
 
 hotwire set restart 0 time 06:00
-hotwire set update  0 pattern second Tuesday
-hotwire set update  0 validate true
+hotwire set restart 0 pattern second Tuesday
+hotwire set restart 0 updates off              a plain restart, no updates
+hotwire set restart 0 from 2026-10-01          every N days, counted from this day
+hotwire set update  0 validate true            an update entry already in the file
 ```
 
 An entry added with `hotwire add` is on at once. An entry added from the menu's **+** button is off until you turn it on. To add one and keep it off: `hotwire disable restart <index>` after adding it.
@@ -361,8 +363,8 @@ In chat or in the server console. `hw` is a short form.
 | `hotwire list` | `hotwire.status` | Every entry in all three lists, with its index and next occurrence |
 | `hotwire now [update\|validate] [seconds]` | `hotwire.restart` | Start a countdown now |
 | `hotwire cancel` | `hotwire.cancel` | Cancel the running countdown |
-| `hotwire add <restart\|update\|validate> <HH:mm> [pattern]` | `hotwire.edit` | Add an entry |
-| `hotwire set <restart\|update> <index> <time\|pattern\|validate> <value>` | `hotwire.edit` | Edit one in place |
+| `hotwire add restart <HH:mm> [pattern]` | `hotwire.edit` | Add a restart |
+| `hotwire set <restart\|update> <index> <time\|pattern\|updates\|from\|validate> <value>` | `hotwire.edit` | Edit one in place |
 | `hotwire remove <restart\|update> <index>` | `hotwire.edit` | Remove one |
 | `hotwire enable\|disable <restart\|update> <index>` | `hotwire.edit` | Turn one on or off |
 | `hotwire backup` | `hotwire.status` | Whether backups can run, and the last one |
@@ -381,6 +383,10 @@ In chat or in the server console. `hw` is a short form.
 
 | Rule | Value |
 | --- | --- |
+| Run now | Requires Hotwire 1.1.61 or later. Restart, update and restart, or validate and restart, with a countdown of at least 1 minute. It starts the server's configured countdown length, 1 hour by default. Nothing starts until Start the countdown. |
+| Install updates | Requires Hotwire 1.1.61 or later. A restart's `Install updates if available`, on or off. |
+| Counting from | Requires Hotwire 1.1.61 or later. The day an every-N-days restart counts from. Any day, past or future. |
+| Wipes | Listed with their next map from Hotwire 1.1.61. Added and changed in AFKPanel only. |
 | Saving | Every change is saved as you make it. There is no save or cancel button. |
 | The edit view | Shows the fields the chosen repeat uses, and leads with when the entry next runs, in words, with the rule and the exact moment beneath |
 | A new entry | Off until you turn it on |

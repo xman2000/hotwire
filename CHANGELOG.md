@@ -24,6 +24,26 @@ sit above a launcher `1.1.7`. Read the label, not the number.
 `hotwire check` prints the plugin's version. Each launcher prints its own
 version as the first line when it starts.
 
+## Plugin 1.1.61, setup 0.1.27 (Windows) and 0.2.26 (Linux) — unreleased
+
+**The in-game menu matches AFKPanel's schedule screen more closely.**
+
+- A restart's edit view has **Install updates**, the same setting as AFKPanel's "Install updates if available".
+- An every-N-days entry has a **Counting from** row: the day it counts from, stepped by day, month and year. Any day,
+  past or future, as in AFKPanel. Before, the menu showed the day and could not change it.
+- **Run now** beside + Restart: restart, update and restart, or validate and restart, with a countdown of at least one
+  minute, starting from the server's configured countdown length. Nothing starts until Start the countdown.
+- **Wipes are listed**, with their next map, and marked as managed in AFKPanel. They are added and changed only in
+  AFKPanel. Before, the menu left them out and could read "Nothing scheduled" while a wipe was due.
+- The menu no longer offers **+ Update**, and `hotwire add` takes `restart` only: an update is a restart's setting, as
+  in AFKPanel. An update entry already in the file stays, and can still be changed or removed.
+- `hotwire set restart <index> updates on|off` and `hotwire set restart <index> from yyyy-mm-dd`, so chat can do
+  everything the menu does.
+- The menu's header carries the AFKPanel wordmark.
+- Messages whose wording changed have new names, so a server with an existing `oxide/lang/en/Hotwire.json` shows the new
+  wording.
+- Setup pins the new plugin.
+
 ## Plugin 1.1.60, launchers 1.1.26 (Windows) and 1.1.11-linux, setup 0.1.26 (Windows) and 0.2.25 (Linux) — unreleased
 
 **A wipe always starts a new world, and a wipe entry can keep its seed or load a custom map.**

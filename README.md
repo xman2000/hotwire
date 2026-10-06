@@ -46,7 +46,7 @@ Hotwire schedules restarts, updates and wipes for a Rust dedicated server. It an
 
    ```
    hotwire add restart 05:00 daily
-   hotwire add update  20:00 first Thursday
+   hotwire add restart 20:00 first Thursday
    ```
 
 To update or remove the plugin, see [docs/PLUGIN.md](docs/PLUGIN.md). To install a Rust server from nothing, see [docs/INSTALL-WINDOWS.md](docs/INSTALL-WINDOWS.md) or [docs/INSTALL-LINUX.md](docs/INSTALL-LINUX.md). For a server on a Pterodactyl or Pelican host, see [docs/INSTALL-PTERODACTYL.md](docs/INSTALL-PTERODACTYL.md).
@@ -104,8 +104,8 @@ In chat or in the server console. `hw` is a short form. Bare `hotwire` is `statu
 | `hotwire check` | `hotwire.status` | Diagnostics: the server folder, the flag files, the clock, the status bar |
 | `hotwire now [update\|validate] [seconds]` | `hotwire.restart` | Start a countdown now |
 | `hotwire cancel` | `hotwire.cancel` | Cancel the running countdown |
-| `hotwire add <restart\|update\|validate> <HH:mm> [pattern]` | `hotwire.edit` | Add an entry |
-| `hotwire set <restart\|update> <index> <time\|pattern\|validate> <value>` | `hotwire.edit` | Edit one in place |
+| `hotwire add restart <HH:mm> [pattern]` | `hotwire.edit` | Add a restart |
+| `hotwire set <restart\|update> <index> <time\|pattern\|updates\|from\|validate> <value>` | `hotwire.edit` | Edit one in place |
 | `hotwire remove <restart\|update> <index>` | `hotwire.edit` | Remove one |
 | `hotwire enable\|disable <restart\|update> <index>` | `hotwire.edit` | Turn one on or off |
 
@@ -119,7 +119,7 @@ In chat or in the server console. `hw` is a short form. Bare `hotwire` is `statu
 
 ## The in-game menu
 
-`hotwire menu` opens a panel over the same schedule. Every change is saved as you make it. The edit view shows the fields the chosen repeat uses and leads with when the entry next runs, in words: *tomorrow at 05:00*, *Tuesday at 03:00*.
+`hotwire menu` opens a panel over the same schedule. Every change is saved as you make it. The edit view shows the fields the chosen repeat uses and leads with when the entry next runs, in words: *tomorrow at 05:00*, *Tuesday at 03:00*. Run now starts a restart, an update and restart, or a validate and restart, with the countdown you choose. Wipes are listed and changed only in AFKPanel.
 
 ## Announcements
 

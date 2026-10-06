@@ -17,7 +17,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Hotwire", "xman2000", "1.1.60")]
+    [Info("Hotwire", "xman2000", "1.1.61")]
     [Description("Scheduled restarts and updates. Announces, counts down, writes a flag, quits.")]
     internal class Hotwire : CovalencePlugin
     {
@@ -10346,7 +10346,19 @@ namespace Oxide.Plugins
             public int Index = -1;                 // -1 means the list view
             public bool RootDrawn;
             public bool Editing => Index >= 0;
+
+            // The Run now view, the panel's Run now: what to run and how long players are warned. Nothing starts until
+            // Start the countdown, so the view is its own confirmation.
+            public bool RunNow;
+            public string RunKind = "restart";     // restart | update | validate
+            public int RunSeconds;
         }
+
+        // A manual countdown from the menu is never shorter than this, as from the panel: players are always warned.
+        private const int MenuRunMinimumSeconds = 60;
+
+        // AFKPanel's wordmark: "AFK" in the brand green, "Panel" in white, as on afkpanel.com's dark pages.
+        private const string AfkPanelMark = "<color=#44FF2B>AFK</color><color=#FFFFFF>Panel</color>";
 
         private readonly Dictionary<string, MenuState> _menus = new Dictionary<string, MenuState>();
 
@@ -10534,11 +10546,15 @@ namespace Oxide.Plugins
                     RectTransform = { AnchorMin = Anchor(0, 0.92), AnchorMax = Anchor(1, 1) }
                 }, MenuContent, MenuContent + ".header");
 
-                Label(ui, MenuContent + ".header", 0.02, 0, 0.8, 1,
-                      state.Editing
-                          ? T("MenuTitleEditing", player.Id, Version, state.List, state.Index)
-                          : T("MenuTitleList", player.Id, Version),
+                Label(ui, MenuContent + ".header", 0.02, 0, 0.74, 1,
+                      state.RunNow
+                          ? T("MenuTitleRunNow", player.Id, Version)
+                          : state.Editing
+                              ? T("MenuTitleEditing", player.Id, Version, state.List, state.Index)
+                              : T("MenuTitleList", player.Id, Version),
                       15, ColText, TextAnchor.MiddleLeft);
+
+                Label(ui, MenuContent + ".header", 0.74, 0, 0.91, 1, AfkPanelMark, 15, ColText, TextAnchor.MiddleRight);
 
                 Button(ui, MenuContent + ".header", 0.93, 0.15, 0.98, 0.85, "X", "hotwire.ui close", ColDanger);
 
@@ -10565,7 +10581,8 @@ namespace Oxide.Plugins
                     top = 0.79;
                 }
 
-                if (state.Editing) DrawEdit(ui, player, state, top);
+                if (state.RunNow) DrawRunNow(ui, player, state, top);
+                else if (state.Editing) DrawEdit(ui, player, state, top);
                 else DrawList(ui, player, top);
 
                 CuiHelper.AddUi(basePlayer, ui);
@@ -10588,10 +10605,13 @@ namespace Oxide.Plugins
             var rows = new List<KeyValuePair<string, int>>();
             for (var i = 0; i < _config.Restarts.Count; i++) rows.Add(new KeyValuePair<string, int>("restart", i));
             for (var i = 0; i < _config.Updates.Count; i++) rows.Add(new KeyValuePair<string, int>("update", i));
+            // Wipes are managed in AFKPanel only: listed here so the menu never reads "Nothing scheduled" while a
+            // wipe is due, with no button that changes one.
+            for (var i = 0; i < _config.Wipes.Count; i++) rows.Add(new KeyValuePair<string, int>("wipe", i));
 
             if (rows.Count == 0)
                 Label(ui, MenuContent, 0.04, 0.75, 0.96, 0.85,
-                      T("MenuNothingScheduled", player.Id), 14, ColMuted, TextAnchor.MiddleLeft);
+                      T("MenuNothingScheduledRestart", player.Id), 14, ColMuted, TextAnchor.MiddleLeft);
 
             // One fewer visible row when the countdown banner is up.
             var shown = Math.Min(rows.Count, top > 0.85 ? 9 : 8);
@@ -10599,7 +10619,9 @@ namespace Oxide.Plugins
             {
                 var listName = rows[i].Key;
                 var index = rows[i].Value;
-                var entry = listName == "restart" ? _config.Restarts[index] : (ScheduleEntry)_config.Updates[index];
+                var entry = listName == "restart" ? _config.Restarts[index]
+                    : listName == "update" ? (ScheduleEntry)_config.Updates[index]
+                    : _config.Wipes[index];
 
                 var y1 = top - i * (height + gap);
                 var y0 = y1 - height;
@@ -10621,10 +10643,23 @@ namespace Oxide.Plugins
                               : "")
                         : T(entry.Enabled ? "MenuNoOccurrenceShort" : "MenuDisabled", player.Id);
 
+                if (entry.IsWipe && problem == null)
+                {
+                    var map = WipeMapWords((WipeEntry)entry, player.Id);
+                    if (map.Length > 0) detail += "   " + map;
+                }
+
                 Label(ui, MenuContent + ".row" + i, 0.02, 0.45, 0.62, 0.98,
-                      Sentence(Describe(entry, player.Id)), 13, ColText, TextAnchor.MiddleLeft);
+                      Sentence(MenuDescribe(entry, player.Id)), 13, ColText, TextAnchor.MiddleLeft);
                 Label(ui, MenuContent + ".row" + i, 0.02, 0.05, 0.62, 0.5, detail, 11,
                       problem != null ? ColDangerText : ColMuted, TextAnchor.MiddleLeft);
+
+                if (entry.IsWipe)
+                {
+                    Label(ui, MenuContent + ".row" + i, 0.63, 0.15, 0.98, 0.85,
+                          T("MenuManagedInPanel", player.Id, AfkPanelMark), 12, ColMuted, TextAnchor.MiddleRight);
+                    continue;
+                }
 
                 Button(ui, MenuContent + ".row" + i, 0.63, 0.15, 0.75, 0.85,
                        T(entry.Enabled ? "MenuOn" : "MenuOff", player.Id),
@@ -10641,10 +10676,12 @@ namespace Oxide.Plugins
                       T("MenuMoreRows", player.Id, rows.Count - shown),
                       11, ColMuted, TextAnchor.MiddleLeft);
 
+            // No "add update": an update is a restart's setting now (Install updates), as in AFKPanel. Existing update
+            // entries stay listed and editable.
             Button(ui, MenuContent, 0.02, 0.02, 0.26, 0.09, T("MenuAddRestart", player.Id),
                    "hotwire.ui add restart", ColButton);
-            Button(ui, MenuContent, 0.27, 0.02, 0.51, 0.09, T("MenuAddUpdate", player.Id),
-                   "hotwire.ui add update", ColButton);
+            Button(ui, MenuContent, 0.27, 0.02, 0.51, 0.09, T("MenuRunNow", player.Id),
+                   "hotwire.ui runnow", ColButton);
             Label(ui, MenuContent, 0.54, 0.02, 0.98, 0.09,
                   T("MenuAddHint", player.Id),
                   11, ColMuted, TextAnchor.MiddleRight);
@@ -10764,12 +10801,12 @@ namespace Oxide.Plugins
                       15, ColText, TextAnchor.MiddleCenter);
                 Button(ui, MenuContent, 0.505, y, 0.565, y + h, "+1" + un, $"{prefix} interval {target} 1", ColButton);
                 Button(ui, MenuContent, 0.57, y, 0.63, y + h, "+7" + un, $"{prefix} interval {target} 7", ColButton);
-                Label(ui, MenuContent, 0.65, y, 0.98, y + h,
-                      T("MenuCountingFrom", player.Id,
-                        string.IsNullOrWhiteSpace(entry.AnchorDate)
-                            ? T("MenuToday", player.Id)
-                            : entry.AnchorDate),
-                      11, ColMuted, TextAnchor.MiddleLeft);
+                y -= h + gap;
+
+                // The day it counts from, as AFKPanel's "Counting from". Any day, past or future: it fixes which days
+                // the entry runs on, not when it starts.
+                var anchor = ParseDate(entry.AnchorDate) ?? DateTime.Now.Date;
+                DrawDateSteppers(ui, player, y, h, T("MenuCountingFromLabel", player.Id), anchor, $"{prefix} anchor", target);
                 y -= h + gap;
             }
 
@@ -10826,6 +10863,17 @@ namespace Oxide.Plugins
                       T("MenuValidateHint", player.Id), 11, ColMuted, TextAnchor.MiddleLeft);
                 y -= h + gap;
             }
+            else
+            {
+                // AFKPanel's "Install updates if available", for a restart.
+                Label(ui, MenuContent, 0.04, y, 0.24, y + h, T("MenuInstallUpdates", player.Id), 13, ColMuted,
+                      TextAnchor.MiddleLeft);
+                Button(ui, MenuContent, 0.25, y, 0.40, y + h, T(entry.InstallUpdates ? "MenuOn" : "MenuOff", player.Id),
+                       $"{prefix} updates {target}", entry.InstallUpdates ? ColOn : ColOff);
+                Label(ui, MenuContent, 0.42, y, 0.98, y + h,
+                      T("MenuInstallUpdatesHint", player.Id), 11, ColMuted, TextAnchor.MiddleLeft);
+                y -= h + gap;
+            }
 
             Label(ui, MenuContent, 0.04, y, 0.24, y + h, T("MenuEnabled", player.Id), 13, ColMuted,
                   TextAnchor.MiddleLeft);
@@ -10847,7 +10895,12 @@ namespace Oxide.Plugins
             var recurrence = Normalize(entry.Repeat) == RepeatOnce
                 ? T("RecurOnceShort", player.Id)
                 : DescribeRecurrence(entry, player.Id);
-            var rule = Sentence(T("MenuRule", player.Id, kind, recurrence));
+            var ruleText = T("MenuRule", player.Id, kind, recurrence);
+            if (mode == RepeatEveryNDays && ParseDate(entry.AnchorDate) != null)
+                ruleText += ", " + T("MenuCountingFrom", player.Id,
+                    ParseDate(entry.AnchorDate).Value.ToString("dddd d MMMM yyyy", CultureInfo.InvariantCulture));
+            if (!entry.IsUpdate && !entry.IsWipe && entry.InstallUpdates) ruleText += T("MenuInstallingUpdates", player.Id);
+            var rule = Sentence(ruleText);
 
             string headline, detail, headlineColor;
             if (problem != null)
@@ -10913,6 +10966,113 @@ namespace Oxide.Plugins
                    $"{prefix} delete {target}", ColDanger);
         }
 
+        // Day, month and year steppers in one row, laid out as the Once date's, with the weekday at the end. The
+        // buttons send "<command>day|month|year <list> <index> <delta>".
+        private void DrawDateSteppers(CuiElementContainer ui, IPlayer player, double y, double h, string label,
+                                      DateTime picked, string command, string target)
+        {
+            var udd = T("UnitDayShort", player.Id);
+            var umo = T("UnitMonthShort", player.Id);
+            var uy = T("UnitYearShort", player.Id);
+            Label(ui, MenuContent, 0.04, y, 0.20, y + h, label, 13, ColMuted, TextAnchor.MiddleLeft);
+
+            Button(ui, MenuContent, 0.21, y, 0.26, y + h, "-1" + udd, $"{command}day {target} -1", ColButton);
+            Label(ui, MenuContent, 0.265, y, 0.335, y + h, picked.Day.ToString("00"), 16, ColText, TextAnchor.MiddleCenter);
+            Button(ui, MenuContent, 0.34, y, 0.39, y + h, "+1" + udd, $"{command}day {target} 1", ColButton);
+
+            Button(ui, MenuContent, 0.42, y, 0.47, y + h, "-1" + umo, $"{command}month {target} -1", ColButton);
+            Label(ui, MenuContent, 0.475, y, 0.595, y + h,
+                  picked.ToString("MMMM", CultureInfo.InvariantCulture), 15, ColText, TextAnchor.MiddleCenter);
+            Button(ui, MenuContent, 0.60, y, 0.65, y + h, "+1" + umo, $"{command}month {target} 1", ColButton);
+
+            Button(ui, MenuContent, 0.68, y, 0.73, y + h, "-1" + uy, $"{command}year {target} -1", ColButton);
+            Label(ui, MenuContent, 0.735, y, 0.825, y + h, picked.Year.ToString(), 15, ColText, TextAnchor.MiddleCenter);
+            Button(ui, MenuContent, 0.83, y, 0.88, y + h, "+1" + uy, $"{command}year {target} 1", ColButton);
+
+            Label(ui, MenuContent, 0.89, y, 0.99, y + h,
+                  picked.ToString("ddd", CultureInfo.InvariantCulture), 13, ColMuted, TextAnchor.MiddleLeft);
+        }
+
+        // The menu's sentence for an entry: the schedule's own, plus whether a restart installs updates, which the
+        // list and the summary would otherwise not say.
+        private string MenuDescribe(ScheduleEntry e, string user)
+        {
+            var text = Describe(e, user);
+            if (!e.IsUpdate && !e.IsWipe && e.InstallUpdates) text += T("MenuInstallingUpdates", user);
+            return text;
+        }
+
+        // A wipe row's next map, in words: the custom map, or the seed and size when they are set.
+        private string WipeMapWords(WipeEntry w, string user)
+        {
+            if (!string.IsNullOrWhiteSpace(w.MapUrl)) return T("MenuWipeCustomMap", user);
+            var seed = (w.Seed ?? "").Trim();
+            var size = (w.Size ?? "").Trim();
+            if (seed.Length == 0 || size.Length == 0) return "";
+            return T("MenuWipeSeedSize", user, seed, size);
+        }
+
+        private void DrawRunNow(CuiElementContainer ui, IPlayer player, MenuState state, double top)
+        {
+            var y = top - 0.08;
+            const double h = 0.075, gap = 0.02;
+
+            Label(ui, MenuContent, 0.04, y, 0.20, y + h, T("MenuWhatToRun", player.Id), 13, ColMuted, TextAnchor.MiddleLeft);
+            var kinds = new[] { "restart", "update", "validate" };
+            var keys = new[] { "KindRestart", "KindUpdate", "KindValidate" };
+            for (var i = 0; i < kinds.Length; i++)
+            {
+                var x0 = 0.21 + i * 0.235;
+                Button(ui, MenuContent, x0, y, x0 + 0.225, y + h, Sentence(T(keys[i], player.Id)),
+                       $"hotwire.ui runkind {kinds[i]}", state.RunKind == kinds[i] ? ColOn : ColButton);
+            }
+
+            y -= h + gap;
+            var um = T("UnitMinuteShort", player.Id);
+            Label(ui, MenuContent, 0.04, y, 0.20, y + h, T("MenuCountdown", player.Id), 13, ColMuted, TextAnchor.MiddleLeft);
+            Button(ui, MenuContent, 0.21, y, 0.27, y + h, "-15" + um, "hotwire.ui runsecs -900", ColButton);
+            Button(ui, MenuContent, 0.275, y, 0.335, y + h, "-5" + um, "hotwire.ui runsecs -300", ColButton);
+            Button(ui, MenuContent, 0.34, y, 0.40, y + h, "-1" + um, "hotwire.ui runsecs -60", ColButton);
+            Label(ui, MenuContent, 0.405, y, 0.555, y + h, FormatRemaining(state.RunSeconds), 17, ColText,
+                  TextAnchor.MiddleCenter);
+            Button(ui, MenuContent, 0.56, y, 0.62, y + h, "+1" + um, "hotwire.ui runsecs 60", ColButton);
+            Button(ui, MenuContent, 0.625, y, 0.685, y + h, "+5" + um, "hotwire.ui runsecs 300", ColButton);
+            Button(ui, MenuContent, 0.69, y, 0.75, y + h, "+15" + um, "hotwire.ui runsecs 900", ColButton);
+
+            y -= h * 0.6;
+            Label(ui, MenuContent, 0.21, y, 0.98, y + h * 0.6, T("MenuRunMinimum", player.Id), 11, ColMuted,
+                  TextAnchor.MiddleLeft);
+
+            var kind = T(state.RunKind == "validate" ? "KindValidate" : state.RunKind == "update" ? "KindUpdate" : "KindRestart",
+                         player.Id);
+            var at = DateTime.Now.AddSeconds(state.RunSeconds);
+            string headline, detail, headlineColor = ColText;
+            if (_countdownActive || _shuttingDown)
+            {
+                headline = T("MenuRunBusy", player.Id);
+                detail = T("MenuRunBusyDetail", player.Id);
+                headlineColor = ColWarnText;
+            }
+            else
+            {
+                headline = Sentence(T("MenuRunAt", player.Id, kind, at.ToString("HH:mm", CultureInfo.InvariantCulture)));
+                detail = T("MenuRunDetail", player.Id, FormatRemaining(state.RunSeconds));
+            }
+
+            var summaryTop = y - gap;
+            var summaryBottom = summaryTop - 0.12;
+            ui.Add(new CuiPanel
+            {
+                Image = { Color = ColRow },
+                RectTransform = { AnchorMin = Anchor(0.02, summaryBottom), AnchorMax = Anchor(0.98, summaryTop) }
+            }, MenuContent, MenuContent + ".summary");
+            Label(ui, MenuContent + ".summary", 0.02, 0.44, 0.98, 0.94, headline, 18, headlineColor, TextAnchor.MiddleLeft);
+            Label(ui, MenuContent + ".summary", 0.02, 0.08, 0.98, 0.44, detail, 11, ColMuted, TextAnchor.MiddleLeft);
+
+            Button(ui, MenuContent, 0.02, 0.02, 0.20, 0.09, T("MenuBack", player.Id), "hotwire.ui list", ColButton);
+            Button(ui, MenuContent, 0.70, 0.02, 0.98, 0.09, T("MenuRunStart", player.Id), "hotwire.ui runstart", ColOn);
+        }
+
         private string RepeatLabel(string mode, string user)
         {
             foreach (var known in RepeatModes)
@@ -10970,6 +11130,49 @@ namespace Oxide.Plugins
             if (action == "list")
             {
                 _menus[player.Id].Index = -1;
+                _menus[player.Id].RunNow = false;
+                DrawMenu(player);
+                return;
+            }
+
+            // Run now: the same as "hotwire now" and AFKPanel's Run now. Opening the view changes nothing.
+            if (action == "runnow" || action == "runkind" || action == "runsecs" || action == "runstart")
+            {
+                if (!Allowed(player, PermRestart)) return;
+                var run = _menus[player.Id];
+                if (action == "runnow")
+                {
+                    run.RunNow = true;
+                    run.Index = -1;
+                    run.RunKind = "restart";
+                    run.RunSeconds = Math.Max(MenuRunMinimumSeconds, _config.Countdown.StartSeconds);
+                }
+                else if (action == "runkind")
+                {
+                    if (args.Length < 2) return;
+                    var kind = args[1].ToLowerInvariant();
+                    if (kind != "restart" && kind != "update" && kind != "validate") return;
+                    run.RunKind = kind;
+                }
+                else if (action == "runsecs")
+                {
+                    int delta;
+                    if (args.Length < 2 || !int.TryParse(args[1], out delta)) return;
+                    run.RunSeconds = Math.Max(MenuRunMinimumSeconds, run.RunSeconds + delta);
+                }
+                else
+                {
+                    if (_shuttingDown) { Reply(player, "AlreadyShuttingDown"); DrawMenu(player); return; }
+                    if (_countdownActive) { Reply(player, "AlreadyCounting"); DrawMenu(player); return; }
+                    var seconds = Math.Max(MenuRunMinimumSeconds, run.RunSeconds);
+                    var isUpdate = run.RunKind != "restart";
+                    var isValidate = run.RunKind == "validate";
+                    // A manual countdown carries no key, as "hotwire now": the fired-recently guard neither applies
+                    // to it nor learns from it.
+                    BeginCountdown(DateTime.Now.AddSeconds(seconds), isUpdate, isValidate, null, "");
+                    Puts($"Manual {KindWord(null)} started by {player.Name} from the menu ({seconds}s).");
+                    run.RunNow = false;
+                }
                 DrawMenu(player);
                 return;
             }
@@ -11160,6 +11363,35 @@ namespace Oxide.Plugins
                     break;
                 }
 
+                case "updates":
+                    if (entry.IsUpdate || entry.IsWipe) return;
+                    entry.InstallUpdates = !entry.InstallUpdates;
+                    break;
+
+                case "anchorday":
+                case "anchormonth":
+                case "anchoryear":
+                {
+                    int delta;
+                    if (args.Length < 4 || !int.TryParse(args[3], out delta)) return;
+                    var current = ParseDate(entry.AnchorDate) ?? DateTime.Now.Date;
+                    DateTime moved;
+                    if (action == "anchorday")
+                    {
+                        moved = current.AddDays(delta);
+                    }
+                    else
+                    {
+                        // As the Once date: move the month or year, then clamp the day to what that month has.
+                        var shifted = action == "anchormonth" ? current.AddMonths(delta) : current.AddYears(delta);
+                        moved = new DateTime(shifted.Year, shifted.Month,
+                                             Math.Min(current.Day, DateTime.DaysInMonth(shifted.Year, shifted.Month)));
+                    }
+                    // No floor: a day in the past is a valid start to count from, as in AFKPanel.
+                    entry.AnchorDate = moved.ToString("yyyy-MM-dd");
+                    break;
+                }
+
                 default:
                     return;
             }
@@ -11212,7 +11444,7 @@ namespace Oxide.Plugins
                 case "enable": CmdToggle(player, args, true); return;
                 case "disable": CmdToggle(player, args, false); return;
                 case "backup": CmdBackup(player, args); return;
-                default: Reply(player, "Usage"); return;
+                default: Reply(player, "UsageCommands"); return;
             }
         }
 
@@ -11482,17 +11714,17 @@ namespace Oxide.Plugins
             return row;
         }
 
-        // hotwire set <restart|update> <index> <time|pattern|validate> <value...>
+        // hotwire set <restart|update> <index> <time|pattern|updates|from|validate> <value...>
         //
         // "pattern" takes the same words as add, so anything you can create you
         // can change without deleting and retyping it.
         private void CmdSet(IPlayer player, string[] args)
         {
             if (!Allowed(player, PermEdit)) return;
-            if (args.Length < 5) { Reply(player, "UsageSet"); return; }
+            if (args.Length < 5) { Reply(player, "UsageSetFields"); return; }
 
             var list = ListFor(args[1]);
-            if (list == null) { Reply(player, "UsageSet"); return; }
+            if (list == null) { Reply(player, "UsageSetFields"); return; }
             if (!int.TryParse(args[2], out var index) || index < 0 || index >= list.Count)
             {
                 Reply(player, "BadIndex", args[2]);
@@ -11529,17 +11761,36 @@ namespace Oxide.Plugins
                     break;
                 }
 
+                case "updates":
+                {
+                    if (entry.IsUpdate || entry.IsWipe) { Reply(player, "UpdatesOnlyOnRestart"); return; }
+                    var v = rest[0].ToLowerInvariant();
+                    if (v == "on" || v == "true" || v == "1") entry.InstallUpdates = true;
+                    else if (v == "off" || v == "false" || v == "0") entry.InstallUpdates = false;
+                    else { Reply(player, "UsageSetFields"); return; }
+                    break;
+                }
+
+                case "from":
+                {
+                    if (Normalize(entry.Repeat) != RepeatEveryNDays) { Reply(player, "FromOnlyEveryNDays"); return; }
+                    var from = ParseDate(rest[0]);
+                    if (from == null) { Reply(player, "BadDate", rest[0]); return; }
+                    entry.AnchorDate = from.Value.ToString("yyyy-MM-dd");
+                    break;
+                }
+
                 case "validate":
                 {
                     var update = entry as UpdateEntry;
-                    if (update == null) { Reply(player, "ValidateNotOnRestart"); return; }
+                    if (update == null) { Reply(player, "ValidateOnlyOnUpdate"); return; }
                     update.Validate = rest[0].Equals("true", StringComparison.OrdinalIgnoreCase)
                                       || rest[0] == "1";
                     break;
                 }
 
                 default:
-                    Reply(player, "UsageSet");
+                    Reply(player, "UsageSetFields");
                     return;
             }
 
@@ -11616,20 +11867,17 @@ namespace Oxide.Plugins
         {
             if (!Allowed(player, PermEdit)) return;
 
-            // hotwire add <restart|update|validate> <HH:mm> [days]
-            if (args.Length < 3) { Reply(player, "UsageAdd"); return; }
+            // hotwire add restart <HH:mm> [pattern]. Updates are a restart's setting (hotwire set ... updates on|off),
+            // as in AFKPanel, so there is no "add update" or "add validate" any more.
+            if (args.Length < 3) { Reply(player, "UsageAddRestart"); return; }
 
             var kind = args[1].ToLowerInvariant();
-            if (kind != "restart" && kind != "update" && kind != "validate") { Reply(player, "UsageAdd"); return; }
+            if (kind != "restart") { Reply(player, "UsageAddRestart"); return; }
 
             var time = args[2];
             if (ParseTime(time) == null) { Reply(player, "BadTime", time); return; }
 
-            ScheduleEntry entry = kind == "restart"
-                ? new ScheduleEntry()
-                : new UpdateEntry { Validate = kind == "validate" };
-            entry.Time = time;
-            entry.Enabled = true;
+            var entry = new ScheduleEntry { Time = time, Enabled = true };
 
             var problem = ApplyPattern(entry, args.Skip(3).ToArray());
             if (problem != null) { Reply(player, "Raw", Text(problem, player.Id)); return; }
@@ -11637,13 +11885,9 @@ namespace Oxide.Plugins
             problem = ValidationError(entry);
             if (problem != null) { Reply(player, "Raw", Text(problem, player.Id)); return; }
 
-            var listName = kind == "restart" ? "restart" : "update";
-            if (kind == "restart") _config.Restarts.Add(entry);
-            else _config.Updates.Add((UpdateEntry)entry);
-
-            var index = (kind == "restart" ? _config.Restarts.Count : _config.Updates.Count) - 1;
+            _config.Restarts.Add(entry);
             SaveConfig();
-            Reply(player, "Added", DescribeRow(listName, index, entry, player.Id));
+            Reply(player, "Added", DescribeRow("restart", _config.Restarts.Count - 1, entry, player.Id));
             Puts($"{player.Name} added {Describe(entry, null)}.");
         }
 
@@ -12087,7 +12331,10 @@ namespace Oxide.Plugins
                 ["EditMadeInvalid"] = "That change made the entry invalid, so it has been disabled.",
                 ["SavedButInvalid"] = "Saved, but the entry is now invalid and has been disabled: {0}",
 
-                ["ValidateNotOnRestart"] = "Only an update entry can validate. Remove it and add it as an update.",
+                ["UpdatesOnlyOnRestart"] = "Only a restart has Install updates. An update entry always updates.",
+                ["FromOnlyEveryNDays"] = "Only an every-N-days entry counts from a date. Set its pattern to \"every 2 days\" first.",
+                ["BadDate"] = "\"{0}\" is not a valid date. Use yyyy-MM-dd, such as 2026-10-06.",
+                ["ValidateOnlyOnUpdate"] = "Only an update entry can validate. A restart can run a validate with \"hotwire now validate\".",
                 ["MenuNeedsPlayer"] = "The menu only opens in game. Use the chat commands from the console.",
 
                 // -- Time and zone ----------------------------------------
@@ -12190,9 +12437,10 @@ namespace Oxide.Plugins
                 // -- The in-game panel ------------------------------------
                 ["MenuTitleList"] = "Hotwire {0}  /  Schedule",
                 ["MenuTitleEditing"] = "Hotwire {0}  /  Editing {1} {2}",
+                ["MenuTitleRunNow"] = "Hotwire {0}  /  Run now",
                 ["MenuCountingDown"] = "COUNTING DOWN  --  {0} in {1}",
                 ["MenuCancel"] = "Cancel the restart",
-                ["MenuNothingScheduled"] = "Nothing scheduled. Add a restart or an update below.",
+                ["MenuNothingScheduledRestart"] = "Nothing scheduled. Add a restart below.",
                 ["MenuEdit"] = "Edit",
                 ["MenuDelete"] = "Delete",
                 ["MenuBack"] = "< Back",
@@ -12200,7 +12448,11 @@ namespace Oxide.Plugins
                 ["MenuOff"] = "OFF",
                 ["MenuMoreRows"] = "...and {0} more. Use \"hotwire list\" to see them all.",
                 ["MenuAddRestart"] = "+ Restart",
-                ["MenuAddUpdate"] = "+ Update",
+                ["MenuRunNow"] = "Run now",
+                ["MenuManagedInPanel"] = "Managed in {0}",
+                ["MenuWipeCustomMap"] = "custom map",
+                ["MenuWipeSeedSize"] = "seed {0}, size {1}",
+                ["MenuInstallingUpdates"] = ", installing updates",
                 ["MenuAddHint"] = "New entries start disabled. Turn one ON when it is right.",
 
                 ["MenuTime"] = "Time",
@@ -12215,10 +12467,20 @@ namespace Oxide.Plugins
                 ["MenuOneDay"] = "{0} day",
                 ["MenuNDays"] = "{0} days",
                 ["MenuCountingFrom"] = "counting from {0}",
-                ["MenuToday"] = "today",
                 ["MenuDate"] = "Date",
                 ["MenuValidate"] = "Validate",
                 ["MenuValidateHint"] = "Re-checksums the whole install. Slow.",
+                ["MenuInstallUpdates"] = "Install updates",
+                ["MenuInstallUpdatesHint"] = "A new Rust build or Oxide release is installed at this restart when one is out.",
+                ["MenuCountingFromLabel"] = "Counting from",
+                ["MenuWhatToRun"] = "What to run",
+                ["MenuCountdown"] = "Countdown",
+                ["MenuRunMinimum"] = "At least 1 minute, so players are warned.",
+                ["MenuRunAt"] = "{0} at {1}",
+                ["MenuRunDetail"] = "Players are warned for {0}. Cancel stops it until the shutdown begins.",
+                ["MenuRunBusy"] = "A countdown is already running",
+                ["MenuRunBusyDetail"] = "Cancel it above before starting another.",
+                ["MenuRunStart"] = "Start the countdown",
                 ["MenuEnabled"] = "Enabled",
 
                 // The repeat picker. Each names a rule rather than describing
@@ -12256,13 +12518,13 @@ namespace Oxide.Plugins
                 ["ClocksChange"] = "The clocks change before then.",
                 ["MenuClocksChangeShort"] = "clocks change before then",
 
-                ["Usage"] = "hotwire status | menu | check | connect <code> | list | now [update|validate] [seconds] | cancel | " +
-                            "add <restart|update|validate> <HH:mm> [pattern] | set <restart|update> <index> " +
-                            "<time|pattern|validate> <value> | remove <restart|update> <index> | " +
+                ["UsageCommands"] = "hotwire status | menu | check | connect <code> | list | now [update|validate] [seconds] | cancel | " +
+                            "add restart <HH:mm> [pattern] | set <restart|update> <index> " +
+                            "<time|pattern|updates|from|validate> <value> | remove <restart|update> <index> | " +
                             "enable|disable <restart|update> <index> | backup [now]",
-                ["UsageSet"] = "hotwire set <restart|update> <index> <time|pattern|validate> <value>",
+                ["UsageSetFields"] = "hotwire set <restart|update> <index> <time|pattern|updates|from|validate> <value>. updates: on or off. from: yyyy-MM-dd, for every N days.",
                 ["UsageNow"] = "hotwire now [update|validate] [seconds]",
-                ["UsageAdd"] = "hotwire add <restart|update|validate> <HH:mm> [pattern]. Patterns: daily | " +
+                ["UsageAddRestart"] = "hotwire add restart <HH:mm> [pattern]. Patterns: daily | " +
                                "weekdays | weekends | Mon,Thu | first Thursday | last Friday | day 15 | " +
                                "every 2 days | once 2026-12-24",
                 ["UsageRemove"] = "hotwire remove <restart|update> <index>",
