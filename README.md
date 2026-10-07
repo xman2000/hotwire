@@ -146,6 +146,7 @@ Optional. Nothing is sent until the Rust server is connected with `hotwire-setup
 | Heartbeat: players, FPS, CPU, memory, entities, network, queue, uptime, Oxide and Rust versions | Every 30 seconds |
 | Whether RCON is on, its port and the address it listens on; never its password | With the heartbeat |
 | The plugin list: name, author, version, file hash and size, whether it loaded, Oxide's error if not | When it changes |
+| The SHA-256 of each file in `RustDedicated_Data/Managed`, so AFKPanel can say whether Oxide's files, and the game files it ships patched, are that Oxide release's | Once each start, plugin 1.1.65 or later |
 | Each plugin's server time and memory | Every minute |
 | The schedule: restarts, updates, wipes, the running countdown | When it changes |
 | The map: seed, size, custom map address, last wipe, the map image, markers other plugins place | When they change |

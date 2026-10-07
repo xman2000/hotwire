@@ -24,6 +24,15 @@ sit above a launcher `1.1.7`. Read the label, not the number.
 `hotwire check` prints the plugin's version. Each launcher prints its own
 version as the first line when it starts.
 
+## Plugin 1.1.65 — unreleased
+
+**AFKPanel can say whether Oxide's files are the release's.**
+
+- After each start the plugin hashes every file in `RustDedicated_Data/Managed`, at most 1 MB a tick on the game's main
+  thread (about ten seconds for the whole folder), and sends the hashes once. Never the files.
+- AFKPanel compares the files the Oxide release installs, Oxide's own and the game files it ships patched, with that
+  release's, and shows the result on the server's Info tab.
+
 ## Launchers 1.1.30 (Windows) and 1.1.16-linux — unreleased
 
 **AFKPanel is not told an old build is Steam's.**

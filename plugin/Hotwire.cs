@@ -17,7 +17,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Hotwire", "xman2000", "1.1.64")]
+    [Info("Hotwire", "xman2000", "1.1.65")]
     [Description("Scheduled restarts and updates. Announces, counts down, writes a flag, quits.")]
     internal class Hotwire : CovalencePlugin
     {
@@ -788,6 +788,17 @@ namespace Oxide.Plugins
         // out. timer.Every() returns the former.
         private Timer _scanTimer;
         private Timer _stopTimer;
+        // The game's managed files, hashed a little each tick after the server starts and sent once, so AFKPanel can
+        // say whether Oxide's files are that release's. Hashes only, never content.
+        private Timer _managedHashTimer;
+        private List<string> _managedFiles;
+        private int _managedIndex;
+        private FileStream _managedStream;
+        private SHA256 _managedSha;
+        private JObject _managedHashes;
+        private bool _managedTruncated;
+        private string _frameworkFilesJson;
+        private string _frameworkFilesSentJson;
         private bool _stopping;
         private Timer _countdownTimer;
         private Timer _frameworkTimer;
@@ -903,6 +914,8 @@ namespace Oxide.Plugins
             // quitting with Rust's own quit keeps the play since the last autosave, which a signal loses.
             _stopTimer = timer.Every(1f, StopTick);
 
+            StartManagedHash();
+
             if (_config.Framework.Enabled)
             {
                 var minutes = Math.Max(5, _config.Framework.CheckIntervalMinutes);
@@ -932,6 +945,8 @@ namespace Oxide.Plugins
             _panelTimer?.Destroy();
             _sessionTimer?.Destroy();
             _backupTimer?.Destroy();
+            _managedHashTimer?.Destroy();
+            try { _managedStream?.Dispose(); _managedSha?.Dispose(); } catch { }
 
             // Player events still queued would go with the plugin: keep them to send after the reload.
             try
@@ -2522,6 +2537,94 @@ namespace Oxide.Plugins
             Quit();
         }
 
+        // Every file under RustDedicated_Data/Managed, by its path inside it. AFKPanel compares the ones the Oxide release
+        // installs (its own and the game files it ships patched) with that release's, and ignores the rest, so a file a
+        // later Oxide adds needs no change here. About 90 MB, hashed at most 1 MB a tick on the main thread: a few
+        // milliseconds a frame, done in about ten seconds.
+        private const int ManagedHashMaxFiles = 2000;
+        private const int ManagedHashBytesPerTick = 1024 * 1024;
+
+        private void StartManagedHash()
+        {
+            try
+            {
+                var root = ServerRoot();
+                var managed = root == null ? null : Path.Combine(Path.Combine(root, "RustDedicated_Data"), "Managed");
+                if (managed == null || !Directory.Exists(managed)) return;
+                var all = Directory.GetFiles(managed, "*", SearchOption.AllDirectories)
+                    .Select(f => f.Substring(managed.Length).TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar))
+                    .OrderBy(f => f.Replace('\\', '/'), StringComparer.Ordinal).ToList();
+                _managedTruncated = all.Count > ManagedHashMaxFiles;
+                _managedFiles = all.Take(ManagedHashMaxFiles).ToList();
+                _managedIndex = 0;
+                _managedHashes = new JObject();
+                _managedHashTimer = timer.Every(0.1f, () => ManagedHashTick(managed));
+            }
+            catch (Exception ex)
+            {
+                PrintWarning($"Could not list the game's managed files to hash them: {ex.Message}");
+            }
+        }
+
+        private void ManagedHashTick(string managed)
+        {
+            var budget = ManagedHashBytesPerTick;
+            var buffer = new byte[256 * 1024];
+            while (budget > 0 && _managedIndex < _managedFiles.Count)
+            {
+                var rel = _managedFiles[_managedIndex];
+                try
+                {
+                    if (_managedStream == null)
+                    {
+                        _managedStream = new FileStream(Path.Combine(managed, rel), FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+                        _managedSha = SHA256.Create();
+                    }
+                    var read = _managedStream.Read(buffer, 0, Math.Min(buffer.Length, budget));
+                    if (read > 0)
+                    {
+                        _managedSha.TransformBlock(buffer, 0, read, null, 0);
+                        budget -= read;
+                        continue;
+                    }
+                    _managedSha.TransformFinalBlock(buffer, 0, 0);
+                    _managedHashes[rel.Replace('\\', '/')] = "sha256:" + Hex(_managedSha.Hash);
+                }
+                catch
+                {
+                    // A file that cannot be read is left out, never sent with a guessed hash.
+                }
+                try { _managedStream?.Dispose(); _managedSha?.Dispose(); } catch { }
+                _managedStream = null;
+                _managedSha = null;
+                _managedIndex++;
+            }
+            if (_managedIndex < _managedFiles.Count) return;
+
+            _managedHashTimer?.Destroy();
+            _managedHashTimer = null;
+            var payload = new JObject
+            {
+                ["framework"] = "oxide",
+                ["platform"] = Environment.OSVersion.Platform == PlatformID.Unix ? "linux" : "windows",
+                ["folder"] = "RustDedicated_Data/Managed",
+                ["files"] = _managedHashes,
+            };
+            var version = InstalledFrameworkVersion();
+            if (version != null) payload["version"] = version;
+            if (_managedTruncated) payload["truncated"] = true;
+            _frameworkFilesJson = payload.ToString(Formatting.None);
+            _managedHashes = null;
+            _managedFiles = null;
+        }
+
+        private void SendFrameworkFiles()
+        {
+            var json = _frameworkFilesJson;
+            PanelRequest("POST", PanelReportPath, PanelEnvelope("framework_files", JObject.Parse(json)), response => { _frameworkFilesSentJson = json; },
+                () => { _frameworkFilesSentJson = json; });
+        }
+
         private void Quit(bool isRetry)
         {
             try
@@ -3371,6 +3474,8 @@ namespace Oxide.Plugins
                 if (PolicyAllowsKind("session")) { SendSession(); return; }
                 if (PolicyHolds(_policy)) SpoolSessionReports();
             }
+
+            if (_frameworkFilesJson != null && _frameworkFilesJson != _frameworkFilesSentJson && PolicyAllowsKind("framework_files")) { SendFrameworkFiles(); return; }
 
             if (_config.Panel.ReportMap && !_mapOff)
             {
