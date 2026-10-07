@@ -24,6 +24,14 @@ sit above a launcher `1.1.7`. Read the label, not the number.
 `hotwire check` prints the plugin's version. Each launcher prints its own
 version as the first line when it starts.
 
+## Launchers 1.1.30 (Windows) and 1.1.16-linux — unreleased
+
+**AFKPanel is not told an old build is Steam's.**
+
+- A launcher that does not believe Steam's answer (an older build than the installed one, on `public`) no longer sends
+  it to AFKPanel as Steam's current build. Since 1.1.28 / 1.1.14-linux it did, and AFKPanel then called a current server
+  behind.
+
 ## Launchers 1.1.29 (Windows) and 1.1.15-linux — unreleased
 
 **An old answer from Steam no longer stops an update.**

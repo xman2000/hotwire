@@ -15,7 +15,7 @@
 $ErrorActionPreference = 'Stop'
 # Who this launcher is, for the plugin: written to oxide\data\Hotwire\launcher.json before every start. The plugin
 # offers only the features in the capability list; settings_file means the settings come from hotwire.cfg.
-$LauncherVersion = '1.1.29'
+$LauncherVersion = '1.1.30'
 $LauncherCapabilities = 'supervise,update,framework_verify,crash_backstop,log_rotate,convar_persist,wipe,wipe_same_map,wipe_custom_map,backup,settings_file,rcon_optional'
 $root = $PSScriptRoot
 $cfg = Join-Path $root 'hotwire.cfg'
@@ -1691,6 +1691,8 @@ function Invoke-Main([string[]]$argv) {
                 $installed = Get-InstalledBuild
                 $public = Get-PublicBuild $branchName $hours
                 $env:HOTWIRE_PUBLIC_BUILD = [string]$public
+                # An answer not believed (older than the install on public, below) is not sent to AFKPanel as Steam's build.
+                if ($installed -and $public -and (Get-Env 'STEAM_BRANCH') -eq 'public' -and [long]$installed -gt [long]$public) { $env:HOTWIRE_PUBLIC_BUILD = '' }
                 if (-not $installed) {
                     Say 'Rust build: cannot read the installed build from'
                     Say ('  ' + $Acf)

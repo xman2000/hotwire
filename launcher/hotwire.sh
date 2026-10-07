@@ -21,7 +21,7 @@
 #     hotwire.cfg. The plugin works out this file's code hash itself, and
 #     AFKPanel compares it with the released launchers'; nothing waits on that
 #     answer.
-HOTWIRE_LAUNCHER_VERSION="1.1.15-linux"
+HOTWIRE_LAUNCHER_VERSION="1.1.16-linux"
 HOTWIRE_LAUNCHER_CAPABILITIES="supervise,update,framework_verify,crash_backstop,log_rotate,convar_persist,wipe,wipe_same_map,wipe_custom_map,backup,settings_file,rcon_optional,stop_saves"
 
 # ======================================================================
@@ -1175,7 +1175,11 @@ report_session() {  # <exit_code> <crashed true|false>
     local p="{\"started_at\":\"$STARTED_AT\",\"ended_at\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"exit_code\":$1,\"crashed\":$2"
     [ -n "$INSTALLED_BUILD" ] && p="$p,\"rust_build_id\":\"$INSTALLED_BUILD\""
     # The build Steam has on this branch, from the launcher's last build check; left out when it is not known.
-    [[ "$PUBLIC_BUILD" =~ ^[0-9]+$ ]] && p="$p,\"rust_build_public\":\"$PUBLIC_BUILD\""
+    # An answer older than the install on public is not believed (build_check), so it is not sent as Steam's build.
+    if [[ "$PUBLIC_BUILD" =~ ^[0-9]+$ ]] && ! { [ "$STEAM_BRANCH" = "public" ] && [[ "$INSTALLED_BUILD" =~ ^[0-9]+$ ]] \
+          && [ "$INSTALLED_BUILD" -gt "$PUBLIC_BUILD" ]; }; then
+        p="$p,\"rust_build_public\":\"$PUBLIC_BUILD\""
+    fi
     # Runs in a row that ended under hotwire.crash_seconds, this one included.
     p="$p,\"fast_fail_count\":$CRASH_STREAK"
     # From this run's log: Oxide's "Failed to call hook" lines, and, when the plugin never loaded (so it never sent the
