@@ -962,7 +962,8 @@ write_launcher_state() {
   "platform": "linux",
   "update_mode": "$UPDATE_MODE",
   "path": "$self",
-  "config_problems": [$(config_problems_json)]
+  "config_problems": [$(config_problems_json)],
+  "notices": [$(launcher_notices_json)]
 }
 JSON
 }
@@ -970,6 +971,17 @@ JSON
 # hotwire.cfg's lines that are not used as written, as JSON for launcher.json: the plugin passes them to AFKPanel, which
 # raises them as a problem. The setting's name and what is wrong, never its value. At most 20.
 json_text() { local s="$1"; s="${s//\\/\\\\}"; s="${s//\"/\\\"}"; printf '"%s"' "$s"; }
+# What the launcher wants the admin to know but that stops nothing, such as ionice missing: code and words, at most 10.
+LAUNCHER_NOTICES=()
+launcher_notices_json() {
+    local entry code what sep="" i=0
+    for entry in "${LAUNCHER_NOTICES[@]}"; do
+        [ "$i" -ge 10 ] && break
+        IFS=$'\t' read -r code what <<< "$entry"
+        printf '%s{"code": %s, "message": %s}' "$sep" "$(json_text "$code")" "$(json_text "$what")"
+        sep=", "; i=$((i+1))
+    done
+}
 config_problems_json() {
     local entry line name crit what sep="" i=0
     for entry in "${CFG_REPORT[@]}"; do
@@ -1634,7 +1646,7 @@ backup_archive() {  # <trigger> <run> <staging|""> <sav name|""> <sav size|""> <
         if [ -n "$mapfile" ]; then
             mapname="$(basename "$mapfile")"
             if [ ! -f "$dest/maps/$mapname.zst" ]; then
-                if nice -n 19 ionice -c3 zstd -3 -T2 -q -f "$mapfile" -o "$dest/maps/$mapname.zst.part" 2>/dev/null \
+                if nice -n 19 "${IONICE[@]}" zstd -3 -T2 -q -f "$mapfile" -o "$dest/maps/$mapname.zst.part" 2>/dev/null \
                    && mv -f "$dest/maps/$mapname.zst.part" "$dest/maps/$mapname.zst"; then newmap="$mapname"
                 else rm -f "$dest/maps/$mapname.zst.part"; _blog "$dest" "$run: the map could not be kept (the backup goes on)"; mapname=""; fi
             fi
@@ -1650,7 +1662,7 @@ backup_archive() {  # <trigger> <run> <staging|""> <sav name|""> <sav size|""> <
         } > "$work/MANIFEST"
         bytes_in="$(du -sb "$work" | cut -f1)"; files="$(find "$work" -type f | wc -l)"
         t1="$(_ms)"
-        if ( cd "$work" && tar -cf - . ) | nice -n 19 ionice -c3 zstd -3 -T2 -q -o "$dest/$name.part" 2>/dev/null \
+        if ( cd "$work" && tar -cf - . ) | nice -n 19 "${IONICE[@]}" zstd -3 -T2 -q -o "$dest/$name.part" 2>/dev/null \
            && nice -n 19 zstd -t -q "$dest/$name.part" 2>/dev/null; then
             mv -f "$dest/$name.part" "$dest/$name"
             archive_ms=$(( $(_ms) - t1 ))
@@ -1766,6 +1778,20 @@ run_hook() {  # run_hook <file> <label>
     ( cd "$ROOT" && DO_UPDATE="${DO_UPDATE:-0}" bash "$1" ) || warn "$(basename "$1") exited non-zero; carrying on."
 }
 
+# Backups yield the disk to the game through ionice. Where it is missing or not allowed (some containers and VPSs),
+# ionice exits instead of running the command, so backups run without it, at normal disk priority, and AFKPanel is told.
+IONICE=(ionice -c3)
+check_ionice() {
+    LAUNCHER_NOTICES=()
+    if [ "$BACKUPS" = "1" ] && ! ionice -c3 true >/dev/null 2>&1; then
+        IONICE=()
+        LAUNCHER_NOTICES+=("ionice_unavailable"$'\t'"ionice cannot run on this machine, so backups run at normal disk priority and compete with the game for the disk. Install util-linux's ionice, or allow it in the container, to fix it.")
+        warn "ionice cannot run here; backups run at normal disk priority."
+    else
+        IONICE=(ionice -c3)
+    fi
+}
+
 per_launch_prep() {
     UPDATE_ATTEMPTED=0
     # hotwire.cfg is read again before every start, so an edit takes effect on
@@ -1773,6 +1799,7 @@ per_launch_prep() {
     [ -n "${CONFIG_LOADED:-}" ] && { config_reload; load_secrets; }
     CONFIG_LOADED=1
     init_reporting
+    check_ionice
     decide_update_mode
     build_check
     # The installed build before any update this pass: framework_update compares with it (Oxide goes back over a new build).

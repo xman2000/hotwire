@@ -43,6 +43,23 @@ version as the first line when it starts.
   installed build; the next update carries on from what was downloaded. Before, a SteamCMD that hung kept the server
   down and held the lock every other server on the machine waits for.
 
+**Linux backups work without ionice.**
+
+- Backups yield the disk to the game through `ionice`. Where it is missing or not allowed, as in some containers and
+  VPSs, it stopped every backup. Now the launcher runs them without it, at normal disk priority, says so at the start,
+  and AFKPanel shows it as an information notice.
+
+**The scheduler keeps running after an error.**
+
+- One error in the 10-second schedule check used to stop the timer for good, so no scheduled restart, update or wipe
+  ran until the plugin reloaded. The error is now logged (once, then at most hourly with a count) and the next check
+  runs as usual.
+
+**Changing a wipe keeps what the change leaves out.**
+
+- An edit that does not mention the template, same seed or custom map keeps them. Before, changing the next map from
+  AFKPanel dropped the entry's template, so the template added a second wipe.
+
 **Docs.**
 
 - `docs/CONFIG.md` lists every plugin setting, including the log, console, player, chat, in-game report and plugin time

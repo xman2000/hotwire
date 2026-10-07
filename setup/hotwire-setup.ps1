@@ -104,7 +104,7 @@ $PluginUrl = 'https://raw.githubusercontent.com/xman2000/hotwire/connect-and-rep
 $PinnedHashes = @{
     'hotwire.bat' = 'b9736417a79def9c2744cd61c2aaa3c19d83a96226390c4a1a1eeda361ee4293'
     'hotwire.ps1' = '393e2f4a74c5870fb75d96044ca7cf0cc03a5c3f213f227384cca8c1686134b7'
-    'Hotwire.cs'  = '9dd2453c2933905a8520b3fdd56abfa4e415e6a785e5fd25936c4774b9653d2c'
+    'Hotwire.cs'  = 'b976b11270f9fa984f65303c0debe48101986623a9a3ccd0a006b47d58bb9975'
     'hotwire.example.cfg' = '8dd9495677ad6d888bc72bf05d92cdd0b05f2b528a05282780d460f859a5a9b9'
 }
 

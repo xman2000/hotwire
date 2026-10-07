@@ -667,8 +667,8 @@ RUST_APPID="258550"
 # $PinnedHashes in hotwire-setup.ps1 for Hotwire.cs and hotwire.example.cfg), or every install stops at a
 # hash mismatch. tools/build-release.sh refuses to build a release while any pin is stale. Third-party downloads (SteamCMD from Ubuntu's archive, Oxide
 # from GitHub) are not pinned: Oxide is checked against the SHA-256 GitHub publishes for it instead.
-PIN_LAUNCHER="738cc7b5bd283b4b0c7e0e6fef7a174cb7b50e087078892dc981257154a342a0"
-PIN_PLUGIN="9dd2453c2933905a8520b3fdd56abfa4e415e6a785e5fd25936c4774b9653d2c"
+PIN_LAUNCHER="b63286f50000d6db70417338c08c6c4f76a35b751357efdaf8427062cf1c1a1b"
+PIN_PLUGIN="b976b11270f9fa984f65303c0debe48101986623a9a3ccd0a006b47d58bb9975"
 PIN_CFG="8dd9495677ad6d888bc72bf05d92cdd0b05f2b528a05282780d460f859a5a9b9"
 
 # Rust's own floor (wiki.facepunch.com/rust/Creating-a-server), warned about and never enforced. A small

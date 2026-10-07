@@ -1121,7 +1121,27 @@ namespace Oxide.Plugins
             foreach (var e in _config.Wipes) yield return e;
         }
 
+        // The 10-second timer that runs every schedule. Oxide destroys a timer whose callback throws, and nothing would
+        // start it again, so every restart, update and wipe would stop until the plugin reloads. An error is caught,
+        // logged (once, then at most hourly with a count) and the next pass runs as usual.
+        private int _scanFailures;
+        private DateTime _scanFailureLogged = DateTime.MinValue;
         private void Scan()
+        {
+            try { ScanSchedules(); }
+            catch (Exception ex)
+            {
+                _scanFailures++;
+                if ((DateTime.UtcNow - _scanFailureLogged).TotalHours >= 1)
+                {
+                    PrintError($"The schedule check failed ({ex.GetType().Name}: {ex.Message}). It runs again every 10 seconds; scheduled restarts, updates and wipes keep being checked. Failures since the last message: {_scanFailures}.");
+                    _scanFailureLogged = DateTime.UtcNow;
+                    _scanFailures = 0;
+                }
+            }
+        }
+
+        private void ScanSchedules()
         {
             RefreshScheduleMarker(false);
             if (_countdownActive || _shuttingDown) return;
@@ -4136,6 +4156,20 @@ namespace Oxide.Plugins
                 }
                 identity["config_problems"] = list;
             }
+            // What the launcher wants the admin to know but that stops nothing, such as ionice missing (launcher
+            // 1.1.12-linux): a code and the launcher's words, bounded.
+            var notices = declared["notices"] as JArray;
+            if (notices != null)
+            {
+                var list = new JArray();
+                foreach (var item in notices.OfType<JObject>().Take(10))
+                {
+                    var code = (string)item["code"] ?? "";
+                    if (!Regex.IsMatch(code, "^[a-z][a-z0-9_]{0,63}$")) continue;
+                    list.Add(new JObject { ["code"] = code, ["message"] = Clip((string)item["message"] ?? "", 300) });
+                }
+                identity["notices"] = list;
+            }
             return identity;
         }
 
@@ -5698,6 +5732,9 @@ namespace Oxide.Plugins
                     var fw = (WipeEntry)from; var dw = (WipeEntry)draft;
                     dw.Seed = fw.Seed; dw.Size = fw.Size; dw.Blueprints = fw.Blueprints; dw.Backup = fw.Backup; dw.Forced = fw.Forced; dw.WipeAnyway = fw.WipeAnyway; dw.WipeEarly = fw.WipeEarly;
                     dw.RandomSize = fw.RandomSize; dw.RandomSizeMin = fw.RandomSizeMin; dw.RandomSizeMax = fw.RandomSizeMax;
+                    // An edit that leaves these out keeps them, as it keeps the seed and size: a change to the next map
+                    // must not drop the entry's template, its same seed or its custom map.
+                    dw.KeepSeed = fw.KeepSeed; dw.MapUrl = fw.MapUrl; dw.Template = fw.Template;
                 }
             }
             else
