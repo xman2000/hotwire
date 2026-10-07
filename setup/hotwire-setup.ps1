@@ -70,43 +70,14 @@ $OxideReleaseUrl = 'https://api.github.com/repos/OxideMod/Oxide.Rust/releases/la
 $OxideAsset = 'Oxide.Rust.zip'
 $OxideZipUrl = 'https://github.com/OxideMod/Oxide.Rust/releases/latest/download/Oxide.Rust.zip'
 
-# Hotwire itself, from the branch this script ships on, checked against the pins below. GitHub serves
-# these with LF line endings, which cmd.exe misreads in a .bat, so the launcher is saved with CRLF.
-$LauncherUrl = 'https://raw.githubusercontent.com/xman2000/hotwire/connect-and-report/launcher/hotwire.bat'
-# The launcher's PowerShell (1.1.22 and later), run as a file beside hotwire.bat.
-$LauncherPs1Url = 'https://raw.githubusercontent.com/xman2000/hotwire/connect-and-report/launcher/hotwire.ps1'
-# The settings list the launcher reads from (1.1.16 and later): kept as hotwire.example.cfg, and copied into this
-# server's hotwire.cfg with its ports, map and branch filled in.
-$CfgUrl = 'https://raw.githubusercontent.com/xman2000/hotwire/connect-and-report/examples/hotwire.example.cfg'
-$PluginUrl = 'https://raw.githubusercontent.com/xman2000/hotwire/connect-and-report/plugin/Hotwire.cs'
-
-# ---------------------------------------------------------------------------
-# Pinned SHA-256 of the FIRST-PARTY files this script downloads and then runs,
-# so a launcher or plugin altered in transit (or at rest on GitHub) is caught
-# before it is ever executed. Confirm-DownloadHash compares Get-FileHash of each
-# download against the value here.
-#
-# These are the hashes of the files AS SERVED: raw.githubusercontent serves the
-# git blob, which .gitattributes normalises to LF, so hotwire.bat is hashed with
-# LF line endings here even though it is checked out -- and finally saved -- with
-# CRLF. Compute a value as: (read file, replace CRLF with LF, sha256).
-#
-# Whenever launcher/hotwire.bat, launcher/hotwire.ps1, examples/hotwire.example.cfg or plugin/Hotwire.cs
-# changes on the branch the URLs above point at, these values MUST change in the
-# same commit, or every install aborts with a hash mismatch. tools/build-release.sh
-# refuses to build a release while any of them is stale. A value must match what
-# that branch serves once pushed: hash the committed file, not the working tree.
-#
-# Third-party downloads are deliberately ABSENT: their versions vary, so they are
-# not pinned. Oxide is checked against the SHA-256 GitHub publishes instead;
-# SteamCMD is reported as "unverified (third-party)" rather than blocked, so the
-# omission is never silent.
-$PinnedHashes = @{
-    'hotwire.bat' = 'b9736417a79def9c2744cd61c2aaa3c19d83a96226390c4a1a1eeda361ee4293'
-    'hotwire.ps1' = '393e2f4a74c5870fb75d96044ca7cf0cc03a5c3f213f227384cca8c1686134b7'
-    'Hotwire.cs'  = 'b976b11270f9fa984f65303c0debe48101986623a9a3ccd0a006b47d58bb9975'
-    'hotwire.example.cfg' = '8dd9495677ad6d888bc72bf05d92cdd0b05f2b528a05282780d460f859a5a9b9'
-}
+# Hotwire itself: from the release this copy of setup came with ($ReleaseTag, written in by tools/build-release.sh),
+# a tag that never changes under it, so this copy always installs the files it was released with. A copy taken from
+# the repository has none, and uses the latest release. GitHub serves these with LF line endings, which cmd.exe misreads
+# in a .bat, so the launcher is saved with CRLF. Each download is checked against the SHA-256 of every released file,
+# published by AFKPanel ($ReleasedFilesUrl): the files come from GitHub, the hashes from a second place.
+$ReleaseTag = ''
+$HotwireRepo = 'xman2000/hotwire'
+$ReleasedFilesUrl = 'https://afkpanel.com/hotwire/released-files.json'
 
 $Docs = [ordered]@{
     'This guide, step by step'  = 'https://afkpanel.com/docs/install-windows'
@@ -545,6 +516,22 @@ function Test-CfgLauncher([string]$d) {
     } catch { return $false }
 }
 
+# Launchers from 1.1.27 start Rust with RCON off when no password is set; older ones refuse to start. Read from the
+# capability list in hotwire.ps1, beside hotwire.bat.
+function Test-RconOptional([string]$d) {
+    $ps1 = Join-Path $d 'hotwire.ps1'
+    if (-not (Test-Path -LiteralPath $ps1)) { return $false }
+    try { return [regex]::IsMatch([IO.File]::ReadAllText($ps1), "(?m)^\`$LauncherCapabilities = '[^']*rcon_optional") } catch { return $false }
+}
+
+# True when hotwire-secrets.cfg sets no password at all: no file, or no rcon.password line.
+function Test-RconUnset([string]$d) {
+    $f = Join-Path $d 'hotwire-secrets.cfg'
+    if (-not (Test-Path -LiteralPath $f)) { return $true }
+    try { foreach ($line in [IO.File]::ReadAllLines($f)) { if ([regex]::IsMatch($line.Trim(), '^(?i:rcon\.password)(\s|$)')) { return $false } } } catch { return $false }
+    return $true
+}
+
 # A setting's value in hotwire.cfg, from the last line that sets it, quotes taken off; $null when none does.
 function Get-CfgValue([string]$d, [string]$Name) {
     $cfg = Join-Path $d 'hotwire.cfg'
@@ -724,27 +711,61 @@ function Invoke-Download([string]$Url, [string]$OutFile, [string]$What) {
     return $response
 }
 
-# The integrity gate for a download. $ArtifactKey indexes $PinnedHashes.
-#   - a hash is pinned and matches      -> say so, carry on
-#   - a hash is pinned and does NOT     -> STOP. Setup is install-time, not the
-#                                          boot path, so aborting is safe; running
-#                                          tampered first-party code is not.
-#   - no hash is pinned for the key     -> do not block, but say plainly that the
-#                                          artifact is unverified third-party code.
+# Where Hotwire's files come from: this copy's release tag, else the latest release, else (GitHub's answer missing) the
+# working branch, said so. Worked out once.
+$script:SourceRef = ''
+function Get-SourceUrl([string]$Path) {
+    if (-not $script:SourceRef) {
+        $script:SourceRef = $ReleaseTag
+        if (-not $script:SourceRef) {
+            try { $script:SourceRef = [string](Invoke-RestMethod -Uri "https://api.github.com/repos/$HotwireRepo/releases/latest" -UserAgent 'Mozilla/5.0' -UseBasicParsing -TimeoutSec 20).tag_name } catch { }
+        }
+        if (-not $script:SourceRef) {
+            $script:SourceRef = 'connect-and-report'
+            Write-Warn 'GitHub did not say which Hotwire release is the latest; using the connect-and-report branch.'
+        }
+    }
+    return "https://raw.githubusercontent.com/$HotwireRepo/$($script:SourceRef)/$Path"
+}
+
+# The published list of released files' SHA-256, fetched once; $null when AFKPanel could not be reached.
+$script:ReleasedList = $null; $script:ReleasedTried = $false
+$script:Unverified = New-Object 'System.Collections.Generic.List[string]'
+function Get-ReleasedList {
+    if (-not $script:ReleasedTried) {
+        $script:ReleasedTried = $true
+        try {
+            $answer = Invoke-RestMethod -Uri $ReleasedFilesUrl -UserAgent 'Mozilla/5.0' -UseBasicParsing -TimeoutSec 20
+            if ($null -ne $answer.files) { $script:ReleasedList = $answer.files }
+        } catch { }
+    }
+    return $script:ReleasedList
+}
+
+# A Hotwire file that matches no released file is refused, because it was altered or is not ours. When the list cannot
+# be reached, the install carries on, unverified, and says so here and at the end: a check that cannot run never stops
+# an install.
+function Confirm-ReleasedFile([string]$OutFile, [string]$Name, [string]$What) {
+    $actual = (Get-FileHash -LiteralPath $OutFile -Algorithm SHA256).Hash.ToLowerInvariant()
+    $list = Get-ReleasedList
+    if ($null -eq $list) {
+        Write-Warn "$What could not be checked: AFKPanel's list of released files did not answer. Installing it unverified."
+        $script:Unverified.Add("$What (SHA-256 $actual)")
+        return
+    }
+    $known = $list.$Name
+    if ($null -ne $known -and @($known.PSObject.Properties.Name) -contains $actual) {
+        Write-Ok "$What is a released Hotwire file (its SHA-256 is on AFKPanel's list)"
+        return
+    }
+    Remove-Item -LiteralPath $OutFile -Force -ErrorAction SilentlyContinue
+    Stop-Politely "checking $What" "its SHA-256, $actual, is not any released Hotwire file's" `
+        "nothing was installed; the download was altered or damaged on the way. Run the script again, and if it repeats, report it"
+}
+
+# A third-party download, whose version varies (SteamCMD): not checked, and said so, never silently.
 function Confirm-DownloadHash([string]$OutFile, [string]$ArtifactKey, [string]$What) {
-    $expected = $PinnedHashes[$ArtifactKey]
-    if (-not $expected) {
-        Write-Note "$What is not integrity-checked here: unverified (third-party), because its version varies"
-        return
-    }
-    $actual = (Get-FileHash -LiteralPath $OutFile -Algorithm SHA256).Hash
-    if ($actual -ieq $expected) {
-        Write-Ok "$What verified -- its SHA-256 matches the pinned value"
-        return
-    }
-    Stop-Politely "verifying $What against its pinned SHA-256" `
-        "the download's hash ($($actual.ToLower())) does not match the expected $expected" `
-        "nothing was installed; this can mean the download was corrupted or altered in transit, or that the pinned hash is stale after a release -- try again, and if it persists get the file by hand from $($Docs['Hotwire (source)'])"
+    Write-Note "$What is not integrity-checked here: unverified (third-party), because its version varies"
 }
 
 # ------------------------------------------------------------- 1. machine --
@@ -1097,6 +1118,8 @@ function Get-InstallState([string]$d) {
     }
 
     $s.RconProblem = if ($s.HasLauncher) { Get-SecretsProblem $d } else { $null }
+    $s.RconOptional = $s.HasLauncher -and (Test-RconOptional $d)
+    $s.RconUnset = Test-RconUnset $d
 
     $s.Connected = Test-Path -LiteralPath (Get-StateFile $d)
     $s.PanelDeclined = Test-Declined $d 'panel'
@@ -1185,7 +1208,9 @@ function Show-InstallState($s, [string]$Title) {
     elseif ($s.PluginDeclined) { Write-Check info 'Plugin' 'not installed -- you said no' }
     else { Write-Check no 'Plugin' 'not installed' }
     if (-not $s.HasLauncher) { Write-Check info 'RCON password' 'set with the start script' }
+    elseif ($s.RconProblem -and $s.RconOptional) { Write-Check warn 'RCON password' "$($s.RconProblem) -- RCON stays off until it is fixed" }
     elseif ($s.RconProblem) { Write-Check fail 'RCON password' "$($s.RconProblem) -- hotwire.bat will not start" }
+    elseif ($s.RconOptional -and $s.RconUnset) { Write-Check info 'RCON' 'off: no password set. Hotwire does not need RCON.' }
     else { Write-Check ok 'RCON password' 'set, and hotwire.bat will accept it' }
     if ($s.Connected) { Write-Check ok 'AFKPanel' $(if ($s.Identity) { "connected as '$($s.Identity)'" } else { 'connected' }) }
     elseif ($s.PanelDeclined) { Write-Check info 'AFKPanel' 'not connected -- you said no' }
@@ -1235,9 +1260,8 @@ function Get-InstallPlan($s) {
     elseif ($s.CfgMissing) { & $add 'launcher' 'Start script' 'write hotwire.cfg, the settings hotwire.bat reads' }
     elseif (($s.LauncherMismatch -or $s.LauncherBranchMismatch) -and $s.LauncherOurs) { & $add 'launcher' 'Start script' 'bring hotwire.bat in line with this server' }
     if (-not $s.HasPlugin -and -not $s.PluginDeclined -and -not $s.OxideDeclined) { & $add 'plugin' 'Hotwire plugin' 'install it -- needs Oxide' }
-    if (($s.HasLauncher -and $s.RconProblem) -or (-not $s.HasLauncher -and -not $s.LauncherDeclined)) {
-        & $add 'rcon' 'RCON password' $(if ($s.RconProblem) { "fix it: $($s.RconProblem)" } else { 'set it, for hotwire.bat' })
-    }
+    # A launcher this setup installs runs without an RCON password, so a new install has nothing to set here.
+    if ($s.HasLauncher -and $s.RconProblem) { & $add 'rcon' 'RCON password' "fix it: $($s.RconProblem)" }
     $portsShut = $s.FirewallError -or ($s.FirewallOn -and ($s.Game.Allows.Count -eq 0 -or $s.Query.Allows.Count -eq 0 -or $s.Game.Blocks.Count -gt 0 -or $s.Query.Blocks.Count -gt 0))
     if ($portsShut) { & $add 'firewall' 'Firewall' "open this server's game and query ports" }
     if (-not $s.Connected -and -not $s.PanelDeclined) { & $add 'panel' 'AFKPanel' 'connect this server' }
@@ -1274,13 +1298,20 @@ function Show-InstallPlan($Plan, $s) {
 }
 
 function Show-Finish([string]$d, $s) {
-    $ready = $s.RustDone -and (($s.HasLauncher -and -not $s.RconProblem -and -not $s.CfgMissing) -or (-not $s.HasLauncher -and $s.LauncherDeclined))
+    $rconStops = $s.RconProblem -and -not $s.RconOptional
+    $ready = $s.RustDone -and (($s.HasLauncher -and -not $rconStops -and -not $s.CfgMissing) -or (-not $s.HasLauncher -and $s.LauncherDeclined))
     if ($ready) {
         Write-Box @('A L L   S Y S T E M S   G O', '', 'This Rust server is ready to start.') 'Green'
     } else {
         Write-Box @('N O T   R E A D Y   Y E T', '', 'The pre-flight lines marked above say what is left.') 'Yellow'
     }
     Write-Host ""
+    if ($script:Unverified.Count -gt 0) {
+        Write-Warn "Installed without being checked, because AFKPanel's list of released files did not answer:"
+        foreach ($u in $script:Unverified) { Write-Note "         $u" }
+        Write-Note "         Run the script again when afkpanel.com answers, or compare these with the release's SHA256SUMS on GitHub."
+        Write-Host ""
+    }
     Write-Summary
     Write-Host ""
     if ($s.HasLauncher) {
@@ -1906,8 +1937,8 @@ function Install-Launcher([string]$d) {
 
     if (-not $hasLauncher) {
         $download = "$launcher.hotwire-tmp"
-        [void](Invoke-Download $LauncherUrl $download 'the Hotwire launcher')
-        Confirm-DownloadHash $download 'hotwire.bat' 'the Hotwire launcher'
+        [void](Invoke-Download (Get-SourceUrl 'launcher/hotwire.bat') $download 'the Hotwire launcher')
+        Confirm-ReleasedFile $download 'hotwire.bat' 'the Hotwire launcher'
         try { $text = [System.IO.File]::ReadAllText($download) }
         finally { Remove-Item -LiteralPath $download -Force -ErrorAction SilentlyContinue }
         if ($text -notmatch '(?m)^set "HOTWIRE_LAUNCHER_CAPABILITIES=[^"]*settings_file' -and $text -notmatch '(?m)^REM HOTWIRE-PART hotwire\.ps1\r?$') {
@@ -1923,8 +1954,8 @@ function Install-Launcher([string]$d) {
 
     # The list of settings, kept as hotwire.example.cfg, and this server's copy of it, hotwire.cfg.
     $download = Join-Path $d 'hotwire.example.cfg.hotwire-tmp'
-    [void](Invoke-Download $CfgUrl $download 'the settings list')
-    Confirm-DownloadHash $download 'hotwire.example.cfg' 'the settings list'
+    [void](Invoke-Download (Get-SourceUrl 'examples/hotwire.example.cfg') $download 'the settings list')
+    Confirm-ReleasedFile $download 'hotwire.example.cfg' 'the settings list'
     try { $text = [System.IO.File]::ReadAllText($download) }
     finally { Remove-Item -LiteralPath $download -Force -ErrorAction SilentlyContinue }
     $example = Join-Path $d 'hotwire.example.cfg'
@@ -1959,8 +1990,8 @@ function Install-LauncherPs1([string]$d) {
     if (-not (Test-Path -LiteralPath $launcher) -or (Test-Path -LiteralPath $ps1)) { return }
     if (-not ([System.IO.File]::ReadAllText($launcher) -match '(?m)^REM HOTWIRE-PART hotwire\.ps1\r?$')) { return }
     $download = "$ps1.hotwire-tmp"
-    [void](Invoke-Download $LauncherPs1Url $download "the Hotwire launcher's PowerShell")
-    Confirm-DownloadHash $download 'hotwire.ps1' "the Hotwire launcher's PowerShell"
+    [void](Invoke-Download (Get-SourceUrl 'launcher/hotwire.ps1') $download "the Hotwire launcher's PowerShell")
+    Confirm-ReleasedFile $download 'hotwire.ps1' "the Hotwire launcher's PowerShell"
     try { $text = [System.IO.File]::ReadAllText($download) }
     finally { Remove-Item -LiteralPath $download -Force -ErrorAction SilentlyContinue }
     Write-FileAtomic $ps1 $text
@@ -2002,8 +2033,8 @@ function Install-Plugin([string]$d) {
     # Downloaded beside where it goes, under a name Oxide does not load, then renamed into place.
     if (-not (Test-Path -LiteralPath $pluginDir)) { New-Item -ItemType Directory -Path $pluginDir -Force | Out-Null }
     $tmp = "$plugin.hotwire-tmp"
-    [void](Invoke-Download $PluginUrl $tmp 'the Hotwire plugin')
-    Confirm-DownloadHash $tmp 'Hotwire.cs' 'the Hotwire plugin'
+    [void](Invoke-Download (Get-SourceUrl 'plugin/Hotwire.cs') $tmp 'the Hotwire plugin')
+    Confirm-ReleasedFile $tmp 'Hotwire.cs' 'the Hotwire plugin'
     $info = [regex]::Match([System.IO.File]::ReadAllText($tmp), '\[Info\("Hotwire",\s*"[^"]*",\s*"([^"]+)"\)\]')
     if (-not $info.Success) {
         Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
@@ -2059,6 +2090,8 @@ function Get-SecretsName([string]$d) { if (Test-CfgLauncher $d) { return 'hotwir
 # What is wrong with the RCON password, or $null when hotwire.bat will accept it. From hotwire-secrets.cfg, the
 # last rcon.password line; from an older launcher's secrets.bat, the last set "RCON_PASSWORD=..." line.
 function Get-SecretsProblem([string]$d) {
+    # No password is not a problem for a launcher that runs without one: RCON is simply off.
+    if ((Test-RconOptional $d) -and (Test-RconUnset $d)) { return $null }
     if (Test-CfgLauncher $d) {
         $f = Join-Path $d 'hotwire-secrets.cfg'
         if (-not (Test-Path -LiteralPath $f)) { return 'there is no hotwire-secrets.cfg' }
@@ -2097,6 +2130,13 @@ function Install-RconPassword([string]$d) {
         return
     }
 
+    if ((Test-RconOptional $d) -and (Test-RconUnset $d)) {
+        Write-Ok "RCON stays off: Hotwire does not need it. To use an RCON tool, set rcon.password in $(Join-Path $d 'hotwire-secrets.cfg')"
+        Write-Note "  (hotwire-secrets.example.cfg shows how); it takes effect at the next restart."
+        Save-Record $d 'rcon'
+        return
+    }
+
     if (Test-Path -LiteralPath $secrets) {
         $problem = Get-SecretsProblem $d
         if (-not $problem) {
@@ -2104,7 +2144,8 @@ function Install-RconPassword([string]$d) {
             Save-Record $d 'rcon'
             return
         }
-        Write-Bad "$name is here, but $problem -- hotwire.bat will not start the server"
+        if (Test-RconOptional $d) { Write-Bad "$name is here, but $problem -- RCON stays off until it is fixed" }
+        else { Write-Bad "$name is here, but $problem -- hotwire.bat will not start the server" }
         if (-not (Confirm-Step "Set a new RCON password in its place?")) {
             Write-Note "Left as it is. Fix $secrets before starting the server."
             return

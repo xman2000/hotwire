@@ -39,9 +39,10 @@ Stop the server and your old start script. Keep the old script: to go back, run 
 
 See [hotwire.cfg](https://afkpanel.com/docs/hotwire-cfg) for the file's format.
 
-## 5. Set the RCON password
+## 5. Set the RCON password, if you use RCON
 
-Put your RCON password in `hotwire-secrets.cfg`. See [The RCON password file](https://afkpanel.com/docs/rcon-password).
+If you use an RCON tool, put its password in `hotwire-secrets.cfg`. Without one, RCON is off. See
+[The RCON password file](https://afkpanel.com/docs/rcon-password).
 
 ## 6. Move your own commands
 

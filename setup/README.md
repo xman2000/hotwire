@@ -24,7 +24,7 @@ or removing anything defaults to no.
    - is a Rust server installed in this folder, and which build
    - is the clock right (against Steam's servers, so it never contacts the panel)
    - is Hotwire installed: `hotwire.bat`, `hotwire.ps1` and `hotwire.cfg` here, `Hotwire.cs` in `oxide\plugins`
-   - is the RCON password in `hotwire-secrets.cfg` one the launcher will accept
+   - is RCON off, or is the password in `hotwire-secrets.cfg` one the launcher will accept
    - is it connected to AFKPanel, and as what
 6. Pick from the menu. It suggests the next step from what it found.
 
@@ -118,7 +118,7 @@ exact way to undo it. The last screen shows where that file is. In short:
 ## Commands
 
 ```
-install   SteamCMD, Rust, Oxide, the start script, an RCON password, the firewall,
+install   SteamCMD, Rust, Oxide, the start script, the firewall,
           the Hotwire plugin, and connecting to AFKPanel               (Windows)
 doctor    check this machine is ready to connect. read-only, changes nothing
 connect   connect to the panel. asks for the code; nothing is written until you confirm
@@ -137,7 +137,7 @@ It runs in four parts, and only the third one changes anything:
    otherwise `C:\rustserver` unless you type another.
 2. **Pre-flight**: a read-only check of everything below. That covers the machine (Administrator,
    memory, disk, the clock against Steam's servers), SteamCMD, Rust and its branch, Oxide, the start
-   script, the plugin, the RCON password and AFKPanel. It also checks Windows Firewall on this
+   script, the plugin, RCON and AFKPanel. It also checks Windows Firewall on this
    server's ports, and there *open* means open on the network the machine is actually on: a rule that
    only covers Private networks does not count on a Public connection. A **flight plan** then lists only
    what is missing. A finished server gets an empty plan and nothing happens.
@@ -154,7 +154,7 @@ It runs in four parts, and only the third one changes anything:
 | 5 | Oxide, from its GitHub release, checked against the SHA-256 GitHub publishes, and checked to be the Windows build and a real archive before it is unpacked. Defaults to yes; no leaves a vanilla server, and the start script is set up to stay vanilla | the server folder |
 | 6 | **Start script**: `hotwire.bat` and `hotwire.ps1`, as released, and `hotwire.cfg`, the settings it reads, with this server's ports, `hotwire.install_framework 0` when there is no Oxide, the chosen `hotwire.steam_branch`, and `hotwire.steamcmd` when SteamCMD is not in `C:\steamcmd`. Keeps the list as `hotwire.example.cfg`. Asks for ports first if none are chosen. Defaults to yes; no means you use your own start script, and step 8 is skipped | `hotwire.bat`, `hotwire.ps1`, `hotwire.cfg`; existing ones are left alone, and a missing `hotwire.ps1` is added |
 | 7 | **Hotwire plugin**, asked separately, defaults to yes. Scheduled, announced restarts. Skipped without Oxide | `oxide\plugins\Hotwire.cs` |
-| 8 | **RCON password**, walked through: type your own (hidden, twice, checked against the launcher's rules), or press Enter for 32 random letters and digits, shown once and copied to the clipboard | `hotwire-secrets.cfg`, readable only by Administrators and you; an existing valid one is left alone, an invalid one replaced only if you say yes |
+| 8 | **RCON password**: none is set, so RCON is off; Hotwire does not use it. An existing `hotwire-secrets.cfg` with a password the launcher refuses can be replaced, if you say yes: type your own (hidden, twice) or press Enter for 32 random letters and digits | `hotwire-secrets.cfg` only when replacing one, readable only by Administrators and you |
 | 9 | **Windows Firewall**: opens this server's game and query ports, and its Rust+ port only if asked. Asks for ports first if none are chosen | rules named for the port and the server's folder, in the group `Hotwire` |
 | 10 | **AFKPanel**, asked last, defaults to yes. Yes runs `connect`; no changes nothing | only if yes: the files under *doctor and connect* |
 

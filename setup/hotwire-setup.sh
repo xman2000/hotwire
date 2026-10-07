@@ -649,10 +649,13 @@ cmd_detach() {
 # It runs as root, because it installs packages, adds a user and a service; the server itself never
 # runs as root. Everything it creates in the server folder belongs to that user.
 
-REPO_RAW="https://raw.githubusercontent.com/xman2000/hotwire/connect-and-report"
-LAUNCHER_URL="$REPO_RAW/launcher/hotwire.sh"
-CFG_URL="$REPO_RAW/examples/hotwire.example.cfg"
-PLUGIN_URL="$REPO_RAW/plugin/Hotwire.cs"
+# The release this copy of setup came with, written in by tools/build-release.sh. Hotwire's own files are downloaded from
+# that tag, which never changes under it, so this copy always installs the files it was released with. A copy taken from
+# the repository has none, and uses the latest release.
+RELEASE_TAG=""
+HOTWIRE_REPO="xman2000/hotwire"
+# Each download is checked against a second place: the SHA-256 of every released file, published by AFKPanel.
+RELEASED_FILES_URL="${HOTWIRE_RELEASED_FILES_URL:-https://afkpanel.com/hotwire/released-files.json}"
 GUIDE_URL="https://afkpanel.com/docs/install-linux"
 OXIDE_URL="https://github.com/OxideMod/Oxide.Rust/releases/latest/download/Oxide.Rust-linux.zip"
 OXIDE_RELEASES="https://api.github.com/repos/OxideMod/Oxide.Rust/releases/latest"
@@ -660,16 +663,8 @@ OXIDE_ASSET="Oxide.Rust-linux.zip"
 STEAMCMD_BIN="/usr/games/steamcmd"
 RUST_APPID="258550"
 
-# SHA-256 of launcher/hotwire.sh, examples/hotwire.example.cfg and plugin/Hotwire.cs AS SERVED from the branch
-# above (the git blob, LF):
-#     git show HEAD:launcher/hotwire.sh | sha256sum
-# Whenever one of those files changes on that branch, its pin changes in the same commit (and so does
-# $PinnedHashes in hotwire-setup.ps1 for Hotwire.cs and hotwire.example.cfg), or every install stops at a
-# hash mismatch. tools/build-release.sh refuses to build a release while any pin is stale. Third-party downloads (SteamCMD from Ubuntu's archive, Oxide
-# from GitHub) are not pinned: Oxide is checked against the SHA-256 GitHub publishes for it instead.
-PIN_LAUNCHER="b63286f50000d6db70417338c08c6c4f76a35b751357efdaf8427062cf1c1a1b"
-PIN_PLUGIN="b976b11270f9fa984f65303c0debe48101986623a9a3ccd0a006b47d58bb9975"
-PIN_CFG="8dd9495677ad6d888bc72bf05d92cdd0b05f2b528a05282780d460f859a5a9b9"
+# Third-party downloads (SteamCMD from Ubuntu's archive, Oxide from GitHub) are checked their own way: Oxide against the
+# SHA-256 GitHub publishes for it.
 
 # Rust's own floor (wiki.facepunch.com/rust/Creating-a-server), warned about and never enforced. A small
 # test server runs on less, and refusing would be guessing at what the reader wants.
@@ -952,14 +947,53 @@ fetch() {  # fetch <url> <out> <what>
     curl -fsSL --retry 2 --max-time 300 -o "$2" "$1" 2>/dev/null \
         || { rm -f "$2"; die "downloading $3" "the download from $1 failed" "check this machine can reach github.com, then run install again"; }
 }
-check_pin() {  # check_pin <file> <expected sha256> <what>
-    local got; got="$(sha256sum "$1" | cut -d' ' -f1)"
-    if [ "$got" != "$2" ]; then
-        rm -f "$1"
-        die "checking the downloaded $3" "its SHA-256 is $got, not the $2 this setup expects" \
-            "nothing was written; download this setup script again (it is probably older than $3), then run install again"
+# Where Hotwire's files come from: this copy's release tag, else the latest release, else (GitHub's answer missing) the
+# working branch, said so. Worked out once.
+SOURCE_REF=""
+source_ref() {
+    if [ -z "$SOURCE_REF" ]; then
+        SOURCE_REF="$RELEASE_TAG"
+        if [ -z "$SOURCE_REF" ]; then
+            SOURCE_REF="$(curl -fsS --max-time 20 "https://api.github.com/repos/$HOTWIRE_REPO/releases/latest" 2>/dev/null \
+                | grep -oE '"tag_name"[[:space:]]*:[[:space:]]*"[^"]+"' | head -1 | sed -E 's/.*"([^"]+)"$/\1/')"
+        fi
+        if [ -z "$SOURCE_REF" ]; then
+            SOURCE_REF="connect-and-report"
+            warn "GitHub did not say which Hotwire release is the latest; using the connect-and-report branch."
+        fi
     fi
-    ok "$3 matches its published SHA-256"
+    printf '%s' "$SOURCE_REF"
+}
+source_url() { printf 'https://raw.githubusercontent.com/%s/%s/%s' "$HOTWIRE_REPO" "$(source_ref)" "$1"; }
+
+# The published list of released files' SHA-256, fetched once. Empty when AFKPanel could not be reached.
+RELEASED_LIST=""; RELEASED_TRIED=0; UNVERIFIED=()
+released_list() {
+    if [ "$RELEASED_TRIED" = 0 ]; then
+        RELEASED_TRIED=1
+        RELEASED_LIST="$(curl -fsS --max-time 20 "$RELEASED_FILES_URL" 2>/dev/null || true)"
+        printf '%s' "$RELEASED_LIST" | grep -q '"files"' || RELEASED_LIST=""
+    fi
+    printf '%s' "$RELEASED_LIST"
+}
+
+# check_released <file> <name in the list> <what>: a file that matches no released Hotwire file is refused, because it
+# was altered or is not ours. When the list cannot be reached, the install carries on, unverified, and says so here and
+# at the end: a check that cannot run never stops an install.
+check_released() {
+    local got list; got="$(sha256sum "$1" | cut -d' ' -f1)"; list="$(released_list)"
+    if [ -z "$list" ]; then
+        warn "$3 could not be checked: AFKPanel's list of released files did not answer. Installing it unverified."
+        UNVERIFIED+=("$3 (SHA-256 $got)")
+        return 0
+    fi
+    if printf '%s' "$list" | HW_NAME="$2" HW_SHA="$got" python3 -c 'import json,os,sys; f=json.load(sys.stdin).get("files",{}); sys.exit(0 if os.environ["HW_SHA"] in f.get(os.environ["HW_NAME"],{}) else 1)' 2>/dev/null; then
+        ok "$3 is a released Hotwire file (its SHA-256 is on AFKPanel's list)"
+        return 0
+    fi
+    rm -f "$1"
+    die "checking the downloaded $3" "its SHA-256, $got, is not any released Hotwire file's" \
+        "nothing was written; the download was altered or damaged on the way. Run install again, and if it repeats, report it"
 }
 
 # ------------------------------------------------------------ pre-flight --
@@ -1055,7 +1089,9 @@ show_state() {  # show_state <title>
     elif [ "${S[launcher_no]}" = 1 ]; then check_line info "Start script" "no hotwire.sh -- you chose your own start script"
     else check_line no "Start script" "no hotwire.sh"; fi
     if [ "${S[launcher]}" != 1 ]; then check_line info "RCON password" "set with the start script"
+    elif [ -n "${S[rcon]}" ] && rcon_optional; then check_line warn "RCON password" "${S[rcon]} -- RCON stays off until it is fixed"
     elif [ -n "${S[rcon]}" ]; then check_line fail "RCON password" "${S[rcon]} -- hotwire.sh will not start"
+    elif rcon_optional && rcon_unset; then check_line info "RCON" "off: no password set. Hotwire does not need RCON."
     else check_line ok "RCON password" "set, and hotwire.sh will accept it"; fi
     if [ "${S[service]}" = 1 ]; then check_line ok "Service" "${S[unit]} -- starts with the machine"
     elif [ "${S[service_no]}" = 1 ]; then check_line info "Service" "none -- you start the server yourself, as you chose"
@@ -1103,8 +1139,8 @@ plan() {
     fi
     [ "${S[launcher]}" = 0 ] && [ "${S[launcher_no]}" = 0 ] && PLAN+=("launcher|Start script|install hotwire.sh, or say no to use your own")
     [ "${S[launcher]}" = 1 ] && reads_cfg && [ ! -f "$IROOT/hotwire.cfg" ] && PLAN+=("launcher|Start script|write hotwire.cfg, the settings hotwire.sh reads")
-    { [ -n "${S[rcon]}" ] || { [ "${S[launcher]}" = 0 ] && [ "${S[launcher_no]}" = 0 ]; }; } \
-        && PLAN+=("rcon|RCON password|$([ -n "${S[rcon]}" ] && echo "fix it: ${S[rcon]}" || echo 'set it, for hotwire.sh')")
+    # A launcher this setup installs runs without an RCON password, so a new install has nothing to set here.
+    [ -n "${S[rcon]}" ] && PLAN+=("rcon|RCON password|fix it: ${S[rcon]}")
     [ "${S[plugin]}" = 0 ] && [ "${S[plugin_no]}" = 0 ] && [ "${S[oxide_no]}" = 0 ] && PLAN+=("plugin|Hotwire plugin|install it -- needs Oxide")
     [ "${S[service]}" = 0 ] && [ "${S[service_no]}" = 0 ] && [ "${S[launcher_no]}" = 0 ] && PLAN+=("service|Service|start the server with the machine")
     [ "${S[ufw]}" = active ] && { [ "${S[game_open]}" = 0 ] || [ "${S[query_open]}" = 0 ] || [ "${S[ports_chosen]}" = 0 ]; } \
@@ -1458,6 +1494,14 @@ has_saves() { find "$IROOT/server" -type f \( -name '*.sav' -o -name '*.sav.*' -
 # Whether the launcher here reads its settings from hotwire.cfg (1.1.2-linux and later) rather than
 # keeping them inside itself.
 reads_cfg() { grep -q '^HOTWIRE_LAUNCHER_CAPABILITIES=.*settings_file' "$IROOT/hotwire.sh" 2>/dev/null; }
+# Launchers from 1.1.12-linux start Rust with RCON off when no password is set; older ones refuse to start.
+rcon_optional() { grep -q '^HOTWIRE_LAUNCHER_CAPABILITIES=.*rcon_optional' "$IROOT/hotwire.sh" 2>/dev/null; }
+# True when hotwire-secrets.cfg sets no password at all (no file, or no rcon.password line).
+rcon_unset() {
+    local f="$IROOT/hotwire-secrets.cfg"
+    [ -f "$f" ] || return 0
+    ! grep -qiE '^[[:space:]]*rcon\.password([[:space:]]|$)' "$f"
+}
 
 # A setting's value in hotwire.cfg, the last line that sets it, quotes taken off; empty when none does.
 cfg_get() {  # cfg_get <name>
@@ -1532,8 +1576,8 @@ step_launcher() {
     local tmp
     if [ ! -f "$l" ]; then
         tmp="$l.hotwire-tmp"
-        fetch "$LAUNCHER_URL" "$tmp" "the Hotwire launcher"
-        check_pin "$tmp" "$PIN_LAUNCHER" "the Hotwire launcher"
+        fetch "$(source_url launcher/hotwire.sh)" "$tmp" "the Hotwire launcher"
+        check_released "$tmp" hotwire.sh "the Hotwire launcher"
         chmod 755 "$tmp" && mv -f "$tmp" "$l" || die "writing $l" "the write failed" "check free space, then run install again"
         own "$l"; rec_add created "$l"
         change "created $l" "delete $l"
@@ -1541,8 +1585,8 @@ step_launcher() {
 
     # The list of settings, kept as hotwire.example.cfg, and this server's copy of it, hotwire.cfg.
     tmp="$IROOT/hotwire.example.cfg.hotwire-tmp"
-    fetch "$CFG_URL" "$tmp" "the settings list"
-    check_pin "$tmp" "$PIN_CFG" "the settings list"
+    fetch "$(source_url examples/hotwire.example.cfg)" "$tmp" "the settings list"
+    check_released "$tmp" hotwire.example.cfg "the settings list"
     local text; text="$(cat "$tmp")"
     if [ -f "$IROOT/hotwire.example.cfg" ]; then rm -f "$tmp"; else mv -f "$tmp" "$IROOT/hotwire.example.cfg"; own "$IROOT/hotwire.example.cfg"; fi
     [ "$branch" != public ] && text="$(printf '%s\n' "$text" | cfg_set_text hotwire.steam_branch "$branch")"
@@ -1579,6 +1623,8 @@ secrets_name() { if reads_cfg; then printf 'hotwire-secrets.cfg'; else printf 's
 # Reads the secrets file rather than running it: this script is root, and the file belongs to the server's user.
 secrets_problem() {
     local f="$IROOT/secrets.sh" line val
+    # No password is not a problem for a launcher that runs without one: RCON is simply off.
+    if rcon_optional && rcon_unset; then return; fi
     if reads_cfg; then
         f="$IROOT/hotwire-secrets.cfg"
         [ -f "$f" ] || { printf 'there is no hotwire-secrets.cfg'; return; }
@@ -1613,10 +1659,16 @@ step_rcon() {
     local f="$IROOT/$(secrets_name)" name; name="$(secrets_name)"
     local replacing=0 problem
     if [ ! -f "$IROOT/hotwire.sh" ]; then note "Skipped: there is no hotwire.sh, so your own start script sets the RCON password."; return 0; fi
+    if rcon_optional && rcon_unset; then
+        ok "RCON stays off: Hotwire does not need it. To use an RCON tool, set rcon.password in $IROOT/hotwire-secrets.cfg"
+        note "  (hotwire-secrets.example.cfg shows how); it takes effect at the next restart."
+        save_step rcon; return 0
+    fi
     if [ -f "$f" ]; then
         problem="$(secrets_problem)"
         if [ -z "$problem" ]; then ok "$name is already here, and hotwire.sh will accept its password -- left as it is"; save_step rcon; return 0; fi
-        bad "$name is here, but $problem -- hotwire.sh will not start the server"
+        if rcon_optional; then bad "$name is here, but $problem -- RCON stays off until it is fixed"
+        else bad "$name is here, but $problem -- hotwire.sh will not start the server"; fi
         confirm "Set a new RCON password in its place?" || { note "Left as it is. Fix $f before starting the server."; return 0; }
         replacing=1
     fi
@@ -1672,8 +1724,8 @@ step_plugin() {
     [ -f "$IROOT/hotwire.sh" ] || { warn "there is no hotwire.sh: a scheduled restart quits the server, and your own start"; note "        script has to start it again."; }
     offer plugin "Install the Hotwire plugin?" || { note "Skipped. Run install again any time to add it."; return 0; }
     as_user mkdir -p "$dir"
-    fetch "$PLUGIN_URL" "$p.hotwire-tmp" "the Hotwire plugin"
-    check_pin "$p.hotwire-tmp" "$PIN_PLUGIN" "the Hotwire plugin"
+    fetch "$(source_url plugin/Hotwire.cs)" "$p.hotwire-tmp" "the Hotwire plugin"
+    check_released "$p.hotwire-tmp" Hotwire.cs "the Hotwire plugin"
     local v; v="$(grep -oE '\[Info\("Hotwire", *"[^"]*", *"[^"]+"\)\]' "$p.hotwire-tmp" | grep -oE '"[0-9][^"]*"\)' | tr -d '")')"
     [ -n "$v" ] || { rm -f "$p.hotwire-tmp"; die "checking the downloaded Hotwire.cs" "it is not the Hotwire plugin" "nothing was written; please report this"; }
     mv -f "$p.hotwire-tmp" "$p"; own "$p"
@@ -1808,10 +1860,16 @@ place_setup() {
 
 show_finish() {
     local ready=0
-    if [ "${S[rust_done]}" = 1 ] && { { [ "${S[launcher]}" = 1 ] && [ -z "${S[rcon]}" ]; } || [ "${S[launcher_no]}" = 1 ]; }; then ready=1; fi
+    if [ "${S[rust_done]}" = 1 ] && { { [ "${S[launcher]}" = 1 ] && { [ -z "${S[rcon]}" ] || rcon_optional; }; } || [ "${S[launcher_no]}" = 1 ]; }; then ready=1; fi
     if [ "$ready" = 1 ]; then box "$C_GRN" "A L L   S Y S T E M S   G O" "" "This Rust server is ready to start."
     else box "$C_YEL" "N O T   R E A D Y   Y E T" "" "The pre-flight lines above say what is left."; fi
     say ""
+    if [ "${#UNVERIFIED[@]}" -gt 0 ]; then
+        warn "Installed without being checked, because AFKPanel's list of released files did not answer:"
+        local u; for u in "${UNVERIFIED[@]}"; do note "         $u"; done
+        note "         Run install again when afkpanel.com answers, or compare these with the release's SHA256SUMS on GitHub."
+        say ""
+    fi
     if [ "${S[launcher]}" = 1 ]; then
         say "  ${C_BLD}Next:${C_OFF}"
         if reads_cfg; then
@@ -1947,7 +2005,7 @@ cmd_help() {
 hotwire-setup -- install a Rust server, and connect it to AFKPanel
 
   install   A Rust server on Ubuntu, from nothing: SteamCMD, Rust, Oxide, the start
-            script, the RCON password, the plugin, a service, and the panel last.
+            script, the plugin, a service, and the panel last.
             Run with sudo. Checks first, asks before every step, safe to run again.
   doctor    Check this machine: tools, signing, your server, the panel, the clock.
             Read-only, changes nothing, safe any time.

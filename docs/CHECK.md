@@ -30,8 +30,8 @@ Fix each problem it lists, then run it again until it lists none.
 | --- | --- |
 | `No hotwire.cfg beside the launcher` | Convert your start script at https://afkpanel.com/get-started, or copy `hotwire.example.cfg` to `hotwire.cfg` |
 | `hotwire.cfg has settings that would change which server this is` | Fix the lines it lists. A bad save folder, seed, world size, port or map address would open a different save. |
-| `No hotwire-secrets.cfg beside the launcher` | Create it: see [The RCON password file](https://afkpanel.com/docs/rcon-password) |
-| `hotwire-secrets.cfg does not set rcon.password.` | Add the `rcon.password` line |
+| `RCON is off: no hotwire-secrets.cfg` | Nothing, unless you use an RCON tool: see [The RCON password file](https://afkpanel.com/docs/rcon-password) |
+| `RCON is off: hotwire-secrets.cfg sets no rcon.password.` | Nothing, unless you use an RCON tool: add the `rcon.password` line |
 | `rcon.password is still the example 'change_me'.` | Set a real password |
 | `rcon.password is shorter than hotwire.rcon_password_min` | Use a longer password |
 

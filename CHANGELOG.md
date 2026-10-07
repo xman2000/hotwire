@@ -43,6 +43,27 @@ version as the first line when it starts.
   installed build; the next update carries on from what was downloaded. Before, a SteamCMD that hung kept the server
   down and held the lock every other server on the machine waits for.
 
+**RCON is off unless you set a password.**
+
+- Hotwire does not use RCON, and Rust starts with RCON off when it is given no password. Both launchers now start
+  without one: no `hotwire-secrets.cfg`, or no `rcon.password` line, means RCON is off, and the start says so. A
+  password that is set but refused (the example value, too short) keeps the last good one, or leaves RCON off; it never
+  stops a start. Before, the launcher would not start without a password.
+- Setup no longer makes a password. It offers to replace one the launcher refuses, as before. It checks the launcher's
+  `rcon_optional` capability, so an older launcher kept in the folder still gets a password.
+- The plugin reports whether RCON is on, its port and the address it listens on, never the password, so AFKPanel can
+  show it.
+
+**Setup installs the files of its own release, and checks each one.**
+
+- Each copy of setup carries the release it was built for and downloads Hotwire's files from that tag, so a copy kept
+  for months still installs the files it came with. A copy from the repository uses the latest release.
+- Each file is checked against the SHA-256 of every released Hotwire file, published on afkpanel.com: the files come
+  from GitHub, the hashes from a second place. A file on neither list is refused. When the list cannot be reached, the
+  install carries on, says the file is unverified, and lists it again at the end.
+- No hashes are written into the setup scripts any more, so a change to the launcher or plugin no longer needs setup
+  edited in the same commit.
+
 **Linux backups work without ionice.**
 
 - Backups yield the disk to the game through `ionice`. Where it is missing or not allowed, as in some containers and

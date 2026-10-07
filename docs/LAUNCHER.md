@@ -217,7 +217,7 @@ Every setting is one line. A setting that is off starts with `#` and shows the g
 | Turning a setting off | Breaks nothing; no line depends on another |
 | A convar not in the list | Goes at the end, under OTHER CONVARS, by its own name. The launcher warns about a name it does not know, and passes it on. |
 | The defaults shown | Read out of a Rust build and re-checked after every Rust update |
-| Set out of the box | Only the ports and what the server cannot run without: `-batchmode -nographics`, `server.level`, the RCON password and `rcon.web`. Everything else is the game's default until you change it. |
+| Set out of the box | Only the ports and what the server cannot run without: `-batchmode -nographics`, `server.level`, `rcon.web` and the RCON password when one is set. Everything else is the game's default until you change it. |
 | `server.seed` | Rust's own default is 1337, so a server left to it plays the same map as every other. `hotwire-setup` writes a random seed when it builds a new server, once; for a server that already has a save it leaves the seed alone, because a new seed starts a new map. `server.randomize_seed` is not used. |
 
 ## Set it up
@@ -225,7 +225,7 @@ Every setting is one line. A setting that is off starts with `#` and shows the g
 `hotwire-setup` does this for you: see [INSTALL-WINDOWS.md](INSTALL-WINDOWS.md), [INSTALL-LINUX.md](INSTALL-LINUX.md) and, for a server you already run, [SWITCH-TO-HOTWIRE.md](SWITCH-TO-HOTWIRE.md). By hand:
 
 1. Copy the launcher, `hotwire.example.cfg` and `hotwire-secrets.example.cfg` into the server folder.
-2. Copy `hotwire-secrets.example.cfg` to `hotwire-secrets.cfg` and put your RCON password in it, in double quotes. The launcher refuses a password that is empty, shorter than `hotwire.rcon_password_min`, or still the example.
+2. Only if you use an RCON tool: copy `hotwire-secrets.example.cfg` to `hotwire-secrets.cfg` and set your RCON password in it, in double quotes. Without one, RCON is off. A password shorter than `hotwire.rcon_password_min`, or still the example, leaves RCON off and is reported; it never stops the start.
 3. Copy `hotwire.example.cfg` to `hotwire.cfg`. Set `server.hostname` and `server.description` at the top, check the ports, then go through the list.
 4. Run the check, then the launcher:
 

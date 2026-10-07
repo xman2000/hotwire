@@ -144,6 +144,7 @@ Optional. Nothing is sent until the Rust server is connected with `hotwire-setup
 | Sent | When |
 | --- | --- |
 | Heartbeat: players, FPS, CPU, memory, entities, network, queue, uptime, Oxide and Rust versions | Every 30 seconds |
+| Whether RCON is on, its port and the address it listens on; never its password | With the heartbeat |
 | The plugin list: name, author, version, file hash and size, whether it loaded, Oxide's error if not | When it changes |
 | Each plugin's server time and memory | Every minute |
 | The schedule: restarts, updates, wipes, the running countdown | When it changes |
@@ -160,7 +161,7 @@ Optional. Nothing is sent until the Rust server is connected with `hotwire-setup
 | Never | Why |
 | --- | --- |
 | A plugin's file or source | Only its hash and size travel |
-| The RCON password | It stays in `hotwire-secrets.cfg` on the machine, and only the launcher reads it, to start Rust. Hotwire does not use RCON, and a console line that shows the password is masked before it is sent. |
+| The RCON password | When you set one, it stays in `hotwire-secrets.cfg` on the machine, and only the launcher reads it, to start Rust. Hotwire does not use RCON, and without a password RCON is off. A console line that shows the password is masked before it is sent. |
 | A report from a copied server folder | The plugin reports only from the folder that was connected |
 | A change to what the server does because AFKPanel is slow, down or wrong | Reporting runs beside the schedule, never in front of it |
 
@@ -204,7 +205,7 @@ launcher/hotwire.bat            starts the Windows launcher; the same in every r
 launcher/hotwire.ps1            the launcher for Windows
 launcher/hotwire.sh             the launcher for Linux
 examples/hotwire.example.cfg    every setting both launchers read; copy to hotwire.cfg
-examples/hotwire-secrets.example.cfg   copy to hotwire-secrets.cfg for the RCON password; never committed
+examples/hotwire-secrets.example.cfg   copy to hotwire-secrets.cfg for an RCON password, if you use RCON; never committed
 examples/hotwire-*.example.*    your own commands before a start and after an update
 setup/hotwire-setup.ps1         Windows: install a server, connect it, check it
 setup/hotwire-setup.sh          Linux: the same

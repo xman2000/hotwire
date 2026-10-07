@@ -1,8 +1,8 @@
 # A release: push a tag, and GitHub builds the files from that commit and publishes them as a release.
 #
 # The files are what afkpanel.com/get/ sends people to (its links redirect here), so the bytes an admin downloads come
-# from this repository, never from the panel's server. tools/build-release.sh refuses to build when a setup script's pin
-# or a launcher's code hash is stale.
+# from this repository, never from the panel's server. tools/build-release.sh refuses to build until AFKPanel's list of
+# released files holds this commit's files, because setup checks every download against that list.
 name: Release
 
 on:
@@ -19,6 +19,8 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Build the release files
+        env:
+          TAG: ${{ github.ref_name }}
         run: tools/build-release.sh
 
       - name: Publish the release

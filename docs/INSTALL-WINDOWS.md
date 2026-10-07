@@ -19,7 +19,7 @@ Steps 1 to 6 give you a working server. Steps 7 to 9 connect it to AFKPanel and 
 ## Let the setup script do steps 1 to 6
 
 `hotwire-setup.bat` runs steps 1 to 6 for you and asks before each one: the clock, SteamCMD, Rust on the branch you
-choose, Oxide, the start script with its ports, an RCON password and the firewall, then the Hotwire plugin. It can also
+choose, Oxide, the start script with its ports and the firewall, then the Hotwire plugin. It can also
 connect the server to AFKPanel.
 
 1. Download https://afkpanel.com/get/windows and unzip it. `hotwire-setup.bat` and `hotwire-setup.ps1` are in it,
@@ -100,26 +100,10 @@ Remove-Item C:\rustserver\OxideMod.zip
 
 Oxide creates its folders the first time the server starts.
 
-## 5. Set an RCON password
+## 5. RCON, only if you use it
 
-The RCON password gives full control of the server. Make it long and unique. The launcher does not start if the
-password is shorter than 8 characters or is still the example value. It cannot contain a double quote.
-
-1. Generate a password. This copies it to your clipboard:
-
-   ```powershell
-   -join ((48..57) + (65..90) + (97..122) | Get-Random -Count 32 | ForEach-Object { [char]$_ }) | Set-Clipboard
-   ```
-
-2. Save it in your password manager.
-3. Create `C:\rustserver\hotwire-secrets.cfg` with the password in it, in double quotes. Never commit this file
-   anywhere.
-
-   ```
-   rcon.password "the-long-thing-you-just-generated"
-   ```
-
-The download in step 6 has `hotwire-secrets.example.cfg` to copy.
+Hotwire does not need RCON, and without a password the server starts with RCON off. If you use an RCON tool, such as
+RustAdmin or BattleMetrics, set a password: see [The RCON password file](https://afkpanel.com/docs/rcon-password).
 
 ## 6. Install Hotwire and start the server
 

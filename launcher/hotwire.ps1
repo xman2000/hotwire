@@ -16,7 +16,7 @@ $ErrorActionPreference = 'Stop'
 # Who this launcher is, for the plugin: written to oxide\data\Hotwire\launcher.json before every start. The plugin
 # offers only the features in the capability list; settings_file means the settings come from hotwire.cfg.
 $LauncherVersion = '1.1.27'
-$LauncherCapabilities = 'supervise,update,framework_verify,crash_backstop,log_rotate,convar_persist,wipe,wipe_same_map,wipe_custom_map,backup,settings_file'
+$LauncherCapabilities = 'supervise,update,framework_verify,crash_backstop,log_rotate,convar_persist,wipe,wipe_same_map,wipe_custom_map,backup,settings_file,rcon_optional'
 $root = $PSScriptRoot
 $cfg = Join-Path $root 'hotwire.cfg'
 $secretsCfg = Join-Path $root 'hotwire-secrets.cfg'
@@ -208,10 +208,12 @@ function Get-CvValue($r, [string]$key) {
     return $cvSettings[$key][1]
 }
 
-# Reads hotwire-secrets.cfg as data, like hotwire.cfg, and takes only rcon.password: returns @{ Password } or @{ Why }.
+# Reads hotwire-secrets.cfg as data, like hotwire.cfg, and takes only rcon.password.
+# The RCON password is optional: Hotwire does not use RCON, and Rust runs with RCON off when it is given no password.
+# Returns @{ Password } (empty: RCON off, with Off saying why) or @{ Why } for a password set but unusable.
 function Read-Secret([int]$minimum) {
     if (-not (Test-Path -LiteralPath $secretsCfg -PathType Leaf)) {
-        return @{ Why = 'No hotwire-secrets.cfg beside the launcher. Copy hotwire-secrets.example.cfg to hotwire-secrets.cfg and set rcon.password.' }
+        return @{ Password = ''; Off = 'RCON is off: no hotwire-secrets.cfg. Hotwire does not need RCON; set rcon.password there to turn it on.' }
     }
     $n = 0; $password = ''
     foreach ($raw in [IO.File]::ReadAllLines($secretsCfg)) {
@@ -223,7 +225,7 @@ function Read-Secret([int]$minimum) {
         if ($p.Name.ToLowerInvariant() -eq 'rcon.password') { $password = $p.Value }
         else { Say ('hotwire-secrets.cfg line ' + $n + ': ' + $p.Name + ': only rcon.password belongs here; ignored.') }
     }
-    if ($password -eq '') { return @{ Why = 'hotwire-secrets.cfg does not set rcon.password.' } }
+    if ($password -eq '') { return @{ Password = ''; Off = 'RCON is off: hotwire-secrets.cfg sets no rcon.password.' } }
     if ($password -eq 'change_me') { return @{ Why = "rcon.password is still the example value 'change_me'. Set your own in hotwire-secrets.cfg." } }
     if ($password.Length -lt $minimum) { return @{ Why = ('rcon.password is shorter than hotwire.rcon_password_min (' + $minimum + ').') } }
     return @{ Password = $password }
@@ -298,13 +300,14 @@ function Invoke-Load {
 
     $minimum = [int](Get-HwValue $r 'hotwire.rcon_password_min')
     $secret = Read-Secret $minimum
+    # A password set but unusable never stops a start: the last good one is kept, or RCON stays off.
+    $keepPassword = $false
     if ($secret.Why) {
+        Rule; Say $secret.Why
+        if ([string]$env:HOTWIRE_RCON64 -ne '') { Say 'Starting with the RCON password from the last start.'; $keepPassword = $true }
+        else { Say 'Starting with RCON off until it is fixed.' }
         Rule
-        if ($first) { Say $secret.Why; Rule; Write-Output 'HWSET HW_LOAD=fatal'; return }
-        Say ($secret.Why + ' Starting with the settings from the last start.'); Rule
-        Write-Output 'HWSET HW_LOAD=kept'
-        return
-    }
+    } elseif ($secret.Off -and -not $quiet) { Say $secret.Off }
 
     if (-not $quiet) {
         if ($first -or $env:CHECK_ONLY) {
@@ -332,7 +335,7 @@ function Invoke-Load {
     foreach ($key in $hwSettings.Keys) { Write-Output ('HWSET ' + $hwSettings[$key][0] + '=' + (Get-HwValue $r $key)) }
     # The password stays in this process's environment, as in the old launcher, base64-encoded so the environment
     # holds only letters, digits, + / and =.
-    Write-Output ('HWSET HOTWIRE_RCON64=' + [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($secret.Password)))
+    if (-not $keepPassword) { Write-Output ('HWSET HOTWIRE_RCON64=' + [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes([string]$secret.Password))) }
     Write-Output 'HWSET HW_LOAD=ok'
 }
 
@@ -556,7 +559,8 @@ function Invoke-Launch {
     $list = New-Object 'System.Collections.Generic.List[string]'
     foreach ($a in (ConvertFrom-Json ([IO.File]::ReadAllText($argsFile)))) { $list.Add([string]$a) }
     $password = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String([string]$env:HOTWIRE_RCON64))
-    $list.Add('+rcon.password'); $list.Add($password)
+    # No password, no RCON: Rust starts no RCON listener when it is given none.
+    if ($password -ne '') { $list.Add('+rcon.password'); $list.Add($password) }
     $list.Add('-logfile'); $list.Add([string]$env:LOGFILE)
     $psi = New-Object Diagnostics.ProcessStartInfo
     $psi.FileName = Join-Path $root 'RustDedicated.exe'

@@ -4065,7 +4065,30 @@ namespace Oxide.Plugins
             if (_inventoryHash != null) payload["inventory_hash"] = _inventoryHash;
             try { var l = LauncherIdentity(); if (l != null) payload["launcher"] = l; } catch { }
             try { payload["reporting"] = ReportingConfigSnapshot(); } catch { }
+            try { var r = RconState(); if (r != null) payload["rcon"] = r; } catch { }
             return payload;
+        }
+
+        // Whether Rust's RCON is listening, read from the game itself: on or off, its port, and the address it is
+        // bound to ("" is every address). Never the password. Rust starts no listener without a password, or with
+        // one of the weak ones it refuses; the legacy listener (rcon.web 0) is internal, so it is read by reflection.
+        private static System.Reflection.FieldInfo _legacyRconListener;
+        private JObject RconState()
+        {
+            var on = Facepunch.RCon.listenerNew != null;
+            if (!on)
+            {
+                if (_legacyRconListener == null)
+                    _legacyRconListener = typeof(Facepunch.RCon).GetField("listener", System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public);
+                on = _legacyRconListener != null && _legacyRconListener.GetValue(null) != null;
+            }
+            return new JObject
+            {
+                ["on"] = on,
+                ["port"] = Facepunch.RCon.Port,
+                ["address"] = Clip(Facepunch.RCon.Ip ?? "", 64),
+                ["web"] = Facepunch.RCon.Web,
+            };
         }
 
         // What this plugin is configured to send, and the sharing level it is applying. The panel uses it to

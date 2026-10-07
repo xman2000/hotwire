@@ -5,8 +5,8 @@
 #  Built by xman2000 and Claude.  MIT License.
 #  https://github.com/xman2000/hotwire
 #
-#  Your settings are in hotwire.cfg, beside this file, and the RCON
-#  password is in hotwire-secrets.cfg. This file holds no settings:
+#  Your settings are in hotwire.cfg, beside this file, and an RCON
+#  password, if you use RCON, in hotwire-secrets.cfg. This file holds no settings:
 #  replace it with a newer release and nothing of yours changes.
 #
 #  Usage:
@@ -22,7 +22,7 @@
 #     AFKPanel compares it with the released launchers'; nothing waits on that
 #     answer.
 HOTWIRE_LAUNCHER_VERSION="1.1.12-linux"
-HOTWIRE_LAUNCHER_CAPABILITIES="supervise,update,framework_verify,crash_backstop,log_rotate,convar_persist,wipe,wipe_same_map,wipe_custom_map,backup,settings_file"
+HOTWIRE_LAUNCHER_CAPABILITIES="supervise,update,framework_verify,crash_backstop,log_rotate,convar_persist,wipe,wipe_same_map,wipe_custom_map,backup,settings_file,rcon_optional"
 
 # ======================================================================
 #  HOW THIS LAUNCHER WORKS
@@ -59,8 +59,8 @@ HOTWIRE_LAUNCHER_CAPABILITIES="supervise,update,framework_verify,crash_backstop,
 #
 #   Setup:
 #     1. Copy hotwire.example.cfg to hotwire.cfg and fill in sections 1 and 2.
-#     2. Copy hotwire-secrets.example.cfg to hotwire-secrets.cfg and set the
-#        RCON password.
+#     2. Only if you use an RCON tool: copy hotwire-secrets.example.cfg to
+#        hotwire-secrets.cfg and set the RCON password. Without it RCON is off.
 #     3. Keep hotwire.sh beside RustDedicated: its own folder is the server's.
 #     4. Run ./hotwire.sh check, then ./hotwire.sh.
 #
@@ -420,15 +420,19 @@ config_reload() {
 
 # ======================================================================
 # The RCON password, from hotwire-secrets.cfg. Read as data, like
-# hotwire.cfg; only rcon.password is taken from it. Read before every start:
-# a problem stops the first start, and a later start keeps the last good
-# password and says so.
+# hotwire.cfg; only rcon.password is taken from it. Read before every start.
+# It is optional: Hotwire does not use RCON, and Rust runs with RCON off when
+# it is given no password. A password that is set but unusable (the example
+# value, too short) leaves RCON off, or keeps the last good one, and says so;
+# it never stops a start.
 # ======================================================================
 RCON_PASSWORD=""
 load_secrets() {
     local raw line n=0 password="" why=""
     if [ ! -f "$SECRETS_CFG" ]; then
-        why="No hotwire-secrets.cfg beside the launcher. Copy hotwire-secrets.example.cfg to hotwire-secrets.cfg and set rcon.password."
+        RCON_PASSWORD=""
+        log "RCON is off: no hotwire-secrets.cfg. Hotwire does not need RCON; set rcon.password there to turn it on."
+        return 0
     else
         while IFS= read -r raw || [ -n "$raw" ]; do
             n=$((n+1))
@@ -439,14 +443,19 @@ load_secrets() {
             if [ "${CFG_NAME,,}" = "rcon.password" ]; then password="$CFG_VALUE"
             else warn "hotwire-secrets.cfg line $n: $CFG_NAME: only rcon.password belongs here; ignored."; fi
         done < "$SECRETS_CFG"
-        if [ -z "$password" ]; then why="hotwire-secrets.cfg does not set rcon.password."
+        if [ -z "$password" ]; then
+            RCON_PASSWORD=""
+            log "RCON is off: hotwire-secrets.cfg sets no rcon.password."
+            return 0
         elif [ "$password" = "change_me" ]; then why="rcon.password is still the example 'change_me'. Set a real one in hotwire-secrets.cfg."
         elif [ "${#password}" -lt "$RCON_PASSWORD_MIN" ]; then why="rcon.password is shorter than hotwire.rcon_password_min ($RCON_PASSWORD_MIN)."
         fi
     fi
     if [ -n "$why" ]; then
-        [ -z "$RCON_PASSWORD" ] && die "$why"
-        rule; bad "$why"; bad "Starting with the RCON password from the last start."; rule
+        rule; bad "$why"
+        if [ -n "$RCON_PASSWORD" ]; then bad "Starting with the RCON password from the last start."
+        else bad "Starting with RCON off until it is fixed."; fi
+        rule
         return 0
     fi
     RCON_PASSWORD="$password"
@@ -915,7 +924,8 @@ build_args() {
     [ -n "$SERVER_HOSTNAME" ]    && ARGS+=( +server.hostname "$SERVER_HOSTNAME" )
     [ -n "$SERVER_DESCRIPTION" ] && ARGS+=( +server.description "$SERVER_DESCRIPTION" )
     [ -n "$SERVER_TAGS" ]        && ARGS+=( +server.tags "$SERVER_TAGS" )
-    ARGS+=( +rcon.password "$RCON_PASSWORD" )
+    # No password, no RCON: Rust starts no RCON listener when it is given none.
+    [ -n "$RCON_PASSWORD" ] && ARGS+=( +rcon.password "$RCON_PASSWORD" )
     [ -n "$RCON_WEB" ]           && ARGS+=( +rcon.web "$RCON_WEB" )
     [ "${#EXTRA_CONVARS[@]}" -gt 0 ] && ARGS+=( "${EXTRA_CONVARS[@]}" )
 }

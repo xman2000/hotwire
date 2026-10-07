@@ -32,7 +32,7 @@ The script is plain bash, saved in the folder where you ran that line, so you ca
   next install
 
 - installs the server into `/home/rust/server`, running as a `rust` user
-- uses Hotwire's launcher, a random map seed and a generated RCON password
+- uses Hotwire's launcher and a random map seed, with RCON off
 - creates a `rust-server` service that starts with the machine (enabled, not started)
 - never touches a Rust server it did not install
 - records every change it makes, and how to undo it, in `hotwire/changes.log`
@@ -165,13 +165,8 @@ As the `rust` user:
    server that has been played is a new map. A second server on the same machine needs its own ports, for example
    28115, 28117 and 28116; open those too.
 
-3. Set the RCON password. Rust does not start without one.
-
-   ```bash
-   printf 'rcon.password "%s"\n' "$(openssl rand -base64 24 | tr -d '"')" > hotwire-secrets.cfg
-   chmod 600 hotwire-secrets.cfg
-   cat hotwire-secrets.cfg      # save this in your password manager
-   ```
+3. Hotwire does not need RCON, and without a password the server starts with RCON off. If you use an RCON tool, set
+   one: see [The RCON password file](https://afkpanel.com/docs/rcon-password).
 
 4. Check the settings, then start the server:
 
