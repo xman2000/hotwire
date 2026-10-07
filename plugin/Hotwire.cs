@@ -17,7 +17,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Hotwire", "xman2000", "1.1.62")]
+    [Info("Hotwire", "xman2000", "1.1.63")]
     [Description("Scheduled restarts and updates. Announces, counts down, writes a flag, quits.")]
     internal class Hotwire : CovalencePlugin
     {
@@ -787,6 +787,8 @@ namespace Oxide.Plugins
         // Oxide.Core.Libraries.Timer, which is the library that hands these
         // out. timer.Every() returns the former.
         private Timer _scanTimer;
+        private Timer _stopTimer;
+        private bool _stopping;
         private Timer _countdownTimer;
         private Timer _frameworkTimer;
 
@@ -896,6 +898,10 @@ namespace Oxide.Plugins
             // rather than off tick accumulation, so a late start shortens the
             // countdown by a few seconds instead of moving the restart.
             _scanTimer = timer.Every(10f, Scan);
+
+            // The Linux launcher asks for a stop through STOP.request (systemctl stop, a reboot): saving and
+            // quitting with Rust's own quit keeps the play since the last autosave, which a signal loses.
+            _stopTimer = timer.Every(1f, StopTick);
 
             if (_config.Framework.Enabled)
             {
@@ -2470,6 +2476,31 @@ namespace Oxide.Plugins
         }
 
         private void Quit() => Quit(false);
+
+        // Answers the launcher's stop request: STOP.ack says it is in hand, then quit saves the world on the way out. The
+        // launcher waits for Rust to exit and stays stopped; the request is its to remove.
+        private void StopTick()
+        {
+            if (_stopping)
+                return;
+            var root = ServerRoot();
+            if (root == null)
+                return;
+            try
+            {
+                if (!File.Exists(Path.Combine(root, "STOP.request")))
+                    return;
+                _stopping = true;
+                File.WriteAllText(Path.Combine(root, "STOP.ack"), DateTime.UtcNow.ToString("o"));
+                Puts("The launcher asked for a stop: saving the world and quitting.");
+            }
+            catch (Exception ex)
+            {
+                PrintWarning($"Could not answer the launcher's stop request: {ex.Message}. It stops the server without a save.");
+                return;
+            }
+            Quit();
+        }
 
         private void Quit(bool isRetry)
         {

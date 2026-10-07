@@ -21,8 +21,8 @@
 #     hotwire.cfg. The plugin works out this file's code hash itself, and
 #     AFKPanel compares it with the released launchers'; nothing waits on that
 #     answer.
-HOTWIRE_LAUNCHER_VERSION="1.1.12-linux"
-HOTWIRE_LAUNCHER_CAPABILITIES="supervise,update,framework_verify,crash_backstop,log_rotate,convar_persist,wipe,wipe_same_map,wipe_custom_map,backup,settings_file,rcon_optional"
+HOTWIRE_LAUNCHER_VERSION="1.1.13-linux"
+HOTWIRE_LAUNCHER_CAPABILITIES="supervise,update,framework_verify,crash_backstop,log_rotate,convar_persist,wipe,wipe_same_map,wipe_custom_map,backup,settings_file,rcon_optional,stop_saves"
 
 # ======================================================================
 #  HOW THIS LAUNCHER WORKS
@@ -96,6 +96,7 @@ set_defaults() {
     MAX_DAYS_WITHOUT_UPDATE="14"; MAX_STEAM_TRIES="5"; STEAM_RETRY_SECONDS="60"; STEAMCMD_WAIT_MINUTES="60"; STEAMCMD_UPDATE_MINUTES="60"; FORCED_WIPE_STEAM_MINUTES="15"
     BUILD_CHECK_HOURS="6"; UPDATE_ON_NEW_BUILD="1"; FAST_RUST_UPDATES="0"; RECOVER_REFUSED_UPDATE="1"
     INSTALL_FRAMEWORK="1"; SKIP_UNCHANGED_FRAMEWORK="1"; VERIFY_FRAMEWORK="1"
+    STOP_ASK_SECONDS="5"; STOP_SAVE_SECONDS="90"
     RESTART_ON_EXIT="1"; RESTART_DELAY="15"; CRASH_SECONDS="60"; MAX_CRASH_STREAK="10"; CRASH_BACKOFF="1"
     ROTATE_LOGS="1"; LOG_KEEP="14"; RCON_PASSWORD_MIN="8"; CHECK_OPTIONS="1"; BACKUPS="1"
     EXTRA_CONVARS=()
@@ -196,6 +197,8 @@ declare -A HW_SETTINGS=(
     [hotwire.steam_retry_seconds]="STEAM_RETRY_SECONDS int"
     [hotwire.steamcmd_wait_minutes]="STEAMCMD_WAIT_MINUTES int"
     [hotwire.steamcmd_update_minutes]="STEAMCMD_UPDATE_MINUTES int"
+    [hotwire.stop_ask_seconds]="STOP_ASK_SECONDS int"
+    [hotwire.stop_save_seconds]="STOP_SAVE_SECONDS int"
     [hotwire.forced_wipe_steam_minutes]="FORCED_WIPE_STEAM_MINUTES int"
     [hotwire.install_framework]="INSTALL_FRAMEWORK bool"
     [hotwire.skip_unchanged_framework]="SKIP_UNCHANGED_FRAMEWORK bool"
@@ -1802,6 +1805,80 @@ check_ionice() {
     fi
 }
 
+# A stop (systemctl stop, a reboot) used to end Rust with a signal, and Rust does not save on one: play since the
+# last autosave was lost. Now the launcher catches the stop and asks Hotwire, through STOP.request beside the server, to
+# save and quit with Rust's own quit; it waits hotwire.stop_ask_seconds for Hotwire to answer (STOP.ack) and
+# hotwire.stop_save_seconds for Rust to finish, then stops it the old way. Under systemd this needs KillMode=mixed, or
+# systemd signals Rust itself at the same moment: check_stop_unit tells AFKPanel when the unit lacks it.
+STOP_REQUESTED=0
+RUST_PID=""
+run_server() {
+    STOP_REQUESTED=0
+    rm -f "$ROOT/STOP.request" "$ROOT/STOP.ack"
+    trap 'STOP_REQUESTED=1' TERM INT
+    # In the background so a signal reaches this script while Rust runs. A script's background job starts with stdin on
+    # /dev/null; stdin is given back so the server console still reads what is typed. Ctrl+C in a terminal still reaches
+    # Rust, which catches it and quits without saving; typing quit saves.
+    "$RUST_BIN" "${ARGS[@]}" -logfile "$LOGFILE" <&0 &
+    RUST_PID=$!
+    local rc=0
+    while :; do
+        wait "$RUST_PID"; rc=$?
+        if [ "$STOP_REQUESTED" = "1" ]; then
+            stop_server
+            wait "$RUST_PID" 2>/dev/null; rc=$?
+            break
+        fi
+        kill -0 "$RUST_PID" 2>/dev/null || break
+    done
+    trap - TERM INT
+    RUST_RC=$rc
+}
+
+stop_server() {
+    local req="$ROOT/STOP.request" ack="$ROOT/STOP.ack" i
+    log "Stop requested: asking Hotwire to save the world and quit..."
+    date -u +%Y-%m-%dT%H:%M:%SZ > "$req" 2>/dev/null
+    for (( i=0; i < STOP_ASK_SECONDS * 2; i++ )); do
+        [ -f "$ack" ] && break
+        kill -0 "$RUST_PID" 2>/dev/null || break
+        sleep 0.5
+    done
+    if [ -f "$ack" ]; then
+        for (( i=0; i < STOP_SAVE_SECONDS; i++ )); do
+            kill -0 "$RUST_PID" 2>/dev/null || break
+            sleep 1
+        done
+        if kill -0 "$RUST_PID" 2>/dev/null; then
+            warn "The server did not quit within ${STOP_SAVE_SECONDS}s (hotwire.stop_save_seconds); stopping it without a save."
+        else
+            ok "The server saved and quit."
+        fi
+    elif kill -0 "$RUST_PID" 2>/dev/null; then
+        warn "Hotwire did not answer within ${STOP_ASK_SECONDS}s (hotwire.stop_ask_seconds; is it loaded?); stopping the server without a save."
+    fi
+    if kill -0 "$RUST_PID" 2>/dev/null; then
+        kill -TERM "$RUST_PID" 2>/dev/null
+        for (( i=0; i < 15; i++ )); do kill -0 "$RUST_PID" 2>/dev/null || break; sleep 1; done
+        kill -KILL "$RUST_PID" 2>/dev/null
+    fi
+    rm -f "$req" "$ack"
+}
+
+# Under systemd, a unit without KillMode=mixed signals Rust itself when it stops, before Hotwire can save: the
+# launcher's handshake cannot help it. Setup 0.2.28 writes the unit with it; AFKPanel is told when this one lacks it.
+check_stop_unit() {
+    [ -n "${INVOCATION_ID:-}" ] || return 0
+    command -v systemctl >/dev/null 2>&1 || return 0
+    local unit mode
+    unit="$(sed -n 's|^0::.*/\([^/]*\.service\)$|\1|p' /proc/self/cgroup 2>/dev/null | head -1)"
+    [ -n "$unit" ] || return 0
+    mode="$(systemctl show -p KillMode --value "$unit" 2>/dev/null)"
+    [ -z "$mode" ] || [ "$mode" = "mixed" ] && return 0
+    LAUNCHER_NOTICES+=("stop_kills_server"$'\t'"This server's systemd unit ($unit) stops Rust directly, so a stop or a reboot loses the play since the last save. Run hotwire-setup.sh install again to update the unit, or add KillMode=mixed and TimeoutStopSec=120 to its [Service] section.")
+    warn "$unit stops Rust directly (KillMode=$mode): a stop loses play since the last save. Run hotwire-setup.sh install again to fix it."
+}
+
 per_launch_prep() {
     UPDATE_ATTEMPTED=0
     # hotwire.cfg is read again before every start, so an edit takes effect on
@@ -1810,6 +1887,7 @@ per_launch_prep() {
     CONFIG_LOADED=1
     init_reporting
     check_ionice
+    check_stop_unit
     decide_update_mode
     build_check
     # The installed build before any update this pass: framework_update compares with it (Oxide goes back over a new build).
@@ -1863,16 +1941,20 @@ run_loop() {
         local start_ts end_ts run_secs rc crashed
         start_ts="$(date +%s)"
         backup_watch_start
-        "$RUST_BIN" "${ARGS[@]}" -logfile "$LOGFILE"; rc=$?
+        run_server; rc=$RUST_RC
         end_ts="$(date +%s)"
         backup_watch_stop
         run_secs=$(( end_ts - start_ts )); [ "$run_secs" -lt 0 ] && run_secs=99999
 
         if [ "$run_secs" -lt "$CRASH_SECONDS" ]; then CRASH_STREAK=$((CRASH_STREAK+1)); crashed=true; else CRASH_STREAK=0; crashed=false; fi
+        # A stop that was asked for is not a crash, however soon after the start it came.
+        if [ "$STOP_REQUESTED" = "1" ]; then CRASH_STREAK=0; crashed=false; fi
         report_session "$rc" "$crashed"
         # It goes now, in the background, not after the next update.
         spool_kick
 
+        # A stop that was asked for is final: exit 0, which a systemd unit with Restart=on-failure does not restart.
+        if [ "$STOP_REQUESTED" = "1" ]; then log "Stopped."; spool_flush; exit 0; fi
         if [ "$RESTART_ON_EXIT" = "0" ]; then log "Server exited; hotwire.restart_on_exit is 0. Stopping."; spool_flush; exit 0; fi
 
         if [ "$MAX_CRASH_STREAK" != "0" ] && [ "$CRASH_STREAK" -ge "$MAX_CRASH_STREAK" ]; then

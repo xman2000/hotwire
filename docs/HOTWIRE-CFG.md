@@ -122,6 +122,8 @@ Each is off in the file and shows the value used.
 | `hotwire.crash_seconds` | 60 | A run shorter than this counts as a crash |
 | `hotwire.max_crash_streak` | 10 | Crashes in a row before the launcher stops. 0 = never stop. |
 | `hotwire.crash_backoff` | 1 | Wait 30, 60, 120, then 300 seconds after repeated crashes |
+| `hotwire.stop_ask_seconds` | 5 | Linux, launcher 1.1.13-linux or later: when the server is stopped, seconds Hotwire has to answer the request to save and quit |
+| `hotwire.stop_save_seconds` | 90 | Linux, launcher 1.1.13-linux or later: seconds the save and quit may take before Rust is stopped anyway |
 | `hotwire.rotate_logs` | 1 | Keep each run's log |
 | `hotwire.log_keep` | 14 | How many logs to keep. Cannot be 0. |
 | `hotwire.rcon_password_min` | 8 | Shortest RCON password allowed. Cannot be 0. |

@@ -28,7 +28,7 @@
 #
 set -uo pipefail
 
-VERSION="0.2.27"
+VERSION="0.2.28"
 DEFAULT_PANEL="https://afkpanel.com"
 
 # ---------------------------------------------------------------- output ----
@@ -1743,7 +1743,27 @@ step_service() {
     step "Service"
     local unit; unit="$(unit_name)"
     local path="/etc/systemd/system/$unit"
-    if [ -f "$path" ]; then ok "$unit is already set up -- kept"; save_step service; return 0; fi
+    if [ -f "$path" ]; then
+        # Units from setup before 0.2.28 let systemd signal Rust itself on a stop, so Rust quits without saving. With
+        # KillMode=mixed only hotwire.sh is signalled, and it asks Hotwire to save and quit first (launcher 1.1.13-linux).
+        if head -1 "$path" | grep -q '^# Written by hotwire-setup' && ! grep -q '^KillMode=mixed' "$path"; then
+            why "This server's service stops Rust directly, so a stop or a reboot loses the play since the last save." \
+                "Two lines let the launcher ask Hotwire to save and quit first: KillMode=mixed and TimeoutStopSec=120."
+            if confirm_default_yes "Update $unit so a stop saves the world first?"; then
+                cp -p "$path" "$path.hotwire-bak"
+                sed -e '/^KillMode=/d' -e '/^TimeoutStopSec=/d' -e 's/^\[Service\]$/[Service]\nKillMode=mixed\nTimeoutStopSec=120/' \
+                    "$path.hotwire-bak" > "$path.hotwire-tmp" && mv -f "$path.hotwire-tmp" "$path"
+                systemctl daemon-reload || warn "systemctl daemon-reload failed; the change applies after the next reload."
+                ok "$unit updated: a stop now saves the world first (with launcher 1.1.13-linux or later)"
+                change "added KillMode=mixed and TimeoutStopSec=120 to $path" "sudo mv $path.hotwire-bak $path && sudo systemctl daemon-reload"
+            else
+                note "Kept as it was. A stop loses the play since the last save."
+            fi
+        else
+            ok "$unit is already set up -- kept"
+        fi
+        save_step service; return 0
+    fi
     if [ ! -f "$IROOT/hotwire.sh" ]; then note "Skipped: there is no hotwire.sh for a service to start."; return 0; fi
     why "A systemd service starts hotwire.sh when this machine boots, as $IUSER, and keeps its output in" \
         "the journal. It is switched on for boot, and NOT started now." "" \
@@ -1767,6 +1787,9 @@ WorkingDirectory=$IROOT
 ExecStart=$IROOT/hotwire.sh
 Restart=on-failure
 RestartSec=10
+# Only hotwire.sh is signalled on a stop; it asks Hotwire to save and quit, then Rust gets 120 s in all.
+KillMode=mixed
+TimeoutStopSec=120
 LimitNOFILE=65535
 NoNewPrivileges=yes
 

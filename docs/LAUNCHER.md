@@ -49,6 +49,8 @@ The launcher's settings, and the default when `hotwire.cfg` leaves one out:
 | `hotwire.crash_seconds` | `60` | A run shorter than this is a crash |
 | `hotwire.max_crash_streak` | `10` | Crashes in a row before stopping. `0` never stops. |
 | `hotwire.crash_backoff` | `1` | Wait 30, 60, 120, then 300 seconds after repeated crashes. `0` always waits `hotwire.restart_delay`. |
+| `hotwire.stop_ask_seconds` | `5` | Linux, launcher 1.1.13-linux or later: when the server is stopped, how long Hotwire has to answer the request to save and quit |
+| `hotwire.stop_save_seconds` | `90` | Linux, launcher 1.1.13-linux or later: how long the save and quit may take before Rust is stopped anyway |
 | `hotwire.rcon_password_min` | `8` | The shortest RCON password it starts with |
 | `hotwire.check_options` | `1` | `0` skips the warning about convar names it does not know |
 | `hotwire.backups` | `1` | Carry out the backups the plugin asks for. `0` never backs up here. |
@@ -136,6 +138,23 @@ Measured on one Linux server: about 0.8 GB downloaded, 133 seconds.
 | `Steam no longer serves the installed Rust build's file list, so this update cannot patch it.` | A refused update was found |
 | `The update finished without the old file list.` | The recovery worked |
 | `The update did not finish. Steam's install record is put back as it was.` | The recovery failed, and the server starts on the installed build |
+
+## Stopping the server
+
+Rust saves only when it quits through its own `quit`. A signal ends it without a save, losing the play since the last
+autosave (`server.saveinterval`, 600 seconds unless changed). Requires launcher 1.1.13-linux and plugin 1.1.63.
+
+| How it is stopped | What happens |
+| --- | --- |
+| `systemctl stop`, or the machine shutting down or rebooting | The launcher asks Hotwire to save and quit, and waits for the save. Within `hotwire.stop_ask_seconds` Hotwire answers; within `hotwire.stop_save_seconds` Rust has saved and quit. |
+| Hotwire does not answer (not loaded, or failed to compile) | Rust is stopped without a save, and killed 15 seconds later if it is still running |
+| `quit` typed in the console | Rust saves and quits |
+| Ctrl+C in a terminal | Rust receives it too and quits without a save. Type `quit` instead. |
+| Windows | Closing the window or Ctrl+C ends Rust without a save. Type `quit` instead. |
+
+The systemd unit needs `KillMode=mixed` and `TimeoutStopSec=120`. Without them systemd stops Rust itself, before the
+launcher can ask. `hotwire-setup.sh install` writes both, and offers to add them to a unit it wrote before. A launcher
+started by a unit without them says so at each start, and AFKPanel shows it under Hotwire notices.
 
 ## Wipes
 

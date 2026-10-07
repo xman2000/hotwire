@@ -200,6 +200,8 @@ WorkingDirectory=/home/rust/server
 ExecStart=/home/rust/server/hotwire.sh
 Restart=on-failure
 RestartSec=10
+KillMode=mixed
+TimeoutStopSec=120
 LimitNOFILE=65535
 NoNewPrivileges=yes
 
@@ -215,6 +217,10 @@ sudo journalctl -u rust-server -f
 `WorkingDirectory` is required: the server looks for its files in the folder it was started from. Use
 `Restart=on-failure`, not `always`. The launcher stops on purpose after repeated crashes, and `always` would start it
 again at once.
+
+`KillMode=mixed` and `TimeoutStopSec=120` let a stop or a reboot save the world: systemd asks the launcher, the
+launcher asks Hotwire, and Rust saves and quits. Without them systemd stops Rust directly and the play since the last
+save is lost.
 
 ## 8. Check that the machine can reach AFKPanel
 

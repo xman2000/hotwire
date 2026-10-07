@@ -24,6 +24,20 @@ sit above a launcher `1.1.7`. Read the label, not the number.
 `hotwire check` prints the plugin's version. Each launcher prints its own
 version as the first line when it starts.
 
+## Plugin 1.1.63, launcher 1.1.13-linux, setup 0.2.28 (Linux) — unreleased
+
+**On Linux, a stop or a reboot saves the world first.**
+
+- Rust saves only when it quits through its own `quit`; `systemctl stop` or a reboot ended it without a save, losing
+  the play since the last autosave. Now the launcher asks Hotwire to save and quit, and waits for it.
+- `hotwire.stop_ask_seconds` (5) is how long Hotwire has to answer, `hotwire.stop_save_seconds` (90) how long the save
+  may take. When Hotwire does not answer, Rust is stopped as before.
+- The systemd unit needs `KillMode=mixed` and `TimeoutStopSec=120`, or systemd stops Rust before the launcher can ask.
+  Setup writes both, and offers to add them to a unit it wrote before. A launcher started by a unit without them says
+  so at each start, and AFKPanel shows it.
+- Ctrl+C in a terminal still ends Rust without a save, because Rust catches it too. Type `quit` instead. Windows is
+  unchanged.
+
 ## Plugin 1.1.62, launchers 1.1.27 (Windows) and 1.1.12-linux, setup 0.1.28 (Windows) and 0.2.27 (Linux) — unreleased
 
 **AFKPanel shows the lines in hotwire.cfg that are not used as written.**
