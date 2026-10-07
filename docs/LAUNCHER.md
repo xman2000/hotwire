@@ -264,6 +264,8 @@ On Windows, from 1.1.25:
 
 Moving to 1.1.25 from an older launcher replaces `hotwire.bat` too, so close the window first, replace both files, run `hotwire.bat check`, then `hotwire.bat`.
 
+On Linux, bash reads `hotwire.sh` while it runs: stop the server, replace `hotwire.sh`, run `./hotwire.sh check`, then start it. From 1.1.13-linux, a stop under systemd saves the world first. The steps are in [Install on Linux](INSTALL-LINUX.md#update-the-launcher).
+
 `hotwire.bat` refuses to start when `hotwire.ps1` is missing. AFKPanel shows whether a server runs a released launcher by comparing the plugin's hash of both files with the released ones'; it never refuses anything on that.
 
 ## Check

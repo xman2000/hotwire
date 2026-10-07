@@ -262,6 +262,39 @@ sudo systemctl restart rust-server      # or press Ctrl+C and run ./hotwire.sh a
 
 The plugin loads its key and starts reporting. The server appears in AFKPanel within about 2 minutes.
 
+## Update the launcher
+
+bash reads `hotwire.sh` while it runs, so stop the server before replacing it. The download has the plugin too, and
+both are replaced together.
+
+1. Stop the server, as your admin user:
+
+   ```bash
+   sudo systemctl stop rust-server
+   ```
+
+   From launcher 1.1.13-linux, with the unit in step 7, a stop saves the world first. An older launcher stops without a
+   save, and the play since the last autosave is lost: stop it when nobody is playing. In a terminal, type `quit`
+   instead; Ctrl+C stops without a save.
+
+2. Replace the launcher and the plugin, as the `rust` user:
+
+   ```bash
+   cd /home/rust/server
+   curl -fsSL https://afkpanel.com/get/linux -o hotwire-linux.zip
+   unzip -o hotwire-linux.zip hotwire.sh Hotwire.cs && rm hotwire-linux.zip
+   chmod +x hotwire.sh && mv Hotwire.cs oxide/plugins/
+   ```
+
+   `hotwire.cfg`, `hotwire-secrets.cfg` and your hook files are not in the download, so they stay as they are.
+
+3. Check the settings as the `rust` user, then start the server as your admin user:
+
+   ```bash
+   ./hotwire.sh check
+   sudo systemctl start rust-server
+   ```
+
 ## Troubleshooting
 
 | Symptom | Cause | Fix |

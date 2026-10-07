@@ -99,6 +99,9 @@ copy hotwire.example.cfg. Only if you use an RCON tool, set its password in
 hotwire-secrets.cfg (copy hotwire-secrets.example.cfg, then chmod 600 it); without one RCON
 is off. Run ./hotwire.sh check, then ./hotwire.sh.
 
+To update: stop the server, replace hotwire.sh and Hotwire.cs (in oxide/plugins), run
+./hotwire.sh check, then start it again.
+
 To install a server from nothing, use hotwire-setup.sh instead.
 The guide: https://afkpanel.com/docs/install-linux
 TXT

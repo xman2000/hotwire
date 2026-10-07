@@ -34,6 +34,9 @@ version as the first line when it starts.
   build counts as not knowing, and the start updates. When the server is current, that update changes nothing.
 - On any other branch, a server newer than the branch's answer is still treated as a test branch and left alone.
 
+**Updating on Linux is written down.** Install on Linux and the launcher guide say how to update `hotwire.sh` and the
+plugin: stop the server, replace both, check, start. The Linux download's README says the same.
+
 ## Plugin 1.1.64, launchers 1.1.28 (Windows) and 1.1.14-linux, setup 0.1.29 (Windows) and 0.2.29 (Linux) — unreleased
 
 **One launcher per server folder.**
