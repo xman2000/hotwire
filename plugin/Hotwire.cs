@@ -4071,17 +4071,21 @@ namespace Oxide.Plugins
 
         // Whether Rust's RCON is listening, read from the game itself: on or off, its port, and the address it is
         // bound to ("" is every address). Never the password. Rust starts no listener without a password, or with
-        // one of the weak ones it refuses; the legacy listener (rcon.web 0) is internal, so it is read by reflection.
-        private static System.Reflection.FieldInfo _legacyRconListener;
+        // one of the weak ones it refuses. Both listener fields are read by reflection: listenerNew's type lives in
+        // Facepunch.Rcon.dll, which Oxide does not give plugins, so naming the field fails the compile; the legacy
+        // listener (rcon.web 0) is internal.
+        private static System.Reflection.FieldInfo[] _rconListeners;
         private JObject RconState()
         {
-            var on = Facepunch.RCon.listenerNew != null;
-            if (!on)
+            if (_rconListeners == null)
             {
-                if (_legacyRconListener == null)
-                    _legacyRconListener = typeof(Facepunch.RCon).GetField("listener", System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public);
-                on = _legacyRconListener != null && _legacyRconListener.GetValue(null) != null;
+                var flags = System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public;
+                _rconListeners = new[] { "listenerNew", "listener" }
+                    .Select(n => typeof(Facepunch.RCon).GetField(n, flags))
+                    .Where(f => f != null)
+                    .ToArray();
             }
+            var on = _rconListeners.Any(f => f.GetValue(null) != null);
             return new JObject
             {
                 ["on"] = on,
