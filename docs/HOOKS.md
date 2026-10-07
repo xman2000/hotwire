@@ -12,7 +12,7 @@ Hotwire never creates or changes these files.
 
 ## Create a hook
 
-1. In the server's folder, copy the example file from the Hotwire download:
+1. In the server's folder, copy the example file from the `examples` folder of the Hotwire download:
 
    | Platform | Copy | To |
    | --- | --- | --- |

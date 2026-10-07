@@ -138,13 +138,16 @@ As the `rust` user:
    cd /home/rust/server
    curl -fsSL https://afkpanel.com/get/linux -o hotwire-linux.zip
    unzip -o hotwire-linux.zip && rm hotwire-linux.zip && chmod +x hotwire.sh
-   mkdir -p oxide/plugins && mv Hotwire.cs oxide/plugins/
+   mkdir -p oxide/plugins && mv plugin/Hotwire.cs oxide/plugins/ && rmdir plugin
    ```
+
+   The download holds `hotwire.sh`, `README.txt`, the plugin in `plugin/` and the example settings and hooks in
+   `examples/`, which stays in the server folder.
 
 2. Copy the settings file and open it:
 
    ```bash
-   cp hotwire.example.cfg hotwire.cfg
+   cp examples/hotwire.example.cfg hotwire.cfg
    nano hotwire.cfg
    ```
 
@@ -282,8 +285,8 @@ both are replaced together.
    ```bash
    cd /home/rust/server
    curl -fsSL https://afkpanel.com/get/linux -o hotwire-linux.zip
-   unzip -o hotwire-linux.zip hotwire.sh Hotwire.cs && rm hotwire-linux.zip
-   chmod +x hotwire.sh && mv Hotwire.cs oxide/plugins/
+   unzip -o hotwire-linux.zip hotwire.sh plugin/Hotwire.cs && rm hotwire-linux.zip
+   chmod +x hotwire.sh && mv plugin/Hotwire.cs oxide/plugins/ && rmdir plugin
    ```
 
    `hotwire.cfg`, `hotwire-secrets.cfg` and your hook files are not in the download, so they stay as they are.

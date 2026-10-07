@@ -244,7 +244,7 @@ Every setting is one line. A setting that is off starts with `#` and shows the g
 
 `hotwire-setup` does this for you: see [INSTALL-WINDOWS.md](INSTALL-WINDOWS.md), [INSTALL-LINUX.md](INSTALL-LINUX.md) and, for a server you already run, [SWITCH-TO-HOTWIRE.md](SWITCH-TO-HOTWIRE.md). By hand:
 
-1. Copy the launcher, `hotwire.example.cfg` and `hotwire-secrets.example.cfg` into the server folder.
+1. Copy the launcher, and `hotwire.example.cfg` and `hotwire-secrets.example.cfg` from the download's `examples` folder, into the server folder.
 2. Only if you use an RCON tool: copy `hotwire-secrets.example.cfg` to `hotwire-secrets.cfg` and set your RCON password in it, in double quotes. Without one, RCON is off. A password shorter than `hotwire.rcon_password_min`, or still the example, leaves RCON off and is reported; it never stops the start.
 3. Copy `hotwire.example.cfg` to `hotwire.cfg`. Set `server.hostname` and `server.description` at the top, check the ports, then go through the list.
 4. Run the check, then the launcher:

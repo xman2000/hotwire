@@ -11,10 +11,10 @@
 # AFKPanel's list first, then the tag is pushed.
 # HOTWIRE_SKIP_LIST_CHECK=1 skips that check for a build by hand.
 #
-#   dist/hotwire-windows.zip   the setup script (.bat + .ps1), hotwire.bat and hotwire.ps1, the settings and hook examples, Hotwire.cs,
-#                              README.txt
-#   dist/hotwire-linux.zip     hotwire.sh, the settings and hook examples, Hotwire.cs, README.txt: Hotwire for a server
-#                              that is already installed (what the start-script converter on afkpanel.com sends people to)
+#   dist/hotwire-windows.zip   the setup script (.bat + .ps1), hotwire.bat, hotwire.ps1 and README.txt at the top; the plugin in
+#                              plugin/; the settings and hook examples in examples/
+#   dist/hotwire-linux.zip     hotwire.sh and README.txt at the top, plugin/Hotwire.cs, examples/: Hotwire for a server that is
+#                              already installed (what the start-script converter on afkpanel.com sends people to)
 #   dist/hotwire-setup.sh      the Linux setup script
 #   dist/Hotwire.cs            the plugin
 #   dist/SHA256SUMS            sha256 of each of the above
@@ -24,7 +24,7 @@
 
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
-rm -rf dist && mkdir -p dist/windows
+rm -rf dist && mkdir -p dist/windows/plugin dist/windows/examples
 
 blob() { git show "HEAD:$1"; }
 sha() { sha256sum | cut -c1-64; }
@@ -55,62 +55,72 @@ blob setup/hotwire-setup.bat     | crlf > dist/windows/hotwire-setup.bat
 blob setup/hotwire-setup.ps1     | stamp_ps1 | crlf > dist/windows/hotwire-setup.ps1
 blob launcher/hotwire.bat        | crlf > dist/windows/hotwire.bat
 blob launcher/hotwire.ps1        | crlf > dist/windows/hotwire.ps1
-blob examples/hotwire.example.cfg | crlf > dist/windows/hotwire.example.cfg
-blob examples/hotwire-secrets.example.cfg | crlf > dist/windows/hotwire-secrets.example.cfg
-blob examples/hotwire-before.example.bat | crlf > dist/windows/hotwire-before.example.bat
-blob examples/hotwire-after.example.bat | crlf > dist/windows/hotwire-after.example.bat
-blob plugin/Hotwire.cs > dist/windows/Hotwire.cs
+blob examples/hotwire.example.cfg | crlf > dist/windows/examples/hotwire.example.cfg
+blob examples/hotwire-secrets.example.cfg | crlf > dist/windows/examples/hotwire-secrets.example.cfg
+blob examples/hotwire-before.example.bat | crlf > dist/windows/examples/hotwire-before.example.bat
+blob examples/hotwire-after.example.bat | crlf > dist/windows/examples/hotwire-after.example.bat
+blob plugin/Hotwire.cs > dist/windows/plugin/Hotwire.cs
 crlf > dist/windows/README.txt <<'TXT'
 Hotwire for Windows
+
+  hotwire-setup.bat, hotwire-setup.ps1   install a server, connect it, check it
+  hotwire.bat, hotwire.ps1               the launcher
+  plugin\Hotwire.cs                      the plugin
+  examples\                              the settings file and your own commands
 
 To install a server: right-click hotwire-setup.bat and choose Run as administrator.
 It checks this machine, then asks before each step. Keep hotwire-setup.ps1 beside it.
 
 To add Hotwire to a server you already run: put hotwire.bat and hotwire.ps1 beside
-RustDedicated.exe and Hotwire.cs in oxide\plugins. Your settings go in hotwire.cfg: make
-it from your old start script at https://afkpanel.com/get-started, or copy
-hotwire.example.cfg. Only if you use an RCON tool, set its password in
-hotwire-secrets.cfg (copy hotwire-secrets.example.cfg); without one RCON is off.
+RustDedicated.exe, and plugin\Hotwire.cs in oxide\plugins. Your settings go in hotwire.cfg:
+make it from your old start script at https://afkpanel.com/get-started, or copy
+examples\hotwire.example.cfg. Only if you use an RCON tool, set its password in
+hotwire-secrets.cfg (copy examples\hotwire-secrets.example.cfg); without one RCON is off.
 
 To update the launcher: replace hotwire.ps1; it takes over at the next restart. When
 hotwire.bat changes too, close the launcher's window first, then replace both.
 
 The guide: https://afkpanel.com/docs/install-windows
 TXT
-touch -d "$(git log -1 --format=%cI HEAD)" dist/windows/*
-(cd dist/windows && zip -qX ../hotwire-windows.zip hotwire-setup.bat hotwire-setup.ps1 hotwire.bat hotwire.ps1 hotwire.example.cfg \
-    hotwire-secrets.example.cfg hotwire-before.example.bat hotwire-after.example.bat Hotwire.cs README.txt)
+touch -d "$(git log -1 --format=%cI HEAD)" dist/windows/* dist/windows/plugin/* dist/windows/examples/*
+(cd dist/windows && zip -qX ../hotwire-windows.zip hotwire-setup.bat hotwire-setup.ps1 hotwire.bat hotwire.ps1 README.txt \
+    plugin/Hotwire.cs examples/hotwire.example.cfg examples/hotwire-secrets.example.cfg examples/hotwire-before.example.bat \
+    examples/hotwire-after.example.bat)
 rm -rf dist/windows
 
 # The Linux launcher with its examples. zip keeps each file's mode, so hotwire.sh unzips runnable.
-mkdir -p dist/linux
+mkdir -p dist/linux/plugin dist/linux/examples
 blob launcher/hotwire.sh > dist/linux/hotwire.sh
-blob examples/hotwire.example.cfg > dist/linux/hotwire.example.cfg
-blob examples/hotwire-secrets.example.cfg > dist/linux/hotwire-secrets.example.cfg
-blob examples/hotwire-before.example.sh > dist/linux/hotwire-before.example.sh
-blob examples/hotwire-after.example.sh > dist/linux/hotwire-after.example.sh
-blob plugin/Hotwire.cs > dist/linux/Hotwire.cs
+blob examples/hotwire.example.cfg > dist/linux/examples/hotwire.example.cfg
+blob examples/hotwire-secrets.example.cfg > dist/linux/examples/hotwire-secrets.example.cfg
+blob examples/hotwire-before.example.sh > dist/linux/examples/hotwire-before.example.sh
+blob examples/hotwire-after.example.sh > dist/linux/examples/hotwire-after.example.sh
+blob plugin/Hotwire.cs > dist/linux/plugin/Hotwire.cs
 cat > dist/linux/README.txt <<'TXT'
 Hotwire for Linux, for a Rust server you already run
 
-Put hotwire.sh beside RustDedicated and Hotwire.cs in oxide/plugins. Your settings go in
-hotwire.cfg: make it from your old start script at https://afkpanel.com/get-started, or
-copy hotwire.example.cfg. Only if you use an RCON tool, set its password in
-hotwire-secrets.cfg (copy hotwire-secrets.example.cfg, then chmod 600 it); without one RCON
-is off. Run ./hotwire.sh check, then ./hotwire.sh.
+  hotwire.sh          the launcher
+  plugin/Hotwire.cs   the plugin
+  examples/           the settings file and your own commands
 
-To update: stop the server, replace hotwire.sh and Hotwire.cs (in oxide/plugins), run
-./hotwire.sh check, then start it again.
+Put hotwire.sh beside RustDedicated, and plugin/Hotwire.cs in oxide/plugins. Your settings
+go in hotwire.cfg: make it from your old start script at https://afkpanel.com/get-started,
+or copy examples/hotwire.example.cfg. Only if you use an RCON tool, set its password in
+hotwire-secrets.cfg (copy examples/hotwire-secrets.example.cfg, then chmod 600 it); without
+one RCON is off. Run ./hotwire.sh check, then ./hotwire.sh.
+
+To update: stop the server, replace hotwire.sh, and Hotwire.cs in oxide/plugins with
+plugin/Hotwire.cs, run ./hotwire.sh check, then start it again.
 
 To install a server from nothing, use hotwire-setup.sh instead.
 The guide: https://afkpanel.com/docs/install-linux
 TXT
 chmod 755 dist/linux/hotwire.sh
-chmod 644 dist/linux/hotwire.example.cfg dist/linux/hotwire-secrets.example.cfg dist/linux/hotwire-before.example.sh \
-    dist/linux/hotwire-after.example.sh dist/linux/Hotwire.cs dist/linux/README.txt
-touch -d "$(git log -1 --format=%cI HEAD)" dist/linux/*
-(cd dist/linux && zip -qX ../hotwire-linux.zip hotwire.sh hotwire.example.cfg hotwire-secrets.example.cfg \
-    hotwire-before.example.sh hotwire-after.example.sh Hotwire.cs README.txt)
+chmod 644 dist/linux/examples/* dist/linux/plugin/Hotwire.cs dist/linux/README.txt
+chmod 755 dist/linux/plugin dist/linux/examples
+touch -d "$(git log -1 --format=%cI HEAD)" dist/linux/* dist/linux/plugin/* dist/linux/examples/*
+(cd dist/linux && zip -qX ../hotwire-linux.zip hotwire.sh README.txt plugin/Hotwire.cs examples/hotwire.example.cfg \
+    examples/hotwire-secrets.example.cfg examples/hotwire-before.example.sh examples/hotwire-after.example.sh)
 rm -rf dist/linux
 
 blob setup/hotwire-setup.sh | stamp_sh > dist/hotwire-setup.sh

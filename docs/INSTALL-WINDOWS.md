@@ -110,11 +110,11 @@ RustAdmin or BattleMetrics, set a password: see [The RCON password file](https:/
 Hotwire has two parts. The plugin schedules announced restarts. The launcher starts the server again when it exits,
 tells a restart apart from an update, and stops a crash loop from filling the disk with logs.
 
-1. Download https://afkpanel.com/get/windows and unzip it. It holds `hotwire.bat`, `hotwire.ps1`,
-   `hotwire.example.cfg`, `hotwire-secrets.example.cfg` and `Hotwire.cs`.
-2. Put `hotwire.bat`, `hotwire.ps1` and `hotwire.example.cfg` in `C:\rustserver\`, next to `RustDedicated.exe`. The
-   launcher treats its own folder as the server folder, so there is no path to set.
-3. Put `Hotwire.cs` in `C:\rustserver\oxide\plugins\`. If the `plugins` folder does not exist yet, create it.
+1. Download https://afkpanel.com/get/windows and unzip it. It holds `hotwire.bat` and `hotwire.ps1`, the plugin in the
+   `plugin` folder, and the example settings and hooks in the `examples` folder.
+2. Put `hotwire.bat`, `hotwire.ps1` and `examples\hotwire.example.cfg` in `C:\rustserver\`, next to
+   `RustDedicated.exe`. The launcher treats its own folder as the server folder, so there is no path to set.
+3. Put `plugin\Hotwire.cs` in `C:\rustserver\oxide\plugins\`. If the `plugins` folder does not exist yet, create it.
 4. Copy `hotwire.example.cfg` to `hotwire.cfg` and open it in Notepad. It holds every setting, one per line: a name,
    a space, then the value, in double quotes when it has spaces. The settings most servers change are at the top:
 

@@ -8,7 +8,7 @@
 | You have | Do this |
 | --- | --- |
 | A server you already run | Convert your start script at https://afkpanel.com/get-started |
-| A new server | Copy `hotwire.example.cfg`, from the Hotwire download, to `hotwire.cfg` |
+| A new server | Copy `hotwire.example.cfg`, from the `examples` folder of the Hotwire download, to `hotwire.cfg` |
 
 ## The format
 

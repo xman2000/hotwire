@@ -38,6 +38,10 @@ version as the first line when it starts.
   Without one that verifies, the wipe is cancelled, the server starts unchanged on its current map, and `WIPE.result`
   says why. They list the new capability `wipe_permit`.
 
+**The downloads have folders.** `hotwire-windows.zip` and `hotwire-linux.zip` keep the setup script, the launcher and
+`README.txt` at the top, the plugin in `plugin/`, and the example settings and hooks in `examples/`. The install guides
+follow.
+
 ## Plugin 1.1.65 — unreleased
 
 **AFKPanel can say whether Oxide's files are the release's.**

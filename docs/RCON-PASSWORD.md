@@ -25,7 +25,7 @@ Only if you use an RCON tool.
    openssl rand -base64 24
    ```
 2. Save the password in your password manager.
-3. Copy `hotwire-secrets.example.cfg`, from the Hotwire download, to `hotwire-secrets.cfg`, beside `hotwire.bat` or
+3. Copy `hotwire-secrets.example.cfg`, from the `examples` folder of the Hotwire download, to `hotwire-secrets.cfg`, beside `hotwire.bat` or
    `hotwire.sh`. The start-script converter's `hotwire-settings.zip` also holds one.
 4. Open `hotwire-secrets.cfg`, remove the `#` before `rcon.password`, and replace `change_me` with the password,
    keeping the double quotes:

@@ -5,7 +5,7 @@ connected. It needs Oxide. The launcher works without it.
 
 ## Add the plugin
 
-1. Get `Hotwire.cs`. It is in the Hotwire download for Windows and Linux, and on its own at
+1. Get `Hotwire.cs`. It is in the `plugin` folder of the Hotwire download for Windows and Linux, and on its own at
    https://afkpanel.com/get/Hotwire.cs.
 2. Put it in the server's `oxide/plugins` folder. If the folder does not exist, start the server once with Oxide
    installed, or create it.
