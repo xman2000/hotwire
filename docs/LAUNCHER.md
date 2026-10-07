@@ -65,7 +65,7 @@ Fixed in the launcher, never settings: where Oxide is downloaded from and checke
 | --- | --- |
 | `auto` | As `hotwire` while the plugin has an update scheduled, as `always` otherwise. The plugin keeps `UPDATE.schedule` in the server folder while an update entry or its framework check is on, rewritten every 15 minutes; a file that is missing or over 2 hours old counts as no schedule. |
 | `always` | On every start |
-| `hotwire` | When a flag file is present, when Steam has a newer build (`hotwire.update_on_new_build`), when the launcher cannot find out whether it has, or when the backstop fires |
+| `hotwire` | When a flag file is present, when Steam has a newer build (`hotwire.update_on_new_build`), when the launcher cannot find out whether it has, or when the backstop fires. On `public`, an answer from Steam older than the installed build counts as not finding out (launchers 1.1.29, 1.1.15-linux). |
 | `off` | Never. A flag file is left in place and the console says so. |
 
 | Flag in the server folder | The next start |

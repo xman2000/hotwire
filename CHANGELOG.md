@@ -24,6 +24,16 @@ sit above a launcher `1.1.7`. Read the label, not the number.
 `hotwire check` prints the plugin's version. Each launcher prints its own
 version as the first line when it starts.
 
+## Launchers 1.1.29 (Windows) and 1.1.15-linux — unreleased
+
+**An old answer from Steam no longer stops an update.**
+
+- SteamCMD can answer with an old build. A launcher set to the `public` branch read that as the server being ahead of
+  Steam, and in `hotwire` mode skipped the update, so after a Rust release the server could stay on the old build.
+- Now, with `hotwire.steam_branch` `public` and `hotwire.update_on_new_build` on, an answer older than the installed
+  build counts as not knowing, and the start updates. When the server is current, that update changes nothing.
+- On any other branch, a server newer than the branch's answer is still treated as a test branch and left alone.
+
 ## Plugin 1.1.64, launchers 1.1.28 (Windows) and 1.1.14-linux, setup 0.1.29 (Windows) and 0.2.29 (Linux) — unreleased
 
 **One launcher per server folder.**

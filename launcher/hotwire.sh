@@ -21,7 +21,7 @@
 #     hotwire.cfg. The plugin works out this file's code hash itself, and
 #     AFKPanel compares it with the released launchers'; nothing waits on that
 #     answer.
-HOTWIRE_LAUNCHER_VERSION="1.1.14-linux"
+HOTWIRE_LAUNCHER_VERSION="1.1.15-linux"
 HOTWIRE_LAUNCHER_CAPABILITIES="supervise,update,framework_verify,crash_backstop,log_rotate,convar_persist,wipe,wipe_same_map,wipe_custom_map,backup,settings_file,rcon_optional,stop_saves"
 
 # ======================================================================
@@ -548,6 +548,11 @@ build_check() {
     if [ -n "$INSTALLED_BUILD" ] && [ -n "$PUBLIC_BUILD" ]; then
         if [ "$INSTALLED_BUILD" = "$PUBLIC_BUILD" ]; then
             log "Rust build: installed $INSTALLED_BUILD, ${STEAM_BRANCH:-public} $PUBLIC_BUILD -- current."
+        elif [ "$STEAM_BRANCH" = "public" ] && [ "$INSTALLED_BUILD" -gt "$PUBLIC_BUILD" ] 2>/dev/null; then
+            # SteamCMD has answered with a build older than the installed public one (measured on Windows,
+            # 2026-10-07), so an answer older than the install is not believed: it counts as not knowing.
+            log "Rust build: installed $INSTALLED_BUILD, public $PUBLIC_BUILD. Steam's answer is older than this install,"
+            log "and SteamCMD can answer with an old build, so whether this install is current is not known."
         elif [ "$INSTALLED_BUILD" -gt "$PUBLIC_BUILD" ] 2>/dev/null; then
             log "Rust build: installed $INSTALLED_BUILD is newer than ${STEAM_BRANCH:-public} $PUBLIC_BUILD (test branch?)."
         else
@@ -602,6 +607,12 @@ update_decision() {
     # Rust release, so an unanswered question costs an update, never the server.
     if [ "$UPDATE_ON_NEW_BUILD" = "1" ] && { [ -z "$INSTALLED_BUILD" ] || [ -z "$PUBLIC_BUILD" ]; }; then
         log "Updating: the launcher could not tell whether this install is on Steam's current build."
+        DO_UPDATE=1; return 0
+    fi
+    # A server set to public (not left empty) cannot be ahead of public: an older answer from Steam counts as not knowing.
+    if [ "$UPDATE_ON_NEW_BUILD" = "1" ] && [ "$STEAM_BRANCH" = "public" ] \
+       && [ "$INSTALLED_BUILD" -gt "$PUBLIC_BUILD" ] 2>/dev/null; then
+        log "Updating: Steam answered public $PUBLIC_BUILD, older than installed $INSTALLED_BUILD, so the answer is not trusted."
         DO_UPDATE=1; return 0
     fi
     # New-build trigger.

@@ -15,7 +15,7 @@
 $ErrorActionPreference = 'Stop'
 # Who this launcher is, for the plugin: written to oxide\data\Hotwire\launcher.json before every start. The plugin
 # offers only the features in the capability list; settings_file means the settings come from hotwire.cfg.
-$LauncherVersion = '1.1.28'
+$LauncherVersion = '1.1.29'
 $LauncherCapabilities = 'supervise,update,framework_verify,crash_backstop,log_rotate,convar_persist,wipe,wipe_same_map,wipe_custom_map,backup,settings_file,rcon_optional'
 $root = $PSScriptRoot
 $cfg = Join-Path $root 'hotwire.cfg'
@@ -1698,6 +1698,11 @@ function Invoke-Main([string[]]$argv) {
                     Say ('Rust build: installed ' + $installed + '. Steam did not answer, so the usual rules apply.')
                 } elseif ($installed -eq $public) {
                     Say ('Rust build: installed ' + $installed + ', ' + $branchName + ' ' + $public + '. Up to date.')
+                } elseif ([long]$installed -gt [long]$public -and (Get-Env 'STEAM_BRANCH') -eq 'public') {
+                    # SteamCMD has answered with a build older than the installed public one (measured on Windows,
+                    # 2026-10-07), so an answer older than the install is not believed: it counts as not knowing.
+                    Say ('Rust build: installed ' + $installed + ', public ' + $public + '. Steam''s answer is older than this install,')
+                    Say 'and SteamCMD can answer with an old build, so whether this install is current is not known.'
                 } elseif ([long]$installed -gt [long]$public) {
                     Say ('Rust build: installed ' + $installed + ', ' + $branchName + ' ' + $public + '. This server is newer than')
                     Say ('Steam''s ' + $branchName + ' branch, so it is on another branch, such as staging. The next update moves')
@@ -1732,12 +1737,15 @@ function Invoke-Main([string[]]$argv) {
                     # A newer build on Steam is checked before the day count: a server that is behind updates now, and
                     # one that is current is left alone however long it has been. Unknown is not the same as current: a
                     # server left on an old build turns every player away after a Rust release, so when the build cannot
-                    # be checked, the launcher updates. A server on a newer build than Steam's, as on a test branch, is
-                    # not behind.
+                    # be checked, the launcher updates. A server set to public (not left empty) that looks newer than
+                    # Steam's public build counts as not checked; on any other branch a newer build is a test branch, and not behind.
                     if ((Get-Env 'UPDATE_ON_NEW_BUILD') -eq '1') {
                         if (-not $installed -or -not $public) {
                             $doUpdate = $true
                             Say 'Updating: could not check whether this install has Steam''s current build.'
+                        } elseif ((Get-Env 'STEAM_BRANCH') -eq 'public' -and [long]$installed -gt [long]$public) {
+                            $doUpdate = $true
+                            Say ('Updating: Steam answered public ' + $public + ', older than installed ' + $installed + ', so the answer is not trusted.')
                         } elseif ($installed -ne $public -and [long]$installed -lt [long]$public) {
                             $doUpdate = $true
                             Say ('Updating: installed build ' + $installed + ' is behind Steam''s ' + $public + '.')

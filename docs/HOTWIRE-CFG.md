@@ -105,7 +105,7 @@ Each is off in the file and shows the value used.
 | `hotwire.steamcmd` on Linux | `/usr/games/steamcmd` | The SteamCMD program |
 | `hotwire.steam_branch` | `public` | The Steam branch. Empty lets Steam keep the last one. |
 | `hotwire.max_days_without_update` | 14 | `hotwire` mode: update after this many days without one. 0 = never. |
-| `hotwire.update_on_new_build` | 1 | Update when Steam has a newer build |
+| `hotwire.update_on_new_build` | 1 | Update when Steam has a newer build. With `hotwire.steam_branch` `public`, also when Steam answers with an older build than the installed one (launchers 1.1.29, 1.1.15-linux). |
 | `hotwire.fast_rust_updates` | 0 | 1 = a Rust update on a server with Oxide finishes in one try (launchers 1.1.19, 1.1.7-linux) |
 | `hotwire.recover_refused_update` | 1 | When Steam no longer serves the installed build's file list, update without it (launchers 1.1.19, 1.1.7-linux). 0 = start the installed build. |
 | `hotwire.build_check_hours` | 6 | Hours to trust a Steam build check. 0 turns the check off. |
