@@ -28,7 +28,7 @@
 #
 set -uo pipefail
 
-VERSION="0.2.28"
+VERSION="0.2.29"
 DEFAULT_PANEL="https://afkpanel.com"
 
 # ---------------------------------------------------------------- output ----
@@ -1654,6 +1654,33 @@ read_secret() {  # sets TTY_LINE, not echoed; in this shell for the same reason 
     printf '\n' >/dev/tty 2>/dev/null
 }
 
+# With RCON on, it can listen on this machine only (rcon.ip 127.0.0.1): asked, never assumed, because a tool on another
+# machine (BattleMetrics, RustAdmin on the admin's own computer) then cannot connect.
+offer_rcon_local() {
+    local c="$IROOT/hotwire.cfg" ip port
+    reads_cfg && [ -f "$c" ] || return 0
+    ip="$(cfg_get rcon.ip)"; port="$(cfg_get rcon.port)"; port="${port:-28016}"
+    if [ -n "$ip" ]; then ok "RCON listens on $ip only (rcon.ip in hotwire.cfg) -- left as it is"; return 0; fi
+    why "RCON is on. Anyone who reaches TCP port $port and knows the password can run any console command on" \
+        "this server: kick or ban everyone, wipe it, shut it down. Today RCON listens on every network address" \
+        "this machine has, so a firewall is all that keeps the rest of the internet away from it." "" \
+        "If every RCON tool you use runs on this machine (RustAdmin or a script on this server), RCON can" \
+        "listen on this machine only. Then nothing elsewhere can reach it, even with the port open." "" \
+        "Tools on other machines could not connect any more: BattleMetrics, RustAdmin on your own computer," \
+        "a Discord bot hosted elsewhere. Say no if you use any of those." "" \
+        "This writes rcon.ip 127.0.0.1 into hotwire.cfg. Remove that line, and restart, to undo it."
+    if ! confirm "Allow RCON only from this machine?"; then note "Left as it is: RCON listens on every address."; return 0; fi
+    if ! created "$c"; then
+        warn "hotwire.cfg was not created by install, so it is left alone. In it, add the line"
+        note "        rcon.ip 127.0.0.1"
+        return 0
+    fi
+    local b; b="$c.backup-$(date '+%Y%m%d-%H%M%S')"; cp -p "$c" "$b"
+    cfg_set_file "$c" rcon.ip 127.0.0.1 || die "setting rcon.ip in $c" "the write failed" "run install again"
+    own "$c"; ok "hotwire.cfg: rcon.ip 127.0.0.1. From the next restart RCON answers only on this machine."
+    change "set rcon.ip 127.0.0.1 in $c" "copy $b back over it"
+}
+
 step_rcon() {
     step "RCON password"
     local f="$IROOT/$(secrets_name)" name; name="$(secrets_name)"
@@ -1666,7 +1693,7 @@ step_rcon() {
     fi
     if [ -f "$f" ]; then
         problem="$(secrets_problem)"
-        if [ -z "$problem" ]; then ok "$name is already here, and hotwire.sh will accept its password -- left as it is"; save_step rcon; return 0; fi
+        if [ -z "$problem" ]; then ok "$name is already here, and hotwire.sh will accept its password -- left as it is"; offer_rcon_local; save_step rcon; return 0; fi
         if rcon_optional; then bad "$name is here, but $problem -- RCON stays off until it is fixed"
         else bad "$name is here, but $problem -- hotwire.sh will not start the server"; fi
         confirm "Set a new RCON password in its place?" || { note "Left as it is. Fix $f before starting the server."; return 0; }
@@ -1710,6 +1737,7 @@ step_rcon() {
     else
         note "  Your password was not shown."
     fi
+    offer_rcon_local
     save_step rcon
 }
 

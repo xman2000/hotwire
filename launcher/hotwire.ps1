@@ -15,7 +15,7 @@
 $ErrorActionPreference = 'Stop'
 # Who this launcher is, for the plugin: written to oxide\data\Hotwire\launcher.json before every start. The plugin
 # offers only the features in the capability list; settings_file means the settings come from hotwire.cfg.
-$LauncherVersion = '1.1.27'
+$LauncherVersion = '1.1.28'
 $LauncherCapabilities = 'supervise,update,framework_verify,crash_backstop,log_rotate,convar_persist,wipe,wipe_same_map,wipe_custom_map,backup,settings_file,rcon_optional'
 $root = $PSScriptRoot
 $cfg = Join-Path $root 'hotwire.cfg'
@@ -479,6 +479,15 @@ function Invoke-Edits {
                 # would bring the old world back. Every world save in the folder is set aside (renamed, never deleted):
                 # the .sav, its numbered copies and its .navmesh. A custom map's downloaded copy goes too, so a map
                 # changed at the same address is fetched again; a generated map's .map stays.
+                # The cycle is recorded and the flag removed before any file is renamed: the new map is already in
+                # hotwire.cfg, so running this wipe again at a later start would set the new world aside too. A file that
+                # cannot be renamed (another program holds it) is named and left; the wipe is still done.
+                if ($cycle) {
+                    [void](New-Item -ItemType Directory -Force -Path (Split-Path -Parent $cycleFile))
+                    [IO.File]::WriteAllText($cycleFile, $cycle)
+                }
+                Remove-Item -LiteralPath $flag -Force
+                $notMoved = New-Object 'System.Collections.Generic.List[string]'
                 $setAside = 0
                 if (Test-Path -LiteralPath $folder) {
                     $wstamp = Get-Date -Format 'yyyyMMdd-HHmmss'
@@ -488,24 +497,26 @@ function Invoke-Edits {
                         $isWorld = $n.EndsWith('.sav') -or $n -match '\.sav\.[0-9]' -or $n.EndsWith('.navmesh')
                         $isCustomMap = $levelUrl -and $n.EndsWith('.map') -and $n -cnotmatch '^[a-z0-9]+\.[0-9]+\.[0-9]+\.[0-9]+\.map$'
                         if (-not ($isWorld -or $isCustomMap)) { continue }
-                        Rename-Item -LiteralPath $f.FullName -NewName ($n + '.wiped-' + $wstamp)
-                        $setAside++
+                        try { Rename-Item -LiteralPath $f.FullName -NewName ($n + '.wiped-' + $wstamp) -ErrorAction Stop; $setAside++ }
+                        catch { $notMoved.Add($n) }
                     }
                 }
                 if ($bp -ne 'keep' -and (Test-Path -LiteralPath $folder)) {
                     $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
                     foreach ($f in @(Get-ChildItem -LiteralPath $folder -Filter 'player.blueprints.*.db' -File)) {
-                        if ($bp -eq 'delete') { Remove-Item -LiteralPath $f.FullName -Force }
-                        else { Rename-Item -LiteralPath $f.FullName -NewName ($f.Name + '.wiped-' + $stamp) }
-                        $count++
+                        try {
+                            if ($bp -eq 'delete') { Remove-Item -LiteralPath $f.FullName -Force -ErrorAction Stop }
+                            else { Rename-Item -LiteralPath $f.FullName -NewName ($f.Name + '.wiped-' + $stamp) -ErrorAction Stop }
+                            $count++
+                        } catch { $notMoved.Add($f.Name) }
                     }
                 }
-                # The cycle is recorded and the flag removed last, so a crash part-way through reruns the wipe safely.
-                if ($cycle) {
-                    [void](New-Item -ItemType Directory -Force -Path (Split-Path -Parent $cycleFile))
-                    [IO.File]::WriteAllText($cycleFile, $cycle)
+                if ($notMoved.Count -gt 0) {
+                    Rule
+                    Say ('Could not move ' + $notMoved.Count + ' file(s), which another program had open: ' + ($notMoved -join ', ') + '.')
+                    Say 'The wipe is done; Rust may load an old world file it finds there. Close the program holding it, delete the file, and restart.'
+                    Rule
                 }
-                Remove-Item -LiteralPath $flag -Force
                 $sizeText = 'unchanged'; if ($size) { $sizeText = $size }
                 $bpText = 'kept'; if ($bp -ne 'keep') { $bpText = $bp + ' (' + $count + ' file(s))' }
                 if ($levelUrl) {
@@ -1025,6 +1036,12 @@ function Get-HexHmac([string]$secret, [string]$text) {
     try { return -join ($hmac.ComputeHash($utf8.GetBytes($text)) | ForEach-Object { $_.ToString('x2') }) } finally { $hmac.Dispose() }
 }
 
+# The signature AFKPanel checks: HMAC-SHA256 over "POST /api/v1/report", the timestamp, the nonce and the body's
+# SHA-256, one per line. tests/launcher-signing checks it against the shared conformance vector.
+function Get-ReportSignature([string]$secret, [string]$ts, [string]$nonce, [byte[]]$bytes) {
+    return Get-HexHmac $secret ('POST /api/v1/report' + "`n" + $ts + "`n" + $nonce + "`n" + (Get-HexSha256 $bytes))
+}
+
 function Get-UtcStamp([DateTimeOffset]$when) { return $when.UtcDateTime.ToString('yyyy-MM-ddTHH:mm:ssZ') }
 
 # Write one report to the spool: kind, report id, sent_at, payload, connection, one per line, as hotwire.sh does.
@@ -1049,7 +1066,7 @@ function Send-Report($r, [string]$kind, [string]$rid, [string]$sentAt, [string]$
     $nonceBytes = New-Object byte[] 16
     $rng = [Security.Cryptography.RandomNumberGenerator]::Create(); try { $rng.GetBytes($nonceBytes) } finally { $rng.Dispose() }
     $nonce = -join ($nonceBytes | ForEach-Object { $_.ToString('x2') })
-    $sig = Get-HexHmac $r.Secret ('POST /api/v1/report' + "`n" + $ts + "`n" + $nonce + "`n" + (Get-HexSha256 $bytes))
+    $sig = Get-ReportSignature $r.Secret $ts $nonce $bytes
     $headers = @{ 'X-Hotwire-Key' = $r.Key; 'X-Hotwire-Timestamp' = $ts; 'X-Hotwire-Nonce' = $nonce; 'X-Hotwire-Signature' = $sig }
     try {
         $response = Invoke-WebRequest -Uri ($r.Url + '/api/v1/report') -Method Post -Body $bytes -ContentType 'application/json' -Headers $headers -UseBasicParsing -TimeoutSec 15
@@ -1114,15 +1131,39 @@ function Invoke-Report {
             $m = [regex]::Match([IO.File]::ReadAllText($acf), [char]34 + 'buildid' + [char]34 + '\s+' + [char]34 + '(\d+)' + [char]34)
             if ($m.Success) { $p += ',"rust_build_id":"' + $m.Groups[1].Value + '"' }
         }
+        # The build Steam has on this branch, from the launcher's last build check; left out when it is not known.
+        if ([string]$env:HOTWIRE_PUBLIC_BUILD -match '\A\d+\z') { $p += ',"rust_build_public":"' + $env:HOTWIRE_PUBLIC_BUILD + '"' }
+        # Runs in a row that ended under hotwire.crash_seconds, this one included.
+        $streak = 0; [void][int]::TryParse([string]$env:CRASH_STREAK, [ref]$streak)
+        $p += ',"fast_fail_count":' + $streak
+        # From this run's log: Oxide's "Failed to call hook" lines, and, when the plugin never loaded (so it never sent
+        # the log itself), the last 40 lines, at most 8 KB. AFKPanel masks card numbers, IP addresses and Steam IDs
+        # before storing them, as it does every log line.
+        $runLog = [string]$env:LOGFILE
+        if ($runLog -and (Test-Path -LiteralPath $runLog)) {
+            try {
+                $fs = [IO.File]::Open($runLog, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
+                try { $reader = New-Object IO.StreamReader($fs); $text = $reader.ReadToEnd() } finally { $fs.Dispose() }
+                $lines = $text -split "\r?\n"
+                $p += ',"hook_errors":' + @($lines | Where-Object { $_.Contains('Failed to call hook ') }).Count
+                if (-not $text.Contains('Loaded plugin Hotwire')) {
+                    $tail = (@($lines | Select-Object -Last 40) -join "`n") -replace '[\x00-\x08\x0B\x0C\x0E-\x1F]', ''
+                    if ($tail.Length -gt 8000) { $tail = $tail.Substring($tail.Length - 8000) }
+                    $p += ',"log_tail":' + (ConvertTo-Json -InputObject $tail -Compress)
+                }
+            } catch { }
+        }
         $kept = (Test-Path -LiteralPath (Join-Path $root 'UPDATE.flag')) -or (Test-Path -LiteralPath (Join-Path $root 'VALIDATE.flag'))
-        $p += ',"update":{"attempted":' + (& $bool $env:HOTWIRE_UPDATE_ATTEMPTED) + ',"steam_ok":' + (& $bool $env:STEAM_OK) + ',"framework_ok":' + (& $bool $env:FRAMEWORK_OK) + ',"flag_kept":' + $(if ($kept) { 'true' } else { 'false' }) + '}}'
+        $since = ''
+        try { if (Test-Path -LiteralPath $UpdateStamp) { $since = ',"days_since_success":' + [long][math]::Floor(((Get-Date) - (Get-Item -LiteralPath $UpdateStamp).LastWriteTime).TotalDays) } } catch { }
+        $p += ',"update":{"attempted":' + (& $bool $env:HOTWIRE_UPDATE_ATTEMPTED) + ',"steam_ok":' + (& $bool $env:STEAM_OK) + ',"framework_ok":' + (& $bool $env:FRAMEWORK_OK) + ',"flag_kept":' + $(if ($kept) { 'true' } else { 'false' }) + $since + '}}'
         Add-SpoolReport 'session' $p
     } elseif ($env:HOTWIRE_REPORT -eq 'launcher') {
         $streak = 0; [void][int]::TryParse([string]$env:CRASH_STREAK, [ref]$streak)
         $log = @(Get-ChildItem -LiteralPath (Join-Path $root 'logs') -Filter 'server_crash_*.txt' -File -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1)
         $preserved = if ($log.Count -gt 0) { 'logs/' + $log[0].Name } else { '' }
         $detail = [string]$streak + ' consecutive runs under ' + [string]$env:CRASH_SECONDS + 's'
-        Add-SpoolReport 'launcher' ('{"state":"stopped","reason":"crash_streak","detail":"' + $detail + '","crash_streak":' + $streak + ',"preserved_log":"' + $preserved + '"}')
+        Add-SpoolReport 'launcher' ('{"state":"stopped","reason":"crash_streak","detail":' + (ConvertTo-Json -InputObject $detail -Compress) + ',"crash_streak":' + $streak + ',"preserved_log":' + (ConvertTo-Json -InputObject $preserved -Compress) + '}')
     }
 }
 
@@ -1574,7 +1615,23 @@ function Invoke-Main([string[]]$argv) {
         Say 'hotwire.bat and hotwire.ps1 must be in the same folder as RustDedicated.exe.'
         Say 'If they are, Rust is not fully installed.'
         Rule
-        Wait-Key; $script:LauncherExit = 1; return
+        Wait-Key; $script:LauncherExit = 2; return
+    }
+    # One launcher per server folder. A second one would update, back up and wipe under the server the first one runs,
+    # then crash-loop on its ports. The file stays open, unshared, for this process's life; Windows closes it however
+    # the process ends. Check mode changes nothing, so it runs beside a launcher.
+    if (-not $checkOnly) {
+        $lockDir = Join-Path $root 'hotwire'
+        if (-not (Test-Path -LiteralPath $lockDir)) { try { [void](New-Item -ItemType Directory -Path $lockDir) } catch { } }
+        try { $script:FolderLock = [IO.File]::Open((Join-Path $lockDir 'launcher.lock'), [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None) }
+        catch {
+            Rule
+            Say 'Another launcher is already running this server, in this folder:'
+            Say ('  ' + $root)
+            Say 'Close that one first. Two launchers in one folder would update and wipe under a running server.'
+            Rule
+            Wait-Key; $script:LauncherExit = 2; return
+        }
     }
     Set-Location -LiteralPath $root
     [Environment]::CurrentDirectory = $root
@@ -1587,7 +1644,7 @@ function Invoke-Main([string[]]$argv) {
         Say 'update backstop never runs.'
         Say 'Check the permissions on the server folder.'
         Rule
-        Wait-Key; $script:LauncherExit = 1; return
+        Wait-Key; $script:LauncherExit = 2; return
     }
 
     $self = Get-SelfStamp
@@ -1600,7 +1657,7 @@ function Invoke-Main([string[]]$argv) {
         $env:HOTWIRE_FIRST = $(if ($first) { '1' } else { '' })
         $load = ''
         try { $load = Import-Settings } catch { Say ('Could not read the settings: ' + $_.Exception.Message) }
-        if ($first -and $load -ne 'ok') { Say 'Not starting.'; Wait-Key; $script:LauncherExit = 1; return }
+        if ($first -and $load -ne 'ok') { Say 'Not starting.'; Wait-Key; $script:LauncherExit = 2; return }
         $first = $false
         $env:HOTWIRE_FIRST = ''
 
@@ -1633,6 +1690,7 @@ function Invoke-Main([string[]]$argv) {
                 if ($effective -ne 'always' -and $effective -ne 'off' -and $crashStreak -eq 0) { $hours = 0 }
                 $installed = Get-InstalledBuild
                 $public = Get-PublicBuild $branchName $hours
+                $env:HOTWIRE_PUBLIC_BUILD = [string]$public
                 if (-not $installed) {
                     Say 'Rust build: cannot read the installed build from'
                     Say ('  ' + $Acf)
@@ -1833,7 +1891,7 @@ function Invoke-Main([string[]]$argv) {
             Say ''
             Say 'To keep restarting instead, set hotwire.max_crash_streak 0 in hotwire.cfg.'
             Rule
-            Wait-Key; $script:LauncherExit = 1; return
+            Wait-Key; $script:LauncherExit = 2; return
         }
 
         # Back off, so a broken setting does not restart the server four times a minute forever, or run
@@ -1868,6 +1926,11 @@ try {
     Invoke-Main $args
     exit $script:LauncherExit
 } catch {
-    Say ('hotwire.ps1: ' + $_.Exception.Message)
-    exit 1
+    # An error nothing above expected: say it and wait, so the window does not close on a server that is not running.
+    Rule
+    Say ('The launcher stopped on an error it did not expect: ' + $_.Exception.Message)
+    Say 'The server is not running. Fix what the message names, then run hotwire.bat again.'
+    Rule
+    Wait-Key
+    exit 2
 }

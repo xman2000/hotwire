@@ -29,8 +29,9 @@ ours:
 
   1. [ServerVar(ShowInAdminUI = true)] -- Facepunch's own list of the convars
      worth showing an admin. Machine-readable, and it ships with the game.
-  2. A seed of names that independent configuration sources agree on, seen in
-     docs/RESEARCH.md. Evidence, not intuition.
+  2. A seed of names that independent configuration sources agree on: one
+     running server's command line, a hosting provider's server.cfg generator
+     and a hosting provider's settings guide. Evidence, not intuition.
 
 --all is still there when you want the long tail. It is a reference to search,
 not a file to paste.
@@ -64,9 +65,10 @@ except ImportError:
 # was skipped rather than silently dropping it.
 CONVAR_ATTRS = ("ServerVar", "ClientVar", "ReplicatedVar", "AdminVar")
 
-# Names that independent configuration sources agree on -- see
-# docs/RESEARCH.md for how they were gathered and what each source was. This
-# is a seed, not a verdict: anything ShowInAdminUI marks is added to it.
+# Names that independent configuration sources agree on: one running server's
+# command line, a hosting provider's server.cfg generator and a hosting
+# provider's settings guide. This is a seed, not a verdict: anything
+# ShowInAdminUI marks is added to it.
 SEED = {
     # named by all three sources
     "server.hostname", "server.description", "server.headerimage", "server.tags",

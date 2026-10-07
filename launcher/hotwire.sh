@@ -21,7 +21,7 @@
 #     hotwire.cfg. The plugin works out this file's code hash itself, and
 #     AFKPanel compares it with the released launchers'; nothing waits on that
 #     answer.
-HOTWIRE_LAUNCHER_VERSION="1.1.13-linux"
+HOTWIRE_LAUNCHER_VERSION="1.1.14-linux"
 HOTWIRE_LAUNCHER_CAPABILITIES="supervise,update,framework_verify,crash_backstop,log_rotate,convar_persist,wipe,wipe_same_map,wipe_custom_map,backup,settings_file,rcon_optional,stop_saves"
 
 # ======================================================================
@@ -983,7 +983,7 @@ JSON
 
 # hotwire.cfg's lines that are not used as written, as JSON for launcher.json: the plugin passes them to AFKPanel, which
 # raises them as a problem. The setting's name and what is wrong, never its value. At most 20.
-json_text() { local s="$1"; s="${s//\\/\\\\}"; s="${s//\"/\\\"}"; printf '"%s"' "$s"; }
+json_text() { local s="$1"; s="${s//\\/\\\\}"; s="${s//\"/\\\"}"; s="${s//$'\n'/\\n}"; s="${s//$'\r'/}"; s="${s//$'\t'/\\t}"; printf '"%s"' "$s"; }
 # What the launcher wants the admin to know but that stops nothing, such as ionice missing: code and words, at most 10.
 LAUNCHER_NOTICES=()
 launcher_notices_json() {
@@ -1025,6 +1025,11 @@ _json_val() {  # a flat JSON string or number: setup writes the server id quoted
 _sha256() { printf '%s' "$1" | openssl dgst -sha256 | sed 's/^.*= *//'; }
 _hmac()   { printf '%s' "$2" | openssl dgst -sha256 -hmac "$1" | sed 's/^.*= *//'; }
 _bool()   { [ "$1" = "1" ] && printf 'true' || printf 'false'; }
+# The signature AFKPanel checks: HMAC-SHA256 over "POST /api/v1/report", the timestamp, the nonce and the body's SHA-256,
+# one per line. tests/launcher-signing checks it against the shared conformance vector.
+_report_sig() {  # <secret> <timestamp> <nonce> <body>
+    _hmac "$1" "$(printf '%s %s\n%s\n%s\n%s' POST /api/v1/report "$2" "$3" "$(_sha256 "$4")")"
+}
 
 REPORT_ENABLED=0; PANEL_URL=""; SCRIPT_KEY=""; SCRIPT_SECRET=""; REPORT_STATE=""
 # Read again before every start, not once: a connect made while the launcher runs (hotwire-setup connect, or
@@ -1062,7 +1067,7 @@ _hw_post() {  # <kind> <payload-json> <report_id> <sent_at>
     local kind="$1" payload="$2" rid="$3" sent_at="$4" body ts nonce sig code
     body="{\"contract\":1,\"report_id\":\"$rid\",\"sent_at\":\"$sent_at\",\"source\":\"script\",\"source_version\":\"$HOTWIRE_LAUNCHER_VERSION\",\"kind\":\"$kind\",\"payload\":$payload}"
     ts="$(date +%s)"; nonce="$(openssl rand -hex 16)"
-    sig="$(_hmac "$SCRIPT_SECRET" "$(printf '%s %s\n%s\n%s\n%s' POST /api/v1/report "$ts" "$nonce" "$(_sha256 "$body")")")"
+    sig="$(_report_sig "$SCRIPT_SECRET" "$ts" "$nonce" "$body")"
     code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 15 -X POST "$PANEL_URL/api/v1/report" \
         -H 'Content-Type: application/json' -H "X-Hotwire-Key: $SCRIPT_KEY" -H "X-Hotwire-Timestamp: $ts" \
         -H "X-Hotwire-Nonce: $nonce" -H "X-Hotwire-Signature: $sig" --data-binary "$body" 2>/dev/null)" || code="000"
@@ -1158,7 +1163,24 @@ report_session() {  # <exit_code> <crashed true|false>
     read_installed_build
     local p="{\"started_at\":\"$STARTED_AT\",\"ended_at\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"exit_code\":$1,\"crashed\":$2"
     [ -n "$INSTALLED_BUILD" ] && p="$p,\"rust_build_id\":\"$INSTALLED_BUILD\""
-    p="$p,\"update\":{\"attempted\":$(_bool "$UPDATE_ATTEMPTED"),\"steam_ok\":$(_bool "$STEAM_OK"),\"framework_ok\":$(_bool "$FRAMEWORK_OK"),\"flag_kept\":$(_bool "$UPDATE_FLAG_KEPT")}}"
+    # The build Steam has on this branch, from the launcher's last build check; left out when it is not known.
+    [[ "$PUBLIC_BUILD" =~ ^[0-9]+$ ]] && p="$p,\"rust_build_public\":\"$PUBLIC_BUILD\""
+    # Runs in a row that ended under hotwire.crash_seconds, this one included.
+    p="$p,\"fast_fail_count\":$CRASH_STREAK"
+    # From this run's log: Oxide's "Failed to call hook" lines, and, when the plugin never loaded (so it never sent the
+    # log itself), the last 40 lines, at most 8 KB. AFKPanel masks card numbers, IP addresses and Steam IDs before
+    # storing them, as it does every log line.
+    if [ -f "$LOGFILE" ]; then
+        local hooks; hooks="$(grep -ac 'Failed to call hook ' "$LOGFILE" 2>/dev/null)"
+        [[ "$hooks" =~ ^[0-9]+$ ]] || hooks=0
+        p="$p,\"hook_errors\":$hooks"
+        if ! grep -aq 'Loaded plugin Hotwire' "$LOGFILE" 2>/dev/null; then
+            p="$p,\"log_tail\":$(json_text "$(tail -n 40 "$LOGFILE" 2>/dev/null | tail -c 8000 | tr -d '\000-\010\013\014\016-\037')")"
+        fi
+    fi
+    local days=""
+    if [ -f "$UPDATE_STAMP" ]; then days=$(( ( $(date +%s) - $(stat -c %Y "$UPDATE_STAMP" 2>/dev/null || date +%s) ) / 86400 )); fi
+    p="$p,\"update\":{\"attempted\":$(_bool "$UPDATE_ATTEMPTED"),\"steam_ok\":$(_bool "$STEAM_OK"),\"framework_ok\":$(_bool "$FRAMEWORK_OK"),\"flag_kept\":$(_bool "$UPDATE_FLAG_KEPT")${days:+,\"days_since_success\":$days}}}"
     hw_send session "$p"
 }
 
@@ -1169,7 +1191,7 @@ report_launcher_stopped() {  # <detail>
     [ "$REPORT_ENABLED" = "1" ] || return 0
     local plog; plog="$(ls -1t "$LOGDIR" 2>/dev/null | grep server_crash_ | head -1)"
     [ -n "$plog" ] && plog="logs/$plog"
-    hw_send launcher "{\"state\":\"stopped\",\"reason\":\"crash_streak\",\"detail\":\"$1\",\"crash_streak\":$CRASH_STREAK,\"preserved_log\":\"$plog\"}"
+    hw_send launcher "{\"state\":\"stopped\",\"reason\":\"crash_streak\",\"detail\":$(json_text "$1"),\"crash_streak\":$CRASH_STREAK,\"preserved_log\":$(json_text "$plog")}"
 }
 
 # ======================================================================
@@ -1994,6 +2016,20 @@ run_loop() {
 printf '%s%s H O T W I R E %s  launcher %s%s%s\n' \
     "$C_BLD" "$C_CYN" "$C_OFF" "$C_BLD" "$HOTWIRE_LAUNCHER_VERSION" "$C_OFF"
 [ -n "$CHECK_ONLY" ] && log "Check mode: everything is checked, nothing is started."
+
+# One launcher per server folder. A second one would update, back up and wipe under the server the first one runs, then
+# crash-loop on its ports. The lock is held for the launcher's life (and by the server it starts, so a server left
+# running after its launcher was killed still holds the folder); the kernel drops it when the last holder ends.
+if [ -z "$CHECK_ONLY" ] && command -v flock >/dev/null 2>&1; then
+    mkdir -p "$ROOT/hotwire" 2>/dev/null
+    if exec 4>"$ROOT/hotwire/launcher.lock"; then
+        if ! flock -n 4; then
+            holders="$(fuser "$ROOT/hotwire/launcher.lock" 2>/dev/null | tr -s '[:space:]' ' ')"
+            die "Another launcher, or the server it started, is already running in $ROOT${holders:+ (process$holders)}.
+  Stop that one first. Two launchers in one folder would update and wipe under a running server."
+        fi
+    fi
+fi
 
 config_or_die
 load_secrets

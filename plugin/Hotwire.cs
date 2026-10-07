@@ -17,7 +17,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Hotwire", "xman2000", "1.1.63")]
+    [Info("Hotwire", "xman2000", "1.1.64")]
     [Description("Scheduled restarts and updates. Announces, counts down, writes a flag, quits.")]
     internal class Hotwire : CovalencePlugin
     {
@@ -1176,7 +1176,7 @@ namespace Oxide.Plugins
                 if (e.IsWipe && ((WipeEntry)e).Forced) continue;   // ScanForcedWipes decides these
                 var next = NextOccurrence(e, now);
                 if (next == null) continue;
-                if ((next.Value - now).TotalSeconds > start) continue;
+                if (SecondsUntil(next.Value) > start) continue;
                 if (FiredRecently(e.Key, now)) continue;
 
                 // Earliest wins. On a tie an update beats a plain restart --
@@ -1510,7 +1510,27 @@ namespace Oxide.Plugins
         private string T(string key, string user, params object[] args)
         {
             var message = lang.GetMessage(key, this, user);
-            return args.Length == 0 ? message : string.Format(message, args);
+            return args.Length == 0 ? message : Fmt(key, message, args);
+        }
+
+        // A lang file is the admin's to edit, and a stray {2} in one makes string.Format throw. Thrown inside a countdown
+        // or the 10-second schedule check, that would stop restarts. The English wording is used instead, and the
+        // problem is said once per key, so it can be fixed.
+        private readonly HashSet<string> _badLangKeys = new HashSet<string>();
+        private string Fmt(string key, string message, object[] args)
+        {
+            try { return string.Format(message, args); }
+            catch (FormatException)
+            {
+                if (_badLangKeys.Add(key))
+                    PrintWarning($"The lang text for '{key}' does not fit its values (a {{n}} it does not have, or an unpaired brace); the English wording is used. Fix it in oxide/lang.");
+                string english;
+                if (DefaultMessages.TryGetValue(key, out english))
+                {
+                    try { return string.Format(english, args); } catch (FormatException) { }
+                }
+                return message;
+            }
         }
 
         // The zone and DST state, attached to every time the plugin prints.
@@ -2248,7 +2268,7 @@ namespace Oxide.Plugins
             if (_countdownActive || _shuttingDown) return;
 
             _countdownActive = true;
-            _countdownTarget = target;
+            _countdownTarget = ResolveLocal(target);
             _countdownEntry = entry;
             _countdownIsUpdate = isUpdate;
             _countdownIsValidate = isValidate;
@@ -2258,7 +2278,7 @@ namespace Oxide.Plugins
             _countdownKey = key;
             _announced.Clear();
 
-            var remaining = (int)Math.Round((target - DateTime.Now).TotalSeconds);
+            var remaining = (int)Math.Round(SecondsUntil(_countdownTarget));
             _countdownStarted = DateTime.Now;
 
             // Everything at or above the time actually remaining has already
@@ -2317,7 +2337,7 @@ namespace Oxide.Plugins
             // to a stalled frame, and to timer drift over ten minutes -- the
             // restart lands when it said it would, and the worst a hitch can
             // do is skip an announcement.
-            var remaining = (int)Math.Ceiling((_countdownTarget - DateTime.Now).TotalSeconds);
+            var remaining = (int)Math.Ceiling(SecondsUntil(_countdownTarget));
 
             if (remaining <= 0)
             {
@@ -2802,7 +2822,30 @@ namespace Oxide.Plugins
 
         private int RemainingSeconds()
         {
-            return Math.Max(0, (int)Math.Ceiling((_countdownTarget - DateTime.Now).TotalSeconds));
+            return Math.Max(0, (int)Math.Ceiling(SecondsUntil(_countdownTarget)));
+        }
+
+        // Schedule times are wall-clock times on this machine. Two days a year the wall clock jumps: in spring a time
+        // such as 02:30 does not happen at all, and counting to it by subtracting wall-clock times ran a restart up to
+        // an hour early, or skipped it. A time the clock skips runs at the moment the clock jumps (02:30 becomes
+        // 03:00), and every wait is measured in real seconds (UTC). An autumn time that happens twice is taken as the
+        // first; the same-entry guard stops the second.
+        private static DateTime ResolveLocal(DateTime local)
+        {
+            var tz = TimeZoneInfo.Local;
+            var t = DateTime.SpecifyKind(local, DateTimeKind.Unspecified);
+            for (var i = 0; i < 240 && tz.IsInvalidTime(t); i++) t = t.AddMinutes(1);
+            return DateTime.SpecifyKind(t, DateTimeKind.Local);
+        }
+
+        private static double SecondsUntil(DateTime local)
+        {
+            var tz = TimeZoneInfo.Local;
+            var t = DateTime.SpecifyKind(ResolveLocal(local), DateTimeKind.Unspecified);
+            var utc = tz.IsAmbiguousTime(t)
+                ? new DateTimeOffset(t, tz.GetAmbiguousTimeOffsets(t).Max()).UtcDateTime
+                : TimeZoneInfo.ConvertTimeToUtc(t, tz);
+            return (utc - DateTime.UtcNow).TotalSeconds;
         }
 
         private string CountdownText(int remaining)
@@ -6397,6 +6440,15 @@ namespace Oxide.Plugins
         private bool ScanHeldRestart(DateTime now)
         {
             if (_heldRestart == null) return false;
+            // The entry was switched off or removed while it was held (in game or from AFKPanel): the hold ends with it.
+            var held = _heldRestart;
+            if (!AllEntries().Any(e => ReferenceEquals(e, held) && e.Enabled))
+            {
+                Puts($"Held {(held.IsUpdate ? "update" : "restart")} dropped: its entry was switched off or removed.");
+                _heldRestart = null;
+                _heldSinceUtc = null;
+                return false;
+            }
             string why;
             var waited = DateTime.UtcNow - (_heldSinceUtc ?? DateTime.UtcNow);
             var giveUp = waited >= TimeSpan.FromHours(Math.Max(0, _config.Countdown.HoldForOxideHours));
@@ -8724,6 +8776,11 @@ namespace Oxide.Plugins
             return root == null || id == null ? null : Path.Combine(Path.Combine(root, "backup"), id);
         }
 
+        // A scheduled backup that got as far as Rust's save and then failed waits this long before it is tried again. Without
+        // it a failure after the save (no staging folder, a full disk) would run a full world save every 10 seconds.
+        private DateTime _backupRetryUtc = DateTime.MinValue;
+        private const int BackupRetryMinutes = 30;
+
         private void BackupTick()
         {
             try
@@ -8739,6 +8796,7 @@ namespace Oxide.Plugins
                 if (_countdownActive || _shuttingDown) return;
                 var due = BackupNextDue();
                 if (DateTime.UtcNow < due) return;
+                if (DateTime.UtcNow < _backupRetryUtc) return;
                 string why;
                 StartBackup("scheduled", out why);
             }
@@ -8821,6 +8879,7 @@ namespace Oxide.Plugins
             // plugin's OnServerSave write has finished, which makes this the quietest moment for the copies.
             var save = saveRestore.GetMethod("Save", BindingFlags.Public | BindingFlags.Static, null, new[] { typeof(bool) }, null);
             Member(save, "SaveRestore.Save(bool)");
+            _backupRetryUtc = DateTime.UtcNow.AddMinutes(BackupRetryMinutes);
             var sw = System.Diagnostics.Stopwatch.StartNew();
             var saved = (bool)save.Invoke(null, new object[] { true });
             timings.SaveMs = sw.ElapsedMilliseconds;
@@ -8850,6 +8909,7 @@ namespace Oxide.Plugins
                 AddCopySteps(Interface.Oxide.LangDirectory, Path.Combine(Path.Combine(staging, "oxide"), "lang"), null, steps);
             }
 
+            _backupRetryUtc = DateTime.MinValue;
             _backup.LastStartUtc = DateTime.UtcNow;
             _backup.Pending = timings;
             WriteData(BackupDataFile, _backup);
@@ -12351,7 +12411,7 @@ namespace Oxide.Plugins
         private void Reply(IPlayer player, string key, params string[] args)
         {
             var msg = lang.GetMessage(key, this, player.Id);
-            player.Reply(Prefix() + Sentence(args.Length == 0 ? msg : string.Format(msg, args)));
+            player.Reply(Prefix() + Sentence(args.Length == 0 ? msg : Fmt(key, msg, args)));
         }
 
         private void Broadcast(string key, params string[] args)
@@ -12360,7 +12420,7 @@ namespace Oxide.Plugins
             {
                 if (p == null || !p.IsConnected) continue;
                 var msg = lang.GetMessage(key, this, p.Id);
-                p.Message(Prefix() + Sentence(args.Length == 0 ? msg : string.Format(msg, args)));
+                p.Message(Prefix() + Sentence(args.Length == 0 ? msg : Fmt(key, msg, args)));
             }
         }
 
@@ -12374,7 +12434,7 @@ namespace Oxide.Plugins
             {
                 if (p == null || !p.IsConnected) continue;
                 var msg = lang.GetMessage(key, this, p.Id);
-                p.Message(Prefix() + Sentence(string.Format(msg, args(p.Id))));
+                p.Message(Prefix() + Sentence(Fmt(key, msg, args(p.Id))));
             }
         }
 
@@ -12392,9 +12452,10 @@ namespace Oxide.Plugins
         // console tool for whoever runs the server, never seen in game, and
         // forty untranslated column-aligned fragments would make this file
         // worse for nobody's benefit.
-        protected override void LoadDefaultMessages()
-        {
-            lang.RegisterMessages(new Dictionary<string, string>
+        protected override void LoadDefaultMessages() => lang.RegisterMessages(DefaultMessages, this);
+
+        // The English wording, also the fallback when a lang file's text for a key cannot take its values (Fmt).
+        private static readonly Dictionary<string, string> DefaultMessages = new Dictionary<string, string>
             {
                 // The bar is a glance surface: players need to know the server
                 // is going down, not which flavor of going down it is. The
@@ -12642,8 +12703,7 @@ namespace Oxide.Plugins
                                "every 2 days | once 2026-12-24",
                 ["UsageRemove"] = "hotwire remove <restart|update> <index>",
                 ["UsageToggle"] = "hotwire enable|disable <restart|update> <index>"
-            }, this);
-        }
+            };
 
         #endregion
     }

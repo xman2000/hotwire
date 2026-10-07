@@ -42,7 +42,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$Version = '0.1.28'
+$Version = '0.1.29'
 
 # Captured here: inside a function, $PSBoundParameters describes that function, not this script.
 $SteamCmdGiven = $PSBoundParameters.ContainsKey('SteamCmd')
@@ -2119,6 +2119,30 @@ function Read-SecretText([string]$Prompt) {
     finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr) }
 }
 
+# With RCON on, it can listen on this machine only (rcon.ip 127.0.0.1): asked, never assumed, because a tool on another
+# machine (BattleMetrics, RustAdmin on the admin's own computer) then cannot connect.
+function Invoke-RconLocalOffer([string]$d) {
+    if (-not (Test-CfgLauncher $d) -or -not (Test-Path -LiteralPath (Join-Path $d 'hotwire.cfg'))) { return }
+    $ip = Get-CfgValue $d 'rcon.ip'
+    if ($ip) { Write-Ok "RCON listens on $ip only (rcon.ip in hotwire.cfg) -- left as it is"; return }
+    $port = Get-CfgValue $d 'rcon.port'; if (-not $port) { $port = '28016' }
+    Write-Why @(
+        "RCON is on. Anyone who reaches TCP port $port and knows the password can run any console command on",
+        "this server: kick or ban everyone, wipe it, shut it down. Today RCON listens on every network address",
+        "this machine has, so a firewall is all that keeps the rest of the internet away from it.",
+        "",
+        "If every RCON tool you use runs on this machine (RustAdmin or a script on this PC), RCON can listen",
+        "on this machine only. Then nothing elsewhere can reach it, even with the port open.",
+        "",
+        "Tools on other machines could not connect any more: BattleMetrics, RustAdmin on your own computer,",
+        "a Discord bot hosted elsewhere. Say no if you use any of those.",
+        "",
+        "This writes rcon.ip 127.0.0.1 into hotwire.cfg. Remove that line, and restart, to undo it."
+    )
+    if (-not (Confirm-Step "Allow RCON only from this machine?")) { Write-Note "Left as it is: RCON listens on every address."; return }
+    Sync-CfgSetting $d 'rcon.ip' '127.0.0.1' 'RCON only from this machine'
+}
+
 function Install-RconPassword([string]$d) {
     Write-Step "RCON password"
     $name = Get-SecretsName $d
@@ -2141,6 +2165,7 @@ function Install-RconPassword([string]$d) {
         $problem = Get-SecretsProblem $d
         if (-not $problem) {
             Write-Ok "$name is already here, and hotwire.bat will accept its password -- left as it is"
+            Invoke-RconLocalOffer $d
             Save-Record $d 'rcon'
             return
         }
@@ -2217,6 +2242,7 @@ function Install-RconPassword([string]$d) {
     } else {
         Write-Note "Your password was not shown and is not on the clipboard."
     }
+    Invoke-RconLocalOffer $d
     Save-Record $d 'rcon'
 }
 

@@ -24,6 +24,44 @@ sit above a launcher `1.1.7`. Read the label, not the number.
 `hotwire check` prints the plugin's version. Each launcher prints its own
 version as the first line when it starts.
 
+## Plugin 1.1.64, launchers 1.1.28 (Windows) and 1.1.14-linux, setup 0.1.29 (Windows) and 0.2.29 (Linux) — unreleased
+
+**One launcher per server folder.**
+
+- A second launcher started in a folder whose server is already running now stops and says so. Before, it updated,
+  backed up and wiped under the running server, then crash-looped on its ports. `check` still runs beside a launcher.
+
+**The Windows launcher no longer closes without a word.**
+
+- An unexpected error says what happened and that the server is not running, and waits for a key. When PowerShell
+  itself fails (a broken `hotwire.ps1`, a policy that blocks scripts), `hotwire.bat` keeps the window open.
+- `hotwire.bat` changes in this release: replace it with the launcher's window closed.
+
+**A Windows wipe never runs twice.**
+
+- The wipe is recorded before any file is moved, and a file another program has open is named and left. Before, one
+  such file left the wipe unrecorded and the next start wiped the new world too.
+
+**The session report carries what AFKPanel needs to explain a bad start.**
+
+- The current public Rust build, how many runs in a row ended fast, Oxide's hook errors, the last 40 lines of the log
+  when the plugin never loaded, and the days since the last successful update. AFKPanel masks card numbers, IP addresses
+  and Steam IDs in the log lines, as it does for every log line.
+- Two values in the launcher's report are escaped now, and `tests/launcher-signing` checks both launchers' signatures.
+
+**RCON can be kept to this machine.**
+
+- When an RCON password is set, setup explains what RCON can do and offers `rcon.ip 127.0.0.1`: tools on this machine
+  can connect, nothing elsewhere can. The settings example explains the line.
+
+**The plugin's schedules hold up in more cases.**
+
+- A translated message with a placeholder it cannot fill falls back to English instead of stopping a countdown.
+- A backup that fails after Rust's save waits 30 minutes before the next try, instead of saving every 10 seconds.
+- On the day the clock goes forward, a restart at a time that does not exist runs when the clock jumps, and every
+  countdown is measured in real time.
+- A restart held for Oxide's release is dropped when its entry is switched off or removed.
+
 ## Plugin 1.1.63, launcher 1.1.13-linux, setup 0.2.28 (Linux) — unreleased
 
 **On Linux, a stop or a reboot saves the world first.**

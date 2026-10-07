@@ -42,6 +42,22 @@ Only if you use an RCON tool.
 
 6. Restart the server. The launcher reads the file again before every start.
 
+## Only from this machine
+
+If every RCON tool you use runs on the server's own machine, RCON can listen there only. Nothing elsewhere can reach
+it, even with its port open in a firewall. Tools on other machines, such as BattleMetrics or RustAdmin on your own
+computer, then cannot connect.
+
+1. In `hotwire.cfg`, set:
+
+   ```
+   rcon.ip                     127.0.0.1
+   ```
+
+2. Restart the server.
+
+To undo it, remove the line and restart. `hotwire-setup` offers this when it finds an RCON password.
+
 ## Turn RCON off
 
 Delete the `rcon.password` line, or the whole file, and restart the server.

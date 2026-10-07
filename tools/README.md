@@ -22,7 +22,7 @@ venv\Scripts\pip install dnfile
 venv\Scripts\python tools\convars.py <dll>                 curated list
 venv\Scripts\python tools\convars.py <dll> --all           everything
 venv\Scripts\python tools\convars.py <dll> --json          the panel's autocomplete list
-venv\Scripts\python tools\convars.py <dll> --check launcher\hotwire.example.cfg
+venv\Scripts\python tools\convars.py <dll> --check examples\hotwire.example.cfg
                                                          audit the settings list
 ```
 
