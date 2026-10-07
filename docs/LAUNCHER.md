@@ -176,6 +176,7 @@ A wipe comes from the plugin as `WIPE.flag`, one `key value` per line: the new s
 | A forced wipe (`forced 1` and the build the plugin armed on) | Applied only if the update changed the installed build. Otherwise the flag stays, the old map starts, and `WIPE.result` says `deferred`, so the plugin tries again. |
 | The before-wipe backup | Taken only once the build is known to have changed, not on every try |
 | Which launchers wipe | One that lists `wipe` among its capabilities. A changed launcher still wipes; AFKPanel shows that it is not the released file. |
+| AFKPanel's permission | Launchers 1.1.32 (Windows) and 1.1.18-linux list `wipe_permit`: they wipe only when the flag carries AFKPanel's signed permission (`server`, `permit`, `permit_expires`) for this server (the id in `hotwire/connect.json`), this cycle and this map, still in date, checked against AFKPanel's public key built into the launcher. Otherwise the wipe is cancelled, the server starts unchanged, and `WIPE.result` says why. Wipes are part of AFKPanel Pro. |
 | The same map again, or a custom map | Needs `wipe_same_map` or `wipe_custom_map` among the capabilities: launcher 1.1.26 (Windows), 1.1.11 (Linux) or later |
 
 ## Backups

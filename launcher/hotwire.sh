@@ -21,8 +21,8 @@
 #     hotwire.cfg. The plugin works out this file's code hash itself, and
 #     AFKPanel compares it with the released launchers'; nothing waits on that
 #     answer.
-HOTWIRE_LAUNCHER_VERSION="1.1.16-linux"
-HOTWIRE_LAUNCHER_CAPABILITIES="supervise,update,framework_verify,crash_backstop,log_rotate,convar_persist,wipe,wipe_same_map,wipe_custom_map,backup,settings_file,rcon_optional,stop_saves"
+HOTWIRE_LAUNCHER_VERSION="1.1.18-linux"
+HOTWIRE_LAUNCHER_CAPABILITIES="supervise,update,framework_verify,crash_backstop,log_rotate,convar_persist,wipe,wipe_same_map,wipe_custom_map,backup,settings_file,rcon_optional,stop_saves,wipe_permit"
 
 # ======================================================================
 #  HOW THIS LAUNCHER WORKS
@@ -1268,6 +1268,32 @@ _cfg_set_one() {  # <name> <value>: stdin to stdout
     '
 }
 
+# AFKPanel's public key for wipe permissions. Wipes are part of AFKPanel Pro: a wipe runs only with AFKPanel's signed
+# permission for this server, this wipe and this map, checked here against this key. The private half is AFKPanel's alone.
+WIPE_PERMIT_PUBKEY="-----BEGIN PUBLIC KEY-----
+MIIBojANBgkqhkiG9w0BAQEFAAOCAY8AMIIBigKCAYEAotv0GyyUvwmrVHLcq+1y
+FZHmZbxBIr+coTcMKK2trfccv/9i/k8+7SjO1k/TnP0qRkOn7swCfYYovTvxeFB/
+7DYAMCzdPOM74ZZ+KPfCAjdv+hQ7F57VooZd+/nCdbc6UK/2Md5obkocKveFsZDG
+DXTS4b3P1wt9VlV6x/VlObVqmWSBPAyhLHaS3xiaC7jjr2x9HZk5aGXxNvk/xgt8
+W8Tt26vAr1xc3INBmfK49fFgCYQrj+rKOtnRkTbEd0/f/TY8qg5uUgOC6cSQkt2U
+S0WRrC6izC/8cBt8WXH6JNHs3+Rqogrbl76AMQjvQTZ5swNbZvxZEo+LRdcAKJdj
+VQWnxfmBLc/4tlbfeCh4NoLpLqcgAttxRLqom6/6xNRVbB2eWUlx8qYFIecxknGL
+++ylOpnqKbNtA3KziFvH+GVqvsf1kSW8dDAeRQLwdY3JoIybQNKkd3DZBk8a4HVs
+/HzyrC8U7xraCdmG2FqxQY/WKnYFvvz0u8CFAebxRukhAgMBAAE=
+-----END PUBLIC KEY-----"
+
+# Whether a wipe permission verifies: RSA, SHA-256, over the seven lines AFKPanel signed, rebuilt from the flag.
+wipe_permit_ok() {  # <public key pem> <server> <cycle> <seed> <size> <levelurl> <expires> <permit base64>
+    local dir rc
+    dir="$(mktemp -d)" || return 1
+    printf '%s\n' "$1" > "$dir/key.pem"
+    printf 'hotwire-wipe-permit 1\nserver %s\ncycle %s\nseed %s\nsize %s\nlevelurl %s\nexpires %s\n' "$2" "$3" "$4" "$5" "$6" "$7" > "$dir/text"
+    printf '%s' "$8" | openssl base64 -d -A > "$dir/sig" 2>/dev/null
+    openssl dgst -sha256 -verify "$dir/key.pem" -signature "$dir/sig" "$dir/text" >/dev/null 2>&1; rc=$?
+    rm -rf "$dir"
+    return $rc
+}
+
 apply_wipe() {
     local flag="$ROOT/$WIPE_FLAG"
     [ -f "$flag" ] || return 0
@@ -1281,6 +1307,10 @@ apply_wipe() {
     expires="$(grep -m1 '^expires '  "$flag" | awk '{print $2}')"
     forced="$(grep -m1 '^forced '    "$flag" | awk '{print $2}')"
     armed_build="$(grep -m1 '^armed_build ' "$flag" | awk '{print $2}')"
+    local permit permit_expires permit_server
+    permit="$(grep -m1 '^permit ' "$flag" | awk '{print $2}')"
+    permit_expires="$(grep -m1 '^permit_expires ' "$flag" | awk '{print $2}')"
+    permit_server="$(grep -m1 '^server ' "$flag" | awk '{print $2}')"
     now="$(date +%s)"
     [ -z "$bp" ] && bp="keep"
 
@@ -1299,8 +1329,19 @@ apply_wipe() {
     elif [ -n "$size" ] && ! cfg_check worldsize "$size"; then why="size $CFG_WHY"
     elif [ -n "$levelurl" ] && { ! cfg_check url "$levelurl" || [[ "$levelurl" == *[\"\'\`\$\\]* ]]; }; then why="map address ${CFG_WHY:-has a quote, \$ or backslash}"
     fi
-    [ -z "$why" ] && seed="$((10#$seed))" && { [ -z "$size" ] || size="$((10#$size))"; }
     case "$bp" in keep|rename|delete) ;; *) [ -z "$why" ] && why="blueprints must be keep, rename or delete";; esac
+    # Wipes are part of AFKPanel Pro: AFKPanel's permission for this server, this wipe and this map, checked against
+    # the values exactly as the flag carries them.
+    if [ -z "$why" ]; then
+        local my_server; my_server="$(_json_val "$CONNECT_FILE" server_id)"
+        if [ -z "$permit" ]; then why="no permission from AFKPanel (wipes are part of AFKPanel Pro)"
+        elif ! [[ "$permit_expires" =~ ^[0-9]+$ ]] || [ "$permit_expires" -le "$now" ]; then why="AFKPanel's permission has expired"
+        elif [ -z "$my_server" ] || [ "$permit_server" != "$my_server" ]; then why="AFKPanel's permission is for another server"
+        elif ! wipe_permit_ok "$WIPE_PERMIT_PUBKEY" "$permit_server" "$cycle" "$seed" "$size" "$levelurl" "$permit_expires" "$permit"; then
+            why="AFKPanel's permission does not match this wipe"
+        fi
+    fi
+    [ -z "$why" ] && seed="$((10#$seed))" && { [ -z "$size" ] || size="$((10#$size))"; }
     if [ -n "$why" ]; then
         rule; bad "Wipe CANCELLED: $why. Booting unchanged."; rule
         printf 'cancelled: %s\n' "$why" > "$WIPE_RESULT" 2>/dev/null || true

@@ -24,6 +24,20 @@ sit above a launcher `1.1.7`. Read the label, not the number.
 `hotwire check` prints the plugin's version. Each launcher prints its own
 version as the first line when it starts.
 
+## Plugin 1.1.66, launchers 1.1.32 (Windows) and 1.1.18-linux — unreleased
+
+**Wipes are part of AFKPanel Pro, like backups.**
+
+- The plugin runs a wipe only on a server whose AFKPanel plan includes wipes. It asks AFKPanel, and remembers a yes for
+  30 days when AFKPanel cannot be reached. An unconnected server, or one on a plan without wipes, reports its wipe
+  entries as not available and never wipes, whatever its config says.
+- The backup before a wipe follows the backup plan check too.
+- AFKPanel signs a permission for each wipe: this server, this wipe, this map. The plugin fetches it up to a day ahead,
+  and a wipe sent from AFKPanel carries its own. The plugin writes it into `WIPE.flag`.
+- The launchers check that permission against AFKPanel's public key, built in, before anything is written or renamed.
+  Without one that verifies, the wipe is cancelled, the server starts unchanged on its current map, and `WIPE.result`
+  says why. They list the new capability `wipe_permit`.
+
 ## Plugin 1.1.65 — unreleased
 
 **AFKPanel can say whether Oxide's files are the release's.**

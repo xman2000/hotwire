@@ -88,6 +88,8 @@ An entry added with `hotwire add` is on at once. An entry added from the menu's 
 
 ## Wipes
 
+Wipes are part of AFKPanel Pro. From Hotwire 1.1.66 a wipe fires only on a server whose AFKPanel plan includes wipes: the plugin asks AFKPanel, and remembers a yes for 30 days when AFKPanel cannot be reached. A server that is not connected, or whose plan does not include wipes, reports its wipe entries with that problem and never wipes. Launchers 1.1.32 (Windows) and 1.1.18-linux or later also wipe only with AFKPanel's signed permission for that server, that wipe and that map; the plugin fetches it up to a day before the wipe, so AFKPanel being unreachable at wipe time does not stop it.
+
 Requires the Hotwire launcher: Windows 1.1.17 or later, Linux 1.1.4 or later. On a start script, or an older launcher, a wipe entry is reported with that problem and never fires.
 
 A wipe is a restart that also leaves the launcher `WIPE.flag` with the next map's seed. Every server starts with one forced wipe, switched off, with a random seed and a random size between 3500 and 4500; it is added once, and a deleted one is not added back. The entry has the recurrence fields above and these:
@@ -126,7 +128,7 @@ A wipe is a restart that also leaves the launcher `WIPE.flag` with the next map'
 | --- | --- |
 | Retry, forced wipe | With AFKPanel's release check open, a deferral means the update did not install the new build: the plugin tries again after `Forced wipe: after a failed update, retry after these many minutes` (5, 10, 20, then 30), counted from the boot that found it, each a 5-minute announced restart. As soon as the new build is installed it wipes without comparing. Without AFKPanel: every `Forced wipe: try again every this many minutes` (30) from the last restart. |
 | Window, forced wipe | `Forced wipe: give up this many hours after the release moment` (6), counted from when AFKPanel's release check opened, or from 19:00 London without it. After it the plugin stops and reports that no update arrived, or wipes once if `Wipe anyway` is `true`. |
-| No word from AFKPanel, forced wipe | `Forced wipe: go without AFKPanel's release check after this many minutes of silence` (30) after 19:00 London. The plugin then restarts with an update and the launcher's build comparison decides. |
+| No word from AFKPanel, forced wipe | `Forced wipe: go without AFKPanel's release check after this many minutes of silence` (30) after 19:00 London. The plugin then restarts with an update and the launcher's build comparison decides. The plan and the permission still apply: the yes AFKPanel last gave, and a permission fetched before the silence. |
 | Release check | Requires Hotwire 1.1.47 or later, connected to AFKPanel, with `Accept commands from the panel` on. A server that cannot hear it restarts at 19:00 London and the launcher's build comparison decides. |
 | `hotwire.update_mode off` | The launcher does not update, so a forced wipe applies only if the new build is already installed; otherwise it gives up at the end of the window |
 | A wipe entry | Always updates too |

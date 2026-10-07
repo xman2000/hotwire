@@ -17,7 +17,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Hotwire", "xman2000", "1.1.65")]
+    [Info("Hotwire", "xman2000", "1.1.66")]
     [Description("Scheduled restarts and updates. Announces, counts down, writes a flag, quits.")]
     internal class Hotwire : CovalencePlugin
     {
@@ -931,6 +931,8 @@ namespace Oxide.Plugins
             PrepareSession(initial);
             StartPanelReporting();
             StartBackups();
+            _wipePlan = ReadData<WipePlanState>(WipePlanFile) ?? new WipePlanState();
+            if (_wipePlan.Permits == null) _wipePlan.Permits = new List<WipePermitRecord>();
         }
 
         private void Unload()
@@ -1790,6 +1792,8 @@ namespace Oxide.Plugins
         // Why a wipe entry cannot run on this server, in words, or null.
         private string WipeBlocker(WipeEntry w)
         {
+            // Wipes are part of AFKPanel Pro, like backups: no plan that includes them, no wipe.
+            if (!WipePlanAllows()) return T("ErrWipePlan", null);
             if (!LauncherCan("wipe")) return T("ErrLauncherCannotWipe", null);
             // The same world twice needs a launcher that sets the old save aside, or the old world loads again.
             if (w.KeepSeed && !LauncherCan("wipe_same_map")) return T("ErrLauncherCannotWipeSameMap", null);
@@ -2468,8 +2472,10 @@ namespace Oxide.Plugins
                 // A launcher that takes backups backs up the stopped server before it wipes (asked for in the flag).
                 // Only an older launcher falls back to Rust's server.backup, which copies the whole save folder on
                 // the main thread, uncompressed.
-                _wipeBackupByLauncher = _wipeBackup && LauncherCan("backup");
-                if (_wipeBackup && !_wipeBackupByLauncher)
+                // Backups are part of Pro: the backup before a wipe is too, whoever takes it.
+                var backupAllowed = _wipeBackup && BackupPlanAllows();
+                _wipeBackupByLauncher = backupAllowed && LauncherCan("backup");
+                if (backupAllowed && !_wipeBackupByLauncher)
                 {
                     try { server.Command("server.backup"); Puts("Ran server.backup before the wipe (this launcher cannot take backups itself)."); }
                     catch (Exception ex) { PrintWarning($"server.backup failed before the wipe: {ex.Message}. Continuing."); }
@@ -2687,6 +2693,16 @@ namespace Oxide.Plugins
             body.Append("cycle ").Append(_wipeCycle).Append('\n');
             body.Append("expires ").Append(expires).Append('\n');
             if (_wipeBackupByLauncher) body.Append("backup 1").Append('\n');
+            // AFKPanel's signed permission for this wipe: a launcher that checks them wipes only with one that verifies.
+            var permit = HeldWipePermit(_wipeCycle, _wipeSeed, _wipeSize, _wipeMapUrl);
+            if (permit != null)
+            {
+                body.Append("server ").Append(permit.Server.ToString(CultureInfo.InvariantCulture)).Append('\n');
+                body.Append("permit ").Append(permit.Permit).Append('\n');
+                body.Append("permit_expires ").Append(permit.Expires.ToString(CultureInfo.InvariantCulture)).Append('\n');
+            }
+            else if (LauncherCan("wipe_permit"))
+                PrintWarning($"No permission from AFKPanel for wipe {_wipeCycle}, so the launcher will not wipe: the server restarts on the current map. AFKPanel signs one for a server whose plan includes wipes, when it can be reached.");
             if (_wipeForced)
             {
                 body.Append("forced 1").Append('\n');
@@ -3468,6 +3484,9 @@ namespace Oxide.Plugins
 
             // What to send, and how often, for this account's plan.
             if (now >= _policyDue) { PollPolicy(); return; }
+
+            // Wipes are Pro: a permission for the next wipe, up to a day ahead, so an outage at wipe time does not stop it.
+            if (WipePermitDue()) { RequestWipePermit(); return; }
 
             if (SessionReportDue())
             {
@@ -6285,11 +6304,15 @@ namespace Oxide.Plugins
                     if (!Regex.IsMatch(cycle, "^[A-Za-z0-9._:-]{1,64}$"))
                     { status = "refused"; result = "a cycle id is required (1-64 of A-Z a-z 0-9 . _ : -)"; return; }
 
+                    // Wipes are part of Pro: AFKPanel queues one only on a plan with them, and the plugin checks again.
+                    if (!WipePlanAllows()) { status = "refused"; result = T("ErrWipePlan", null); return; }
+
                     _wipeSeed = seed;
                     _wipeSize = size;
                     _wipeMapUrl = "";
                     _wipeBlueprints = bp;
                     _wipeCycle = cycle;
+                    KeepCommandWipePermit(args, cycle, seed, size);
                     _wipeBackup = args["backup"] == null ? _config.Backups.BeforeWipe : BoolArg(args, "backup");   // default: the config's "Back up before a wipe"
                     _wipeForced = false;
                     _wipeArmedBuild = null;
@@ -8820,6 +8843,143 @@ namespace Oxide.Plugins
         // when the panel cannot be reached -- the last answer it gave, for up to
         // 30 days. A panel outage never stops a paying server's backups (rule 1);
         // a lapsed plan cannot keep them going for ever offline.
+        // --- Wipes are part of Pro (wipes need the plan, and a launcher that checks them needs AFKPanel's permission) ---
+
+        private const string WipePlanFile = "Hotwire/wipe_plan";
+        private const string WipePermitPath = "/api/v1/wipe-permit";
+        private const int WipePermitAheadHours = 24;              // a permission is fetched up to a day before its wipe
+        private WipePlanState _wipePlan = new WipePlanState();
+        private DateTime _wipePermitNextAsk = DateTime.MinValue;
+
+        private class WipePlanState
+        {
+            public bool PlanAllows;
+            public DateTime? PlanCheckedUtc;
+            public List<WipePermitRecord> Permits = new List<WipePermitRecord>();
+        }
+
+        private class WipePermitRecord
+        {
+            public string Cycle = "", Seed = "", Size = "", LevelUrl = "";
+            public long Expires;
+            public long Server;
+            public string Permit = "";
+        }
+
+        // Whether the account's plan includes wipes: the panel's policy, or -- when the panel cannot be reached -- the
+        // last answer it gave, for up to 30 days, exactly as for backups. An unconnected server, or one that never heard
+        // yes, does not wipe.
+        private bool WipePlanAllows()
+        {
+            if (_policy != null)
+            {
+                if (_wipePlan.PlanAllows != _policy.Wipes || _wipePlan.PlanCheckedUtc == null || (DateTime.UtcNow - _wipePlan.PlanCheckedUtc.Value).TotalHours >= 24)
+                {
+                    _wipePlan.PlanAllows = _policy.Wipes;
+                    _wipePlan.PlanCheckedUtc = DateTime.UtcNow;
+                    WriteData(WipePlanFile, _wipePlan);
+                }
+                return _policy.Wipes;
+            }
+            return _wipePlan.PlanAllows && _wipePlan.PlanCheckedUtc != null && (DateTime.UtcNow - _wipePlan.PlanCheckedUtc.Value).TotalDays < BackupPlanMemoryDays;
+        }
+
+        private static long UnixNow() => (long)(DateTime.UtcNow - UnixEpoch).TotalSeconds;
+
+        // A held permission for exactly this wipe and map, still in date.
+        private WipePermitRecord HeldWipePermit(string cycle, string seed, string size, string levelUrl)
+        {
+            var now = UnixNow();
+            return _wipePlan.Permits.FirstOrDefault(p => p.Cycle == (cycle ?? "") && p.Seed == (seed ?? "") && p.Size == (size ?? "")
+                && p.LevelUrl == (levelUrl ?? "") && p.Expires > now);
+        }
+
+        // The next wipe this server needs a permission for and does not hold: the one being counted down to, then any
+        // scheduled or forced wipe due within a day. Null when there is none, or the plan has no wipes.
+        private WipePermitRecord WipePermitWanted()
+        {
+            if (!WipePlanAllows()) return null;
+            var nowUtc = DateTime.UtcNow;
+            if (_countdownActive && _countdownIsWipe && !string.IsNullOrEmpty(_wipeCycle))
+            {
+                var until = _wipeForced && _wipeWindowEndUtc != null ? _wipeWindowEndUtc.Value : nowUtc.AddHours(3);
+                var armed = new WipePermitRecord { Cycle = _wipeCycle, Seed = _wipeSeed ?? "", Size = _wipeSize ?? "", LevelUrl = _wipeMapUrl ?? "",
+                    Expires = (long)(until.AddHours(1) - UnixEpoch).TotalSeconds };
+                if (HeldWipePermit(armed.Cycle, armed.Seed, armed.Size, armed.LevelUrl) == null) return armed;
+            }
+
+            var now = DateTime.Now;
+            foreach (var e in _config.Wipes)
+            {
+                // A seed is drawn when the entry is saved; one without (drawn at the countdown) is asked for then.
+                if (!e.Enabled || string.IsNullOrWhiteSpace(e.Seed)) continue;
+                WipePermitRecord want;
+                if (e.Forced)
+                {
+                    var release = ForcedCycleMoment(now);
+                    if (release == null || ForcedCycleDone(e, release.Value) || (release.Value - now).TotalHours > WipePermitAheadHours) continue;
+                    var start = release.Value < now ? now : release.Value;
+                    want = new WipePermitRecord { Cycle = $"forced-{e.Id}-{release.Value:yyyyMM}",
+                        Expires = (long)(start.ToUniversalTime().AddHours(Math.Max(0.5, _config.General.ForcedWipeWindowHours) + 1) - UnixEpoch).TotalSeconds };
+                }
+                else
+                {
+                    var next = NextOccurrence(e, now);
+                    if (next == null || (next.Value - now).TotalHours > WipePermitAheadHours) continue;
+                    want = new WipePermitRecord { Cycle = $"wipe-{e.Id}-{next.Value:yyyyMMdd}",
+                        Expires = (long)(next.Value.ToUniversalTime().AddHours(3) - UnixEpoch).TotalSeconds };
+                }
+                // Exactly what the flag will carry (ArmWipeFrom): the seed, the size and the map address as saved.
+                want.Seed = (e.Seed ?? "").Trim();
+                want.Size = (e.Size ?? "").Trim();
+                want.LevelUrl = (e.MapUrl ?? "").Trim();
+                if (HeldWipePermit(want.Cycle, want.Seed, want.Size, want.LevelUrl) == null) return want;
+            }
+            return null;
+        }
+
+        // Asks AFKPanel for one wipe's permission. Asked again no sooner than 5 minutes later, whatever the answer:
+        // a refusal is a fact about the plan, and the next ask finds out whether it changed.
+        private bool WipePermitDue() => DateTime.UtcNow >= _wipePermitNextAsk && WipePermitWanted() != null;
+
+        private void RequestWipePermit()
+        {
+            var want = WipePermitWanted();
+            _wipePermitNextAsk = DateTime.UtcNow.AddMinutes(5);
+            if (want == null) return;
+            var body = new JObject { ["cycle"] = want.Cycle, ["seed"] = want.Seed, ["size"] = want.Size, ["levelurl"] = want.LevelUrl, ["expires"] = want.Expires }
+                .ToString(Formatting.None);
+            PanelRequest("POST", WipePermitPath, body, response =>
+            {
+                var data = JObject.Parse(response)["data"] as JObject;
+                if (data == null || data["permitted"]?.Type != JTokenType.Boolean || !(bool)data["permitted"])
+                {
+                    Puts($"AFKPanel gave no permission for wipe {want.Cycle}: {(string)JObject.Parse(response)["message"] ?? "no reason given"}");
+                    return;
+                }
+                want.Permit = (string)data["permit"] ?? "";
+                want.Expires = data["expires"]?.Type == JTokenType.Integer ? (long)data["expires"] : 0;
+                want.Server = data["server"]?.Type == JTokenType.Integer ? (long)data["server"] : 0;
+                if (want.Permit.Length == 0 || want.Expires <= UnixNow() || want.Server <= 0) return;
+                _wipePlan.Permits.RemoveAll(p => p.Cycle == want.Cycle || p.Expires <= UnixNow());
+                _wipePlan.Permits.Add(want);
+                WriteData(WipePlanFile, _wipePlan);
+                Puts($"AFKPanel permitted wipe {want.Cycle}, until {DateTimeOffset.FromUnixTimeSeconds(want.Expires).UtcDateTime:yyyy-MM-dd HH:mm} UTC.");
+            }, signedResponse: true);
+        }
+
+        // A wipe sent from AFKPanel carries its permission in the command, signed when it was queued.
+        private void KeepCommandWipePermit(JObject args, string cycle, string seed, string size)
+        {
+            var permit = ((string)args["permit"] ?? "").Trim();
+            var expires = args["permit_expires"]?.Type == JTokenType.Integer ? (long)args["permit_expires"] : 0;
+            var server = args["permit_server"]?.Type == JTokenType.Integer ? (long)args["permit_server"] : 0;
+            if (permit.Length == 0 || expires <= UnixNow() || server <= 0) return;
+            _wipePlan.Permits.RemoveAll(p => p.Cycle == cycle || p.Expires <= UnixNow());
+            _wipePlan.Permits.Add(new WipePermitRecord { Cycle = cycle, Seed = seed, Size = size, LevelUrl = "", Expires = expires, Server = server, Permit = permit });
+            WriteData(WipePlanFile, _wipePlan);
+        }
+
         private bool BackupPlanAllows()
         {
             if (_policy != null)
@@ -9607,6 +9767,7 @@ namespace Oxide.Plugins
             public bool Positions;            // send player positions; false unless the panel says true
             public bool Backups;              // the plan includes backups; false unless the panel says true
             public bool Chat;                 // send chat lines; false unless the panel says true (chat is part of Pro)
+            public bool Wipes;                // the plan includes wipes; false unless the panel says true
             public DateTime ReceivedUtc;
         }
 
@@ -9661,6 +9822,8 @@ namespace Oxide.Plugins
                     Backups = data["backups"] != null && data["backups"].Type == JTokenType.Boolean && (bool)data["backups"],
                     // Chat likewise: only true means the plan includes it. Joins, leaves and reports are not chat.
                     Chat = data["chat"] != null && data["chat"].Type == JTokenType.Boolean && (bool)data["chat"],
+                    // Wipes likewise: only true means the plan includes them (wipes are part of Pro, like backups).
+                    Wipes = data["wipes"] != null && data["wipes"].Type == JTokenType.Boolean && (bool)data["wipes"],
                     ReceivedUtc = DateTime.UtcNow
                 };
 
@@ -12697,6 +12860,7 @@ namespace Oxide.Plugins
                 ["ErrBadBlueprints"] = "\"{0}\" is not a blueprint action. Use keep, rename or delete.",
                 ["ErrNoLondonZone"] = "This machine has no Europe/London time zone, so the forced wipe's release moment cannot be worked out.",
                 ["ErrLauncherCannotWipe"] = "The launcher on this server cannot wipe: it needs a Hotwire launcher with the wipe capability.",
+                ["ErrWipePlan"] = "Wipes are part of AFKPanel Pro. This server's account does not include them, so no wipe runs.",
                 ["ErrLauncherCannotWipeSameMap"] = "The same seed every wipe needs Hotwire launcher 1.1.26 (Windows) or 1.1.11 (Linux) or later: an older one would load the old world again.",
                 ["ErrLauncherCannotWipeCustomMap"] = "A custom map needs Hotwire launcher 1.1.26 (Windows) or 1.1.11 (Linux) or later.",
                 ["ErrBadMapUrl"] = "{0} is not a map address: use an http or https address with no spaces or quotes, at most 500 characters.",

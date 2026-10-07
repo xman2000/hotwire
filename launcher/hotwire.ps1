@@ -15,8 +15,8 @@
 $ErrorActionPreference = 'Stop'
 # Who this launcher is, for the plugin: written to oxide\data\Hotwire\launcher.json before every start. The plugin
 # offers only the features in the capability list; settings_file means the settings come from hotwire.cfg.
-$LauncherVersion = '1.1.30'
-$LauncherCapabilities = 'supervise,update,framework_verify,crash_backstop,log_rotate,convar_persist,wipe,wipe_same_map,wipe_custom_map,backup,settings_file,rcon_optional'
+$LauncherVersion = '1.1.32'
+$LauncherCapabilities = 'supervise,update,framework_verify,crash_backstop,log_rotate,convar_persist,wipe,wipe_same_map,wipe_custom_map,backup,settings_file,rcon_optional,wipe_permit'
 $root = $PSScriptRoot
 $cfg = Join-Path $root 'hotwire.cfg'
 $secretsCfg = Join-Path $root 'hotwire-secrets.cfg'
@@ -409,6 +409,26 @@ function Test-ForcedWipeWaits {
     return $false
 }
 
+# AFKPanel's public key for wipe permissions, as the RSA modulus and exponent (Windows PowerShell 5.1 cannot read a PEM).
+# Wipes are part of AFKPanel Pro: a wipe runs only with AFKPanel's signed permission for this server, this wipe and this
+# map, checked here. The private half is AFKPanel's alone.
+$WipePermitModulus = 'otv0GyyUvwmrVHLcq+1yFZHmZbxBIr+coTcMKK2trfccv/9i/k8+7SjO1k/TnP0qRkOn7swCfYYovTvxeFB/7DYAMCzdPOM74ZZ+KPfCAjdv+hQ7F57VooZd+/nCdbc6UK/2Md5obkocKveFsZDGDXTS4b3P1wt9VlV6x/VlObVqmWSBPAyhLHaS3xiaC7jjr2x9HZk5aGXxNvk/xgt8W8Tt26vAr1xc3INBmfK49fFgCYQrj+rKOtnRkTbEd0/f/TY8qg5uUgOC6cSQkt2US0WRrC6izC/8cBt8WXH6JNHs3+Rqogrbl76AMQjvQTZ5swNbZvxZEo+LRdcAKJdjVQWnxfmBLc/4tlbfeCh4NoLpLqcgAttxRLqom6/6xNRVbB2eWUlx8qYFIecxknGL++ylOpnqKbNtA3KziFvH+GVqvsf1kSW8dDAeRQLwdY3JoIybQNKkd3DZBk8a4HVs/HzyrC8U7xraCdmG2FqxQY/WKnYFvvz0u8CFAebxRukh'
+$WipePermitExponent = 'AQAB'
+
+# Whether a wipe permission verifies: RSA, SHA-256, over the seven lines AFKPanel signed, rebuilt from the flag.
+function Test-WipePermit([string]$server, [string]$cycle, [string]$seed, [string]$size, [string]$levelUrl, [string]$expires, [string]$permit, [string]$modulus, [string]$exponent) {
+    try {
+        $text = 'hotwire-wipe-permit 1' + "`n" + 'server ' + $server + "`n" + 'cycle ' + $cycle + "`n" + 'seed ' + $seed + "`n" + 'size ' + $size + "`n" + 'levelurl ' + $levelUrl + "`n" + 'expires ' + $expires + "`n"
+        $bytes = (New-Object Text.UTF8Encoding($false)).GetBytes($text)
+        $params = New-Object Security.Cryptography.RSAParameters
+        $params.Modulus = [Convert]::FromBase64String($modulus)
+        $params.Exponent = [Convert]::FromBase64String($exponent)
+        $rsa = New-Object Security.Cryptography.RSACryptoServiceProvider
+        $rsa.ImportParameters($params)
+        return [bool]$rsa.VerifyData($bytes, 'SHA256', [Convert]::FromBase64String($permit))
+    } catch { return $false }
+}
+
 function Invoke-Edits {
     $wipeName = $env:WIPE_FLAG; if (-not $wipeName) { $wipeName = 'WIPE.flag' }
 
@@ -447,6 +467,17 @@ function Invoke-Edits {
             elseif ($size -and ($size -notmatch '^\d{1,5}$' -or [int]$size -lt 1000 -or [int]$size -gt 6000)) { $why = 'size is not a whole number from 1000 to 6000' }
             elseif ('keep', 'rename', 'delete' -notcontains $bp) { $why = 'blueprints must be keep, rename or delete' }
             elseif ($levelUrl -and ($levelUrl -cnotmatch '^https?://\S+$' -or $levelUrl -match '["''`$\\]' -or $levelUrl.Length -gt 500)) { $why = 'the map address must be an http:// or https:// address with no quote, $ or backslash' }
+            # Wipes are part of AFKPanel Pro: AFKPanel's permission for this server, this wipe and this map, checked against
+            # the values exactly as the flag carries them, before anything is backed up, written or renamed.
+            if (-not $why) {
+                $permit = [string]$w['permit']; $permitExpires = [string]$w['permit_expires']; $permitServer = [string]$w['server']
+                $connect = Read-JsonFile (Join-Path $root 'hotwire\connect.json')
+                $myServer = ''; if ($connect -and $null -ne $connect.server_id) { $myServer = [string]$connect.server_id }
+                if (-not $permit) { $why = 'no permission from AFKPanel (wipes are part of AFKPanel Pro)' }
+                elseif ($permitExpires -notmatch '^\d+$' -or [long]$permitExpires -le $now) { $why = 'AFKPanel''s permission has expired' }
+                elseif (-not $myServer -or $permitServer -ne $myServer) { $why = 'AFKPanel''s permission is for another server' }
+                elseif (-not (Test-WipePermit $permitServer $cycle $seed $size $levelUrl $permitExpires $permit $WipePermitModulus $WipePermitExponent)) { $why = 'AFKPanel''s permission does not match this wipe' }
+            }
             # A forced wipe's backup waits until the update is known to have arrived (above).
             if (-not $why -and $forced -eq '1' -and $w['backup'] -eq '1' -and $env:BACKUPS -ne '0') {
                 Say 'Backing up the stopped server before the wipe...'

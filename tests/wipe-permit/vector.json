@@ -1,0 +1,25 @@
+{
+    "note": "Test-only key pair; never the production key. The same vectors AFKPanel checks.",
+    "vectors": [
+        {
+            "server": 42,
+            "cycle": "wipe-0193f2c1-20261105",
+            "seed": "1847362",
+            "size": "4000",
+            "levelurl": "",
+            "expires": 1793836800,
+            "canonical": "hotwire-wipe-permit 1\nserver 42\ncycle wipe-0193f2c1-20261105\nseed 1847362\nsize 4000\nlevelurl \nexpires 1793836800\n",
+            "permit": "PUkLxKMbtfHGGJxxGrWuIFv0CM5ZE05zcg0nJeZj0bb092eVDnXdeEErNPvKB3XaYchDsXNicCm9VaLeoevpTsRxks56PVwadfIoeF8SYs4PgYLi2jauX2ROYSdanGvOHFNCtnCalbVtEm+/yWddZbEs+b+9UinI592Cdm2NK+fokK7AJ/yEhOpW6WjHq+RBHejZc6m22voMxZXlnNnQAoiiUGr+gVx2e22HJbKSKCJjwccGs6z5x9m26WfGp25o58XMB6SP6Q0B2W++CBycJEzR9BjJ28ct544IdKfBdldlLzI+8vZiFMJZXl13lUXA1roS86scLxAFeM2tt7TPGw=="
+        },
+        {
+            "server": 7,
+            "cycle": "wipe-x-20261105",
+            "seed": "1",
+            "size": "",
+            "levelurl": "https://maps.example.com/island.map",
+            "expires": 1793836800,
+            "canonical": "hotwire-wipe-permit 1\nserver 7\ncycle wipe-x-20261105\nseed 1\nsize \nlevelurl https://maps.example.com/island.map\nexpires 1793836800\n",
+            "permit": "NsnA3TsZDmnBvONRf1w/FLDvzXDOaCSHlZqauQDzgUdlOOxCpX6eE/XhbE+kWpsEQ2bYXWOUCUC4pJiGP9ujChcqtthl0M6hDjcgJwvcCQigmxEDgnP+3J02foVrfdtJ9hJ5DMjM1oJeYhUku1u1PYsYpH4YgGoYCe9KZtuMMZ/UGDI+p0hIpkJI7pKDold8Lz1wW9vqNZYvUm7Xmdchb0EfVYrS1O4BTOxrN1qgvqE+8G7R6yckn4iz+n/6fymjEQgcB/RxEauxBdsTZsWjHh7ndT5mY1dJ9PxmzZjfuNGqs4Jz/eJlYpsB79AmE8634wekckvImiY65epVJjEhTg=="
+        }
+    ]
+}
