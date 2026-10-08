@@ -15,7 +15,7 @@
 $ErrorActionPreference = 'Stop'
 # Who this launcher is, for the plugin: written to oxide\data\Hotwire\launcher.json before every start. The plugin
 # offers only the features in the capability list; settings_file means the settings come from hotwire.cfg.
-$LauncherVersion = '1.1.32'
+$LauncherVersion = '1.1.33'
 $LauncherCapabilities = 'supervise,update,framework_verify,crash_backstop,log_rotate,convar_persist,wipe,wipe_same_map,wipe_custom_map,backup,settings_file,rcon_optional,wipe_permit'
 $root = $PSScriptRoot
 $cfg = Join-Path $root 'hotwire.cfg'
@@ -55,6 +55,7 @@ $hwSettings = @{
     'hotwire.rcon_password_min'        = @('RCON_PASSWORD_MIN', 'int1', '8')
     'hotwire.check_options'            = @('CHECK_OPTIONS', 'bool', '1')
     'hotwire.backups'                  = @('BACKUPS', 'bool', '1')
+    'hotwire.hook_timeout_minutes'     = @('HOOK_TIMEOUT_MINUTES', 'int1', '30')
 }
 # Rust convars the launcher reads itself: kind, default.
 $cvSettings = @{
@@ -1149,7 +1150,16 @@ function Invoke-Send {
     } finally { $lock.Dispose() }
 }
 
-# Writes the report HOTWIRE_REPORT names: session or launcher.
+# The session report's "update" field: what this start's update did.
+function Get-UpdateJson {
+    $bool = { param($v) if ([string]$v -eq '1') { 'true' } else { 'false' } }
+    $kept = (Test-Path -LiteralPath (Join-Path $root 'UPDATE.flag')) -or (Test-Path -LiteralPath (Join-Path $root 'VALIDATE.flag'))
+    $since = ''
+    try { if (Test-Path -LiteralPath $UpdateStamp) { $since = ',"days_since_success":' + [long][math]::Floor(((Get-Date) - (Get-Item -LiteralPath $UpdateStamp).LastWriteTime).TotalDays) } } catch { }
+    return ',"update":{"attempted":' + (& $bool $env:HOTWIRE_UPDATE_ATTEMPTED) + ',"steam_ok":' + (& $bool $env:STEAM_OK) + ',"framework_ok":' + (& $bool $env:FRAMEWORK_OK) + ',"flag_kept":' + $(if ($kept) { 'true' } else { 'false' }) + $since + '}'
+}
+
+# Writes the report HOTWIRE_REPORT names: session (after a run), session_start (as the server starts) or launcher.
 function Invoke-Report {
     $bool = { param($v) if ([string]$v -eq '1') { 'true' } else { 'false' } }
     if ($env:HOTWIRE_REPORT -eq 'session') {
@@ -1184,11 +1194,14 @@ function Invoke-Report {
                 }
             } catch { }
         }
-        $kept = (Test-Path -LiteralPath (Join-Path $root 'UPDATE.flag')) -or (Test-Path -LiteralPath (Join-Path $root 'VALIDATE.flag'))
-        $since = ''
-        try { if (Test-Path -LiteralPath $UpdateStamp) { $since = ',"days_since_success":' + [long][math]::Floor(((Get-Date) - (Get-Item -LiteralPath $UpdateStamp).LastWriteTime).TotalDays) } } catch { }
-        $p += ',"update":{"attempted":' + (& $bool $env:HOTWIRE_UPDATE_ATTEMPTED) + ',"steam_ok":' + (& $bool $env:STEAM_OK) + ',"framework_ok":' + (& $bool $env:FRAMEWORK_OK) + ',"flag_kept":' + $(if ($kept) { 'true' } else { 'false' }) + $since + '}}'
+        $p += (Get-UpdateJson) + (Get-LauncherHooksJson) + '}'
         Add-SpoolReport 'session' $p
+    } elseif ($env:HOTWIRE_REPORT -eq 'session_start') {
+        # As the server starts, keyed by the same started_at as the report after it exits, so AFKPanel shows where a
+        # slow start went while the server runs.
+        $started = [string]$env:HOTWIRE_STARTED_AT
+        if ($started -notmatch '\A\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ\z') { return }
+        Add-SpoolReport 'session' ('{"started_at":"' + $started + '"' + (Get-UpdateJson) + (Get-LauncherHooksJson) + '}')
     } elseif ($env:HOTWIRE_REPORT -eq 'launcher') {
         $streak = 0; [void][int]::TryParse([string]$env:CRASH_STREAK, [ref]$streak)
         $log = @(Get-ChildItem -LiteralPath (Join-Path $root 'logs') -Filter 'server_crash_*.txt' -File -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1)
@@ -1570,10 +1583,49 @@ function Update-Oxide([string]$buildBefore) {
     }
 }
 
-# One of your own hook files, in a cmd of its own, so its variables and any exit stay inside it. False when it failed.
-function Invoke-Hook([string]$path) {
-    $p = Start-Process -FilePath 'cmd.exe' -ArgumentList ('/d /c call ' + [char]34 + $path + [char]34) -NoNewWindow -Wait -PassThru
-    return ($p.ExitCode -eq 0)
+# One of your own hook files, in a cmd of its own, so its variables and any exit stay inside it. A hook still running at
+# hotwire.hook_timeout_minutes is stopped with everything it started, and the start carries on. Its time, exit code and
+# whether it was stopped go to AFKPanel in the session report ($slot is before or after). Returns ok, failed or stopped.
+$script:HookRuns = @{}
+$script:HookLimitSeconds = $null   # the launcher's own tests set it; they cannot wait a minute
+$script:HookShellForTests = $null  # and run the hook with this instead of cmd.exe, off Windows
+function Invoke-Hook([string]$path, [string]$slot) {
+    $limit = if ($script:HookLimitSeconds) { [double]$script:HookLimitSeconds } else { 60.0 * (Get-Num 'HOOK_TIMEOUT_MINUTES' 30) }
+    $clock = [Diagnostics.Stopwatch]::StartNew()
+    if ($script:HookShellForTests) {
+        $p = Start-Process -FilePath $script:HookShellForTests -ArgumentList ([char]34 + $path + [char]34) -NoNewWindow -PassThru
+    } else {
+        $p = Start-Process -FilePath 'cmd.exe' -ArgumentList ('/d /c call ' + [char]34 + $path + [char]34) -NoNewWindow -PassThru
+    }
+    $null = $p.Handle  # keeps the exit code readable once the process has gone
+    $stopped = $false
+    while (-not $p.WaitForExit(500)) {
+        if ($clock.Elapsed.TotalSeconds -ge $limit) {
+            $stopped = $true
+            Say ((Split-Path -Leaf $path) + ' was still running after ' + (Get-Num 'HOOK_TIMEOUT_MINUTES' 30) + ' minutes (hotwire.hook_timeout_minutes); stopping it and starting anyway.')
+            $taskkill = Get-Command 'taskkill.exe' -ErrorAction SilentlyContinue
+            if ($taskkill) { & $taskkill.Source /T /F /PID $p.Id *> $null } else { try { $p.Kill($true) } catch { try { $p.Kill() } catch { } } }
+            [void]$p.WaitForExit(10000)
+            break
+        }
+    }
+    $clock.Stop()
+    $seconds = ([math]::Round($clock.Elapsed.TotalSeconds, 1)).ToString('0.0', [Globalization.CultureInfo]::InvariantCulture)
+    if ($stopped) {
+        $script:HookRuns[$slot] = '{"seconds":' + $seconds + ',"exit_code":null,"timed_out":true}'
+        return 'stopped'
+    }
+    $code = [int]$p.ExitCode
+    $script:HookRuns[$slot] = '{"seconds":' + $seconds + ',"exit_code":' + $code + ',"timed_out":false}'
+    if ($code -eq 0) { return 'ok' } else { return 'failed' }
+}
+
+# The hooks this start ran, as the session report's "launcher_hooks" field, or nothing when neither ran.
+function Get-LauncherHooksJson {
+    $parts = @()
+    foreach ($slot in @('before', 'after')) { if ($script:HookRuns.ContainsKey($slot)) { $parts += '"' + $slot + '":' + $script:HookRuns[$slot] } }
+    if ($parts.Count -eq 0) { return '' }
+    return ',"launcher_hooks":{' + ($parts -join ',') + '}'
 }
 
 # Keep the previous log: -logfile empties the file on every start, so without this a restart would erase the log of
@@ -1809,6 +1861,7 @@ function Invoke-Main([string[]]$argv) {
                 $doUpdate = $false
             }
             $env:DO_UPDATE = $(if ($doUpdate) { '1' } else { '0' })
+            $script:HookRuns = @{}
 
             if (-not $checkOnly) {
                 # Back up the stopped server before an update or a wipe changes it.
@@ -1817,7 +1870,7 @@ function Invoke-Main([string[]]$argv) {
                 # starts anyway. Check mode runs no hooks.
                 if (Test-Path -LiteralPath $HookBefore) {
                     Say 'Running hotwire-before.bat...'
-                    if (-not (Invoke-Hook $HookBefore)) { Say 'hotwire-before.bat failed; starting anyway.' }
+                    if ((Invoke-Hook $HookBefore 'before') -eq 'failed') { Say 'hotwire-before.bat failed; starting anyway.' }
                 }
             }
 
@@ -1858,7 +1911,7 @@ function Invoke-Main([string[]]$argv) {
                 # hotwire-after.bat runs after every update attempt, successful or not.
                 if (Test-Path -LiteralPath $HookAfter) {
                     Say 'Running hotwire-after.bat...'
-                    if (-not (Invoke-Hook $HookAfter)) { Say 'hotwire-after.bat failed; starting anyway.' }
+                    if ((Invoke-Hook $HookAfter 'after') -eq 'failed') { Say 'hotwire-after.bat failed; starting anyway.' }
                 }
             } elseif (-not $checkOnly) {
                 Say 'Restarting without updating Rust or Oxide.'
@@ -1884,9 +1937,15 @@ function Invoke-Main([string[]]$argv) {
         # ---- start ------------------------------------------------------------------------------------------------------
         Move-ServerLog $crashStreak
         Write-LauncherState
+        $startedAt = Get-UtcStamp ([DateTimeOffset]::UtcNow)
+        $env:HOTWIRE_REPORT = 'session_start'; $env:HOTWIRE_STARTED_AT = $startedAt
+        $env:HOTWIRE_UPDATE_ATTEMPTED = $(if ($updateAttempted) { '1' } else { '0' })
+        $env:STEAM_OK = $(if ($steamOk) { '1' } else { '0' }); $env:FRAMEWORK_OK = $(if ($frameworkOk) { '1' } else { '0' })
+        try { Invoke-Report } catch { }
+        $env:HOTWIRE_REPORT = ''
+        # Held reports go in the background, this start's among them; the server starts without waiting.
         Start-BackgroundSend
         Say 'Starting the server...'
-        $startedAt = Get-UtcStamp ([DateTimeOffset]::UtcNow)
         $runStart = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
         $rustExit = 0
         try { $rustExit = Invoke-Launch } catch { Say ('Could not start the server: ' + $_.Exception.Message); $rustExit = -1 }

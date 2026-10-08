@@ -35,6 +35,9 @@ jobs:
       - name: The wipe permission
         run: bash tests/wipe-permit/run.sh
 
+      - name: "The launchers' hooks, their time limit and the start report"
+        run: bash tests/launcher-hooks/run.sh
+
       - name: Shell scripts parse
         run: |
           bash -n launcher/hotwire.sh

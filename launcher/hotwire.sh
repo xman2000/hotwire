@@ -21,7 +21,7 @@
 #     hotwire.cfg. The plugin works out this file's code hash itself, and
 #     AFKPanel compares it with the released launchers'; nothing waits on that
 #     answer.
-HOTWIRE_LAUNCHER_VERSION="1.1.18-linux"
+HOTWIRE_LAUNCHER_VERSION="1.1.19-linux"
 HOTWIRE_LAUNCHER_CAPABILITIES="supervise,update,framework_verify,crash_backstop,log_rotate,convar_persist,wipe,wipe_same_map,wipe_custom_map,backup,settings_file,rcon_optional,stop_saves,wipe_permit"
 
 # ======================================================================
@@ -99,6 +99,7 @@ set_defaults() {
     STOP_ASK_SECONDS="5"; STOP_SAVE_SECONDS="90"
     RESTART_ON_EXIT="1"; RESTART_DELAY="15"; CRASH_SECONDS="60"; MAX_CRASH_STREAK="10"; CRASH_BACKOFF="1"
     ROTATE_LOGS="1"; LOG_KEEP="14"; RCON_PASSWORD_MIN="8"; CHECK_OPTIONS="1"; BACKUPS="1"
+    HOOK_TIMEOUT_MINUTES="30"
     EXTRA_CONVARS=()
 }
 set_defaults
@@ -213,6 +214,7 @@ declare -A HW_SETTINGS=(
     [hotwire.rcon_password_min]="RCON_PASSWORD_MIN int1"
     [hotwire.check_options]="CHECK_OPTIONS bool"
     [hotwire.backups]="BACKUPS bool"
+    [hotwire.hook_timeout_minutes]="HOOK_TIMEOUT_MINUTES int1"
 )
 # Rust convars the launcher itself reads -> "<VARIABLE> <kind>". "critical" kinds
 # are never defaulted when a line fails (see above).
@@ -1193,10 +1195,23 @@ report_session() {  # <exit_code> <crashed true|false>
             p="$p,\"log_tail\":$(json_text "$(tail -n 40 "$LOGFILE" 2>/dev/null | tail -c 8000 | tr -d '\000-\010\013\014\016-\037')")"
         fi
     fi
+    p="$p$(update_json)$(launcher_hooks_json)}"
+    hw_send session "$p"
+}
+
+# The session report's "update" field: what this start's update did.
+update_json() {
     local days=""
     if [ -f "$UPDATE_STAMP" ]; then days=$(( ( $(date +%s) - $(stat -c %Y "$UPDATE_STAMP" 2>/dev/null || date +%s) ) / 86400 )); fi
-    p="$p,\"update\":{\"attempted\":$(_bool "$UPDATE_ATTEMPTED"),\"steam_ok\":$(_bool "$STEAM_OK"),\"framework_ok\":$(_bool "$FRAMEWORK_OK"),\"flag_kept\":$(_bool "$UPDATE_FLAG_KEPT")${days:+,\"days_since_success\":$days}}}"
-    hw_send session "$p"
+    printf ',"update":{"attempted":%s,"steam_ok":%s,"framework_ok":%s,"flag_kept":%s%s}' \
+        "$(_bool "$UPDATE_ATTEMPTED")" "$(_bool "$STEAM_OK")" "$(_bool "$FRAMEWORK_OK")" "$(_bool "$UPDATE_FLAG_KEPT")" "${days:+,\"days_since_success\":$days}"
+}
+
+# A session report as the server starts, keyed by the same started_at as the one
+# after it exits, so AFKPanel shows where a slow start went while the server runs.
+report_session_start() {
+    [ "$REPORT_ENABLED" = "1" ] || return 0
+    hw_send session "{\"started_at\":\"$STARTED_AT\"$(update_json)$(launcher_hooks_json)}"
 }
 
 # The launcher report: sent when the crash-streak backstop stops the server for
@@ -1862,11 +1877,52 @@ backup_before_launch() {
 # A hook: an admin's own script beside the launcher, run with bash. It never
 # blocks a start (a failure is logged) and never runs in check mode. Only the
 # admin writes these files; nothing Hotwire or the panel produces creates them.
-run_hook() {  # run_hook <file> <label>
+# It runs in its own process group, so a hook still running at
+# hotwire.hook_timeout_minutes is stopped with everything it started, and the
+# start carries on. How long it took goes to AFKPanel in the session report.
+HOOK_RUN_BEFORE=""; HOOK_RUN_AFTER=""
+run_hook() {  # run_hook <file> <label> <before|after>
     [ -f "$1" ] || return 0
-    log "Running $2 ($(basename "$1"))..."
+    local name; name="$(basename "$1")"
+    log "Running $2 ($name)..."
+    # HOOK_LIMIT_SECONDS is for the launcher's own tests (tests/launcher-hooks), which cannot wait a minute.
+    local limit="${HOOK_LIMIT_SECONDS:-$(( HOOK_TIMEOUT_MINUTES * 60 ))}" t0 t1 pid rc timed_out=0 tenths
+    t0="${EPOCHREALTIME/[.,]/}"
     # DO_UPDATE tells the hook whether this start updates: 1 or 0.
-    ( cd "$ROOT" && DO_UPDATE="${DO_UPDATE:-0}" bash "$1" ) || warn "$(basename "$1") exited non-zero; carrying on."
+    ( cd "$ROOT" && DO_UPDATE="${DO_UPDATE:-0}" exec setsid bash "$1" ) &
+    pid=$!
+    while kill -0 "$pid" 2>/dev/null; do
+        t1="${EPOCHREALTIME/[.,]/}"
+        if [ $(( (t1 - t0) / 1000000 )) -ge "$limit" ]; then
+            timed_out=1
+            warn "$name was still running after $HOOK_TIMEOUT_MINUTES minutes (hotwire.hook_timeout_minutes); stopping it and starting anyway."
+            kill -TERM -- "-$pid" 2>/dev/null
+            local waited=0
+            while kill -0 "$pid" 2>/dev/null && [ "$waited" -lt 10 ]; do sleep 1; waited=$((waited + 1)); done
+            kill -KILL -- "-$pid" 2>/dev/null
+            break
+        fi
+        sleep 0.2
+    done
+    wait "$pid" 2>/dev/null; rc=$?
+    t1="${EPOCHREALTIME/[.,]/}"
+    tenths=$(( (t1 - t0 + 50000) / 100000 ))
+    local run="{\"seconds\":$((tenths / 10)).$((tenths % 10)),\"exit_code\":"
+    if [ "$timed_out" = 1 ]; then run="$run"'null,"timed_out":true}'
+    else
+        run="$run$rc,\"timed_out\":false}"
+        [ "$rc" = 0 ] || warn "$name exited non-zero; carrying on."
+    fi
+    if [ "$3" = "before" ]; then HOOK_RUN_BEFORE="$run"; else HOOK_RUN_AFTER="$run"; fi
+}
+
+# The hooks this start ran, as the session report's "launcher_hooks" field, or
+# nothing when neither ran.
+launcher_hooks_json() {
+    local parts=""
+    [ -n "$HOOK_RUN_BEFORE" ] && parts="\"before\":$HOOK_RUN_BEFORE"
+    [ -n "$HOOK_RUN_AFTER" ] && parts="${parts:+$parts,}\"after\":$HOOK_RUN_AFTER"
+    [ -n "$parts" ] && printf ',"launcher_hooks":{%s}' "$parts"
 }
 
 # Backups yield the disk to the game through ionice. Where it is missing or not allowed (some containers and VPSs),
@@ -1980,14 +2036,15 @@ per_launch_prep() {
     # A backup of the stopped server, before an update or a wipe changes it.
     [ -z "$CHECK_ONLY" ] && backup_before_launch
     # hotwire-before.sh runs on every real start (not in check mode), before any update.
-    [ -z "$CHECK_ONLY" ] && run_hook "$HOOK_BEFORE" "the before-start hook"
+    HOOK_RUN_BEFORE=""; HOOK_RUN_AFTER=""
+    [ -z "$CHECK_ONLY" ] && run_hook "$HOOK_BEFORE" "the before-start hook" before
     if [ "$DO_UPDATE" = "1" ]; then
         UPDATE_ATTEMPTED=1
         steam_update
         framework_update
         finalize_update
         # hotwire-after.sh runs after an update attempt (success or not), like the .bat.
-        run_hook "$HOOK_AFTER" "the after-update hook"
+        run_hook "$HOOK_AFTER" "the after-update hook" after
     elif [ -z "$CHECK_ONLY" ]; then
         log "Plain restart: no update this pass."
     fi
@@ -2010,12 +2067,13 @@ per_launch_prep() {
 run_loop() {
     while :; do
         per_launch_prep
-        # Held reports go in the background; the server starts without waiting.
-        spool_kick
         rotate_log
         write_launcher_state
-        log "Starting server..."
         STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+        report_session_start
+        # Held reports go in the background, this start's among them; the server starts without waiting.
+        spool_kick
+        log "Starting server..."
         local start_ts end_ts run_secs rc crashed
         start_ts="$(date +%s)"
         backup_watch_start
