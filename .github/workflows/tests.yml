@@ -1,0 +1,44 @@
+# The checks every change to Hotwire passes before it reaches main: on each push to dev, and on each pull request to main,
+# which cannot merge until they pass. They run what can run outside a game: the plugin's request signing and report
+# rules (.NET), both launchers' signing and JSON escaping, and the wipe-permission check (bash and PowerShell).
+# Compiling the plugin against the game's own files is not here: that needs a Rust server's managed folder.
+name: Tests
+
+on:
+  push:
+    branches: [dev]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: PowerShell is present for the Windows launcher's checks
+        run: pwsh -NoProfile -Command '$PSVersionTable.PSVersion.ToString()'
+
+      - name: The plugin's signing and report rules
+        run: bash tests/plugin-signing/run.sh
+
+      - name: The launchers' signing and escaping
+        run: bash tests/launcher-signing/run.sh
+
+      - name: The wipe permission
+        run: bash tests/wipe-permit/run.sh
+
+      - name: Shell scripts parse
+        run: |
+          bash -n launcher/hotwire.sh
+          bash -n setup/hotwire-setup.sh
+          for f in launcher/hotwire.ps1 setup/hotwire-setup.ps1; do
+            pwsh -NoProfile -Command "\$e=\$null; [System.Management.Automation.Language.Parser]::ParseFile('$f',[ref]\$null,[ref]\$e) | Out-Null; if (\$e) { \$e; exit 1 } else { 'ok $f' }"
+          done

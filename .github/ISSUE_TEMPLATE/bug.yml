@@ -1,0 +1,45 @@
+name: Something is wrong
+description: Hotwire, the launcher or setup did something it should not, or did not do something it should.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Issues here are public. Leave out passwords, connect codes, keys and your server's address.
+        A security problem goes to security@afkpanel.com instead, never here.
+  - type: input
+    id: version
+    attributes:
+      label: Hotwire version
+      description: The plugin's version, from `hotwire check` in the server console, and the launcher's, from the first line it prints when it starts.
+      placeholder: plugin 1.1.66, launcher 1.1.18-linux
+    validations:
+      required: true
+  - type: dropdown
+    id: system
+    attributes:
+      label: Where the server runs
+      options:
+        - Windows
+        - Linux
+        - A Pterodactyl or Pelican host
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what you expected
+    validations:
+      required: true
+  - type: textarea
+    id: check
+    attributes:
+      label: Output of `hotwire check`
+      description: From the server console. Remove anything private before pasting.
+      render: text
+  - type: textarea
+    id: log
+    attributes:
+      label: Console or log lines from around that moment
+      description: From the launcher's window or `oxide/logs/oxide_<date>.txt`.
+      render: text

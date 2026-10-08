@@ -17,6 +17,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Every tag, so the notes can list what changed since the previous release.
+          fetch-depth: 0
 
       - name: Build the release files
         env:
@@ -29,10 +32,20 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: |
           plugin=$(grep -oP 'Info\("Hotwire", "xman2000", "\K[0-9.]+' plugin/Hotwire.cs)
+          previous=$(git describe --tags --abbrev=0 --match 'release-*' "${TAG}^" 2>/dev/null || true)
           {
             echo "Plugin ${plugin}. Download and install: https://afkpanel.com/get-started"
             echo
-            echo "What changed: see CHANGELOG.md at this tag."
+            echo "## What changed"
+            echo
+            if [ -n "$previous" ]; then
+              # The changelog lines added since the previous release, as written there.
+              git diff --unified=0 "$previous" HEAD -- CHANGELOG.md | sed -n 's/^+\([^+]\)/\1/p; s/^+$//p' | sed 's/ — unreleased$//'
+            else
+              echo "See CHANGELOG.md at this tag."
+            fi
+            echo
+            echo "Watch your server from any browser with [AFKPanel](https://afkpanel.com): [Get started](https://afkpanel.com/get-started) · [Documentation](https://afkpanel.com/docs) · [Pricing](https://afkpanel.com/pricing)"
             echo
             echo 'SHA-256:'
             echo '```'

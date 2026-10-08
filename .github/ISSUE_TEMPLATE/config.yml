@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: A problem with AFKPanel, the website
+    url: https://afkpanel.com/docs/report-a-problem
+    about: AFKPanel is a service, not this repository. Report problems with it there.
+  - name: Something not working as expected
+    url: https://afkpanel.com/docs/troubleshooting
+    about: The problems that come up most often, and what to do about each.
+  - name: A security problem
+    url: https://afkpanel.com/docs/report-a-problem
+    about: Never in a public issue. E-mail security@afkpanel.com.
