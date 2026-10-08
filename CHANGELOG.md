@@ -24,6 +24,22 @@ sit above a launcher `1.1.7`. Read the label, not the number.
 `hotwire check` prints the plugin's version. Each launcher prints its own
 version as the first line when it starts.
 
+## Plugin 1.1.67 — unreleased
+
+**Pseudonymous player data, and a month of held reports.**
+
+- At the pseudonymous sharing level the plugin now sends a pseudonym wherever the identified level sends a Steam ID:
+  joins and leaves, who is online, live map positions, and Steam IDs inside log lines. A pseudonym is `psn:` and 28 hex
+  characters, made on this machine from the Steam ID and a key AFKPanel issues to the account, so one player has the
+  same pseudonym on every server of that account. No player name is sent at this level. Chat and in-game reports are
+  still sent only at the identified level. Before this version the pseudonymous level sent what the anonymous level
+  sends.
+- Events queued under one sharing level are dropped when the level changes, rather than sent under the new one.
+- Reports and log lines that cannot reach AFKPanel are now kept for 30 days by default (was 7), so a paused server's
+  reports wait long enough to arrive when it is active again. The setting is
+  `Keep unsent reports and log lines for this many days`, up to 90. A config file written by an earlier version keeps
+  the number it already has.
+
 ## Launchers 1.1.33 (Windows) and 1.1.19-linux, setup 0.1.30 (Windows)
 
 **Your own hooks have a time limit, and AFKPanel sees how long they took.**

@@ -290,7 +290,7 @@ Reporting to AFKPanel. Nothing is sent until the Rust server has been connected 
 
 | Rule | Value |
 | --- | --- |
-| Player data | How much player data the account's servers send is chosen by the account owner in AFKPanel: counts only, anonymous, pseudonymous or identified. The plugin asks every 2 minutes and applies the level before anything is sent. Until AFKPanel has answered, or when an answer cannot be read, the level is counts only. There is no key for it in this file. |
+| Player data | How much player data the account's servers send is chosen by the account owner in AFKPanel: counts only, anonymous, pseudonymous or identified. The plugin asks every 2 minutes and applies the level before anything is sent. Until AFKPanel has answered, or when an answer cannot be read, the level is counts only. At pseudonymous, each Steam ID is replaced by a pseudonym made on this machine from a key AFKPanel issues to the account, the same on every server of the account, and no player names are sent. There is no key for it in this file. |
 | A command AFKPanel sends twice | Answered from `oxide/data/Hotwire/panel_commands.json`, kept for 2 days, not carried out again |
 | An update AFKPanel sends while a countdown is running | The countdown becomes an update, moved earlier if the update asked for less time. A restart sent while a countdown is running is refused. |
 | `panel.json` changed | Read without a reload. Connecting, reconnecting and detaching take effect at once. |

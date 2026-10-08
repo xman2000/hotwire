@@ -17,7 +17,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Hotwire", "xman2000", "1.1.66")]
+    [Info("Hotwire", "xman2000", "1.1.67")]
     [Description("Scheduled restarts and updates. Announces, counts down, writes a flag, quits.")]
     internal class Hotwire : CovalencePlugin
     {
@@ -4171,7 +4171,7 @@ namespace Oxide.Plugins
         // a few hundred files. With `all`, whatever is queued goes now.
         private void SpoolQueuedEvents(bool all)
         {
-            if (EffectiveSharingLevel() < 3)
+            if (EffectiveSharingLevel() < 2)
             {
                 _events.Clear();
                 return;
@@ -7045,8 +7045,12 @@ namespace Oxide.Plugins
         //
         // The last answer is kept on disk with the key it came from, so a reload
         // does not fall silent; an answer for a different key is not used.
-        // Nothing the plugin sends today carries a player's identity -- the log
-        // and events senders that will read this come later.
+        //
+        // At level 2 a pseudonym takes a Steam ID's place and no name is sent:
+        // "psn:" and the first 28 hex characters of HMAC-SHA256, keyed with the
+        // salt's 32 bytes, over the Steam ID's decimal digits. The panel's contract
+        // fixes it byte for byte, because it is what lets one player be followed
+        // across the account's servers.
 
         private const string SharingPath = "/api/v1/sharing";
         private const string SharingDataFile = "Hotwire/panel_sharing";
@@ -7096,6 +7100,28 @@ namespace Oxide.Plugins
         private static bool IsSalt(string salt)
         {
             return salt != null && Regex.IsMatch(salt, "^[0-9a-f]{64}$");
+        }
+
+        private string _pseudonymSalt;
+        private readonly Dictionary<string, string> _pseudonyms = new Dictionary<string, string>(StringComparer.Ordinal);
+
+        // The pseudonym of a Steam ID under the current salt, cached per salt.
+        // Only called at level 2, which EffectiveSharingLevel() gives only with a salt.
+        private string Pseudonym(string steamId)
+        {
+            var salt = _sharing == null ? null : _sharing.Salt;
+            if (!IsSalt(salt)) return null;
+            if (salt != _pseudonymSalt)
+            {
+                _pseudonyms.Clear();
+                _pseudonymSalt = salt;
+            }
+            string cached;
+            if (_pseudonyms.TryGetValue(steamId, out cached)) return cached;
+            var value = MakePseudonym(salt, steamId);
+            if (_pseudonyms.Count >= 10000) _pseudonyms.Clear();
+            _pseudonyms[steamId] = value;
+            return value;
         }
 
         private void LoadSharingAnswer()
@@ -7153,8 +7179,9 @@ namespace Oxide.Plugins
                 if (before != answer.Level)
                 {
                     Puts($"Player data sharing level from the panel: {SharingDescription()}.");
-                    // Identity gathered under the old level never leaves under a lower one.
-                    if (answer.Level < 3) _events.Clear();
+                    // Events gathered under the old level never leave under a new one: a
+                    // pseudonym is not a Steam ID, and an identified event is not pseudonymous.
+                    _events.Clear();
                     _playersSentJson = null;
                     _playersCheckDue = DateTime.MinValue;
                 }
@@ -7279,27 +7306,41 @@ namespace Oxide.Plugins
 
         // ---------------------------------------------------------- players
 
-        // Who is online, sent when the set of players or a name changes. Only at
-        // the "identified" level: below it, the heartbeat's count is all that
-        // leaves this machine.
+        // Who is online, sent when the set of players or a name changes. At the
+        // "identified" level with Steam IDs and names; at "pseudonymous" with each
+        // player's pseudonym and no name. Below that, the heartbeat's count is all
+        // that leaves this machine.
         private string _playersJson, _playersSentJson;
+        private readonly Dictionary<string, string> _playersSentIds = new Dictionary<string, string>(StringComparer.Ordinal);
         private DateTime _playersCheckDue = DateTime.MinValue;
         private DateTime _playersSendNotBefore = DateTime.MinValue;
         private string _playersState = "nothing sent yet";
 
         private void RefreshPlayers()
         {
-            if (EffectiveSharingLevel() < 3)
+            var level = EffectiveSharingLevel();
+            if (level < 2)
             {
                 _playersJson = null;
                 _playersSentJson = null;
-                _playersState = "not sent: the player data level is below identified";
+                _playersState = "not sent: the player data level is below pseudonymous";
                 return;
             }
 
             var list = new JArray();
+            _playersSentIds.Clear();
             foreach (var player in players.Connected.Where(p => p != null).OrderBy(p => p.Id, StringComparer.Ordinal))
-                list.Add(new JObject { ["steam_id"] = player.Id, ["name"] = MaskSourceGates(player.Name ?? "") });
+            {
+                if (level >= 3)
+                {
+                    list.Add(new JObject { ["steam_id"] = player.Id, ["name"] = MaskSourceGates(player.Name ?? "") });
+                    continue;
+                }
+                var pseudonym = Pseudonym(player.Id);
+                if (pseudonym == null) continue;
+                _playersSentIds[pseudonym] = player.Id;
+                list.Add(new JObject { ["steam_id"] = pseudonym });
+            }
             _playersJson = list.ToString(Formatting.None);
         }
 
@@ -7313,7 +7354,9 @@ namespace Oxide.Plugins
             {
                 try
                 {
-                    var player = players.FindPlayerById((string)entry["steam_id"]);
+                    string realId;
+                    var sentId = (string)entry["steam_id"];
+                    var player = players.FindPlayerById(_playersSentIds.TryGetValue(sentId, out realId) ? realId : sentId);
                     var connection = player == null ? null : (player.Object as BasePlayer)?.Connection;
                     if (connection != null)
                         entry["connected_at"] = DateTime.UtcNow.AddSeconds(-connection.GetSecondsConnected())
@@ -7337,7 +7380,8 @@ namespace Oxide.Plugins
         // set every PositionInterval() while anyone is awake and alive, one
         // empty set when the last one goes, and nothing while nobody is. Only
         // when the panel's policy says so, and never at "counts only"; the
-        // Steam ID and name only at "identified".
+        // Steam ID and name only at "identified", a pseudonym and no name at
+        // "pseudonymous".
         //
         // Whether a player is hidden from others is read by name, as the map
         // is: "isInvisible" (the game's own admin invisibility) and
@@ -7395,6 +7439,11 @@ namespace Oxide.Plugins
                         entry["steam_id"] = player.UserIDString;
                         entry["name"] = MaskSourceGates(player.displayName ?? "");
                     }
+                    else if (level == 2)
+                    {
+                        var pseudonym = Pseudonym(player.UserIDString);
+                        if (pseudonym != null) entry["steam_id"] = pseudonym;
+                    }
                     list.Add(entry);
                 }
             }
@@ -7434,9 +7483,11 @@ namespace Oxide.Plugins
                 throw new InvalidOperationException("BasePlayer.limitNetworking is not where it was");
         }
 
-        // Joins, leaves and chat, queued as they happen and sent in batches. Only
-        // gathered while the level is "identified", and let go if it drops before
-        // they are sent. Held in memory: a crash loses the unsent few seconds.
+        // Joins, leaves and chat, queued as they happen and sent in batches. Joins
+        // and leaves from "pseudonymous" up (a pseudonym and no name below
+        // "identified"); chat and in-game reports only at "identified". Let go if
+        // the level changes before they are sent. Held in memory: a crash loses
+        // the unsent few seconds.
         private const int MaxQueuedEvents = 1000;
         private const int EventsPerReport = 200;
         private readonly List<JObject> _events = new List<JObject>();
@@ -7531,7 +7582,16 @@ namespace Oxide.Plugins
 
         private void QueueEvent(bool enabled, string kind, string actor, JObject data)
         {
-            if (!enabled || _panel == null || !_config.Panel.Enabled || EffectiveSharingLevel() < 3) return;
+            var level = EffectiveSharingLevel();
+            if (!enabled || _panel == null || !_config.Panel.Enabled || level < 2) return;
+            if (level < 3)
+            {
+                // Pseudonymous: joins and leaves only, the actor a pseudonym, no name.
+                if (kind != "join" && kind != "leave") return;
+                actor = Pseudonym(actor);
+                if (actor == null) return;
+                data.Remove("name");
+            }
             if (!PolicyAllowsKind("events") && !PolicyHolds(_policy)) return;
             // Chat is not even queued once a policy has said no; before the first answer it waits, and goes if the
             // answer is no.
@@ -7553,10 +7613,10 @@ namespace Oxide.Plugins
         private void SendEvents()
         {
             var interval = EventInterval();
-            if (EffectiveSharingLevel() < 3)
+            if (EffectiveSharingLevel() < 2)
             {
                 _events.Clear();
-                _eventsState = "not sent: the player data level is below identified";
+                _eventsState = "not sent: the player data level is below pseudonymous";
                 _eventsDue = DateTime.UtcNow.AddSeconds(interval);
                 return;
             }
@@ -7908,9 +7968,12 @@ namespace Oxide.Plugins
         private string LogDescription()
         {
             if (!_config.Panel.SendLog && !_config.Panel.SendConsole) return "off in the config";
-            var text = EffectiveSharingLevel() >= 3
+            var level = EffectiveSharingLevel();
+            var text = level >= 3
                 ? "line text sent; card numbers, SSNs and IP addresses masked"
-                : "line text sent; card numbers, SSNs and IP addresses masked, Steam IDs removed";
+                : level == 2
+                    ? "line text sent; card numbers, SSNs and IP addresses masked, Steam IDs replaced by pseudonyms"
+                    : "line text sent; card numbers, SSNs and IP addresses masked, Steam IDs removed";
             if (_policy != null && _policy.LogLevels != null)
                 text += _policy.LogLevels.Count == 0
                     ? "; the panel's policy sends no lines"
@@ -8598,13 +8661,14 @@ namespace Oxide.Plugins
                     // Every line's text is sent. What can be picked out is removed
                     // first: card numbers, SSNs and IP addresses always, the value
                     // of an RCON command that sets a secret, and a Steam ID below
-                    // the identified level. Nothing else is held back.
+                    // the identified level (its pseudonym at "pseudonymous").
+                    // Nothing else is held back.
                     var body = MaskIps(MaskSourceGates(entry.Stream == 'e' ? MaskRconSecrets(entry.Text) : entry.Text));
                     var line = new JObject { ["seq"] = _logCursor.Seq + i + 1 };
                     if (entry.At != null) line["at"] = entry.At;
                     line["level"] = entry.Level == null ? JValue.CreateNull() : (JToken)entry.Level;
                     line["source"] = entry.Source == null ? JValue.CreateNull() : (JToken)entry.Source;
-                    line["message"] = level >= 3 ? body : BlockSteamIds(body);
+                    line["message"] = level >= 3 ? body : level == 2 ? ReplaceSteamIds(body, Pseudonym) : BlockSteamIds(body);
                     lines.Add(line);
                 }
 
@@ -10115,6 +10179,25 @@ namespace Oxide.Plugins
         // the panel sees exactly what it would have removed itself.
         private static string BlockSteamIds(string s)
         {
+            return ReplaceSteamIds(s, id => "[blocked:identity]");
+        }
+
+        // A Steam ID64's pseudonym at the "pseudonymous" level, as the panel's
+        // contract fixes it byte for byte: "psn:" and the first 28 lowercase hex
+        // characters of HMAC-SHA256, keyed with the 32 bytes the salt's 64 hex
+        // characters encode, over the Steam ID's decimal digits in ASCII.
+        private static string MakePseudonym(string saltHex, string steamId)
+        {
+            var key = new byte[32];
+            for (var i = 0; i < 32; i++)
+                key[i] = byte.Parse(saltHex.Substring(i * 2, 2), NumberStyles.HexNumber, CultureInfo.InvariantCulture);
+            using (var hmac = new HMACSHA256(key))
+                return "psn:" + Hex(hmac.ComputeHash(Encoding.ASCII.GetBytes(steamId))).Substring(0, 28);
+        }
+
+        // Every Steam ID64 in a line, replaced by what the function makes of it.
+        private static string ReplaceSteamIds(string s, Func<string, string> replace)
+        {
             if (s.IndexOf("7656119", StringComparison.Ordinal) < 0) return s;
             var sb = new StringBuilder(s.Length);
             var i = 0;
@@ -10127,7 +10210,7 @@ namespace Oxide.Plugins
                 while (IsDigit(s, j)) { j++; run++; }
                 if (!IsDigit(s, at - 1) && run == 10)
                 {
-                    sb.Append(s, i, at - i).Append("[blocked:identity]");
+                    sb.Append(s, i, at - i).Append(replace(s.Substring(at, j - at)) ?? "[blocked:identity]");
                     i = j;
                 }
                 else

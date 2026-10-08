@@ -376,6 +376,17 @@ namespace PluginSigning
             Extracted.SpoolPrune(weekOld, spoolNow, 7, out expired, out overflowed);
             Check("a report older than the kept days is let go", expired.Count == 1 && expired[0].Path == "old.json" && overflowed.Count == 0);
 
+            // The pseudonym is a merge key the panel's contract fixes byte for byte; the vector was made in Python
+            // (hmac, hashlib), not by this code.
+            var psn = JObject.Parse(File.ReadAllText(Path.Combine(Path.GetDirectoryName(args[0]), "pseudonym.json")));
+            var made = Extracted.MakePseudonym((string)psn["salt"], (string)psn["steam_id"]);
+            Check("pseudonym matches the vector", made == (string)psn["pseudonym"], made);
+            Check("pseudonym is 32 characters", made.Length == 32);
+            Check("pseudonyms replace every Steam ID in a log line",
+                Extracted.ReplaceSteamIds((string)psn["log_line"], id => Extracted.MakePseudonym((string)psn["salt"], id)) == (string)psn["log_line_pseudonymous"]);
+            Check("below pseudonymous a Steam ID is still blocked",
+                Extracted.BlockSteamIds((string)psn["log_line"]) == "Kestrel[[blocked:identity]] was killed by [blocked:identity]");
+
             Console.WriteLine(_failed == 0 ? "All checks passed." : _failed + " check(s) FAILED.");
             return _failed == 0 ? 0 : 1;
         }
