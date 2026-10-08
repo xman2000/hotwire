@@ -244,7 +244,7 @@ Reporting to AFKPanel. Nothing is sent until the Rust server has been connected 
   "Accept schedule changes from the panel": true,
   "Accept plugin updates from the panel": true,
   "Send the Oxide log": true,
-  "Keep unsent reports and log lines for this many days": 7,
+  "Keep unsent reports and log lines for this many days": 30,
   "Send the server console": true,
   "Send the log every this many seconds": 60,
   "Send who is online, and player joins and leaves": true,

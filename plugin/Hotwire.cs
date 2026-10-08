@@ -216,13 +216,13 @@ namespace Oxide.Plugins
             // "identified" level. Kept in oxide/logs/hotwire_log_<date>.txt until
             // the panel has it.
             // How long anything waiting for the panel is kept on this machine:
-            // reports that cannot be sent again, and log lines. A week is long
-            // enough for an outage; a server that has not reached the panel in
-            // seven days has a bigger problem than its spool. Raise it if you
-            // want a longer reach back, up to 90 days, which is as far back as
-            // the panel keeps a line anyway. The bounds on size hold either way.
+            // reports that cannot be sent again, and log lines. 30 days covers an
+            // outage and a paused server, which holds its reports until it is
+            // active again. Raise it if you want a longer reach back, up to 90
+            // days, which is as far back as the panel keeps a line anyway. The
+            // bounds on size hold either way.
             [JsonProperty("Keep unsent reports and log lines for this many days")]
-            public int SpoolDays = 7;
+            public int SpoolDays = 30;
 
             [JsonProperty("Send the server console")]
             public bool SendConsole = true;
@@ -3923,7 +3923,7 @@ namespace Oxide.Plugins
         // How long anything waiting for the panel is kept here, from the config,
         // within reason: at least a day, and never past the panel's own 90-day
         // retention. A 0 or a negative in the file means the default week.
-        private const int SpoolDaysDefault = 7;
+        private const int SpoolDaysDefault = 30;
         private const int SpoolDaysMax = 90;
 
         private int SpoolDays()
