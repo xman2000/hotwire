@@ -129,6 +129,7 @@ Each is off in the file and shows the value used.
 | `hotwire.rcon_password_min` | 8 | Shortest RCON password allowed. Cannot be 0. |
 | `hotwire.check_options` | 1 | Warn about a setting name the launcher does not know |
 | `hotwire.backups` | 1 | Carry out the backups Hotwire asks for. 0 = never back up here. |
+| `hotwire.hook_timeout_minutes` | 30 | Launchers 1.1.33 (Windows) and 1.1.19-linux or later: minutes `hotwire-before` and `hotwire-after` may run. A hook still running is stopped and the server starts. Cannot be 0. |
 
 A `hotwire.` name that is not in this table is ignored, and `check` names it.
 

@@ -30,9 +30,23 @@ Hotwire never creates or changes these files.
 | --- | --- |
 | Folder | The server's folder |
 | Process | Its own: `cmd /c` on Windows, `bash` on Linux. A variable it sets, or an `exit` in it, does not reach the launcher. |
-| Waiting | The server waits until the hook finishes. Keep it quick. |
+| Waiting | The server waits until the hook finishes, up to `hotwire.hook_timeout_minutes` (30 by default) |
+| A hook still running at the limit | Stopped, together with everything it started. The launcher logs it, and the server starts anyway. |
 | A failure | Logged, and the server starts anyway |
+| Timing | How long each hook took, its exit code, and whether it was stopped go to AFKPanel with the server's start |
 | `check` | Never runs a hook |
+
+The time limit and the timing need launcher 1.1.33 (Windows) or 1.1.19-linux.
+
+## Change the time limit
+
+A hook that makes a backup of a large server can need longer than 30 minutes. In `hotwire.cfg`, set the minutes:
+
+```
+hotwire.hook_timeout_minutes 60
+```
+
+It applies to both hooks. The smallest value is 1.
 
 ## Tell an update from a restart (Windows)
 

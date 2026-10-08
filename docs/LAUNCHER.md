@@ -54,6 +54,7 @@ The launcher's settings, and the default when `hotwire.cfg` leaves one out:
 | `hotwire.rcon_password_min` | `8` | The shortest RCON password it starts with |
 | `hotwire.check_options` | `1` | `0` skips the warning about convar names it does not know |
 | `hotwire.backups` | `1` | Carry out the backups the plugin asks for. `0` never backs up here. |
+| `hotwire.hook_timeout_minutes` | `30` | Launchers 1.1.33 (Windows) and 1.1.19-linux or later: minutes your own hooks may run before they are stopped and the server starts. Cannot be `0`. |
 
 Fixed in the launcher, never settings: where Oxide is downloaded from and checked against, Rust's Steam app id, the flag file names (`UPDATE.flag`, `VALIDATE.flag`, `WIPE.flag`), and the server folder. `hotwire.cfg` is data that other tools may write, and data never says what gets downloaded or run.
 

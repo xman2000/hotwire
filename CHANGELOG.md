@@ -24,6 +24,17 @@ sit above a launcher `1.1.7`. Read the label, not the number.
 `hotwire check` prints the plugin's version. Each launcher prints its own
 version as the first line when it starts.
 
+## Launchers 1.1.33 (Windows) and 1.1.19-linux
+
+**Your own hooks have a time limit, and AFKPanel sees how long they took.**
+
+- `hotwire-before` and `hotwire-after` may run for `hotwire.hook_timeout_minutes`, 30 by default. A hook still running
+  then is stopped together with everything it started, the launcher logs it, and the server starts. A hook that never
+  ended used to keep the server down.
+- How long each hook took, its exit code, and whether it was stopped go to AFKPanel in the session report.
+- The launcher sends a session report as the server starts, as well as after it stops, so AFKPanel can show where a slow
+  start went while the server is running.
+
 ## Plugin 1.1.66, launchers 1.1.32 (Windows) and 1.1.18-linux — 2026-10-08
 
 **Wipes are part of AFKPanel Pro, like backups.**
