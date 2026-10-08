@@ -24,7 +24,7 @@ sit above a launcher `1.1.7`. Read the label, not the number.
 `hotwire check` prints the plugin's version. Each launcher prints its own
 version as the first line when it starts.
 
-## Plugin 1.1.66, launchers 1.1.32 (Windows) and 1.1.18-linux — unreleased
+## Plugin 1.1.66, launchers 1.1.32 (Windows) and 1.1.18-linux — 2026-10-08
 
 **Wipes are part of AFKPanel Pro, like backups.**
 
@@ -42,7 +42,7 @@ version as the first line when it starts.
 `README.txt` at the top, the plugin in `plugin/`, and the example settings and hooks in `examples/`. The install guides
 follow.
 
-## Plugin 1.1.65 — unreleased
+## Plugin 1.1.65 — 2026-10-08
 
 **AFKPanel can say whether Oxide's files are the release's.**
 
@@ -51,7 +51,7 @@ follow.
 - AFKPanel compares the files the Oxide release installs, Oxide's own and the game files it ships patched, with that
   release's, and shows the result on the server's Info tab.
 
-## Launchers 1.1.30 (Windows) and 1.1.16-linux — unreleased
+## Launchers 1.1.30 (Windows) and 1.1.16-linux — 2026-10-08
 
 **AFKPanel is not told an old build is Steam's.**
 
@@ -59,7 +59,7 @@ follow.
   it to AFKPanel as Steam's current build. Since 1.1.28 / 1.1.14-linux it did, and AFKPanel then called a current server
   behind.
 
-## Launchers 1.1.29 (Windows) and 1.1.15-linux — unreleased
+## Launchers 1.1.29 (Windows) and 1.1.15-linux — 2026-10-08
 
 **An old answer from Steam no longer stops an update.**
 
@@ -72,7 +72,7 @@ follow.
 **Updating on Linux is written down.** Install on Linux and the launcher guide say how to update `hotwire.sh` and the
 plugin: stop the server, replace both, check, start. The Linux download's README says the same.
 
-## Plugin 1.1.64, launchers 1.1.28 (Windows) and 1.1.14-linux, setup 0.1.29 (Windows) and 0.2.29 (Linux) — unreleased
+## Plugin 1.1.64, launchers 1.1.28 (Windows) and 1.1.14-linux, setup 0.1.29 (Windows) and 0.2.29 (Linux) — 2026-10-08
 
 **One launcher per server folder.**
 
@@ -110,7 +110,7 @@ plugin: stop the server, replace both, check, start. The Linux download's README
   countdown is measured in real time.
 - A restart held for Oxide's release is dropped when its entry is switched off or removed.
 
-## Plugin 1.1.63, launcher 1.1.13-linux, setup 0.2.28 (Linux) — unreleased
+## Plugin 1.1.63, launcher 1.1.13-linux, setup 0.2.28 (Linux) — 2026-10-08
 
 **On Linux, a stop or a reboot saves the world first.**
 
@@ -124,7 +124,7 @@ plugin: stop the server, replace both, check, start. The Linux download's README
 - Ctrl+C in a terminal still ends Rust without a save, because Rust catches it too. Type `quit` instead. Windows is
   unchanged.
 
-## Plugin 1.1.62, launchers 1.1.27 (Windows) and 1.1.12-linux, setup 0.1.28 (Windows) and 0.2.27 (Linux) — unreleased
+## Plugin 1.1.62, launchers 1.1.27 (Windows) and 1.1.12-linux, setup 0.1.28 (Windows) and 0.2.27 (Linux) — 2026-10-08
 
 **AFKPanel shows the lines in hotwire.cfg that are not used as written.**
 
@@ -189,7 +189,7 @@ plugin: stop the server, replace both, check, start. The Linux download's README
   with the installer.
 - README: the RCON password stays on the machine; only the launcher reads it.
 
-## Plugin 1.1.61, setup 0.1.27 (Windows) and 0.2.26 (Linux) — unreleased
+## Plugin 1.1.61, setup 0.1.27 (Windows) and 0.2.26 (Linux) — 2026-10-08
 
 **The in-game menu matches AFKPanel's schedule screen more closely.**
 
@@ -209,7 +209,7 @@ plugin: stop the server, replace both, check, start. The Linux download's README
   wording.
 - Setup pins the new plugin.
 
-## Plugin 1.1.60, launchers 1.1.26 (Windows) and 1.1.11-linux, setup 0.1.26 (Windows) and 0.2.25 (Linux) — unreleased
+## Plugin 1.1.60, launchers 1.1.26 (Windows) and 1.1.11-linux, setup 0.1.26 (Windows) and 0.2.25 (Linux) — 2026-10-08
 
 **A wipe always starts a new world, and a wipe entry can keep its seed or load a custom map.**
 
@@ -225,7 +225,7 @@ plugin: stop the server, replace both, check, start. The Linux download's README
   keeps its seed or names a custom map is reported with that problem and does not fire.
 - Setup pins the new plugin and launchers.
 
-## Plugin 1.1.59, setup 0.1.25 (Windows) and 0.2.24 (Linux) — unreleased
+## Plugin 1.1.59, setup 0.1.25 (Windows) and 0.2.24 (Linux) — 2026-10-08
 
 **Cancelling a scheduled restart, update or wipe calls off that occurrence.** Before, `hotwire cancel`, the menu's
 Cancel and AFKPanel's Cancel countdown stopped the countdown, and the schedule started it again about ten seconds later.
