@@ -42,7 +42,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$Version = '0.1.29'
+$Version = '0.1.30'
 
 # Captured here: inside a function, $PSBoundParameters describes that function, not this script.
 $SteamCmdGiven = $PSBoundParameters.ContainsKey('SteamCmd')
@@ -1375,7 +1375,7 @@ function Install-SteamCmd([string]$d) {
         Write-Note "Only steamcmd.exe is added. Nothing already there is changed or deleted."
         $go = Confirm-Step "Put SteamCMD in that folder?"
     } else {
-        $go = Confirm-Step "Install SteamCMD into $SteamCmd?" -DefaultYes
+        $go = Confirm-Step "Install SteamCMD into ${SteamCmd}?" -DefaultYes
     }
     if (-not $go) {
         Write-Note "The Rust server is downloaded through SteamCMD, so install stops here."

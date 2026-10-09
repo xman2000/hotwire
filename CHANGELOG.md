@@ -24,7 +24,7 @@ sit above a launcher `1.1.7`. Read the label, not the number.
 `hotwire check` prints the plugin's version. Each launcher prints its own
 version as the first line when it starts.
 
-## Launchers 1.1.33 (Windows) and 1.1.19-linux
+## Launchers 1.1.33 (Windows) and 1.1.19-linux, setup 0.1.30 (Windows)
 
 **Your own hooks have a time limit, and AFKPanel sees how long they took.**
 
@@ -34,6 +34,8 @@ version as the first line when it starts.
 - How long each hook took, its exit code, and whether it was stopped go to AFKPanel in the session report.
 - The launcher sends a session report as the server starts, as well as after it stops, so AFKPanel can show where a slow
   start went while the server is running.
+- Setup on Windows names the folder when it asks to install SteamCMD; it printed `Install SteamCMD into  [Y/n]`
+  because Windows PowerShell read the question mark as part of the folder's name.
 
 ## Plugin 1.1.66, launchers 1.1.32 (Windows) and 1.1.18-linux — 2026-10-08
 
