@@ -42,18 +42,15 @@ The Rust egg installs Oxide when the Rust server starts. When it has started, **
 2. In the host panel, open **Files**, then `oxide`, then `plugins`.
 3. Select **Upload** and choose `Hotwire.cs`.
 
-Oxide compiles and loads the plugin within a few seconds, with no restart. The **Console** shows:
-
-```
-Loaded plugin Hotwire v1.1.55 by xman2000
-```
+Oxide compiles and loads the plugin within a few seconds, with no restart. The **Console** shows a line that starts
+with `Loaded plugin Hotwire`.
 
 ## 3. Connect the server
 
 1. In AFKPanel, open **Servers** and select **Connect a server**. Copy the code.
 2. In the host panel, open **Console**, type this command with your code, and press Enter:
 
-   ```
+   ```console
    hotwire connect HW-4K2P-9XQR
    ```
 

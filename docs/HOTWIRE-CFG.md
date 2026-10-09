@@ -14,7 +14,7 @@
 
 One setting per line: a name, a space, then the value.
 
-```
+```cfg
 server.hostname      "My Server | Weekly wipes"
 server.maxplayers    100
 #server.tickrate     10

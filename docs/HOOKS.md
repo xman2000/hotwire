@@ -26,7 +26,7 @@ Hotwire never creates or changes these files.
 
 ## How a hook runs
 
-| Behaviour | Detail |
+| Behavior | Detail |
 | --- | --- |
 | Folder | The server's folder |
 | Process | Its own: `cmd /c` on Windows, `bash` on Linux. A variable it sets, or an `exit` in it, does not reach the launcher. |
@@ -42,7 +42,7 @@ The time limit and the timing need launcher 1.1.33 (Windows) or 1.1.19-linux.
 
 A hook that makes a backup of a large server can need longer than 30 minutes. In `hotwire.cfg`, set the minutes:
 
-```
+```cfg
 hotwire.hook_timeout_minutes 60
 ```
 

@@ -69,7 +69,7 @@ sudo mkswap /swapfile && sudo swapon /swapfile
 echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
 ```
 
-## 3. Synchronise the clock
+## 3. Synchronize the clock
 
 A wrong clock makes every signed request to AFKPanel fail, with an error that does not mention the clock.
 
@@ -112,7 +112,7 @@ sudo apt update
 sudo apt install -y steamcmd lib32gcc-s1 curl jq unzip zstd
 ```
 
-Accept the licence prompt when the installer shows it.
+Accept the license prompt when the installer shows it.
 
 ## 6. Download the Rust server
 

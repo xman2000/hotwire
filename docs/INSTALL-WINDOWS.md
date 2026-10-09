@@ -25,8 +25,22 @@ connect the server to AFKPanel.
 1. Download https://afkpanel.com/get/windows and unzip it. `hotwire-setup.bat` and `hotwire-setup.ps1` are in it,
    side by side; keep them together.
 2. Right-click `hotwire-setup.bat` and select **Run as administrator**.
+
+   ![The right-click menu on hotwire-setup.bat, with Run as administrator](https://afkpanel.com/images/docs/win-run-as-admin.webp)
+
 3. Select **Install**.
-4. When it finishes, fill in your server's name in `hotwire.cfg` (step 6, item 4) and start the server.
+
+   ![The setup script's first screen: its checks of the machine, then the menu with Install](https://afkpanel.com/images/docs/win-setup-menu.webp)
+
+   Before it changes anything, it shows what it found and the steps it will take, and asks `Go ahead?`.
+
+   ![The setup script's pre-flight table and flight plan, ending in Go ahead](https://afkpanel.com/images/docs/win-setup-preflight.webp)
+
+4. When it finishes, it lists what it changed and what to do next.
+
+   ![The setup script's last screen: the post-flight checks, what changed on this machine, and the next steps](https://afkpanel.com/images/docs/win-setup-finished.webp)
+
+5. Fill in your server's name in `hotwire.cfg` (step 6, item 4) and start the server.
 
 For a second server on the same machine, use the setup script. It gives each server its own ports and firewall rules.
 To do it by hand, see [Run a second server](#run-a-second-server).
@@ -44,8 +58,15 @@ Rust uses three ports. Open two of them. Keep RCON closed to the internet.
 | 28017 | UDP | The Steam server browser | Yes |
 | 28016 | TCP | RCON | No |
 
+Open PowerShell as administrator. Open the game port:
+
 ```powershell
-New-NetFirewallRule -DisplayName "Rust game"  -Direction Inbound -Protocol UDP -LocalPort 28015 -Action Allow
+New-NetFirewallRule -DisplayName "Rust game" -Direction Inbound -Protocol UDP -LocalPort 28015 -Action Allow
+```
+
+Then the query port:
+
+```powershell
 New-NetFirewallRule -DisplayName "Rust query" -Direction Inbound -Protocol UDP -LocalPort 28017 -Action Allow
 ```
 
@@ -61,12 +82,29 @@ New-NetFirewallRule -DisplayName "Rust RCON (me only)" -Direction Inbound -Proto
 
 SteamCMD is Valve's command-line downloader. Rust's server files come through it.
 
-```powershell
-New-Item -ItemType Directory -Force C:\steamcmd | Out-Null
-Invoke-WebRequest https://steamcdn-a.akamaihd.net/client/installer/steamcmd.zip -OutFile C:\steamcmd\steamcmd.zip
-Expand-Archive C:\steamcmd\steamcmd.zip -DestinationPath C:\steamcmd -Force
-Remove-Item C:\steamcmd\steamcmd.zip
-```
+1. Make its folder:
+
+   ```powershell
+   New-Item -ItemType Directory -Force C:\steamcmd | Out-Null
+   ```
+
+2. Download it:
+
+   ```powershell
+   Invoke-WebRequest https://steamcdn-a.akamaihd.net/client/installer/steamcmd.zip -OutFile C:\steamcmd\steamcmd.zip
+   ```
+
+3. Unzip it:
+
+   ```powershell
+   Expand-Archive C:\steamcmd\steamcmd.zip -DestinationPath C:\steamcmd -Force
+   ```
+
+4. Delete the zip:
+
+   ```powershell
+   Remove-Item C:\steamcmd\steamcmd.zip
+   ```
 
 Run it once so it updates itself. It ends at a `Steam>` prompt.
 
@@ -92,11 +130,23 @@ The download is about 12 GB. When it finishes, `C:\rustserver\RustDedicated.exe`
 
 Oxide (uMod) lets the server run plugins. Hotwire is a plugin, so you need Oxide to connect to AFKPanel.
 
-```powershell
-Invoke-WebRequest "https://github.com/OxideMod/Oxide.Rust/releases/latest/download/Oxide.Rust.zip" -OutFile C:\rustserver\OxideMod.zip
-Expand-Archive C:\rustserver\OxideMod.zip -DestinationPath C:\rustserver -Force
-Remove-Item C:\rustserver\OxideMod.zip
-```
+1. Download it:
+
+   ```powershell
+   Invoke-WebRequest "https://github.com/OxideMod/Oxide.Rust/releases/latest/download/Oxide.Rust.zip" -OutFile C:\rustserver\OxideMod.zip
+   ```
+
+2. Unzip it into the server folder:
+
+   ```powershell
+   Expand-Archive C:\rustserver\OxideMod.zip -DestinationPath C:\rustserver -Force
+   ```
+
+3. Delete the zip:
+
+   ```powershell
+   Remove-Item C:\rustserver\OxideMod.zip
+   ```
 
 Oxide creates its folders the first time the server starts.
 
@@ -139,28 +189,47 @@ tells a restart apart from an update, and stops a crash loop from filling the di
 
    Your own commands, such as a backup before every start, go in `hotwire-before.bat` and `hotwire-after.bat`, beside
    `hotwire.bat`. The download has an example of each.
-5. Check the settings, then start the server:
+5. Check the settings, then start the server. Open PowerShell and go to the server folder:
 
    ```powershell
    cd C:\rustserver
+   ```
+
+   Check the settings. The check starts nothing:
+
+   ```powershell
    .\hotwire.bat check
+   ```
+
+   Start the server:
+
+   ```powershell
    .\hotwire.bat
    ```
 
 The first start takes several minutes while the server generates the map. When the server appears in Rust's server
 browser under your name (or "My Untitled Rust Server" if you left it empty), it is working.
 
+![The Hotwire window at the end of a start, with Rust's status line at the bottom](https://afkpanel.com/images/docs/win-launcher-start.webp)
+
 This is a complete server, and everything so far is free. The next steps connect it to AFKPanel.
 
 ## 7. Check that the machine can reach AFKPanel
 
 1. Copy `hotwire-setup.bat` and `hotwire-setup.ps1`, from the download in step 6, into `C:\rustserver\`.
-2. Run `doctor`:
+2. Open PowerShell and go to the server folder:
 
    ```powershell
    cd C:\rustserver
+   ```
+
+3. Run `doctor`:
+
+   ```powershell
    .\hotwire-setup.bat doctor
    ```
+
+   ![PowerShell after hotwire-setup.bat doctor, every check passed, ending in Everything needed is in place](https://afkpanel.com/images/docs/win-doctor-clean.webp)
 
 `doctor` checks that the machine signs requests correctly, that it can reach AFKPanel, that its clock is accurate
 enough, and that it can find your server. It changes nothing, so you can run it at any time.
@@ -183,6 +252,8 @@ w32tm /resync
 2. In AFKPanel, select **Connect a server** and copy the connect code.
 3. Paste the code when `connect` asks for it. The code is not part of the command, so it stays out of your PowerShell
    history.
+
+   ![hotwire-setup.bat connect asking for the code: Paste the code here](https://afkpanel.com/images/docs/win-setup-connect.webp)
 
 `connect` repeats the `doctor` checks, lists the files it will write, and asks before writing them.
 

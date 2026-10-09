@@ -11,13 +11,13 @@ connected. It needs Oxide. The launcher works without it.
    installed, or create it.
 3. Oxide compiles it within a few seconds. To load it at once, run in the server console:
 
-   ```
+   ```console
    oxide.load Hotwire
    ```
 
 4. Grant the permissions to your admin group:
 
-   ```
+   ```console
    oxide.grant group admin hotwire.status
    oxide.grant group admin hotwire.restart
    oxide.grant group admin hotwire.cancel

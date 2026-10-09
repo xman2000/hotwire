@@ -30,7 +30,7 @@ Only if you use an RCON tool.
 4. Open `hotwire-secrets.cfg`, remove the `#` before `rcon.password`, and replace `change_me` with the password,
    keeping the double quotes:
 
-   ```
+   ```cfg
    rcon.password "the-password-you-generated"
    ```
 
@@ -50,7 +50,7 @@ computer, then cannot connect.
 
 1. In `hotwire.cfg`, set:
 
-   ```
+   ```cfg
    rcon.ip                     127.0.0.1
    ```
 

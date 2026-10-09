@@ -16,11 +16,14 @@ Fix each problem it lists, then run it again until it lists none.
 
 ## What a clean check says
 
+![PowerShell after hotwire.bat check on Windows, with every line clean and the server not started](https://afkpanel.com/images/docs/win-check-clean.webp)
+
 | Line | Meaning |
 | --- | --- |
 | `hotwire.cfg read: every line is a setting.` | No line was ignored |
 | `Options look right.` | Every setting name is in the file's own list |
-| `Rust build: installed <build>, public <build> -- current.` | The installed Rust matches Steam's |
+| `Rust build: installed <build>, public <build>. Up to date.` | On Windows: the installed Rust matches Steam's |
+| `Rust build: installed <build>, public <build> -- current.` | On Linux: the installed Rust matches Steam's |
 | `a normal start would launch without updating.` | The next start skips SteamCMD and Oxide |
 | `a normal start would update here.` | The next start updates Rust and Oxide first |
 
