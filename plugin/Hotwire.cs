@@ -17,7 +17,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Hotwire", "xman2000", "1.1.68")]
+    [Info("Hotwire", "xman2000", "1.1.69")]
     [Description("Scheduled restarts and updates. Announces, counts down, writes a flag, quits.")]
     internal class Hotwire : CovalencePlugin
     {
@@ -4353,6 +4353,13 @@ namespace Oxide.Plugins
             {
                 var q = ConVar.Server.queryport > 0 ? ConVar.Server.queryport : ConVar.Server.port;
                 if (q > 0 && q <= 65535) payload["query_port"] = q;
+            }
+            catch { }
+            // The port players join on, so AFKPanel can show the line to paste into the F1 console (client.connect).
+            try
+            {
+                var g = ConVar.Server.port;
+                if (g > 0 && g <= 65535) payload["game_port"] = g;
             }
             catch { }
             if (_inventoryHash != null) payload["inventory_hash"] = _inventoryHash;

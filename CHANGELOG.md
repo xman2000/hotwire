@@ -24,6 +24,12 @@ sit above a launcher `1.1.7`. Read the label, not the number.
 `hotwire check` prints the plugin's version. Each launcher prints its own
 version as the first line when it starts.
 
+## Plugin 1.1.69 — unreleased
+
+**The heartbeat carries the port players join on.** Hotwire sends `server.port` as `game_port`, so AFKPanel can show
+the server's address and port under its name with a button that copies `client.connect address:port` for Rust's F1
+console. Nothing else changes; an older AFKPanel ignores the field.
+
 ## Plugin 1.1.68, launchers 1.1.34 (Windows) and 1.1.20-linux, setup 0.1.31 (Windows) and 0.2.30 (Linux) — unreleased
 
 **Setup on Linux writes the server's folder as the server's own account.** Every file in the folder (the change log,
