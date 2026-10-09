@@ -42,7 +42,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$Version = '0.1.30'
+$Version = '0.1.31'
 
 # Captured here: inside a function, $PSBoundParameters describes that function, not this script.
 $SteamCmdGiven = $PSBoundParameters.ContainsKey('SteamCmd')
@@ -925,6 +925,14 @@ function Select-Directory {
     if ($d.Length -le 2) {
         Stop-Politely "using '$d' for the server" "that is the root of a drive" "choose a folder, for example C:\rustserver"
     }
+    # Said before the download, not after it: hotwire.bat cannot run from a folder whose path has one of these, and
+    # finding out at the launcher step meant a 12 GB download in a folder that had to be left.
+    if ($d -match '[!%"^&'']') {
+        Write-Warn "the path $d contains one of ! % ' `" ^ &, which hotwire.bat cannot use"
+        if (-not (Confirm-Step "Use it anyway, and start the server with a script of your own?")) {
+            Stop-Politely "using '$d' for the server" "the path contains one of ! % ' `" ^ &" "choose a folder without those characters, for example C:\rustserver"
+        }
+    }
     # Belt and braces behind hotwire-setup.bat: an elevated prompt starts in System32, and a Rust
     # server inside the Windows folder would be a disaster to find and worse to remove.
     if (Test-Under $d $env:SystemRoot) {
@@ -1685,12 +1693,14 @@ function Install-Oxide([string]$d) {
                     "nothing was unpacked; try again later, or download it by hand from $($Docs['Oxide source and releases'])"
             }
 
-            # The game's own files, copied once, before Oxide first replaces them. A later attempt keeps
-            # that first copy rather than backing up files an earlier attempt already replaced.
+            # The game's own files, copied once per Rust build, before Oxide first replaces them. A later attempt on
+            # the same build keeps that first copy rather than backing up files an earlier attempt already replaced;
+            # a new build (an update, another branch) gets its own, or the undo would put the old build's files back.
             $backupsDir = Join-Path $d 'hotwire\backups'
-            $earlier = @(Get-ChildItem -LiteralPath $backupsDir -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -like '*-before-oxide' })
+            $build = [string](Get-InstalledBuild $d); if (-not $build) { $build = 'unknown' }
+            $earlier = @(Get-ChildItem -LiteralPath $backupsDir -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -like ('*-before-oxide-' + $build) })
             if ($earlier.Count -eq 0) {
-                $backupRoot = Join-Path $backupsDir ((Get-Date).ToString('yyyyMMdd-HHmmss') + '-before-oxide')
+                $backupRoot = Join-Path $backupsDir ((Get-Date).ToString('yyyyMMdd-HHmmss') + '-before-oxide-' + $build)
                 $saved = 0
                 foreach ($entry in $entries) {
                     $target = Join-Path $d ($entry.FullName -replace '/', '\')
@@ -1731,7 +1741,7 @@ function Install-Oxide([string]$d) {
     $version = (Get-Item -LiteralPath $dll).VersionInfo.FileVersion
     Write-Ok "Oxide $version installed"
     Write-Note "Its oxide\ folder appears the first time the server starts. That is normal."
-    Add-Change "installed Oxide $version into $d" "copy the files from $d\hotwire\backups\*-before-oxide back into $d"
+    Add-Change "installed Oxide $version into $d" "copy the files from the newest $d\hotwire\backups\*-before-oxide-* back into $d"
     Save-Record $d 'oxide'
     Sync-LauncherFramework $d
 }
@@ -2068,9 +2078,10 @@ function New-RconPassword {
     return $sb.ToString()
 }
 
-# The launcher's own refusals, in its words, plus two a .bat file imposes: for /f
-# skips a line starting with a semicolon, and a batch file treats % as the start of a variable.
-function Test-RconPassword([string]$Password) {
+# The launcher's own refusals, in its words, plus two only an older launcher's secrets.bat imposes (-Bat): for /f
+# skips a line starting with a semicolon, and a batch file treats % as the start of a variable. hotwire-secrets.cfg is
+# read as data, so neither applies to it.
+function Test-RconPassword([string]$Password, [switch]$Bat) {
     if (-not $Password) { return 'it is empty' }
     # A .bat file is read in the console's code page, so a letter outside plain ASCII reaches the server as
     # something else. A space at either end is kept, and nobody remembers typing it.
@@ -2079,8 +2090,8 @@ function Test-RconPassword([string]$Password) {
     if ($Password.Length -lt 8) { return 'it is under 8 characters' }
     if ($Password -eq 'change_me') { return 'it is still the example value, change_me' }
     if ($Password.Contains('"')) { return 'it contains a double quote' }
-    if ($Password.StartsWith(';')) { return 'it starts with a semicolon' }
-    if ($Password.Contains('%')) { return 'it contains %, which a .bat file does not keep as written' }
+    if ($Bat -and $Password.StartsWith(';')) { return 'it starts with a semicolon' }
+    if ($Bat -and $Password.Contains('%')) { return 'it contains %, which a .bat file does not keep as written' }
     return $null
 }
 
@@ -2109,7 +2120,7 @@ function Get-SecretsProblem([string]$d) {
     try { $text = [IO.File]::ReadAllText($f) } catch { return 'secrets.bat could not be read by this account' }
     $found = [regex]::Matches($text, '(?im)^[ \t]*set[ \t]+"RCON_PASSWORD=(.*)"[ \t]*\r?$')
     if ($found.Count -eq 0) { return 'secrets.bat has no line reading set "RCON_PASSWORD=..."' }
-    return (Test-RconPassword $found[$found.Count - 1].Groups[1].Value)
+    return (Test-RconPassword $found[$found.Count - 1].Groups[1].Value -Bat)
 }
 
 function Read-SecretText([string]$Prompt) {
@@ -2182,8 +2193,8 @@ function Install-RconPassword([string]$d) {
         "RCON is remote control of your server: anyone with this password can run commands on it,",
         "so treat it like this machine's administrator password.",
         "",
-        "hotwire.bat reads it from $name, beside it, and will not start the server if it is",
-        "under 8 characters, is 'change_me', or contains a double quote.",
+        "hotwire.bat reads it from $name, beside it. If it is under 8 characters, is 'change_me', or",
+        "contains a double quote, RCON stays off (an older hotwire.bat does not start the server).",
         "",
         "Press Enter and a strong one is made for you: 32 random letters and digits, shown once and",
         "copied to your clipboard. Or type your own -- it is not shown as you type, and you type it",
@@ -2194,7 +2205,7 @@ function Install-RconPassword([string]$d) {
     while ($true) {
         $first = Read-SecretText "  RCON password (Enter to generate one)"
         if (-not $first) { $password = New-RconPassword; $generated = $true; break }
-        $problem = Test-RconPassword $first
+        $problem = Test-RconPassword $first -Bat:(-not (Test-CfgLauncher $d))
         if ($problem) { Write-Bad "that will not work: $problem. Try another, or press Enter to generate one."; continue }
         $second = Read-SecretText "  Type it again"
         if ($second -cne $first) { Write-Bad "the two did not match. Try again."; continue }
@@ -2426,7 +2437,7 @@ function Find-Root {
     }
     $dir = (Get-Location).Path
     for ($i = 0; $i -lt 5 -and $dir; $i++) {
-        if ((Test-Path (Join-Path $dir 'RustDedicated.exe')) -or (Test-Path (Join-Path $dir 'RustDedicated'))) { return $dir }
+        if ((Test-Path -LiteralPath (Join-Path $dir 'RustDedicated.exe')) -or (Test-Path -LiteralPath (Join-Path $dir 'RustDedicated'))) { return $dir }
         $parent = Split-Path $dir -Parent
         if ($parent -eq $dir) { break }
         $dir = $parent
@@ -2518,12 +2529,12 @@ function Test-Clock([string]$Url) {
 
 function Test-Install([string]$r) {
     $ok = $true
-    if ((Test-Path (Join-Path $r 'RustDedicated.exe')) -or (Test-Path (Join-Path $r 'RustDedicated'))) {
+    if ((Test-Path -LiteralPath (Join-Path $r 'RustDedicated.exe')) -or (Test-Path -LiteralPath (Join-Path $r 'RustDedicated'))) {
         Write-Ok "Rust server found at $r"
     } else { Write-Bad "no RustDedicated.exe in $r"; $ok = $false }
 
-    if (Test-Path (Join-Path $r 'oxide')) { Write-Ok "Oxide is installed" }
-    elseif (Test-Path (Join-Path $r 'carbon')) { Write-Ok "Carbon is installed" }
+    if (Test-Path -LiteralPath (Join-Path $r 'oxide')) { Write-Ok "Oxide is installed" }
+    elseif (Test-Path -LiteralPath (Join-Path $r 'carbon')) { Write-Ok "Carbon is installed" }
     else { Write-Warn "no Oxide or Carbon -- the plugin half cannot report until a framework is installed" }
 
     if (Test-Path -LiteralPath (Get-StateFile $r)) {
@@ -2923,6 +2934,12 @@ function Invoke-Install {
         Stop-Politely "installing into $serverDir" "the Rust server in this folder is running" `
             "stop the server first: close the hotwire.bat window, or type quit in the server's window. Then run this again."
     }
+    # Nor under a hotwire.bat still open on this folder with its server stopped: it would start Rust again during the
+    # download or the unpack, or update it back onto the old branch.
+    if ($touchesServer -and $state.LauncherRunning) {
+        Stop-Politely "installing into $serverDir" "hotwire.bat is running for this folder" `
+            "close the hotwire.bat window (or press Ctrl+C in it), then run this again."
+    }
     if ($touchesServer -and $state.ServerRunning -eq 'unknown') {
         Write-Warn "a Rust server is running on this machine, and Windows will not say from which folder"
         Write-Note "If it is the one in $serverDir, stop it first."
@@ -3026,7 +3043,8 @@ function Invoke-Menu {
     $rconProblem = $null
     if ($hasServer -and $launcher) {
         $rconProblem = Get-SecretsProblem $here
-        if ($rconProblem) { Write-Bad "RCON password: $rconProblem -- hotwire.bat will not start the server" }
+        if ($rconProblem -and (Test-RconOptional $here)) { Write-Bad "RCON password: $rconProblem -- RCON stays off until it is fixed" }
+        elseif ($rconProblem) { Write-Bad "RCON password: $rconProblem -- hotwire.bat will not start the server" }
         else { Write-Ok "RCON password is set, and hotwire.bat will accept it" }
     } elseif ($hasServer) { Write-No "RCON password: not checked -- without hotwire.bat, your own start script sets it" }
 

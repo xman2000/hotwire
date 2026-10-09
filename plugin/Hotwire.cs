@@ -17,7 +17,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Hotwire", "xman2000", "1.1.67")]
+    [Info("Hotwire", "xman2000", "1.1.68")]
     [Description("Scheduled restarts and updates. Announces, counts down, writes a flag, quits.")]
     internal class Hotwire : CovalencePlugin
     {
@@ -662,10 +662,18 @@ namespace Oxide.Plugins
                 PrintError($"Configuration is unreadable, falling back to disabled defaults: {ex.Message}");
                 PrintError("Your file has NOT been overwritten. Fix it and reload.");
                 _config = new HotwireConfig();
+                // And it is not overwritten later either: until a reload reads it, nothing saves over it (a change from
+                // the panel or in game would have replaced the whole file with defaults plus that one change).
+                _configUnreadable = true;
                 return;
             }
-            SaveConfig();
+            _configUnreadable = false;
+            // A save that fails (a read-only file) must not stop the plugin loading: the schedule runs from memory.
+            try { SaveConfig(); }
+            catch (Exception ex) { PrintWarning($"The configuration could not be written back ({ex.Message}). The schedule runs as read."); }
         }
+
+        private bool _configUnreadable;
 
         // A null in the file is not the same as a missing key. Delete a key and
         // the field initializer's default survives; write "Restarts": null and
@@ -745,6 +753,11 @@ namespace Oxide.Plugins
 
         protected override void SaveConfig()
         {
+            if (_configUnreadable)
+            {
+                PrintWarning("Not saved: the configuration file could not be read when Hotwire loaded. Fix it and reload; until then changes last until the next restart.");
+                return;
+            }
             EnsureEntryIds();
             Config.WriteObject(_config, true);
             RefreshScheduleMarker(true);
@@ -807,7 +820,7 @@ namespace Oxide.Plugins
         private Timer _frameworkTimer;
 
         private bool _countdownActive;
-        private DateTime _countdownTarget;
+        private DateTime _countdownTarget;   // the moment it ends, in UTC: fixed when it starts, so a clock change cannot move it
         private ScheduleEntry _countdownEntry;   // null for a manual countdown
         private bool _countdownIsUpdate;
         private bool _countdownIsValidate;
@@ -916,6 +929,12 @@ namespace Oxide.Plugins
             }
         }
 
+        private void BootStep(string what, Action step)
+        {
+            try { step(); }
+            catch (Exception ex) { PrintError($"Could not {what} ({ex.Message}). The schedule still runs."); }
+        }
+
         // Oxide passes true once, when the server finishes booting, and false to a
         // plugin loaded into a server that is already running.
         private void OnServerInitialized(bool initial)
@@ -925,9 +944,11 @@ namespace Oxide.Plugins
                 PrintError("Cannot determine the server root, so update flags cannot be written. " +
                            "Set \"Server root\" in the config. Restarts still work; updates will not.");
 
-            ValidateSchedule();
-            ResumeWipeState();
-            ResumePluginChanges();
+            // Each on its own: a file that cannot be read in one of them must not stop the schedule timer below from
+            // starting, or no restart would run for the whole session.
+            BootStep("check the schedule", ValidateSchedule);
+            BootStep("resume a wipe in progress", ResumeWipeState);
+            BootStep("resume a plugin change in progress", ResumePluginChanges);
 
             // Descending, so the tick can stop at the first point it crosses.
             _config.Countdown.AnnounceAt = _config.Countdown.AnnounceAt
@@ -2315,7 +2336,7 @@ namespace Oxide.Plugins
             if (_countdownActive || _shuttingDown) return;
 
             _countdownActive = true;
-            _countdownTarget = ResolveLocal(target);
+            _countdownTarget = ToUtcInstant(target);
             _countdownEntry = entry;
             _countdownIsUpdate = isUpdate;
             _countdownIsValidate = isValidate;
@@ -2325,7 +2346,7 @@ namespace Oxide.Plugins
             _countdownKey = key;
             _announced.Clear();
 
-            var remaining = (int)Math.Round(SecondsUntil(_countdownTarget));
+            var remaining = (int)Math.Round(UntilUtc(_countdownTarget));
             _countdownStarted = DateTime.Now;
 
             // Everything at or above the time actually remaining has already
@@ -2355,7 +2376,7 @@ namespace Oxide.Plugins
             _countdownIsUpdate = true;
             if (validate) _countdownIsValidate = true;
 
-            var target = DateTime.Now.AddSeconds(seconds);
+            var target = DateTime.UtcNow.AddSeconds(seconds);
             if (target < _countdownTarget)
             {
                 _countdownTarget = target;
@@ -2384,7 +2405,7 @@ namespace Oxide.Plugins
             // to a stalled frame, and to timer drift over ten minutes -- the
             // restart lands when it said it would, and the worst a hitch can
             // do is skip an announcement.
-            var remaining = (int)Math.Ceiling(SecondsUntil(_countdownTarget));
+            var remaining = (int)Math.Ceiling(UntilUtc(_countdownTarget));
 
             if (remaining <= 0)
             {
@@ -2457,6 +2478,15 @@ namespace Oxide.Plugins
         {
             if (_shuttingDown) return;
             _shuttingDown = true;
+            // Whatever goes wrong on the way (a config that cannot be saved, a flag that cannot be written), the quit is
+            // still scheduled: "shutting down" is already set, so a server left up here refuses every later restart.
+            try { ExecuteSteps(); }
+            catch (Exception ex) { PrintError($"The restart hit a problem ({ex.Message}). Quitting anyway."); }
+            finally { timer.Once(Math.Max(0.1f, _config.Countdown.KickDelaySeconds), Quit); }
+        }
+
+        private void ExecuteSteps()
+        {
             _countdownActive = false;
             RemoveBars();
 
@@ -2478,11 +2508,20 @@ namespace Oxide.Plugins
             // A one-off has done the only thing it was for. Disabling it here
             // rather than deleting it leaves a record of what ran and when,
             // and lets an admin re-enable it rather than retype the date.
+            // A failed save must not stop the restart: by here the server is shutting down, so an exception would leave
+            // it up with players on and every later restart refused as "already shutting down".
             if (_countdownEntry != null && Normalize(_countdownEntry.Repeat) == RepeatOnce)
             {
                 _countdownEntry.Enabled = false;
-                SaveConfig();
-                Puts($"One-off entry fired ({Describe(_countdownEntry, null)}); it has disabled itself.");
+                try
+                {
+                    SaveConfig();
+                    Puts($"One-off entry fired ({Describe(_countdownEntry, null)}); it has disabled itself.");
+                }
+                catch (Exception ex)
+                {
+                    PrintWarning($"One-off entry fired, but the config could not be saved, so it may run again after the restart: {ex.Message}");
+                }
             }
 
             // Flags first, while a failure can still be reported and while the
@@ -2539,9 +2578,6 @@ namespace Oxide.Plugins
                 }
             }
             Puts($"Kicked {kicked} player(s). Quitting.");
-
-            var delay = Math.Max(0.1f, _config.Countdown.KickDelaySeconds);
-            timer.Once(delay, Quit);
         }
 
         private void Quit() => Quit(false);
@@ -2722,7 +2758,7 @@ namespace Oxide.Plugins
             body.Append("expires ").Append(expires).Append('\n');
             if (_wipeBackupByLauncher) body.Append("backup 1").Append('\n');
             // AFKPanel's signed permission for this wipe: a launcher that checks them wipes only with one that verifies.
-            var permit = HeldWipePermit(_wipeCycle, _wipeSeed, _wipeSize, _wipeMapUrl);
+            var permit = HeldWipePermit(_wipeCycle, _wipeSeed, _wipeSize, _wipeMapUrl, _wipeBlueprints);
             if (permit != null)
             {
                 body.Append("server ").Append(permit.Server.ToString(CultureInfo.InvariantCulture)).Append('\n');
@@ -2969,14 +3005,16 @@ namespace Oxide.Plugins
 
         private int RemainingSeconds()
         {
-            return Math.Max(0, (int)Math.Ceiling(SecondsUntil(_countdownTarget)));
+            return Math.Max(0, (int)Math.Ceiling(UntilUtc(_countdownTarget)));
         }
 
         // Schedule times are wall-clock times on this machine. Two days a year the wall clock jumps: in spring a time
         // such as 02:30 does not happen at all, and counting to it by subtracting wall-clock times ran a restart up to
         // an hour early, or skipped it. A time the clock skips runs at the moment the clock jumps (02:30 becomes
         // 03:00), and every wait is measured in real seconds (UTC). An autumn time that happens twice is taken as the
-        // first; the same-entry guard stops the second.
+        // first; the same-entry guard stops the second. A time in the repeated hour that has already gone by once is the
+        // second: "now plus 300 seconds" read in the second 01:10 of the night was the first 01:15, an hour in the past,
+        // and the countdown ran out at its first tick.
         private static DateTime ResolveLocal(DateTime local)
         {
             var tz = TimeZoneInfo.Local;
@@ -2985,14 +3023,21 @@ namespace Oxide.Plugins
             return DateTime.SpecifyKind(t, DateTimeKind.Local);
         }
 
-        private static double SecondsUntil(DateTime local)
+        private static double SecondsUntil(DateTime local) => UntilUtc(ToUtcInstant(local));
+
+        private static double UntilUtc(DateTime utc) => (utc - DateTime.UtcNow).TotalSeconds;
+
+        // The moment a wall-clock time stands for. A UTC time is already one. An autumn time that happens twice is its
+        // first occurrence unless that has already gone by, then its second.
+        private static DateTime ToUtcInstant(DateTime local)
         {
+            if (local.Kind == DateTimeKind.Utc) return local;
             var tz = TimeZoneInfo.Local;
             var t = DateTime.SpecifyKind(ResolveLocal(local), DateTimeKind.Unspecified);
-            var utc = tz.IsAmbiguousTime(t)
-                ? new DateTimeOffset(t, tz.GetAmbiguousTimeOffsets(t).Max()).UtcDateTime
-                : TimeZoneInfo.ConvertTimeToUtc(t, tz);
-            return (utc - DateTime.UtcNow).TotalSeconds;
+            if (!tz.IsAmbiguousTime(t)) return TimeZoneInfo.ConvertTimeToUtc(t, tz);
+            var both = tz.GetAmbiguousTimeOffsets(t).Select(o => new DateTimeOffset(t, o).UtcDateTime).OrderBy(u => u).ToArray();
+            var now = DateTime.UtcNow.AddSeconds(-1);
+            return both.FirstOrDefault(u => u >= now) is var next && next != default ? next : both[both.Length - 1];
         }
 
         private string CountdownText(int remaining)
@@ -4039,6 +4084,28 @@ namespace Oxide.Plugins
                 Puts($"Panel: {expired.Count} held report{(expired.Count == 1 ? " was" : "s were")} older than {SpoolDays()} days and {(expired.Count == 1 ? "was" : "were")} deleted unsent.");
             if (overflowed.Count > 0)
                 Puts($"Panel: {overflowed.Count} of the oldest held report{(overflowed.Count == 1 ? " was" : "s were")} deleted unsent to keep the spool within {SpoolMaxBytes / (1024 * 1024)} MB.");
+        }
+
+        // The kinds that carry who a player is, or a pseudonym for them (events, the player list, positions).
+        private static readonly string[] SpoolIdentityKinds = { "events", "players", "player_positions" };
+
+        // Called when the sharing level changes: every report of those kinds already held was made under the old level,
+        // so none of them is sent.
+        private void SpoolDropIdentityKinds()
+        {
+            var dropped = 0;
+            foreach (var entry in SpoolEntries())
+            {
+                try
+                {
+                    var kind = (string)JObject.Parse(File.ReadAllText(entry.Path, Encoding.UTF8))["kind"];
+                    if (Array.IndexOf(SpoolIdentityKinds, kind) < 0) continue;
+                }
+                catch { continue; }   // unreadable files are the drain's to remove
+                SpoolDelete(entry.Path);
+                dropped++;
+            }
+            if (dropped > 0) Puts($"Panel: {dropped} held report{(dropped == 1 ? "" : "s")} about players not sent: they were made under the sharing level before.");
         }
 
         private static void SpoolDelete(string path)
@@ -5527,6 +5594,12 @@ namespace Oxide.Plugins
 
         private DateTime _imageDue = DateTime.MinValue;
         private string _imageDoneKey;
+
+        // The last image made for a map, kept until it is sent: a render takes seconds of the server's main thread, so an
+        // upload the panel refused or never answered is retried with the same bytes, never by rendering again.
+        private string _imageBytesKey;
+        private byte[] _imageBytes;
+        private string _imageBytesSource;
         private string _imageState = "not checked yet";
 
         private string MapKey()
@@ -5567,8 +5640,14 @@ namespace Oxide.Plugins
                 }
 
                 string source;
-                var bytes = MapImageBytes(size, out source);
-                if (bytes == null) return;   // said why in MapImageBytes; tried again later
+                byte[] bytes;
+                if (_imageBytesKey == key && _imageBytes != null) { bytes = _imageBytes; source = _imageBytesSource; }
+                else
+                {
+                    bytes = MapImageBytes(size, out source);
+                    if (bytes == null) return;   // said why in MapImageBytes; tried again later
+                    _imageBytesKey = key; _imageBytes = bytes; _imageBytesSource = source;
+                }
 
                 SendMapImage(key, seed, size, bytes, source);
             });
@@ -5688,6 +5767,7 @@ namespace Oxide.Plugins
             PanelRequest("POST", MapRenderPath, body, response =>
             {
                 _imageDoneKey = key;
+                _imageBytes = null; _imageBytesKey = null;
                 _imageState = $"sent the map image {DateTime.Now:HH:mm:ss} ({kilobytes} KB, {(source == "rust_plus" ? "from Rust+" : "rendered")})";
                 Puts($"Sent the map image to the panel ({kilobytes} KB).");
             }, () =>
@@ -6334,6 +6414,9 @@ namespace Oxide.Plugins
 
                     // Wipes are part of Pro: AFKPanel queues one only on a plan with them, and the plugin checks again.
                     if (!WipePlanAllows()) { status = "refused"; result = T("ErrWipePlan", null); return; }
+                    // As for a scheduled wipe: a launcher that cannot wipe would restart on the same map after a countdown
+                    // that told the players otherwise.
+                    if (!LauncherCan("wipe")) { status = "refused"; result = T("ErrLauncherCannotWipe", null); return; }
 
                     _wipeSeed = seed;
                     _wipeSize = size;
@@ -6881,12 +6964,29 @@ namespace Oxide.Plugins
                 var loaded = plugins.Find(name);
                 if (loaded != null && loaded.IsLoaded) Interface.Oxide.UnloadPlugin(name);
 
+                // What the old version had is put back. What only the new version wrote (a config or data it created on
+                // its first load) is set aside in the backup folder, not deleted: left in place, the old version loaded
+                // with the new one's config.
                 if (manifest.Config) File.Copy(Path.Combine(dir, "config.json"), PluginConfigFile(name), true);
+                else if (File.Exists(PluginConfigFile(name))) File.Copy(PluginConfigFile(name), Path.Combine(dir, "config.from-new-version.json"), true);
+                if (!manifest.Config && File.Exists(PluginConfigFile(name))) File.Delete(PluginConfigFile(name));
                 if (manifest.DataFile) File.Copy(Path.Combine(dir, "data.json"), PluginDataFile(name), true);
+                else if (File.Exists(PluginDataFile(name)))
+                {
+                    File.Copy(PluginDataFile(name), Path.Combine(dir, "data.from-new-version.json"), true);
+                    File.Delete(PluginDataFile(name));
+                }
                 if (manifest.DataFolder)
                 {
                     if (Directory.Exists(PluginDataFolder(name))) Directory.Delete(PluginDataFolder(name), true);
                     CopyFolder(Path.Combine(dir, "data"), PluginDataFolder(name));
+                }
+                else if (Directory.Exists(PluginDataFolder(name)))
+                {
+                    var aside = Path.Combine(dir, "data.from-new-version");
+                    if (Directory.Exists(aside)) Directory.Delete(aside, true);
+                    CopyFolder(PluginDataFolder(name), aside);
+                    Directory.Delete(PluginDataFolder(name), true);
                 }
                 PutPluginFile(name, File.ReadAllBytes(Path.Combine(dir, "plugin.cs.bak")));
                 Interface.Oxide.ReloadPlugin(name);
@@ -7207,9 +7307,11 @@ namespace Oxide.Plugins
                 if (before != answer.Level)
                 {
                     Puts($"Player data sharing level from the panel: {SharingDescription()}.");
-                    // Events gathered under the old level never leave under a new one: a
-                    // pseudonym is not a Steam ID, and an identified event is not pseudonymous.
+                    // What was gathered under the old level never leaves under a new one -- a pseudonym is not a Steam
+                    // ID, and an identified event is not pseudonymous: not from memory, not from a log batch already
+                    // built, and not from the spool, where an outage may hold reports made at the old level.
                     _events.Clear();
+                    if (before >= 0) { _logPending = null; SpoolDropIdentityKinds(); }
                     _playersSentJson = null;
                     _playersCheckDue = DateTime.MinValue;
                 }
@@ -8953,6 +9055,9 @@ namespace Oxide.Plugins
         private class WipePermitRecord
         {
             public string Cycle = "", Seed = "", Size = "", LevelUrl = "";
+            // The blueprints the permission signs (version 2), or empty for one that does not (version 1), which holds
+            // for any blueprints. Asked for only when the launcher checks version 2.
+            public string Blueprints = "";
             public long Expires;
             public long Server;
             public string Permit = "";
@@ -8963,15 +9068,17 @@ namespace Oxide.Plugins
         // yes, does not wipe.
         private bool WipePlanAllows()
         {
+            // Remembered as of the panel's last answer, not of now: a policy held in memory while the panel is unreachable
+            // must not keep renewing itself, or "30 days offline" lasted as long as the process.
             if (_policy != null)
             {
-                if (_wipePlan.PlanAllows != _policy.Wipes || _wipePlan.PlanCheckedUtc == null || (DateTime.UtcNow - _wipePlan.PlanCheckedUtc.Value).TotalHours >= 24)
+                var heard = _policy.ReceivedUtc;
+                if (_wipePlan.PlanAllows != _policy.Wipes || _wipePlan.PlanCheckedUtc == null || (heard - _wipePlan.PlanCheckedUtc.Value).TotalHours >= 24)
                 {
                     _wipePlan.PlanAllows = _policy.Wipes;
-                    _wipePlan.PlanCheckedUtc = DateTime.UtcNow;
+                    _wipePlan.PlanCheckedUtc = heard;
                     WriteData(WipePlanFile, _wipePlan);
                 }
-                return _policy.Wipes;
             }
             return _wipePlan.PlanAllows && _wipePlan.PlanCheckedUtc != null && (DateTime.UtcNow - _wipePlan.PlanCheckedUtc.Value).TotalDays < BackupPlanMemoryDays;
         }
@@ -8979,12 +9086,15 @@ namespace Oxide.Plugins
         private static long UnixNow() => (long)(DateTime.UtcNow - UnixEpoch).TotalSeconds;
 
         // A held permission for exactly this wipe and map, still in date.
-        private WipePermitRecord HeldWipePermit(string cycle, string seed, string size, string levelUrl)
+        private WipePermitRecord HeldWipePermit(string cycle, string seed, string size, string levelUrl, string blueprints)
         {
             var now = UnixNow();
             return _wipePlan.Permits.FirstOrDefault(p => p.Cycle == (cycle ?? "") && p.Seed == (seed ?? "") && p.Size == (size ?? "")
-                && p.LevelUrl == (levelUrl ?? "") && p.Expires > now);
+                && p.LevelUrl == (levelUrl ?? "") && ((p.Blueprints ?? "") == "" || p.Blueprints == (blueprints ?? "")) && p.Expires > now);
         }
+
+        // The blueprints a permission should sign: only for a launcher that checks version 2 (ADR-0306 on AFKPanel).
+        private string PermitBlueprints(string blueprints) => LauncherCan("wipe_permit_blueprints") ? (blueprints ?? "keep") : "";
 
         // The next wipe this server needs a permission for and does not hold: the one being counted down to, then any
         // scheduled or forced wipe due within a day. Null when there is none, or the plan has no wipes.
@@ -8996,8 +9106,8 @@ namespace Oxide.Plugins
             {
                 var until = _wipeForced && _wipeWindowEndUtc != null ? _wipeWindowEndUtc.Value : nowUtc.AddHours(3);
                 var armed = new WipePermitRecord { Cycle = _wipeCycle, Seed = _wipeSeed ?? "", Size = _wipeSize ?? "", LevelUrl = _wipeMapUrl ?? "",
-                    Expires = (long)(until.AddHours(1) - UnixEpoch).TotalSeconds };
-                if (HeldWipePermit(armed.Cycle, armed.Seed, armed.Size, armed.LevelUrl) == null) return armed;
+                    Blueprints = PermitBlueprints(_wipeBlueprints), Expires = (long)(until.AddHours(1) - UnixEpoch).TotalSeconds };
+                if (HeldWipePermit(armed.Cycle, armed.Seed, armed.Size, armed.LevelUrl, _wipeBlueprints) == null) return armed;
             }
 
             var now = DateTime.Now;
@@ -9025,7 +9135,9 @@ namespace Oxide.Plugins
                 want.Seed = (e.Seed ?? "").Trim();
                 want.Size = (e.Size ?? "").Trim();
                 want.LevelUrl = (e.MapUrl ?? "").Trim();
-                if (HeldWipePermit(want.Cycle, want.Seed, want.Size, want.LevelUrl) == null) return want;
+                var entryBlueprints = string.IsNullOrWhiteSpace(e.Blueprints) ? "keep" : e.Blueprints.Trim().ToLowerInvariant();
+                want.Blueprints = PermitBlueprints(entryBlueprints);
+                if (HeldWipePermit(want.Cycle, want.Seed, want.Size, want.LevelUrl, entryBlueprints) == null) return want;
             }
             return null;
         }
@@ -9039,8 +9151,9 @@ namespace Oxide.Plugins
             var want = WipePermitWanted();
             _wipePermitNextAsk = DateTime.UtcNow.AddMinutes(5);
             if (want == null) return;
-            var body = new JObject { ["cycle"] = want.Cycle, ["seed"] = want.Seed, ["size"] = want.Size, ["levelurl"] = want.LevelUrl, ["expires"] = want.Expires }
-                .ToString(Formatting.None);
+            var request = new JObject { ["cycle"] = want.Cycle, ["seed"] = want.Seed, ["size"] = want.Size, ["levelurl"] = want.LevelUrl, ["expires"] = want.Expires };
+            if (want.Blueprints.Length > 0) request["blueprints"] = want.Blueprints;
+            var body = request.ToString(Formatting.None);
             PanelRequest("POST", WipePermitPath, body, response =>
             {
                 var data = JObject.Parse(response)["data"] as JObject;
@@ -9052,6 +9165,8 @@ namespace Oxide.Plugins
                 want.Permit = (string)data["permit"] ?? "";
                 want.Expires = data["expires"]?.Type == JTokenType.Integer ? (long)data["expires"] : 0;
                 want.Server = data["server"]?.Type == JTokenType.Integer ? (long)data["server"] : 0;
+                // An AFKPanel that signed version 1 (it does not know this launcher checks version 2) holds for any blueprints.
+                if (!(data["version"]?.Type == JTokenType.Integer && (int)data["version"] == 2)) want.Blueprints = "";
                 if (want.Permit.Length == 0 || want.Expires <= UnixNow() || want.Server <= 0) return;
                 _wipePlan.Permits.RemoveAll(p => p.Cycle == want.Cycle || p.Expires <= UnixNow());
                 _wipePlan.Permits.Add(want);
@@ -9074,15 +9189,17 @@ namespace Oxide.Plugins
 
         private bool BackupPlanAllows()
         {
+            // Remembered as of the panel's last answer, not of now: a policy held in memory while the panel is unreachable
+            // must not keep renewing itself, or "30 days offline" lasted as long as the process.
             if (_policy != null)
             {
-                if (_backup.PlanAllows != _policy.Backups || _backup.PlanCheckedUtc == null || (DateTime.UtcNow - _backup.PlanCheckedUtc.Value).TotalHours >= 24)
+                var heard = _policy.ReceivedUtc;
+                if (_backup.PlanAllows != _policy.Backups || _backup.PlanCheckedUtc == null || (heard - _backup.PlanCheckedUtc.Value).TotalHours >= 24)
                 {
                     _backup.PlanAllows = _policy.Backups;
-                    _backup.PlanCheckedUtc = DateTime.UtcNow;
+                    _backup.PlanCheckedUtc = heard;
                     WriteData(BackupDataFile, _backup);
                 }
-                return _policy.Backups;
             }
             return _backup.PlanAllows && _backup.PlanCheckedUtc != null && (DateTime.UtcNow - _backup.PlanCheckedUtc.Value).TotalDays < BackupPlanMemoryDays;
         }

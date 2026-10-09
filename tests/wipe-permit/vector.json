@@ -1,5 +1,5 @@
 {
-    "note": "Test-only key pair; never the production key. The same vectors AFKPanel checks.",
+    "note": "Test-only key pair; never the production key. Shared with ../hotwire tests/launcher-signing.",
     "vectors": [
         {
             "server": 42,
@@ -21,5 +21,30 @@
             "canonical": "hotwire-wipe-permit 1\nserver 7\ncycle wipe-x-20261105\nseed 1\nsize \nlevelurl https://maps.example.com/island.map\nexpires 1793836800\n",
             "permit": "NsnA3TsZDmnBvONRf1w/FLDvzXDOaCSHlZqauQDzgUdlOOxCpX6eE/XhbE+kWpsEQ2bYXWOUCUC4pJiGP9ujChcqtthl0M6hDjcgJwvcCQigmxEDgnP+3J02foVrfdtJ9hJ5DMjM1oJeYhUku1u1PYsYpH4YgGoYCe9KZtuMMZ/UGDI+p0hIpkJI7pKDold8Lz1wW9vqNZYvUm7Xmdchb0EfVYrS1O4BTOxrN1qgvqE+8G7R6yckn4iz+n/6fymjEQgcB/RxEauxBdsTZsWjHh7ndT5mY1dJ9PxmzZjfuNGqs4Jz/eJlYpsB79AmE8634wekckvImiY65epVJjEhTg=="
         }
-    ]
+    ],
+    "vectors_v2": [
+        {
+            "server": 42,
+            "cycle": "wipe-0193f2c1-20261105",
+            "seed": "1847362",
+            "size": "4000",
+            "levelurl": "",
+            "blueprints": "delete",
+            "expires": 1793836800,
+            "canonical": "hotwire-wipe-permit 2\nserver 42\ncycle wipe-0193f2c1-20261105\nseed 1847362\nsize 4000\nlevelurl \nblueprints delete\nexpires 1793836800\n",
+            "permit": "rcNArTWrb9V5wbr7lQo3QkMocZIaE83Vi5H+1CNqzx525z5uiSNsZgq2CIgQepqHJ0iY1rQNK9a34Dja4viU9cyecXxJ869424pZYT6huHqbEDvkFLxHv8ZW5g4sbDtTyG6hNX62itTAVGl5//6KAQ5GdX7RM5kNNlaC80JlC9RTlVWnGoUHMd49RMdpSQ/H0M26nhb2NXSS7oI9EjIafmoTXvYKAobC3gBg+76d7JqAkC2h6+5ytqvAPN5eYbrMFytm55dl82dPfeabpWIifNhFuyKwjlhiPEI3DfHGoHsVWqOFnuqXH+lReEnNHNglPMxV4N3irHkj3R1fA6IHow=="
+        },
+        {
+            "server": 7,
+            "cycle": "wt-3-20261105",
+            "seed": "99",
+            "size": "",
+            "levelurl": "https://maps.example/x.map",
+            "blueprints": "keep",
+            "expires": 1793840400,
+            "canonical": "hotwire-wipe-permit 2\nserver 7\ncycle wt-3-20261105\nseed 99\nsize \nlevelurl https://maps.example/x.map\nblueprints keep\nexpires 1793840400\n",
+            "permit": "PaHg7drZGizy2wf49Sh6rzFSXF7VFYJMhLQyNesWeHsTIAcub0DCCUCBPWjGspuYHT3PM0CCV3eI90n0H9hvBwdBlK9vix9hasXPywrTeoFxQwrRPJwZXQU0hK7UmRqFBmXgafhQ71Pm19hBgp6ClbVQvwp/sv8tzZv6juff2CskYjV9JSqsUhrXSD+PRxqeePI3yffcP4qD+AXRZ2+vSriWxsy9MzZH5UMXkJhMWxc68nplKw4q+0tOaWbbUUgJ8GtkDRx1gusWa5CbdgjPcmobc8x9KG45E7o+gHu5YXVX4zI4y7c9nb0tqv1BLpScRwDKVs/WnC99HWfbpvTS7w=="
+        }
+    ],
+    "note_v2": "Version 2 (ADR-0306): version 1 with blueprints after levelurl. Same test key."
 }

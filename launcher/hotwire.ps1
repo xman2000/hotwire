@@ -15,8 +15,8 @@
 $ErrorActionPreference = 'Stop'
 # Who this launcher is, for the plugin: written to oxide\data\Hotwire\launcher.json before every start. The plugin
 # offers only the features in the capability list; settings_file means the settings come from hotwire.cfg.
-$LauncherVersion = '1.1.33'
-$LauncherCapabilities = 'supervise,update,framework_verify,crash_backstop,log_rotate,convar_persist,wipe,wipe_same_map,wipe_custom_map,backup,settings_file,rcon_optional,wipe_permit'
+$LauncherVersion = '1.1.34'
+$LauncherCapabilities = 'supervise,update,framework_verify,crash_backstop,log_rotate,convar_persist,wipe,wipe_same_map,wipe_custom_map,backup,settings_file,rcon_optional,wipe_permit,wipe_permit_blueprints'
 $root = $PSScriptRoot
 $cfg = Join-Path $root 'hotwire.cfg'
 $secretsCfg = Join-Path $root 'hotwire-secrets.cfg'
@@ -175,7 +175,7 @@ function Read-Config {
             # Numbers are passed on in base 10, so a leading zero never changes one.
             $value = $p.Value
             if ($value -ne '' -and @('int', 'int1', 'seed', 'worldsize', 'port') -contains $kind) { $value = [string][long]$value }
-            # Set twice: the later line is the one used. A wipe or a saved convar edits the first, so the two disagree.
+            # Set twice: the later line is the one used, and the one a wipe or a saved convar edits.
             if ($used.ContainsKey($lower)) { Add-CfgNote $r $n $name ($criticalKinds -contains $kind) ('also set on line ' + $used[$lower] + '; line ' + $n + ' is used') }
             $used[$lower] = $n
             $r.Values[$lower] = $value
@@ -305,7 +305,7 @@ function Invoke-Load {
     $keepPassword = $false
     if ($secret.Why) {
         Rule; Say $secret.Why
-        if ([string]$env:HOTWIRE_RCON64 -ne '') { Say 'Starting with the RCON password from the last start.'; $keepPassword = $true }
+        if ([string]$script:Rcon64 -ne '') { Say 'Starting with the RCON password from the last start.'; $keepPassword = $true }
         else { Say 'Starting with RCON off until it is fixed.' }
         Rule
     } elseif ($secret.Off -and -not $quiet) { Say $secret.Off }
@@ -363,7 +363,8 @@ function Set-CfgValues([object[]]$pairs) {
             $done = -1; $off = -1
             for ($i = 0; $i -lt $lines.Count; $i++) {
                 $first = ($lines[$i].TrimStart() -split '[ \t]+')[0]
-                if ($first.ToLowerInvariant() -eq $want) { $done = $i; break }
+                # The last line that sets it, the one the reader uses: changing the first left the old value in force.
+                if ($first.ToLowerInvariant() -eq $want) { $done = $i; continue }
                 if ($off -lt 0 -and $first.StartsWith('#') -and $first.Substring(1).ToLowerInvariant() -eq $want) { $off = $i }
             }
             $at = $done; if ($at -lt 0) { $at = $off }
@@ -417,16 +418,38 @@ $WipePermitModulus = 'otv0GyyUvwmrVHLcq+1yFZHmZbxBIr+coTcMKK2trfccv/9i/k8+7SjO1k
 $WipePermitExponent = 'AQAB'
 
 # Whether a wipe permission verifies: RSA, SHA-256, over the seven lines AFKPanel signed, rebuilt from the flag.
-function Test-WipePermit([string]$server, [string]$cycle, [string]$seed, [string]$size, [string]$levelUrl, [string]$expires, [string]$permit, [string]$modulus, [string]$exponent) {
+# Version 2 signs the blueprints too and is tried first; version 1 is what AFKPanel signed before this launcher said it
+# checks version 2, so a permission made then still wipes. Once version 2 is signed, a changed blueprints line fails.
+function Test-OxideZipEntries([string]$zip) {
     try {
-        $text = 'hotwire-wipe-permit 1' + "`n" + 'server ' + $server + "`n" + 'cycle ' + $cycle + "`n" + 'seed ' + $seed + "`n" + 'size ' + $size + "`n" + 'levelurl ' + $levelUrl + "`n" + 'expires ' + $expires + "`n"
-        $bytes = (New-Object Text.UTF8Encoding($false)).GetBytes($text)
+        Add-Type -AssemblyName System.IO.Compression.FileSystem
+        $archive = [IO.Compression.ZipFile]::OpenRead($zip)
+        try {
+            if ($archive.Entries.Count -eq 0) { return $false }
+            foreach ($e in $archive.Entries) {
+                $n = $e.FullName.Replace('\', '/')
+                if (-not $n.StartsWith('RustDedicated_Data/') -or $n -match '(^|/)\.\.(/|$)' -or $n.StartsWith('/') -or $n -match '^[A-Za-z]:') { return $false }
+            }
+            return $true
+        } finally { $archive.Dispose() }
+    } catch { return $false }
+}
+
+function Test-WipePermit([string]$server, [string]$cycle, [string]$seed, [string]$size, [string]$levelUrl, [string]$expires, [string]$permit, [string]$modulus, [string]$exponent, [string]$blueprints = '') {
+    try {
         $params = New-Object Security.Cryptography.RSAParameters
         $params.Modulus = [Convert]::FromBase64String($modulus)
         $params.Exponent = [Convert]::FromBase64String($exponent)
         $rsa = New-Object Security.Cryptography.RSACryptoServiceProvider
         $rsa.ImportParameters($params)
-        return [bool]$rsa.VerifyData($bytes, 'SHA256', [Convert]::FromBase64String($permit))
+        $signature = [Convert]::FromBase64String($permit)
+        $utf8 = New-Object Text.UTF8Encoding($false)
+        if ($blueprints) {
+            $text = 'hotwire-wipe-permit 2' + "`n" + 'server ' + $server + "`n" + 'cycle ' + $cycle + "`n" + 'seed ' + $seed + "`n" + 'size ' + $size + "`n" + 'levelurl ' + $levelUrl + "`n" + 'blueprints ' + $blueprints + "`n" + 'expires ' + $expires + "`n"
+            if ($rsa.VerifyData($utf8.GetBytes($text), 'SHA256', $signature)) { return $true }
+        }
+        $text = 'hotwire-wipe-permit 1' + "`n" + 'server ' + $server + "`n" + 'cycle ' + $cycle + "`n" + 'seed ' + $seed + "`n" + 'size ' + $size + "`n" + 'levelurl ' + $levelUrl + "`n" + 'expires ' + $expires + "`n"
+        return [bool]$rsa.VerifyData($utf8.GetBytes($text), 'SHA256', $signature)
     } catch { return $false }
 }
 
@@ -468,6 +491,9 @@ function Invoke-Edits {
             elseif ($size -and ($size -notmatch '^\d{1,5}$' -or [int]$size -lt 1000 -or [int]$size -gt 6000)) { $why = 'size is not a whole number from 1000 to 6000' }
             elseif ('keep', 'rename', 'delete' -notcontains $bp) { $why = 'blueprints must be keep, rename or delete' }
             elseif ($levelUrl -and ($levelUrl -cnotmatch '^https?://\S+$' -or $levelUrl -match '["''`$\\]' -or $levelUrl.Length -gt 500)) { $why = 'the map address must be an http:// or https:// address with no quote, $ or backslash' }
+            # The settings in use are the last good ones because hotwire.cfg has a line that changes which server this is:
+            # a wipe written now would be recorded as done while the server boots on the old ones.
+            elseif ($env:HOTWIRE_LOAD_STATE -eq 'kept') { $why = 'hotwire.cfg has a setting that cannot be used, so the last good settings are in use; fix it first' }
             # Wipes are part of AFKPanel Pro: AFKPanel's permission for this server, this wipe and this map, checked against
             # the values exactly as the flag carries them, before anything is backed up, written or renamed.
             if (-not $why) {
@@ -477,7 +503,7 @@ function Invoke-Edits {
                 if (-not $permit) { $why = 'no permission from AFKPanel (wipes are part of AFKPanel Pro)' }
                 elseif ($permitExpires -notmatch '^\d+$' -or [long]$permitExpires -le $now) { $why = 'AFKPanel''s permission has expired' }
                 elseif (-not $myServer -or $permitServer -ne $myServer) { $why = 'AFKPanel''s permission is for another server' }
-                elseif (-not (Test-WipePermit $permitServer $cycle $seed $size $levelUrl $permitExpires $permit $WipePermitModulus $WipePermitExponent)) { $why = 'AFKPanel''s permission does not match this wipe' }
+                elseif (-not (Test-WipePermit $permitServer $cycle $seed $size $levelUrl $permitExpires $permit $WipePermitModulus $WipePermitExponent $bp)) { $why = 'AFKPanel''s permission does not match this wipe' }
             }
             # A forced wipe's backup waits until the update is known to have arrived (above).
             if (-not $why -and $forced -eq '1' -and $w['backup'] -eq '1' -and $env:BACKUPS -ne '0') {
@@ -601,7 +627,7 @@ function Invoke-Edits {
 function Invoke-Launch {
     $list = New-Object 'System.Collections.Generic.List[string]'
     foreach ($a in (ConvertFrom-Json ([IO.File]::ReadAllText($argsFile)))) { $list.Add([string]$a) }
-    $password = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String([string]$env:HOTWIRE_RCON64))
+    $password = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String([string]$script:Rcon64))
     # No password, no RCON: Rust starts no RCON listener when it is given none.
     if ($password -ne '') { $list.Add('+rcon.password'); $list.Add($password) }
     $list.Add('-logfile'); $list.Add([string]$env:LOGFILE)
@@ -704,6 +730,10 @@ function Copy-BackupTree([string]$from, [string]$to, [string]$skip) {
     foreach ($f in @(Get-ChildItem -LiteralPath $from -File -Recurse -Force -ErrorAction SilentlyContinue)) {
         $rel = $f.FullName.Substring($base.Length + 1)
         if ($skip -and ($rel -ieq $skip -or $rel.StartsWith($skip + $sep, [StringComparison]::OrdinalIgnoreCase))) { continue }
+        # The panel keys, wherever a backup.conf folder points: the launcher's hotwire\ and the plugin's oxide\data\Hotwire\.
+        $launcherKeys = [IO.Path]::Combine($root, 'hotwire') + $sep
+        $pluginKeys = [IO.Path]::Combine($root, 'oxide', 'data', 'Hotwire') + $sep
+        if ($f.FullName.StartsWith($launcherKeys, [StringComparison]::OrdinalIgnoreCase) -or $f.FullName.StartsWith($pluginKeys, [StringComparison]::OrdinalIgnoreCase)) { continue }
         $target = Join-Path $to $rel
         $folder = Split-Path -Parent $target
         if (-not (Test-Path -LiteralPath $folder)) { [void](New-Item -ItemType Directory -Force -Path $folder) }
@@ -1260,7 +1290,11 @@ function Import-Settings([switch]$Quiet) {
         $pair = $text.Substring(6); $i = $pair.IndexOf('=')
         if ($i -lt 1) { continue }
         $name = $pair.Substring(0, $i); $value = $pair.Substring($i + 1)
-        if ($name -eq 'HW_LOAD') { $state = $value } else { [Environment]::SetEnvironmentVariable($name, $value) }
+        # The RCON password stays in this process, never in the environment every child inherits (SteamCMD, hooks,
+        # the report sender): a hook that dumped its environment would have recorded it.
+        if ($name -eq 'HW_LOAD') { $state = $value }
+        elseif ($name -eq 'HOTWIRE_RCON64') { $script:Rcon64 = $value }
+        else { [Environment]::SetEnvironmentVariable($name, $value) }
     }
     $env:HOTWIRE_QUIET = ''
     return $state
@@ -1563,9 +1597,19 @@ function Update-Oxide([string]$buildBefore) {
         # working install. It gives up on a stalled download (under 1 byte a second for 2 minutes), not a slow one.
         # curl.exe by name: in Windows PowerShell, curl is another command. Started as its own process so its
         # progress reaches the window.
+        # At most 30 minutes in all, so a connection that trickles can never hold the start. Windows Server 2016 has no
+        # curl.exe: there PowerShell's own download is used, with the same limit.
         $q = [char]34
-        $c = Start-Process -FilePath 'curl.exe' -ArgumentList ('-fSL -A Mozilla/5.0 --connect-timeout 30 --speed-limit 1 --speed-time 120 ' + $q + $from + $q + ' --output ' + $q + $zip + $q) -NoNewWindow -Wait -PassThru
-        if ($c.ExitCode -ne 0) { Say 'Oxide download failed. Starting with the Oxide already installed.'; return $false }
+        if (Get-Command 'curl.exe' -CommandType Application -ErrorAction SilentlyContinue) {
+            $c = Start-Process -FilePath 'curl.exe' -ArgumentList ('-fSL -A Mozilla/5.0 --connect-timeout 30 --speed-limit 1 --speed-time 120 --max-time 1800 ' + $q + $from + $q + ' --output ' + $q + $zip + $q) -NoNewWindow -Wait -PassThru
+            if ($c.ExitCode -ne 0) { Say 'Oxide download failed. Starting with the Oxide already installed.'; return $false }
+        } else {
+            try { Invoke-WebRequest -Uri $from -OutFile $zip -UseBasicParsing -UserAgent 'Mozilla/5.0' -TimeoutSec 1800 }
+            catch { Say 'Oxide download failed. Starting with the Oxide already installed.'; return $false }
+        }
+        # Every entry under RustDedicated_Data/ and none climbing out of it, as setup checks: on the unverified path a
+        # changed zip could otherwise write anywhere this account can.
+        if (-not (Test-OxideZipEntries $zip)) { Say 'The Oxide download is not a zip of files under RustDedicated_Data/. It is not installed.'; return $false }
         if ($sha) {
             $got = (Get-FileHash -Algorithm SHA256 -LiteralPath $zip).Hash.ToLower()
             if ($got -ne $sha) {
@@ -1639,7 +1683,8 @@ function Move-ServerLog([long]$crashStreak) {
         $name = 'server_log_' + $stamp + '.txt'
         if ($crashStreak -eq 1) { $name = 'server_crash_' + $stamp + '.txt' }
         Move-Item -LiteralPath $LogFile -Destination ([IO.Path]::Combine($root, 'logs', $name)) -Force
-        Get-ChildItem -Path ([IO.Path]::Combine($root, 'logs', 'server_log_*.txt')) | Sort-Object LastWriteTime -Descending |
+        # The folder by its literal name (a [ in it is not a wildcard), the files by the pattern.
+        Get-ChildItem -LiteralPath ([IO.Path]::Combine($root, 'logs')) -Filter 'server_log_*.txt' -File -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending |
             Select-Object -Skip (Get-Num 'LOG_KEEP' 14) | Remove-Item -Force
     } catch { Say ('Could not rotate the server log: ' + $_.Exception.Message) }
 }
@@ -1930,6 +1975,7 @@ function Invoke-Main([string[]]$argv) {
             $script:LauncherExit = 0; return
         }
         if ((Test-Path -LiteralPath (Join-Path $root $WipeFlag)) -or (Test-Path -LiteralPath (Join-Path $root 'CONVAR.request'))) {
+            $env:HOTWIRE_LOAD_STATE = $load
             try { Invoke-Edits } catch { Say ('Wipe or convar: ' + $_.Exception.Message) }
             try { [void](Import-Settings -Quiet) } catch { Say ('Could not read the settings: ' + $_.Exception.Message) }
         }

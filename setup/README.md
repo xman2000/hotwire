@@ -96,7 +96,7 @@ nothing broken, and running it again simply carries on.
   `hotwire.bat` from before 1.1.16, which keeps its settings inside itself, is left as it is; the start-script
   converter at https://afkpanel.com/get-started moves its settings into `hotwire.cfg`.
 - **The game's own files, without a copy.** Before Oxide first replaces anything, the originals go to
-  `hotwire\backups\<time>-before-oxide\`.
+  `hotwire\backups\<time>-before-oxide-<build>\`, one for each Rust build.
 - **Anything in a SteamCMD folder that already exists.** Only `steamcmd.exe` is added, and you are asked
   first.
 - **Your Downloads, Desktop, Documents, OneDrive or temporary folders.** It will not suggest them for a
@@ -110,7 +110,7 @@ exact way to undo it. The last screen shows where that file is. In short:
 | to undo | do this |
 |---|---|
 | one server's firewall rules | the `Remove-NetFirewallRule -DisplayName '...'` lines in that server's `changes.log` (as Administrator). `-Group Hotwire` would remove **every** server's rules |
-| Oxide | copy the files from `hotwire\backups\*-before-oxide\` back into the server folder |
+| Oxide | copy the files from the newest `hotwire\backups\*-before-oxide-*\` back into the server folder |
 | the start script, plugin or password | delete `hotwire.bat`, `hotwire.ps1` and `hotwire.cfg`, `oxide\plugins\Hotwire.cs` or `hotwire-secrets.cfg` |
 | connecting to the panel | `hotwire-setup.bat detach`, then revoke the keys in the panel |
 | everything | delete the server folder, and `C:\steamcmd` if no other server uses it |

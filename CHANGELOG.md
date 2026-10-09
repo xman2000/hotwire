@@ -24,6 +24,60 @@ sit above a launcher `1.1.7`. Read the label, not the number.
 `hotwire check` prints the plugin's version. Each launcher prints its own
 version as the first line when it starts.
 
+## Plugin 1.1.68, launchers 1.1.34 (Windows) and 1.1.20-linux, setup 0.1.31 (Windows) and 0.2.30 (Linux) — unreleased
+
+**Setup on Linux writes the server's folder as the server's own account.** Every file in the folder (the change log,
+the record, the settings, the RCON password file, the downloads and Oxide's files) is now written and read by the
+account that owns the folder, never by root, and setup never changes the owner of a link. Update setup before running
+`install` again on a server.
+
+**Plugin**
+- A restart whose config cannot be saved still happens. It used to stop part way, with players on, and refuse every
+  later restart until the plugin reloaded.
+- A countdown started during the repeated hour of the autumn clock change now ends when it says. It used to end at
+  its first second.
+- The map image is drawn once per map. When AFKPanel does not take it, the same image is sent again later; the
+  server no longer stops for a new drawing on every try.
+- When the sharing level changes, reports about players that were held while AFKPanel could not be reached are not
+  sent, and neither is a log batch already built.
+- Backups and wipes allowed by the plan are remembered for 30 days from AFKPanel's last answer, not from the last time
+  the plugin looked.
+- A wipe sent from AFKPanel is refused when the launcher cannot wipe, instead of counting down and restarting on the
+  same map.
+- Putting back a plugin after a failed update also sets aside the config and data the new version created, so the
+  old version loads with its own.
+- A config file that cannot be read is no longer overwritten by the next change made in game or from AFKPanel.
+- A file that cannot be read when the server starts no longer stops the restart schedule for the whole session.
+- The plugin asks AFKPanel to sign Blueprints into a wipe's permission when the launcher checks it.
+
+**Launchers**
+- A wipe's permission covers Blueprints too: changing `keep` to `delete` in `WIPE.flag` no longer verifies. A
+  permission AFKPanel signed before is still accepted. New capability: `wipe_permit_blueprints`.
+- A wipe or a saved convar now changes the last line that sets a value in `hotwire.cfg`, the one the launcher reads.
+  With a value set twice, the wipe used to change the other line and boot the old map.
+- Windows: a wipe waits when `hotwire.cfg` has a setting that cannot be used, instead of being recorded as done.
+- The Oxide download stops after 30 minutes in all, and its zip is checked to hold only files under
+  `RustDedicated_Data/` before it is unpacked. Windows Server 2016, which has no `curl.exe`, downloads it with
+  PowerShell.
+- Linux: the report key no longer appears in the list of running programs while a report is signed.
+- Linux: no backup is taken before a wipe that will be cancelled for want of a permission.
+- Linux: a log tail cut inside a character no longer makes AFKPanel refuse the report.
+- Linux: `launcher.json` stays valid JSON when the folder name has a quote or backslash.
+- Linux: a hook that leaves something running no longer keeps the folder locked.
+- Windows: the RCON password is no longer in the environment SteamCMD, hooks and the report sender run with.
+- Windows: backups never include the panel keys, wherever `backup.conf` points.
+- Windows: old logs are trimmed in folders with `[` or `]` in their name.
+
+**Setup**
+- Windows: a folder name a launcher cannot use is said before the download, not after it.
+- Windows: Rust, the branch and Oxide are not installed while hotwire.bat is running for the folder.
+- Windows: the RCON password rules for `hotwire-secrets.cfg` allow `%` and a leading `;`, which only the old
+  `secrets.bat` could not hold, and the checks say RCON stays off rather than that the server will not start.
+- `doctor`, `connect`, `status` and `detach` on Windows work in folders with `[` or `]` in their name.
+- The copy of the game files taken before Oxide is per Rust build, so undoing Oxide after a branch change puts back
+  that build's files.
+- Linux: a folder left with an empty `hotwire` folder by an install that was told no is accepted the next time.
+
 ## Plugin 1.1.67 — unreleased
 
 **Pseudonymous player data, and a month of held reports.**

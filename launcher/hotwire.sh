@@ -21,8 +21,8 @@
 #     hotwire.cfg. The plugin works out this file's code hash itself, and
 #     AFKPanel compares it with the released launchers'; nothing waits on that
 #     answer.
-HOTWIRE_LAUNCHER_VERSION="1.1.19-linux"
-HOTWIRE_LAUNCHER_CAPABILITIES="supervise,update,framework_verify,crash_backstop,log_rotate,convar_persist,wipe,wipe_same_map,wipe_custom_map,backup,settings_file,rcon_optional,stop_saves,wipe_permit"
+HOTWIRE_LAUNCHER_VERSION="1.1.20-linux"
+HOTWIRE_LAUNCHER_CAPABILITIES="supervise,update,framework_verify,crash_backstop,log_rotate,convar_persist,wipe,wipe_same_map,wipe_custom_map,backup,settings_file,rcon_optional,stop_saves,wipe_permit,wipe_permit_blueprints"
 
 # ======================================================================
 #  HOW THIS LAUNCHER WORKS
@@ -350,7 +350,7 @@ load_config() {
             # For a launcher setting an empty value is its default, except the Steam branch, where empty means
             # "let Steam keep the last one". A server convar's empty value is the game's default, as the file says.
             if [ -z "$CFG_VALUE" ] && [ -n "${HW_SETTINGS[$lower]:-}" ] && [ "$kind" != word ]; then continue; fi
-            # Set twice: the later line is the one used. A wipe or a saved convar edits the first, so the two disagree.
+            # Set twice: the later line is the one used, and the one a wipe or a saved convar edits.
             if [ -n "${used[$lower]:-}" ]; then
                 crit=0; cfg_critical "$kind" && crit=1
                 cfg_note "$n" "$name" "$crit" "also set on line ${used[$lower]}; line $n is used"
@@ -877,8 +877,9 @@ framework_update() {
 
     local zip="$ROOT/OxideMod.zip"
     [ -n "$sha" ] && log "Downloading Oxide ${tag:-latest} (will verify SHA-256)..." || log "Downloading Oxide (unverified)..."
-    # A stalled download gives up (under 1 byte a second for 2 minutes); a slow one carries on.
-    if ! curl -fSL -A "Mozilla/5.0" --connect-timeout 30 --speed-limit 1 --speed-time 120 "$from" --output "$zip" 2>/dev/null; then
+    # A stalled download gives up (under 1 byte a second for 2 minutes); a slow one carries on, for at most 30 minutes in
+    # all, so a connection that trickles can never hold the start.
+    if ! curl -fSL -A "Mozilla/5.0" --connect-timeout 30 --speed-limit 1 --speed-time 120 --max-time 1800 "$from" --output "$zip" 2>/dev/null; then
         warn "Oxide download failed; keeping the current install."
         rm -f "$zip"; return 0
     fi
@@ -888,6 +889,12 @@ framework_update() {
             bad "Oxide SHA-256 does not match; NOT extracting."; rm -f "$zip"; return 0
         fi
         ok "Oxide SHA-256 matches."
+    fi
+    # Every entry under RustDedicated_Data/ and none climbing out of it, as setup checks: on the unverified path a
+    # changed zip could otherwise write anywhere the server's user can.
+    local strays; strays="$(unzip -Z1 "$zip" 2>/dev/null | grep -vE '^RustDedicated_Data/'; unzip -Z1 "$zip" 2>/dev/null | grep -E '(^|/)\.\.(/|$)|^/|\\')"
+    if [ -n "$strays" ] || [ -z "$(unzip -Z1 "$zip" 2>/dev/null)" ]; then
+        bad "The Oxide download is not a zip of files under RustDedicated_Data/; NOT extracting."; rm -f "$zip"; return 0
     fi
     if unzip -o "$zip" -d "$ROOT" >/dev/null 2>&1; then
         FRAMEWORK_OK=1
@@ -986,8 +993,8 @@ write_launcher_state() {
   "version": "$HOTWIRE_LAUNCHER_VERSION",
   "capabilities": "$HOTWIRE_LAUNCHER_CAPABILITIES",
   "platform": "linux",
-  "update_mode": "$UPDATE_MODE",
-  "path": "$self",
+  "update_mode": $(json_text "$UPDATE_MODE"),
+  "path": $(json_text "$self"),
   "config_problems": [$(config_problems_json)],
   "notices": [$(launcher_notices_json)]
 }
@@ -1036,7 +1043,22 @@ _json_val() {  # a flat JSON string or number: setup writes the server id quoted
     grep -oE "\"$2\"[[:space:]]*:[[:space:]]*(\"[^\"]*\"|[0-9]+)" "$1" 2>/dev/null | head -1 | sed -E 's/.*:[[:space:]]*"?([^"]*)"?/\1/'
 }
 _sha256() { printf '%s' "$1" | openssl dgst -sha256 | sed 's/^.*= *//'; }
-_hmac()   { printf '%s' "$2" | openssl dgst -sha256 -hmac "$1" | sed 's/^.*= *//'; }
+_hmac() {  # <key> <message>: HMAC-SHA256 hex, built from two SHA-256 passes (RFC 2104) so the key never goes on a command
+    # line, where any local user can read it in the process list; `openssl dgst -hmac <key>` put it there.
+    local hex i b ipad="" opad="" dir
+    hex="$(printf '%s' "$1" | od -An -v -tx1 | tr -d ' \n')"
+    [ "${#hex}" -gt 128 ] && hex="$(printf '%s' "$1" | openssl dgst -sha256 -binary | od -An -v -tx1 | tr -d ' \n')"
+    while [ "${#hex}" -lt 128 ]; do hex="${hex}00"; done
+    for ((i = 0; i < 128; i += 2)); do
+        b=$((16#${hex:i:2}))
+        ipad+="$(printf '\\x%02x' $((b ^ 0x36)))"; opad+="$(printf '\\x%02x' $((b ^ 0x5c)))"
+    done
+    dir="$(umask 077; mktemp -d)" || return 1
+    printf "$ipad" > "$dir/i"; printf "$opad" > "$dir/o"
+    { cat "$dir/i"; printf '%s' "$2"; } | openssl dgst -sha256 -binary > "$dir/inner"
+    cat "$dir/o" "$dir/inner" | openssl dgst -sha256 | sed 's/^.*= *//'
+    rm -rf "$dir"
+}
 _bool()   { [ "$1" = "1" ] && printf 'true' || printf 'false'; }
 # The signature AFKPanel checks: HMAC-SHA256 over "POST /api/v1/report", the timestamp, the nonce and the body's SHA-256,
 # one per line. tests/launcher-signing checks it against the shared conformance vector.
@@ -1192,7 +1214,9 @@ report_session() {  # <exit_code> <crashed true|false>
         [[ "$hooks" =~ ^[0-9]+$ ]] || hooks=0
         p="$p,\"hook_errors\":$hooks"
         if ! grep -aq 'Loaded plugin Hotwire' "$LOGFILE" 2>/dev/null; then
-            p="$p,\"log_tail\":$(json_text "$(tail -n 40 "$LOGFILE" 2>/dev/null | tail -c 8000 | tr -d '\000-\010\013\014\016-\037')")"
+            # A byte cut can start inside a character; its leftover bytes are dropped, or the panel refuses the
+            # report as broken text and the spool lets it go.
+            p="$p,\"log_tail\":$(json_text "$(tail -n 40 "$LOGFILE" 2>/dev/null | tail -c 8000 | LC_ALL=C sed '1s/^[\x80-\xBF]*//' | tr -d '\000-\010\013\014\016-\037')")"
         fi
     fi
     p="$p$(update_json)$(launcher_hooks_json)}"
@@ -1269,7 +1293,9 @@ _cfg_set_one() {  # <name> <value>: stdin to stdout
     HW_NAME="$name" HW_LINE="$(printf '%-27s %s' "$name" "$shown")" awk '
         BEGIN { ln = tolower(ENVIRON["HW_NAME"]); line = ENVIRON["HW_LINE"]; done = 0; off = 0 }
         { rows[NR] = $0 }
-        !done {
+        {
+            # The LAST line that sets it, as the reader takes the last: with a name set twice, changing the first
+            # left the old value in force (LS-5).
             s = $0; sub(/\r$/, "", s); sub(/^[ \t]+/, "", s)
             split(s, f, /[ \t]+/)
             if (tolower(f[1]) == ln) { done = NR }
@@ -1297,16 +1323,39 @@ VQWnxfmBLc/4tlbfeCh4NoLpLqcgAttxRLqom6/6xNRVbB2eWUlx8qYFIecxknGL
 /HzyrC8U7xraCdmG2FqxQY/WKnYFvvz0u8CFAebxRukhAgMBAAE=
 -----END PUBLIC KEY-----"
 
-# Whether a wipe permission verifies: RSA, SHA-256, over the seven lines AFKPanel signed, rebuilt from the flag.
-wipe_permit_ok() {  # <public key pem> <server> <cycle> <seed> <size> <levelurl> <expires> <permit base64>
-    local dir rc
+# Whether a wipe permission verifies: RSA, SHA-256, over the lines AFKPanel signed, rebuilt from the flag. Version 2
+# signs the blueprints too and is tried first; version 1 (seven lines) is what AFKPanel signed before this launcher said
+# it checks version 2, so a permission made then still wipes. Once version 2 is signed, a changed blueprints line fails.
+wipe_permit_ok() {  # <public key pem> <server> <cycle> <seed> <size> <levelurl> <expires> <permit base64> [blueprints]
+    local dir rc=1
     dir="$(mktemp -d)" || return 1
     printf '%s\n' "$1" > "$dir/key.pem"
-    printf 'hotwire-wipe-permit 1\nserver %s\ncycle %s\nseed %s\nsize %s\nlevelurl %s\nexpires %s\n' "$2" "$3" "$4" "$5" "$6" "$7" > "$dir/text"
     printf '%s' "$8" | openssl base64 -d -A > "$dir/sig" 2>/dev/null
-    openssl dgst -sha256 -verify "$dir/key.pem" -signature "$dir/sig" "$dir/text" >/dev/null 2>&1; rc=$?
+    if [ -n "${9:-}" ]; then
+        printf 'hotwire-wipe-permit 2\nserver %s\ncycle %s\nseed %s\nsize %s\nlevelurl %s\nblueprints %s\nexpires %s\n' "$2" "$3" "$4" "$5" "$6" "$9" "$7" > "$dir/text"
+        openssl dgst -sha256 -verify "$dir/key.pem" -signature "$dir/sig" "$dir/text" >/dev/null 2>&1; rc=$?
+    fi
+    if [ "$rc" -ne 0 ]; then
+        printf 'hotwire-wipe-permit 1\nserver %s\ncycle %s\nseed %s\nsize %s\nlevelurl %s\nexpires %s\n' "$2" "$3" "$4" "$5" "$6" "$7" > "$dir/text"
+        openssl dgst -sha256 -verify "$dir/key.pem" -signature "$dir/sig" "$dir/text" >/dev/null 2>&1; rc=$?
+    fi
     rm -rf "$dir"
     return $rc
+}
+
+# Whether a wipe flag carries AFKPanel's permission for this server that verifies: the same test apply_wipe makes,
+# asked first by the backup before a wipe, so a wipe that will be cancelled costs no backup.
+flag_permit_ok() {  # <flag>
+    local f="$1" permit pexp pserver my bp
+    permit="$(grep -m1 '^permit ' "$f" | awk '{print $2}')"
+    pexp="$(grep -m1 '^permit_expires ' "$f" | awk '{print $2}')"
+    pserver="$(grep -m1 '^server ' "$f" | awk '{print $2}')"
+    my="$(_json_val "$CONNECT_FILE" server_id)"
+    bp="$(grep -m1 '^blueprints ' "$f" | awk '{print $2}')"; [ -z "$bp" ] && bp=keep
+    [ -n "$permit" ] && [[ "$pexp" =~ ^[0-9]+$ ]] && [ "$pexp" -gt "$(date +%s)" ] && [ -n "$my" ] && [ "$pserver" = "$my" ] \
+        && wipe_permit_ok "$WIPE_PERMIT_PUBKEY" "$pserver" "$(grep -m1 '^cycle ' "$f" | awk '{print $2}')" \
+            "$(grep -m1 '^seed ' "$f" | awk '{print $2}')" "$(grep -m1 '^size ' "$f" | awk '{print $2}')" \
+            "$(grep -m1 '^levelurl ' "$f" | awk '{print $2}')" "$pexp" "$permit" "$bp"
 }
 
 apply_wipe() {
@@ -1352,7 +1401,7 @@ apply_wipe() {
         if [ -z "$permit" ]; then why="no permission from AFKPanel (wipes are part of AFKPanel Pro)"
         elif ! [[ "$permit_expires" =~ ^[0-9]+$ ]] || [ "$permit_expires" -le "$now" ]; then why="AFKPanel's permission has expired"
         elif [ -z "$my_server" ] || [ "$permit_server" != "$my_server" ]; then why="AFKPanel's permission is for another server"
-        elif ! wipe_permit_ok "$WIPE_PERMIT_PUBKEY" "$permit_server" "$cycle" "$seed" "$size" "$levelurl" "$permit_expires" "$permit"; then
+        elif ! wipe_permit_ok "$WIPE_PERMIT_PUBKEY" "$permit_server" "$cycle" "$seed" "$size" "$levelurl" "$permit_expires" "$permit" "$bp"; then
             why="AFKPanel's permission does not match this wipe"
         fi
     fi
@@ -1856,7 +1905,8 @@ backup_before_launch() {
         local cycle expires
         cycle="$(grep -m1 '^cycle ' "$flag" | awk '{print $2}')"; expires="$(grep -m1 '^expires ' "$flag" | awk '{print $2}')"
         if { [ -z "$cycle" ] || [ "$(cat "$WIPE_STATE" 2>/dev/null)" != "$cycle" ]; } && { [ -z "$expires" ] || [ "$expires" -ge "$(date +%s)" ] 2>/dev/null; }; then
-            trigger="before_wipe"
+            # Only for a wipe that will happen: one without a permission that verifies is cancelled, before any backup.
+            flag_permit_ok "$flag" && trigger="before_wipe"
         fi
     fi
     if [ -z "$trigger" ] && [ "${DO_UPDATE:-0}" = "1" ] && [ "$(_bconf enabled 0)" = "1" ] && [ "$(_bconf before_update 1)" = "1" ]; then
@@ -1889,7 +1939,9 @@ run_hook() {  # run_hook <file> <label> <before|after>
     local limit="${HOOK_LIMIT_SECONDS:-$(( HOOK_TIMEOUT_MINUTES * 60 ))}" t0 t1 pid rc timed_out=0 tenths
     t0="${EPOCHREALTIME/[.,]/}"
     # DO_UPDATE tells the hook whether this start updates: 1 or 0.
-    ( cd "$ROOT" && DO_UPDATE="${DO_UPDATE:-0}" exec setsid bash "$1" ) &
+    # Without the launcher's locks: a hook that leaves something running in the background would otherwise keep the
+    # folder locked, and the next start would refuse as "another launcher is running".
+    ( exec 4>&- 7>&- 8>&- 9>&-; cd "$ROOT" && DO_UPDATE="${DO_UPDATE:-0}" exec setsid bash "$1" ) &
     pid=$!
     while kill -0 "$pid" 2>/dev/null; do
         t1="${EPOCHREALTIME/[.,]/}"

@@ -28,7 +28,7 @@
 #
 set -uo pipefail
 
-VERSION="0.2.29"
+VERSION="0.2.30"
 DEFAULT_PANEL="https://afkpanel.com"
 
 # ---------------------------------------------------------------- output ----
@@ -218,7 +218,22 @@ confirm() {  # never proceed on silence; an unattended run must pass --yes
 #     <METHOD> <path>\n<timestamp>\n<nonce>\n<sha256 of the raw body>
 # check_signing below reproduces AFKPanel's published test vector with it.
 sha256_hex() { printf '%s' "$1" | openssl dgst -sha256 | sed 's/^.*= *//'; }
-hmac_hex()   { printf '%s' "$2" | openssl dgst -sha256 -hmac "$1" | sed 's/^.*= *//'; }
+hmac_hex() {  # <key> <message>: HMAC-SHA256 hex, built from two SHA-256 passes (RFC 2104) so the key never goes on a command
+    # line, where any local user can read it in the process list; `openssl dgst -hmac <key>` put it there.
+    local hex i b ipad="" opad="" dir
+    hex="$(printf '%s' "$1" | od -An -v -tx1 | tr -d ' \n')"
+    [ "${#hex}" -gt 128 ] && hex="$(printf '%s' "$1" | openssl dgst -sha256 -binary | od -An -v -tx1 | tr -d ' \n')"
+    while [ "${#hex}" -lt 128 ]; do hex="${hex}00"; done
+    for ((i = 0; i < 128; i += 2)); do
+        b=$((16#${hex:i:2}))
+        ipad+="$(printf '\\x%02x' $((b ^ 0x36)))"; opad+="$(printf '\\x%02x' $((b ^ 0x5c)))"
+    done
+    dir="$(umask 077; mktemp -d)" || return 1
+    printf "$ipad" > "$dir/i"; printf "$opad" > "$dir/o"
+    { cat "$dir/i"; printf '%s' "$2"; } | openssl dgst -sha256 -binary > "$dir/inner"
+    cat "$dir/o" "$dir/inner" | openssl dgst -sha256 | sed 's/^.*= *//'
+    rm -rf "$dir"
+}
 
 sign_request() {  # sign_request <secret> <METHOD> <path> <ts> <nonce> <body>
     local canon
@@ -765,7 +780,7 @@ changes_log() { printf '%s/hotwire/changes.log' "$IROOT"; }
 # The record is JSON, read and changed with python3 (always on Ubuntu, and checked by the pre-flight),
 # and written whole or not at all. Lists: done, declined, created. Values: folder, user, branch, ports.
 rec_py() {  # rec_py <python taking r (the record) and a (the arguments)>
-    python3 - "$(rec_file)" "$@" <<'PY'
+    as_user python3 - "$(rec_file)" "$@" <<'PY'
 import json, os, sys
 path, code, args = sys.argv[1], sys.argv[2], sys.argv[3:]
 try:
@@ -787,9 +802,9 @@ rec_has()      { [ "$(rec_py 'out["print"] = "1" if a[1] in r.get(a[0], []) else
 done_step()    { rec_has done "$1"; }
 declined()     { rec_has declined "$1"; }
 created()      { rec_has created "$1"; }
-rec_add()      { rec_py 'l = r.setdefault(a[0], []); (a[1] in l) or l.append(a[1]); out["write"] = 1' "$1" "$2" && own "$(rec_file)"; }
-rec_remove()   { rec_py 'r[a[0]] = [x for x in r.get(a[0], []) if x != a[1]]; out["write"] = 1' "$1" "$2" && own "$(rec_file)"; }
-rec_set()      { rec_py 'r[a[0]] = a[1]; out["write"] = 1' "$1" "$2" && own "$(rec_file)"; }
+rec_add()      { rec_py 'l = r.setdefault(a[0], []); (a[1] in l) or l.append(a[1]); out["write"] = 1' "$1" "$2"; }
+rec_remove()   { rec_py 'r[a[0]] = [x for x in r.get(a[0], []) if x != a[1]]; out["write"] = 1' "$1" "$2"; }
+rec_set()      { rec_py 'r[a[0]] = a[1]; out["write"] = 1' "$1" "$2"; }
 save_step()    { rec_add done "$1"; }
 
 # A no is remembered, so the next run does not ask again one Enter away from yes; the pre-flight
@@ -806,19 +821,28 @@ PENDING_CHANGES=""
 change() {  # change <what> <undo>
     local line; line="$(printf '%s  %s\n    undo: %s' "$(date '+%Y-%m-%d %H:%M:%S')" "$1" "$2")"
     if [ ! -d "$IROOT/hotwire" ]; then PENDING_CHANGES+="$line"$'\n'; return 0; fi
-    printf '%s\n' "$line" >> "$(changes_log)"
-    own "$(changes_log)"
+    printf '%s\n' "$line" | as_user tee -a "$(changes_log)" >/dev/null
 }
 flush_changes() {
     [ -n "$PENDING_CHANGES" ] || return 0
-    printf '%s' "$PENDING_CHANGES" >> "$(changes_log)"; own "$(changes_log)"; PENDING_CHANGES=""
+    printf '%s' "$PENDING_CHANGES" | as_user tee -a "$(changes_log)" >/dev/null; PENDING_CHANGES=""
 }
 
-# Everything in the server folder belongs to the server's user, never to root.
-own() { [ -e "$1" ] && chown "$IUSER:$IUSER" "$1" 2>/dev/null; return 0; }
-own_tree() { [ -e "$1" ] && chown -R "$IUSER:$IUSER" "$1" 2>/dev/null; return 0; }
+# Everything in the server folder belongs to the server's user, and is written by that user, never by root. The
+# folder is that user's, and so every Oxide plugin's: a link planted there would turn root's write (or read) into one
+# anywhere on the machine. So root never writes, appends, unpacks or reads a file in it; the server's user does,
+# through as_user, user_write and user_read. own and own_tree remain for what root made outside the folder's files,
+# and never follow a link.
+own() { [ -L "$1" ] && return 0; [ -e "$1" ] && chown -h "$IUSER:$IUSER" "$1" 2>/dev/null; return 0; }
+own_tree() { [ -L "$1" ] && return 0; [ -e "$1" ] && chown -hR "$IUSER:$IUSER" "$1" 2>/dev/null; return 0; }
 
-as_user() { sudo -u "$IUSER" -H -- "$@"; }
+as_user() {
+    if [ "$(id -u)" -ne 0 ] && [ "$(id -un)" = "$IUSER" ]; then "$@"; else sudo -u "$IUSER" -H -- "$@"; fi
+}
+user_write() {  # user_write <path> [mode]: stdin into <path>, as the server's user, beside it first and then renamed
+    as_user sh -c 'umask 077; t="$1.hotwire-tmp"; rm -f "$t" && cat > "$t" && [ -s "$t" ] && chmod "$2" "$t" && mv -f "$t" "$1" || { rm -f "$t"; exit 1; }' _ "$1" "${2:-644}"
+}
+user_read() { as_user cat "$1"; }
 
 # ------------------------------------------------------------- the machine --
 os_ok() {
@@ -937,15 +961,15 @@ choose_ports() {
     say "  Ports: game ${PORT_GAME}/udp, query ${PORT_QUERY}/udp, RCON ${PORT_RCON}/tcp"
     rec_set game_port "$PORT_GAME"; rec_set query_port "$PORT_QUERY"; rec_set rcon_port "$PORT_RCON"
     rec_py 'r["ports"] = {"game": int(a[0]), "query": int(a[1]), "rcon": int(a[2])}; out["write"] = 1' \
-        "$PORT_GAME" "$PORT_QUERY" "$PORT_RCON" && own "$(rec_file)"
+        "$PORT_GAME" "$PORT_QUERY" "$PORT_RCON"
 }
 PORT_GAME=""; PORT_QUERY=""; PORT_RCON=""
 
 # ------------------------------------------------------------ downloads --
 # Downloads beside where the file goes, under a name nothing loads, and checks it before it is used.
 fetch() {  # fetch <url> <out> <what>
-    curl -fsSL --retry 2 --max-time 300 -o "$2" "$1" 2>/dev/null \
-        || { rm -f "$2"; die "downloading $3" "the download from $1 failed" "check this machine can reach github.com, then run install again"; }
+    as_user curl -fsSL --retry 2 --max-time 300 -o "$2" "$1" 2>/dev/null \
+        || { as_user rm -f "$2"; die "downloading $3" "the download from $1 failed" "check this machine can reach github.com, then run install again"; }
 }
 # Where Hotwire's files come from: this copy's release tag, else the latest release, else (GitHub's answer missing) the
 # working branch, said so. Worked out once.
@@ -1360,9 +1384,9 @@ sync_launcher_branch() {
     have="$(cfg_get hotwire.steam_branch)"; have="${have:-public}"
     [ "$have" = "$want" ] && return 0
     if created "$c"; then
-        cp -p "$c" "$c.backup-$(date '+%Y%m%d-%H%M%S')"
+        as_user cp -p "$c" "$c.backup-$(date '+%Y%m%d-%H%M%S')"
         cfg_set_file "$c" hotwire.steam_branch "$want" || die "setting hotwire.steam_branch in $c" "the write failed" "run install again"
-        own "$c"; ok "hotwire.cfg set to hotwire.steam_branch $want"
+        ok "hotwire.cfg set to hotwire.steam_branch $want"
         change "set hotwire.steam_branch $want in $c" "put back the .backup- copy beside it"
     else
         warn "hotwire.cfg is not one install wrote: set hotwire.steam_branch $want in it yourself"
@@ -1394,8 +1418,8 @@ step_rust() {
 
 oxide_entries_ok() {  # every entry under RustDedicated_Data/, none escaping it
     local bad
-    bad="$(unzip -Z1 "$1" 2>/dev/null | grep -vE '^RustDedicated_Data/' ; unzip -Z1 "$1" 2>/dev/null | grep -E '(^|/)\.\.(/|$)|^/|\\')"
-    [ -z "$bad" ] && [ -n "$(unzip -Z1 "$1" 2>/dev/null)" ]
+    bad="$(as_user unzip -Z1 "$1" 2>/dev/null | grep -vE '^RustDedicated_Data/' ; as_user unzip -Z1 "$1" 2>/dev/null | grep -E '(^|/)\.\.(/|$)|^/|\\')"
+    [ -z "$bad" ] && [ -n "$(as_user unzip -Z1 "$1" 2>/dev/null)" ]
 }
 
 step_oxide() {
@@ -1419,39 +1443,40 @@ step_oxide() {
     case "$from" in https://github.com/*) ;; *) from="$OXIDE_URL"; sha="" ;; esac
     fetch "$from" "$zip" "Oxide for Rust (Linux)"
     if [[ "$sha" =~ ^[0-9a-fA-F]{64}$ ]]; then
-        [ "$(sha256sum "$zip" | cut -d' ' -f1)" = "${sha,,}" ] || { rm -f "$zip"; die "checking the Oxide download" \
+        [ "$(as_user sha256sum "$zip" | cut -d' ' -f1)" = "${sha,,}" ] || { as_user rm -f "$zip"; die "checking the Oxide download" \
             "its SHA-256 does not match the one GitHub publishes" "nothing was unpacked; run install again later"; }
         ok "Oxide matches the SHA-256 GitHub publishes"
     else
         warn "GitHub did not say what Oxide's SHA-256 should be; it is used unverified (third-party)"
     fi
-    oxide_entries_ok "$zip" || { rm -f "$zip"; die "checking the Oxide download" \
+    oxide_entries_ok "$zip" || { as_user rm -f "$zip"; die "checking the Oxide download" \
         "it is not a zip of files under RustDedicated_Data/" "nothing was unpacked; run install again later"; }
 
     # The game's own files, copied once, before Oxide first replaces them.
-    if ! ls -d "$IROOT"/hotwire/backups/*-before-oxide >/dev/null 2>&1; then
-        local backup="$IROOT/hotwire/backups/$(date '+%Y%m%d-%H%M%S')-before-oxide" saved=0 f
+    # Once per Rust build: a new build (an update, another branch) gets its own copy, or the undo would put the old
+    # build's files back.
+    local build; build="$(rust_build)"; build="${build:-unknown}"
+    if ! as_user sh -c 'ls -d "$1"/hotwire/backups/*-before-oxide-"$2"' _ "$IROOT" "$build" >/dev/null 2>&1; then
+        local backup="$IROOT/hotwire/backups/$(date '+%Y%m%d-%H%M%S')-before-oxide-$build" saved=0 f
         while IFS= read -r f; do
-            [ -f "$IROOT/$f" ] || continue
-            mkdir -p "$backup/$(dirname "$f")" && cp -p "$IROOT/$f" "$backup/$f" && saved=$((saved + 1))
-        done < <(unzip -Z1 "$zip" | grep -v '/$')
-        own_tree "$IROOT/hotwire/backups"
+            as_user test -f "$IROOT/$f" || continue
+            as_user mkdir -p "$backup/$(dirname "$f")" && as_user cp -p "$IROOT/$f" "$backup/$f" && saved=$((saved + 1))
+        done < <(as_user unzip -Z1 "$zip" | grep -v '/$')
         [ "$saved" -gt 0 ] && { ok "copied $saved game file(s) Oxide replaces to $backup"; change "copied $saved game file(s) that Oxide replaces to $backup" "nothing needed; this is the backup"; }
     fi
 
     # Unpacked beside the server, then each file renamed into place, so none is ever half-written.
-    rm -rf "$work"; mkdir -p "$work"
-    unzip -q "$zip" -d "$work" || { rm -rf "$work" "$zip"; die "unpacking Oxide" "unzip failed" "run install again"; }
+    as_user rm -rf "$work"; as_user mkdir -p "$work"
+    as_user unzip -q "$zip" -d "$work" || { as_user rm -rf "$work" "$zip"; die "unpacking Oxide" "unzip failed" "run install again"; }
     local f
     while IFS= read -r f; do
-        mkdir -p "$IROOT/$(dirname "$f")"
-        mv -f "$work/$f" "$IROOT/$f" || die "putting $f in place" "the move failed" "run install again: it puts every Oxide file in place again"
-    done < <(cd "$work" && find . -type f | sed 's|^\./||')
-    rm -rf "$work" "$zip"
-    own_tree "$IROOT/RustDedicated_Data"
+        as_user mkdir -p "$IROOT/$(dirname "$f")"
+        as_user mv -f "$work/$f" "$IROOT/$f" || die "putting $f in place" "the move failed" "run install again: it puts every Oxide file in place again"
+    done < <(as_user find "$work" -type f -printf '%P\n')
+    as_user rm -rf "$work" "$zip"
     [ -f "$(oxide_dll)" ] || die "installing Oxide" "no Oxide.Rust.dll after unpacking" "run install again"
     ok "Oxide installed"
-    change "installed Oxide into $IROOT" "copy the files from $IROOT/hotwire/backups/*-before-oxide back into $IROOT"
+    change "installed Oxide into $IROOT" "copy the files from the newest $IROOT/hotwire/backups/*-before-oxide-* back into $IROOT"
     save_step oxide
     sync_launcher_framework
 }
@@ -1468,9 +1493,9 @@ sync_launcher_framework() {
         [ "$(cfg_get hotwire.install_framework)" = "$want" ] && return 0
         [ "$want" = 1 ] && [ -z "$(cfg_get hotwire.install_framework)" ] && return 0
         if created "$c"; then
-            cp -p "$c" "$c.backup-$(date '+%Y%m%d-%H%M%S')"
+            as_user cp -p "$c" "$c.backup-$(date '+%Y%m%d-%H%M%S')"
             cfg_set_file "$c" hotwire.install_framework "$want" || die "setting hotwire.install_framework in $c" "the write failed" "run install again"
-            own "$c"; ok "hotwire.cfg set to hotwire.install_framework $want"
+            ok "hotwire.cfg set to hotwire.install_framework $want"
             change "set hotwire.install_framework $want in $c" "put back the .backup- copy beside it"
         else
             warn "hotwire.cfg is not one install wrote: set hotwire.install_framework $want in it yourself"
@@ -1479,9 +1504,9 @@ sync_launcher_framework() {
     fi
     grep -qx "INSTALL_FRAMEWORK=\"$want\"" "$l" && return 0
     if created "$l"; then
-        cp -p "$l" "$l.backup-$(date '+%Y%m%d-%H%M%S')"
-        sed "s/^INSTALL_FRAMEWORK=\"[01]\"\$/INSTALL_FRAMEWORK=\"$want\"/" "$l" > "$l.hotwire-tmp" && chmod 755 "$l.hotwire-tmp" && mv -f "$l.hotwire-tmp" "$l"
-        own "$l"; ok "hotwire.sh set to INSTALL_FRAMEWORK=\"$want\""
+        as_user cp -p "$l" "$l.backup-$(date '+%Y%m%d-%H%M%S')"
+        user_read "$l" | sed "s/^INSTALL_FRAMEWORK=\"[01]\"\$/INSTALL_FRAMEWORK=\"$want\"/" | user_write "$l" 755
+        ok "hotwire.sh set to INSTALL_FRAMEWORK=\"$want\""
         change "set INSTALL_FRAMEWORK=\"$want\" in $l" "put back the .backup- copy beside it"
     else
         warn "hotwire.sh is not one install wrote: set INSTALL_FRAMEWORK=\"$want\" in it yourself"
@@ -1520,7 +1545,9 @@ cfg_set_text() {  # cfg_set_text <name> <value>   stdin -> stdout
     HW_NAME="$1" HW_LINE="$(printf '%-27s %s' "$1" "$shown")" awk '
         BEGIN { ln = tolower(ENVIRON["HW_NAME"]); line = ENVIRON["HW_LINE"]; done = 0; off = 0 }
         { rows[NR] = $0 }
-        !done {
+        {
+            # The LAST line that sets it, as the reader takes the last: with a name set twice, changing the first
+            # left the old value in force (LS-5).
             s = $0; sub(/\r$/, "", s); sub(/^[ \t]+/, "", s)
             split(s, f, /[ \t]+/)
             if (tolower(f[1]) == ln) { done = NR }
@@ -1532,9 +1559,9 @@ cfg_set_text() {  # cfg_set_text <name> <value>   stdin -> stdout
             if (!at) print line
         }'
 }
-cfg_set_file() {  # cfg_set_file <file> <name> <value>: written whole beside it, then moved into place
-    cfg_set_text "$2" "$3" < "$1" > "$1.hotwire-tmp" && chmod --reference="$1" "$1.hotwire-tmp" 2>/dev/null \
-        && [ -s "$1.hotwire-tmp" ] && mv -f "$1.hotwire-tmp" "$1" || { rm -f "$1.hotwire-tmp"; return 1; }
+cfg_set_file() {  # cfg_set_file <file> <name> <value>: written whole beside it, then moved into place, as the server's user
+    local mode; mode="$(as_user stat -c %a "$1" 2>/dev/null)"; mode="${mode:-644}"
+    user_read "$1" | cfg_set_text "$2" "$3" | user_write "$1" "$mode"
 }
 
 step_launcher() {
@@ -1578,8 +1605,8 @@ step_launcher() {
         tmp="$l.hotwire-tmp"
         fetch "$(source_url launcher/hotwire.sh)" "$tmp" "the Hotwire launcher"
         check_released "$tmp" hotwire.sh "the Hotwire launcher"
-        chmod 755 "$tmp" && mv -f "$tmp" "$l" || die "writing $l" "the write failed" "check free space, then run install again"
-        own "$l"; rec_add created "$l"
+        as_user chmod 755 "$tmp" && as_user mv -f "$tmp" "$l" || die "writing $l" "the write failed" "check free space, then run install again"
+        rec_add created "$l"
         change "created $l" "delete $l"
     fi
 
@@ -1587,15 +1614,14 @@ step_launcher() {
     tmp="$IROOT/hotwire.example.cfg.hotwire-tmp"
     fetch "$(source_url examples/hotwire.example.cfg)" "$tmp" "the settings list"
     check_released "$tmp" hotwire.example.cfg "the settings list"
-    local text; text="$(cat "$tmp")"
-    if [ -f "$IROOT/hotwire.example.cfg" ]; then rm -f "$tmp"; else mv -f "$tmp" "$IROOT/hotwire.example.cfg"; own "$IROOT/hotwire.example.cfg"; fi
+    local text; text="$(user_read "$tmp")"
+    if [ -f "$IROOT/hotwire.example.cfg" ]; then as_user rm -f "$tmp"; else as_user mv -f "$tmp" "$IROOT/hotwire.example.cfg"; fi
     [ "$branch" != public ] && text="$(printf '%s\n' "$text" | cfg_set_text hotwire.steam_branch "$branch")"
     text="$(printf '%s\n' "$text" | cfg_set_text server.port "$PORT_GAME" | cfg_set_text server.queryport "$PORT_QUERY" | cfg_set_text rcon.port "$PORT_RCON")"
     [ "$vanilla" = 1 ] && text="$(printf '%s\n' "$text" | cfg_set_text hotwire.install_framework 0)"
     [ -n "$seed" ] && text="$(printf '%s\n' "$text" | cfg_set_text server.seed "$seed")"
-    ( umask 022; printf '%s\n' "$text" > "$c.hotwire-tmp" ) && chmod 644 "$c.hotwire-tmp" && mv -f "$c.hotwire-tmp" "$c" \
-        || { rm -f "$c.hotwire-tmp"; die "writing $c" "the write failed" "check free space, then run install again"; }
-    own "$c"
+    printf '%s\n' "$text" | user_write "$c" 644 \
+        || die "writing $c" "the write failed" "check free space, then run install again"
     rec_add created "$c"
     ok "hotwire.cfg written$([ "$vanilla" = 1 ] && printf ' for a vanilla server'), ports ${PORT_GAME}/${PORT_QUERY}/${PORT_RCON}"
     [ -n "$seed" ] && { ok "the map is seed $seed, picked at random for this server"; note "        To play a particular map, change server.seed in hotwire.cfg BEFORE the first start."; }
@@ -1675,9 +1701,9 @@ offer_rcon_local() {
         note "        rcon.ip 127.0.0.1"
         return 0
     fi
-    local b; b="$c.backup-$(date '+%Y%m%d-%H%M%S')"; cp -p "$c" "$b"
+    local b; b="$c.backup-$(date '+%Y%m%d-%H%M%S')"; as_user cp -p "$c" "$b"
     cfg_set_file "$c" rcon.ip 127.0.0.1 || die "setting rcon.ip in $c" "the write failed" "run install again"
-    own "$c"; ok "hotwire.cfg: rcon.ip 127.0.0.1. From the next restart RCON answers only on this machine."
+    ok "hotwire.cfg: rcon.ip 127.0.0.1. From the next restart RCON answers only on this machine."
     change "set rcon.ip 127.0.0.1 in $c" "copy $b back over it"
 }
 
@@ -1717,15 +1743,13 @@ step_rcon() {
         pw="$first"; break
     done
     local previous=""
-    if [ "$replacing" = 1 ]; then previous="$f.backup-$(date '+%Y%m%d-%H%M%S')"; cp -p "$f" "$previous"; fi
-    ( umask 077
-      if [ "$name" = hotwire-secrets.cfg ]; then
-          printf '# The RCON password for this server. RCON is remote control of the machine: treat this\n# like a root password. Never share this file, and never commit it anywhere.\nrcon.password "%s"\n' "$pw" > "$f.hotwire-tmp"
+    if [ "$replacing" = 1 ]; then previous="$f.backup-$(date '+%Y%m%d-%H%M%S')"; as_user cp -p "$f" "$previous"; fi
+    # Through a pipe, never on a command line: the password goes to the server's user's own write.
+    { if [ "$name" = hotwire-secrets.cfg ]; then
+          printf '# The RCON password for this server. RCON is remote control of the machine: treat this\n# like a root password. Never share this file, and never commit it anywhere.\nrcon.password "%s"\n' "$pw"
       else
-          printf '# The RCON password for this server. RCON is remote control of the machine: treat this\n# like a root password. Never share this file, and never commit it anywhere.\nRCON_PASSWORD='"'"'%s'"'"'\n' "$pw" > "$f.hotwire-tmp"
-      fi ) \
-        && chmod 600 "$f.hotwire-tmp" && chown "$IUSER:$IUSER" "$f.hotwire-tmp" && mv -f "$f.hotwire-tmp" "$f" \
-        || { rm -f "$f.hotwire-tmp"; die "writing $f" "the write failed" "run install again"; }
+          printf '# The RCON password for this server. RCON is remote control of the machine: treat this\n# like a root password. Never share this file, and never commit it anywhere.\nRCON_PASSWORD='"'"'%s'"'"'\n' "$pw"
+      fi; } | user_write "$f" 600 || die "writing $f" "the write failed" "run install again"
     rec_add created "$f"
     ok "$name written, readable only by $IUSER"
     if [ -n "$previous" ]; then change "replaced $f (the RCON password)" "copy $previous back over it"
@@ -1754,9 +1778,9 @@ step_plugin() {
     as_user mkdir -p "$dir"
     fetch "$(source_url plugin/Hotwire.cs)" "$p.hotwire-tmp" "the Hotwire plugin"
     check_released "$p.hotwire-tmp" Hotwire.cs "the Hotwire plugin"
-    local v; v="$(grep -oE '\[Info\("Hotwire", *"[^"]*", *"[^"]+"\)\]' "$p.hotwire-tmp" | grep -oE '"[0-9][^"]*"\)' | tr -d '")')"
-    [ -n "$v" ] || { rm -f "$p.hotwire-tmp"; die "checking the downloaded Hotwire.cs" "it is not the Hotwire plugin" "nothing was written; please report this"; }
-    mv -f "$p.hotwire-tmp" "$p"; own "$p"
+    local v; v="$(user_read "$p.hotwire-tmp" | grep -oE '\[Info\("Hotwire", *"[^"]*", *"[^"]+"\)\]' | grep -oE '"[0-9][^"]*"\)' | tr -d '")')"
+    [ -n "$v" ] || { as_user rm -f "$p.hotwire-tmp"; die "checking the downloaded Hotwire.cs" "it is not the Hotwire plugin" "nothing was written; please report this"; }
+    as_user mv -f "$p.hotwire-tmp" "$p"
     rec_add created "$p"
     ok "Hotwire plugin $v written to oxide/plugins"
     note "        Oxide compiles it the first time the server starts."
@@ -1967,7 +1991,8 @@ choose_folder() {
         die "installing into $IROOT" "a Rust server is already there, installed some other way" \
             "this installer never changes a server it did not install. To connect that one: $0 connect --root $IROOT"
     fi
-    if [ -d "$IROOT" ] && [ ! -f "$IROOT/hotwire/install.json" ] && [ -n "$(ls -A "$IROOT" 2>/dev/null)" ]; then
+    # The empty hotwire folder an earlier run made before it was told no is not "other things" (found 2026-10-09).
+    if [ -d "$IROOT" ] && [ ! -f "$IROOT/hotwire/install.json" ] && [ -n "$(ls -A "$IROOT" 2>/dev/null | grep -vx hotwire)$(ls -A "$IROOT/hotwire" 2>/dev/null)" ]; then
         warn "$IROOT is not empty, and nothing here was installed by this script"
         confirm "Install into it anyway? Nothing already in it is changed or removed." \
             || die "installing into $IROOT" "you chose not to use a folder with other things in it" "run install again with --root and an empty folder"
