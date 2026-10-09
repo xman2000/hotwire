@@ -2,7 +2,8 @@
 #
 # The files are what afkpanel.com/get/ sends people to (its links redirect here), so the bytes an admin downloads come
 # from this repository, never from the panel's server. tools/build-release.sh refuses to build until AFKPanel's list of
-# released files holds this commit's files, because setup checks every download against that list.
+# released files holds this commit's files, because setup checks every download against that list. The tests run first,
+# on the tagged commit: a tag on a commit that fails them publishes nothing.
 name: Release
 
 on:
@@ -13,7 +14,11 @@ permissions:
   contents: write
 
 jobs:
+  tests:
+    uses: ./.github/workflows/tests.yml
+
   release:
+    needs: tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

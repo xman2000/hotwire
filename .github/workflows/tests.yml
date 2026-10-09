@@ -1,6 +1,7 @@
 # The checks every change to Hotwire passes before it reaches main: on each push to dev, and on each pull request to main,
-# which cannot merge until they pass. They run what can run outside a game: the plugin's request signing and report
-# rules (.NET), both launchers' signing and JSON escaping, and the wipe-permission check (bash and PowerShell).
+# which cannot merge until they pass; a release runs them again on the tagged commit before it builds anything. They run
+# what can run outside a game: the plugin's request signing and report rules (.NET), both launchers' signing and JSON
+# escaping, and the wipe-permission check (bash and PowerShell).
 # Compiling the plugin against the game's own files is not here: that needs a Rust server's managed folder.
 name: Tests
 
@@ -9,6 +10,7 @@ on:
     branches: [dev]
   pull_request:
     branches: [main]
+  workflow_call:
 
 permissions:
   contents: read

@@ -83,6 +83,8 @@ if [ -n "$ps" ]; then
             check "hotwire.ps1 v2 vector $i, $case" "$got" "$want"
         done
     done
+elif [ -n "${CI:-}" ]; then
+    check "pwsh is on the PATH in CI" "no" "yes"
 else
     echo "  skip  hotwire.ps1: no pwsh or powershell on the PATH"
 fi

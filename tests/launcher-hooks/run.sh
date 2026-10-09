@@ -59,6 +59,10 @@ ps="$(command -v pwsh || true)"
 if [ -n "$ps" ]; then
     got="$(HOTWIRE_TEST_WORK="$work" "$ps" -NoProfile -NonInteractive -File tests/launcher-hooks/ps1.ps1)"
     while IFS='|' read -r name have want; do [ -n "$name" ] && check "$name" "$have" "$want"; done <<< "$got"
+    # Every check ps1.ps1 holds must answer: one that prints nothing would otherwise pass.
+    check "hotwire.ps1 answered every check" "$(grep -c '|' <<< "$got")" "$(grep -cE "^[\"']hotwire\.ps1[ '][^|]*\|" tests/launcher-hooks/ps1.ps1)"
+elif [ -n "${CI:-}" ]; then
+    check "pwsh is on the PATH in CI" "no" "yes"
 else
     echo "  skip  hotwire.ps1: no pwsh on the PATH"
 fi

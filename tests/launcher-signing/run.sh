@@ -35,6 +35,8 @@ if [ -n "$ps" ]; then
         $v = Get-Content -Raw "tests/plugin-signing/conformance.json" | ConvertFrom-Json
         Get-ReportSignature $v.secret $v.timestamp $v.nonce ((New-Object Text.UTF8Encoding($false)).GetBytes($v.body_utf8))')"
     check "hotwire.ps1 signs the conformance vector" "$got" "$want"
+elif [ -n "${CI:-}" ]; then
+    check "pwsh is on the PATH in CI" "no" "yes"
 else
     echo "  skip  hotwire.ps1: no pwsh or powershell on the PATH"
 fi
