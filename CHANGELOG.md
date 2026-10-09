@@ -35,6 +35,9 @@ version as the first line when it starts.
   still sent only at the identified level. Before this version the pseudonymous level sent what the anonymous level
   sends.
 - Events queued under one sharing level are dropped when the level changes, rather than sent under the new one.
+- Oxide's admin group gets Hotwire's four permissions when the plugin first loads, so a server owner can run Hotwire's
+  commands in the F1 console or chat without granting them first. Each is given once: a permission you take away from
+  the group stays away.
 - Reports and log lines that cannot reach AFKPanel are now kept for 30 days by default (was 7), so a paused server's
   reports wait long enough to arrive when it is active again. The setting is
   `Keep unsent reports and log lines for this many days`, up to 90. A config file written by an earlier version keeps

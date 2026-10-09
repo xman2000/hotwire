@@ -782,6 +782,9 @@ namespace Oxide.Plugins
         private const string PermEdit = "hotwire.edit";
 
         private const string LastFiredFile = "Hotwire/last_fired";
+        // Which of Hotwire's permissions were given to Oxide's admin group, so each is given once: one an admin takes away
+        // stays away.
+        private const string AdminGrantsFile = "Hotwire/admin_grants";
 
         // Oxide.Plugins.Timer, injected by the plugin compiler -- NOT
         // Oxide.Core.Libraries.Timer, which is the library that hands these
@@ -866,12 +869,37 @@ namespace Oxide.Plugins
 
         #region Lifecycle
 
+        // Oxide's admin group (every server owner joins it) gets Hotwire's permissions, each once. Without them an owner
+        // could not run a Hotwire command anywhere but the server console, which a Linux service does not have.
+        private void GrantAdminsOnce()
+        {
+            try
+            {
+                var granted = Interface.Oxide.DataFileSystem.ReadObject<List<string>>(AdminGrantsFile) ?? new List<string>();
+                if (!permission.GroupExists("admin")) return;
+                var changed = false;
+                foreach (var perm in new[] { PermStatus, PermRestart, PermCancel, PermEdit })
+                {
+                    if (granted.Contains(perm)) continue;
+                    permission.GrantGroupPermission("admin", perm, this);
+                    granted.Add(perm);
+                    changed = true;
+                }
+                if (changed) Interface.Oxide.DataFileSystem.WriteObject(AdminGrantsFile, granted);
+            }
+            catch (Exception ex)
+            {
+                PrintWarning($"Could not give Oxide's admin group Hotwire's permissions: {ex.Message}");
+            }
+        }
+
         private void Init()
         {
             permission.RegisterPermission(PermStatus, this);
             permission.RegisterPermission(PermRestart, this);
             permission.RegisterPermission(PermCancel, this);
             permission.RegisterPermission(PermEdit, this);
+            GrantAdminsOnce();
 
             AddCovalenceCommand(new[] { "hotwire", "hw" }, nameof(CmdHotwire));
             AddCovalenceCommand("hotwire.ui", nameof(CmdMenuAction));   // goes with the menu

@@ -35,6 +35,10 @@ The plugin writes `oxide/config/Hotwire.json` with every schedule turned off, so
 | `hotwire.cancel` | Cancel a running countdown |
 | `hotwire.edit` | Add, change, remove, enable and disable schedule entries |
 
+Oxide's `admin` group, which every server owner joins, gets all four when the plugin first loads. Each is given once, so
+one you take away from the group with `oxide.revoke group admin <permission>` stays away. Give them to anyone else with
+`oxide.grant`, for example `oxide.grant user <steamid> hotwire.status`.
+
 ## Check that it loaded
 
 Run `hotwire status` in the server console. A compile error is written to `oxide/logs/`.
