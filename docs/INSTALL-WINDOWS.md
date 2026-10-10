@@ -28,7 +28,7 @@ connect the server to AFKPanel.
 
    ![The right-click menu on hotwire-setup.bat, with Run as administrator](https://afkpanel.com/images/docs/win-run-as-admin.webp)
 
-3. Select **Install**.
+3. At `Choose`, type `1`, **Install a Rust server in this folder**, and press Enter.
 
    ![The setup script's first screen: its checks of the machine, then the menu with Install](https://afkpanel.com/images/docs/win-setup-menu.webp)
 
@@ -257,15 +257,10 @@ w32tm /resync
 
 `connect` repeats the `doctor` checks, lists the files it will write, and asks before writing them.
 
-## 9. Restart the server
+## 9. Check that it reports
 
-Stop `hotwire.bat` with Ctrl+C, then start it again:
-
-```powershell
-.\hotwire.bat
-```
-
-The plugin loads its key and starts reporting. The server appears in AFKPanel within about 2 minutes.
+Nothing needs restarting. The plugin starts reporting as soon as `connect` finishes, and the server appears in
+AFKPanel within a minute. The launcher picks up the connection by itself.
 
 ## Troubleshooting
 
@@ -311,6 +306,6 @@ it runs:
 
 1. Close the launcher's window. The server stops with it.
 2. Replace `hotwire.bat` and `hotwire.ps1`. Keep your `hotwire.cfg`, `hotwire-secrets.cfg` and hook files.
-3. Run `hotwire.bat check`, then `hotwire.bat`.
+3. Run `.\hotwire.bat check`, then `.\hotwire.bat`.
 
 Moving to launcher 1.1.25 from an older one changes both files.

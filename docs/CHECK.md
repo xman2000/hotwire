@@ -9,7 +9,7 @@ In the server's folder:
 
 | Platform | Command |
 | --- | --- |
-| Windows | `hotwire.bat check` |
+| Windows | `.\hotwire.bat check` |
 | Linux | `./hotwire.sh check` |
 
 Fix each problem it lists, then run it again until it lists none.
@@ -24,7 +24,8 @@ Fix each problem it lists, then run it again until it lists none.
 | `Options look right.` | Every setting name is in the file's own list |
 | `Rust build: installed <build>, public <build>. Up to date.` | On Windows: the installed Rust matches Steam's |
 | `Rust build: installed <build>, public <build> -- current.` | On Linux: the installed Rust matches Steam's |
-| `a normal start would launch without updating.` | The next start skips SteamCMD and Oxide |
+| `a normal start would not update.` | On Windows: the next start skips SteamCMD and Oxide |
+| `a normal start would launch without updating.` | On Linux: the next start skips SteamCMD and Oxide |
 | `a normal start would update here.` | The next start updates Rust and Oxide first |
 
 ## Problems that stop the start
@@ -33,10 +34,18 @@ Fix each problem it lists, then run it again until it lists none.
 | --- | --- |
 | `No hotwire.cfg beside the launcher` | Convert your start script at https://afkpanel.com/get-started, or copy `hotwire.example.cfg` to `hotwire.cfg` |
 | `hotwire.cfg has settings that would change which server this is` | Fix the lines it lists. A bad save folder, seed, world size, port or map address would open a different save. |
-| `RCON is off: no hotwire-secrets.cfg` | Nothing, unless you use an RCON tool: see [The RCON password file](https://afkpanel.com/docs/rcon-password) |
+
+## RCON messages
+
+None of these stops the server; Hotwire does not need RCON. See
+[The RCON password file](https://afkpanel.com/docs/rcon-password).
+
+| Message | Fix |
+| --- | --- |
+| `RCON is off: no hotwire-secrets.cfg` | Nothing, unless you use an RCON tool: create the file with an `rcon.password` line |
 | `RCON is off: hotwire-secrets.cfg sets no rcon.password.` | Nothing, unless you use an RCON tool: add the `rcon.password` line |
-| `rcon.password is still the example 'change_me'.` | Set a real password |
-| `rcon.password is shorter than hotwire.rcon_password_min` | Use a longer password |
+| `rcon.password is still the example` | Set your own password. Until then the server starts with the last good password, or with RCON off. |
+| `rcon.password is shorter than hotwire.rcon_password_min` | Use a longer password. Until then the server starts as above. |
 
 ## Lines that are ignored
 

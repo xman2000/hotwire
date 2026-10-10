@@ -30,7 +30,7 @@ The launcher's settings, and the default when `hotwire.cfg` leaves one out:
 | `hotwire.steamcmd` | Windows `C:\steamcmd\steamcmd.exe`; Linux `/usr/games/steamcmd` | SteamCMD. Several servers may share one. |
 | `hotwire.steamcmd_wait_minutes` | `60` | How long to wait for another server's SteamCMD run before starting as is |
 | `hotwire.steamcmd_update_minutes` | `60` | Launchers 1.1.27 (Windows) and 1.1.12-linux or later: the longest one SteamCMD update may run before it is stopped and the installed build starts. `0` = no limit |
-| `hotwire.forced_wipe_steam_minutes` | `15` | Launchers 1.1.25 (Windows) and 1.1.6-linux or later: when a forced wipe waits on the update, keep trying SteamCMD this long before starting what is on disk. `0` = only `hotwire.steam_tries` |
+| `hotwire.forced_wipe_steam_minutes` | `15` | Launchers 1.1.20 (Windows) and 1.1.6-linux or later: when a forced wipe waits on the update, keep trying SteamCMD this long before starting what is on disk. `0` = only `hotwire.steam_tries` |
 | `hotwire.steam_branch` | `public` | The Steam branch. Empty lets Steam keep the install on its current branch. |
 | `hotwire.max_days_without_update` | `14` | `hotwire` mode's backstop. `0` turns it off. |
 | `hotwire.update_on_new_build` | `1` | `hotwire` mode updates when Steam's build is ahead |
@@ -252,7 +252,7 @@ Every setting is one line. A setting that is off starts with `#` and shows the g
 
    | Platform | Check | Start |
    | --- | --- | --- |
-   | Windows | `hotwire.bat check` | `hotwire.bat` |
+   | Windows | `.\hotwire.bat check` | `.\hotwire.bat` |
    | Linux | `./hotwire.sh check` | `./hotwire.sh` |
 
 Your own commands, such as a backup before every start, go in `hotwire-before` (before every start) and `hotwire-after` (after an update), beside the launcher. See [Run your own commands](HOOKS.md).
@@ -264,7 +264,7 @@ On Windows, from 1.1.25:
 1. Replace `hotwire.ps1`. The launcher can be running: it starts the new copy at the next restart and says so.
 2. Replace `hotwire.bat` only when a release changes it, and only with the launcher's window closed: cmd reads `hotwire.bat` while it runs.
 
-Moving to 1.1.25 from an older launcher replaces `hotwire.bat` too, so close the window first, replace both files, run `hotwire.bat check`, then `hotwire.bat`.
+Moving to 1.1.25 from an older launcher replaces `hotwire.bat` too, so close the window first, replace both files, run `.\hotwire.bat check`, then `.\hotwire.bat`.
 
 On Linux, bash reads `hotwire.sh` while it runs: stop the server, replace `hotwire.sh`, run `./hotwire.sh check`, then start it. From 1.1.13-linux, a stop under systemd saves the world first. The steps are in [Install on Linux](INSTALL-LINUX.md#update-the-launcher).
 

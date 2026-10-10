@@ -47,11 +47,11 @@ with `Loaded plugin Hotwire`.
 
 ## 3. Connect the server
 
-1. In AFKPanel, open **Servers** and select **Connect a server**. Copy the code.
+1. In AFKPanel, select **Connect a server** in the menu. Copy the code.
 2. In the host panel, open **Console**, type this command with your code, and press Enter:
 
    ```console
-   hotwire connect HW-4K2P-9XQR
+   hotwire connect HW-4K2P-9XQR https://afkpanel.com
    ```
 
 A code works once, for 60 minutes. The Console shows `This server is reporting.` The Rust server appears in AFKPanel

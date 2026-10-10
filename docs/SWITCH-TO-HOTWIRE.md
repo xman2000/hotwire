@@ -54,7 +54,7 @@ them to `hotwire-before` or `hotwire-after`. See
 
 | Platform | Command |
 | --- | --- |
-| Windows | `hotwire.bat check` |
+| Windows | `.\hotwire.bat check` |
 | Linux | `./hotwire.sh check` |
 
 Fix each problem it lists and run it again. See [Check your settings](https://afkpanel.com/docs/check-your-settings).
@@ -63,10 +63,11 @@ Fix each problem it lists and run it again. See [Check your settings](https://af
 
 | Platform | Command |
 | --- | --- |
-| Windows | `hotwire.bat` |
+| Windows | `.\hotwire.bat` |
 | Linux | `./hotwire.sh` |
 
-Leave the window open. The launcher starts the server again whenever it stops.
+Leave the window or terminal open: the launcher starts the server again whenever it stops. On Linux, a systemd service
+keeps it running after you log out; see [Install a Rust server on Ubuntu](https://afkpanel.com/docs/install-linux).
 
 ## 9. Add the plugin
 

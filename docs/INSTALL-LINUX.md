@@ -30,7 +30,6 @@ The script is plain bash, saved in the folder where you ran that line, so you ca
 
 - keeps a copy of itself at `/usr/local/sbin/hotwire-setup`, owned by root, for `doctor`, `connect`, `detach` and the
   next install
-
 - installs the server into `/home/rust/server`, running as a `rust` user
 - uses Hotwire's launcher and a random map seed, with RCON off
 - creates a `rust-server` service that starts with the machine (enabled, not started)
@@ -257,13 +256,10 @@ enough, and that it can find your server. It changes nothing, so you can run it 
 
 `connect` repeats the `doctor` checks, lists the files it will write, and asks before writing them.
 
-## 10. Restart the server
+## 10. Check that it reports
 
-```bash
-sudo systemctl restart rust-server      # or press Ctrl+C and run ./hotwire.sh again
-```
-
-The plugin loads its key and starts reporting. The server appears in AFKPanel within about 2 minutes.
+Nothing needs restarting. The plugin starts reporting as soon as `connect` finishes, and the server appears in
+AFKPanel within a minute. The launcher picks up the connection by itself at its next start.
 
 ## Update the launcher
 
@@ -291,10 +287,15 @@ both are replaced together.
 
    `hotwire.cfg`, `hotwire-secrets.cfg` and your hook files are not in the download, so they stay as they are.
 
-3. Check the settings as the `rust` user, then start the server as your admin user:
+3. Check the settings as the `rust` user:
 
    ```bash
    ./hotwire.sh check
+   ```
+
+4. Start the server as your admin user:
+
+   ```bash
    sudo systemctl start rust-server
    ```
 

@@ -22,7 +22,12 @@ Hotwire never creates or changes these files.
    | Linux | `hotwire-after.example.sh` | `hotwire-after.sh` |
 
 2. Add your commands. The examples in the file are commented out: remove the `REM` or `#` to use one.
-3. Restart the server. The launcher logs `Running hotwire-before.bat...` when it runs the file.
+3. Restart the server. The launcher logs the line below when it runs the file:
+
+   | Platform | Line |
+   | --- | --- |
+   | Windows | `Running hotwire-before.bat...` |
+   | Linux | `Running the before-start hook (hotwire-before.sh)...` |
 
 ## How a hook runs
 
@@ -63,7 +68,7 @@ if "%DO_UPDATE%"=="1" (
 exit /b 0
 ```
 
-On Linux, `hotwire-before.sh` reads it as `$DO_UPDATE`. Requires launcher 1.1.10-linux or later.
+On Linux, `hotwire-before.sh` reads it as `$DO_UPDATE`. Requires launcher 1.1.9-linux or later.
 
 ## Examples
 
@@ -76,7 +81,7 @@ xcopy oxide\config D:\rust-config-copy\ /E /I /Y >nul
 The same in `hotwire-before.sh`:
 
 ```bash
-cp -a oxide/config ~/rust-config-copy/
+mkdir -p ~/rust-config-copy && cp -a oxide/config/. ~/rust-config-copy/
 ```
 
 Record when each update happened, in `hotwire-after.bat`:

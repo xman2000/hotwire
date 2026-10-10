@@ -15,15 +15,6 @@ connected. It needs Oxide. The launcher works without it.
    oxide.load Hotwire
    ```
 
-4. Grant the permissions to your admin group:
-
-   ```console
-   oxide.grant group admin hotwire.status
-   oxide.grant group admin hotwire.restart
-   oxide.grant group admin hotwire.cancel
-   oxide.grant group admin hotwire.edit
-   ```
-
 The plugin writes `oxide/config/Hotwire.json` with every schedule turned off, so adding it cannot restart anything.
 
 ## Permissions
@@ -35,7 +26,7 @@ The plugin writes `oxide/config/Hotwire.json` with every schedule turned off, so
 | `hotwire.cancel` | Cancel a running countdown |
 | `hotwire.edit` | Add, change, remove, enable and disable schedule entries |
 
-Oxide's `admin` group, which every server owner joins, gets all four when the plugin first loads. Each is given once, so
+Oxide's `admin` group, which every server owner joins, gets all four when the plugin first loads (plugin 1.1.67 and later). Each is given once, so
 one you take away from the group with `oxide.revoke group admin <permission>` stays away. Give them to anyone else with
 `oxide.grant`, for example `oxide.grant user <steamid> hotwire.status`.
 
