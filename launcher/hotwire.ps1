@@ -15,7 +15,7 @@
 $ErrorActionPreference = 'Stop'
 # Who this launcher is, for the plugin: written to oxide\data\Hotwire\launcher.json before every start. The plugin
 # offers only the features in the capability list; settings_file means the settings come from hotwire.cfg.
-$LauncherVersion = '1.1.34'
+$LauncherVersion = '1.1.35'
 $LauncherCapabilities = 'supervise,update,framework_verify,crash_backstop,log_rotate,convar_persist,wipe,wipe_same_map,wipe_custom_map,backup,settings_file,rcon_optional,wipe_permit,wipe_permit_blueprints'
 $root = $PSScriptRoot
 $cfg = Join-Path $root 'hotwire.cfg'
@@ -1540,7 +1540,7 @@ function Update-Rust([bool]$validate, [string]$installed, [string]$public) {
 # an hour after GitHub had the new one. Oxide is third-party and changes with every Rust release, so Hotwire has no
 # hash of its own to pin it to; the SHA-256 proves the file is the one GitHub holds for the release, not who built
 # it. True when Oxide is in place afterwards.
-function Update-Oxide([string]$buildBefore) {
+function Update-Oxide([string]$buildBefore, [bool]$validated = $false) {
     if ((Get-Env 'INSTALL_FRAMEWORK') -eq '0') {
         Say 'Vanilla server: hotwire.install_framework is 0, so Oxide is not installed.'
         return $true
@@ -1565,7 +1565,11 @@ function Update-Oxide([string]$buildBefore) {
     $buildAfter = Get-InstalledBuild
     $extract = $true
     if ((Get-Env 'SKIP_UNCHANGED_FRAMEWORK') -eq '1' -and $buildBefore -and $buildAfter) {
-        if ($buildBefore -ne $buildAfter) {
+        if ($validated) {
+            # A validate puts the game's own files back without changing the build, so Oxide's version still matches
+            # and the server would start without it. Oxide goes back over them.
+            Say 'A validate put the game''s own files back, so Oxide is installed again.'
+        } elseif ($buildBefore -ne $buildAfter) {
             Say ('Rust changed from build ' + $buildBefore + ' to ' + $buildAfter + ', so Oxide is installed again.')
         } elseif (-not $tag) {
             Say 'GitHub did not return Oxide''s latest version, so the installed one cannot be compared. Installing Oxide.'
@@ -1922,7 +1926,7 @@ function Invoke-Main([string[]]$argv) {
             if ($doUpdate) {
                 $updateAttempted = $true
                 $steamOk = Update-Rust $doValidate $installed $public
-                $frameworkOk = Update-Oxide $installed
+                $frameworkOk = Update-Oxide $installed $doValidate
 
                 # Delete the flags and reset the backstop only when the update completed: deleting a flag after a
                 # failure would make the next restart skip the update, and resetting the stamp on every failed try would

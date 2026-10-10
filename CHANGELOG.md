@@ -24,13 +24,24 @@ sit above a launcher `1.1.7`. Read the label, not the number.
 `hotwire check` prints the plugin's version. Each launcher prints its own
 version as the first line when it starts.
 
-## Plugin 1.1.69 — unreleased
+## Plugin 1.1.70, launcher 1.1.35 (Windows) — unreleased
+
+**Cancelling a forced wipe's retry calls the wipe off.** When the update a forced wipe waits for had not installed, the
+retry's countdown could be cancelled from AFKPanel, with `hotwire cancel` or from the menu, but the wipe stayed pending
+and came back at the next start. Cancelling it now clears it, and the console says so.
+
+**The Windows launcher puts Oxide back after a validate.** A validate restores the game's own files without changing the
+build, so Oxide's version still matched and the server started without Oxide. The Linux launcher already did this.
+
+**A countdown the panel started no longer prints "(entry )".** It reads "Countdown started: restart in 300s."
+
+## Plugin 1.1.69 — 2026-10-09
 
 **The heartbeat carries the port players join on.** Hotwire sends `server.port` as `game_port`, so AFKPanel can show
 the server's address and port under its name with a button that copies `client.connect address:port` for Rust's F1
 console. Nothing else changes; an older AFKPanel ignores the field.
 
-## Plugin 1.1.68, launchers 1.1.34 (Windows) and 1.1.20-linux, setup 0.1.31 (Windows) and 0.2.30 (Linux) — unreleased
+## Plugin 1.1.68, launchers 1.1.34 (Windows) and 1.1.20-linux, setup 0.1.31 (Windows) and 0.2.30 (Linux) — 2026-10-09
 
 **Setup on Linux writes the server's folder as the server's own account.** Every file in the folder (the change log,
 the record, the settings, the RCON password file, the downloads and Oxide's files) is now written and read by the
@@ -84,7 +95,7 @@ account that owns the folder, never by root, and setup never changes the owner o
   that build's files.
 - Linux: a folder left with an empty `hotwire` folder by an install that was told no is accepted the next time.
 
-## Plugin 1.1.67 — unreleased
+## Plugin 1.1.67 — 2026-10-09
 
 **Pseudonymous player data, and a month of held reports.**
 
@@ -103,7 +114,7 @@ account that owns the folder, never by root, and setup never changes the owner o
   `Keep unsent reports and log lines for this many days`, up to 90. A config file written by an earlier version keeps
   the number it already has.
 
-## Launchers 1.1.33 (Windows) and 1.1.19-linux, setup 0.1.30 (Windows)
+## Launchers 1.1.33 (Windows) and 1.1.19-linux, setup 0.1.30 (Windows) — 2026-10-09
 
 **Your own hooks have a time limit, and AFKPanel sees how long they took.**
 

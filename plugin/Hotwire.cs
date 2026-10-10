@@ -17,7 +17,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Hotwire", "xman2000", "1.1.69")]
+    [Info("Hotwire", "xman2000", "1.1.70")]
     [Description("Scheduled restarts and updates. Announces, counts down, writes a flag, quits.")]
     internal class Hotwire : CovalencePlugin
     {
@@ -44,8 +44,8 @@ namespace Oxide.Plugins
         //
         //  What is left is runtime assumption, tagged VERIFY at each use and
         //  wrapped so that being wrong costs one optional feature rather than
-        //  the schedule: the AdvancedStatus call shape, the uMod release-feed
-        //  response shape, and the epoch its timestamps are measured from.
+        //  the schedule: the AdvancedStatus call shape and the epoch its
+        //  timestamps are measured from.
         // =================================================================
 
         #region Configuration
@@ -2354,7 +2354,8 @@ namespace Oxide.Plugins
             // first tick repeats the opening announcement a second later.
             foreach (var point in _config.Countdown.AnnounceAt)
                 if (point >= remaining) _announced.Add(point);
-            Puts($"Countdown started: {KindWord(null)} in {remaining}s (entry {key}).");
+            // A countdown the panel or a command started has no schedule entry: say none, not "(entry )".
+            Puts(string.IsNullOrEmpty(key) ? $"Countdown started: {KindWord(null)} in {remaining}s." : $"Countdown started: {KindWord(null)} in {remaining}s (entry {key}).");
             Broadcast("CountdownStart", u => new object[] { KindWord(u), FormatRemaining(remaining) });
 
             ShowBars();
@@ -2456,6 +2457,11 @@ namespace Oxide.Plugins
                 _lastFired[_countdownKey] = DateTime.Now;
                 try { Interface.Oxide.DataFileSystem.WriteObject(LastFiredFile, _lastFired); } catch { }
             }
+
+            // Cancelling a forced wipe's retry calls the wipe off. Marking the retry fired did nothing (nothing reads it),
+            // so the pending wipe stayed and came back at the next start.
+            if (skipOccurrence && _wipePending != null && _countdownKey.StartsWith("wiperetry:", StringComparison.Ordinal))
+                ClearWipePending($"its retry was canceled by {by}");
 
             _countdownTimer?.Destroy();
             _countdownTimer = null;
@@ -3239,9 +3245,10 @@ namespace Oxide.Plugins
                 string latest;
                 try
                 {
-                    // VERIFY: the response shape of the uMod release feed is
-                    // assumed, not confirmed. Parsed defensively so that a
-                    // changed feed logs a warning instead of throwing on a
+                    // Read from the live feed on 2026-10-10: the address answers
+                    // 301 to assets.umod.org, whose JSON carries
+                    // latest_release_version ("2.0.7820"). Parsed defensively so
+                    // that a changed feed logs a warning instead of throwing on a
                     // timer forever.
                     latest = JObject.Parse(response)["latest_release_version"]?.ToString();
                 }
