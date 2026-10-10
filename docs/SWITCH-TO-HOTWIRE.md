@@ -13,7 +13,7 @@ and players stay as they are.
 
 1. Open https://afkpanel.com/get-started and choose your start script. A file that holds a password, a Discord webhook,
    a Steam login or a key is refused in your browser and not sent.
-2. Read the report. A problem listed under **Needs you** stops the conversion: fix it in your script and choose the
+2. Read the report. A problem listed under **Fix in your script** stops the conversion: fix it in your script and choose the
    file again.
 3. Select **Download hotwire-settings.zip**. It holds `hotwire.cfg`, with your settings, and `hotwire-secrets.cfg`.
 4. Note the rows under **Not carried**. Each one names the line in your script and what to do with it.
