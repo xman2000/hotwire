@@ -17,7 +17,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Hotwire", "xman2000", "1.1.75")]
+    [Info("Hotwire", "xman2000", "1.1.76")]
     [Description("Scheduled restarts and updates. Announces, counts down, writes a flag, quits.")]
     internal class Hotwire : CovalencePlugin
     {
@@ -190,6 +190,15 @@ namespace Oxide.Plugins
             // secret or salt is never sent. Sent when a value changes.
             [JsonProperty("Report convars")]
             public bool ReportConvars = true;
+
+            // Oxide's permission groups: each group's title, rank, parent,
+            // its own permissions and how many members it has, and which
+            // plugin registered each permission. At the Identified sharing
+            // level, also who is in each group, except the group every player
+            // joins, which is sent as a count. Read only: nothing here changes
+            // a group. Sent when a group changes.
+            [JsonProperty("Report permissions")]
+            public bool ReportPermissions = true;
 
             // Adding, editing, enabling, disabling and removing schedule entries
             // from the panel. They are checked exactly as the chat commands check
@@ -3502,9 +3511,9 @@ namespace Oxide.Plugins
             }
         }
 
-        private void OnPluginLoaded(Plugin plugin) => _inventoryCheckDue = DateTime.UtcNow.AddSeconds(3);
+        private void OnPluginLoaded(Plugin plugin) { _inventoryCheckDue = DateTime.UtcNow.AddSeconds(3); _permissionsCheckDue = DateTime.MinValue; }
 
-        private void OnPluginUnloaded(Plugin plugin) => _inventoryCheckDue = DateTime.UtcNow.AddSeconds(3);
+        private void OnPluginUnloaded(Plugin plugin) { _inventoryCheckDue = DateTime.UtcNow.AddSeconds(3); _permissionsCheckDue = DateTime.MinValue; }
 
         private void PanelTick()
         {
@@ -3612,6 +3621,12 @@ namespace Oxide.Plugins
             {
                 if (now >= _convarsCheckDue) { _convarsCheckDue = now.AddSeconds(60); RefreshConvars(); }
                 if (_convarsJson != null && _convarsJson != _convarsSentJson && PolicyAllowsKind("convars")) { SendConvars(); return; }
+            }
+
+            if (_config.Panel.ReportPermissions)
+            {
+                if (now >= _permissionsCheckDue) { _permissionsCheckDue = now.AddSeconds(60); RefreshPermissions(); }
+                if (_permissionsJson != null && _permissionsKey != _permissionsSentKey && PolicyAllowsKind("permissions")) { SendPermissions(); return; }
             }
 
             if (_config.Panel.ReportSchedule)
@@ -4439,6 +4454,7 @@ namespace Oxide.Plugins
                 ["map"] = _config.Panel.ReportMap,
                 ["schedule"] = _config.Panel.ReportSchedule,
                 ["convars"] = _config.Panel.ReportConvars,
+                ["permissions"] = _config.Panel.ReportPermissions,
                 ["plugin_time"] = _config.Panel.ReportPluginTime,
                 ["reports"] = _config.Panel.SendReports,
                 ["log"] = _config.Panel.SendLog,
@@ -5955,6 +5971,130 @@ namespace Oxide.Plugins
             if (_panelConvars.Count >= MaxReportedConvars || !_panelConvars.Add(name.ToLowerInvariant())) return;
             WriteData(PanelConvarsFile, _panelConvars.ToList());
             _convarsCheckDue = DateTime.MinValue;
+        }
+
+        // Permissions: Oxide's groups, read only (the panel's Permissions tab). Read every 60 seconds, and at once after a
+        // change Oxide announces; a wildcard grant or a cleared parent announces nothing, and the next read finds it.
+        // Only calls that read: GetUserData and everything built on it would create a record for an unseen player.
+        // The players group's member count changes with every new player, so it is sent but never by itself causes a
+        // report: it goes with the next real change.
+        private const int MaxReportedGroups = 200;
+        private const int MaxGroupPermissions = 1000;
+        private const int MaxGroupMembers = 1000;
+        private const int MaxRegisteredPermissions = 5000;
+        private static readonly Regex SteamId64 = new Regex("^7656119[0-9]{10}$");
+        private DateTime _permissionsCheckDue = DateTime.MinValue;
+        private string _permissionsJson;
+        private string _permissionsKey;
+        private string _permissionsSentKey;
+
+        private void RefreshPermissions()
+        {
+            try
+            {
+                var defaults = Interface.Oxide.Config.Options.DefaultGroups;
+                var playersGroup = defaults != null && !string.IsNullOrEmpty(defaults.Players) ? defaults.Players : "default";
+                var adminGroup = defaults != null && !string.IsNullOrEmpty(defaults.Administrators) ? defaults.Administrators : "admin";
+                var identified = EffectiveSharingLevel() == 3;
+
+                var names = (permission.GetGroups() ?? new string[0]).Where(g => !string.IsNullOrEmpty(g)).OrderBy(g => g, StringComparer.Ordinal).Take(MaxReportedGroups);
+                var groups = new JArray();
+                var keyGroups = new JArray();
+                foreach (var name in names)
+                {
+                    var perms = new JArray();
+                    foreach (var perm in (permission.GetGroupPermissions(name, false) ?? new string[0]).Where(p => !string.IsNullOrEmpty(p)).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(p => p, StringComparer.Ordinal).Take(MaxGroupPermissions)) perms.Add(perm);
+                    var users = permission.GetUsersInGroup(name) ?? new string[0];
+                    var row = new JObject
+                    {
+                        ["name"] = Clip(name, 64),
+                        ["title"] = Clip(permission.GetGroupTitle(name) ?? name, 64),
+                        ["rank"] = permission.GetGroupRank(name),
+                        ["permissions"] = perms,
+                        ["member_count"] = users.Length,
+                    };
+                    var parent = permission.GetGroupParent(name);
+                    if (!string.IsNullOrEmpty(parent)) row["parent"] = Clip(parent, 64);
+
+                    var isPlayers = string.Equals(name, playersGroup, StringComparison.OrdinalIgnoreCase);
+                    if (identified && !isPlayers)
+                    {
+                        var members = new JArray();
+                        foreach (var entry in users)
+                        {
+                            if (members.Count >= MaxGroupMembers) break;
+                            // Oxide writes each as "<id> (<last seen nickname>)".
+                            var space = entry == null ? -1 : entry.IndexOf(' ');
+                            var id = space < 0 ? entry : entry.Substring(0, space);
+                            if (id == null || !SteamId64.IsMatch(id)) continue;
+                            var member = new JObject { ["id"] = id };
+                            if (space > 0 && entry.Length > space + 2 && entry.EndsWith(")")) member["name"] = Clip(entry.Substring(space + 2, entry.Length - space - 3), 64);
+                            members.Add(member);
+                        }
+                        row["members"] = members;
+                    }
+                    groups.Add(row);
+
+                    var keyRow = (JObject)row.DeepClone();
+                    if (isPlayers) keyRow.Remove("member_count");
+                    keyGroups.Add(keyRow);
+                }
+
+                var registered = new JArray();
+                var loaded = plugins.GetAll() ?? new Plugin[0];
+                foreach (var perm in (permission.GetPermissions() ?? new string[0]).OrderBy(p => p, StringComparer.Ordinal))
+                {
+                    if (registered.Count >= MaxRegisteredPermissions) break;
+                    var owner = loaded.FirstOrDefault(p => p != null && permission.PermissionExists(perm, p));
+                    var entry = new JObject { ["permission"] = perm };
+                    if (owner != null) entry["plugin"] = Clip(owner.Name ?? "", 64);
+                    registered.Add(entry);
+                }
+
+                var payload = new JObject
+                {
+                    ["players_group"] = playersGroup,
+                    ["admin_group"] = adminGroup,
+                    ["groups"] = groups,
+                    ["registered"] = registered,
+                };
+                payload["permissions_hash"] = "sha256:" + Sha256Hex(payload.ToString(Formatting.None));
+                _permissionsJson = payload.ToString(Formatting.None);
+                _permissionsKey = Sha256Hex(new JObject { ["groups"] = keyGroups, ["registered"] = registered, ["players_group"] = playersGroup }.ToString(Formatting.None));
+            }
+            catch (Exception ex)
+            {
+                PrintWarning($"Could not read Oxide's groups to report them: {ex.Message}");
+            }
+        }
+
+        private void SendPermissions()
+        {
+            var json = _permissionsJson;
+            var key = _permissionsKey;
+            PanelRequest("POST", PanelReportPath, PanelEnvelope("permissions", JObject.Parse(json)), response => { _permissionsSentKey = key; },
+                () => { _permissionsSentKey = key; });
+        }
+
+        // Oxide's own announcements of a group change: read again at the next pass. Declared with object parameters, so a
+        // future change of argument type still matches; a player joining the players group is not a change worth a report.
+        private void PermissionsChanged() => _permissionsCheckDue = DateTime.MinValue;
+        private void OnGroupCreated(object name, object title, object rank) => PermissionsChanged();
+        private void OnGroupDeleted(object name) => PermissionsChanged();
+        private void OnGroupTitleSet(object name, object title) => PermissionsChanged();
+        private void OnGroupRankSet(object name, object rank) => PermissionsChanged();
+        private void OnGroupParentSet(object name, object parent) => PermissionsChanged();
+        private void OnGroupPermissionGranted(object name, object perm) => PermissionsChanged();
+        private void OnGroupPermissionRevoked(object name, object perm) => PermissionsChanged();
+        private void OnPermissionRegistered(object perm, object owner) => PermissionsChanged();
+        private void OnUserGroupAdded(object id, object group) => UserGroupChanged(group);
+        private void OnUserGroupRemoved(object id, object group) => UserGroupChanged(group);
+
+        private void UserGroupChanged(object group)
+        {
+            var defaults = Interface.Oxide.Config.Options.DefaultGroups;
+            var players = defaults != null && !string.IsNullOrEmpty(defaults.Players) ? defaults.Players : "default";
+            if (!string.Equals(group as string, players, StringComparison.OrdinalIgnoreCase)) PermissionsChanged();
         }
 
         private DateTime _scheduleCheckDue = DateTime.MinValue;

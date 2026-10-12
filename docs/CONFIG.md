@@ -242,6 +242,7 @@ Reporting to AFKPanel. Nothing is sent until the Rust server has been connected 
   "Send the map layout": true,
   "Report the schedule": true,
   "Report convars": true,
+  "Report permissions": true,
   "Accept schedule changes from the panel": true,
   "Accept plugin updates from the panel": true,
   "Send the Oxide log": true,
@@ -287,6 +288,7 @@ Reporting to AFKPanel. Nothing is sent until the Rust server has been connected 
 | `Send plugin server time every this many seconds` | AFKPanel may ask for a longer interval, never a shorter one | 30 or more |
 | `Report the schedule` | Every restart, update and wipe entry, its next time and any problem, the countdown settings, and the running countdown; sent when any of it changes | |
 | `Report convars` | The current value of each convar Facepunch shows in its own admin screen, read from the running game so the list follows Rust's updates, and of any convar AFKPanel changed, with Rust's default. A name containing password, secret, key, token, salt or auth is never sent, nor `env.time`, the game's clock. Read every 60 seconds; sent when a value changes. AFKPanel changed: `oxide/data/Hotwire/panel_convars.json`. | |
+| `Report permissions` | Oxide's permission groups: each group's title, rank, parent, its own permissions and member count, and which plugin registered each permission. At the Identified sharing level, also each group's members by Steam ID and name, except the players group (`DefaultGroups.Players`, usually `default`), which is sent as a count. Read only; nothing changes a group. Read every 60 seconds and after a group change Oxide announces; sent when one changes. | |
 | `Accept schedule changes from the panel` | Lets AFKPanel add, edit, enable, disable and remove entries. Each change is checked as a chat command is, and refused if the schedule changed in game since AFKPanel last saw it. `false` keeps the schedule editable in game only; a restart, update or wipe now, and cancelling a countdown, follow `Accept commands from the panel`. | |
 | `Accept plugin updates from the panel` | Lets AFKPanel update a plugin to uMod's current file, and undo that update. Hotwire downloads the file from umod.org by the plugin's file name and installs it only if its SHA-256 is the one AFKPanel named. It first copies the plugin's file, its config (`oxide/config/<name>.json`) and its data (`oxide/data/<name>.json` and `oxide/data/<name>/`) to `oxide/data/Hotwire/plugin-backups/<name>/`, replacing the previous copy, and puts them back if the new file has not loaded within 3 minutes. Refused while a restart is counting down, while another plugin is being changed, for Hotwire itself, and when the copy would be larger than 50 MB. `false` means plugin files change only by hand. | |
 

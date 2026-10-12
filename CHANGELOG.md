@@ -24,6 +24,15 @@ sit above a launcher `1.1.7`. Read the label, not the number.
 `hotwire check` prints the plugin's version. Each launcher prints its own
 version as the first line when it starts.
 
+## Plugin 1.1.76 — unreleased
+
+**AFKPanel can show Oxide's permission groups.** The plugin reports each group's title, rank and parent, its own
+permissions, how many members it has, and which plugin registered each permission. At the Identified sharing level it
+also reports who is in each group, except the group every player joins, which is reported as a count. It only reads:
+nothing in the plugin or AFKPanel changes a group. The groups are read every 60 seconds, and at once after a change
+Oxide announces, and sent when one changes; a new player joining the players group does not send a report by itself.
+`Report permissions` in the config turns it off.
+
 ## Plugin 1.1.75, launchers 1.1.39 (Windows) and 1.1.24-linux, setup 0.2.31 (Linux) — unreleased
 
 **Hotwire can update itself.** Off unless you turn it on: `hotwire.self_update auto` in `hotwire.cfg`, or from
