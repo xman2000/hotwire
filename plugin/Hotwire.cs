@@ -17,7 +17,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Hotwire", "xman2000", "1.1.73")]
+    [Info("Hotwire", "xman2000", "1.1.74")]
     [Description("Scheduled restarts and updates. Announces, counts down, writes a flag, quits.")]
     internal class Hotwire : CovalencePlugin
     {
@@ -183,6 +183,13 @@ namespace Oxide.Plugins
             // entry next fires. Sent when it changes.
             [JsonProperty("Report the schedule")]
             public bool ReportSchedule = true;
+
+            // The current values of the convars Facepunch shows in its own
+            // admin screen, read from the running game, and of any convar
+            // AFKPanel changed. A name that looks like a password, key, token,
+            // secret or salt is never sent. Sent when a value changes.
+            [JsonProperty("Report convars")]
+            public bool ReportConvars = true;
 
             // Adding, editing, enabling, disabling and removing schedule entries
             // from the panel. They are checked exactly as the chat commands check
@@ -3596,6 +3603,12 @@ namespace Oxide.Plugins
             // Raidable Bases zones come from its hooks, not the game map read, so they are not gated on _mapOff.
             if (_config.Panel.ReportMap && _raidZonesJson != null && _raidZonesJson != _raidZonesSentJson && now >= _raidZonesDue && PolicyAllowsKind("raid_zones")) { SendRaidZones(); return; }
 
+            if (_config.Panel.ReportConvars)
+            {
+                if (now >= _convarsCheckDue) { _convarsCheckDue = now.AddSeconds(60); RefreshConvars(); }
+                if (_convarsJson != null && _convarsJson != _convarsSentJson && PolicyAllowsKind("convars")) { SendConvars(); return; }
+            }
+
             if (_config.Panel.ReportSchedule)
             {
                 if (now >= _scheduleCheckDue) { _scheduleCheckDue = now.AddSeconds(30); RefreshSchedule(); }
@@ -4420,6 +4433,7 @@ namespace Oxide.Plugins
                 ["sharing_level"] = EffectiveSharingLevel(),
                 ["map"] = _config.Panel.ReportMap,
                 ["schedule"] = _config.Panel.ReportSchedule,
+                ["convars"] = _config.Panel.ReportConvars,
                 ["plugin_time"] = _config.Panel.ReportPluginTime,
                 ["reports"] = _config.Panel.SendReports,
                 ["log"] = _config.Panel.SendLog,
@@ -5853,6 +5867,69 @@ namespace Oxide.Plugins
         // outside. A change is refused if the schedule moved here since the
         // panel last saw it, so an edit made in game is never silently undone.
 
+        // Convars: the values of the ones Facepunch marks for its admin screen (the game's own list, so it follows
+        // every Rust update) and of any AFKPanel changed, which are remembered across restarts. Read every 60 seconds
+        // and sent when anything differs. A secret-shaped name is never read, whichever list it is on.
+        private const string PanelConvarsFile = "Hotwire/panel_convars";
+        private const int MaxReportedConvars = 400;
+        private static readonly Regex SecretConvarName = new Regex("password|secret|key|token|salt|auth", RegexOptions.IgnoreCase);
+        // The game's clock, which Facepunch lists with the settings: it moves every second, so sending it would mean a
+        // report every minute about nothing an admin set.
+        private static readonly HashSet<string> MovingConvars = new HashSet<string>(StringComparer.Ordinal) { "env.time" };
+        private DateTime _convarsCheckDue = DateTime.MinValue;
+        private string _convarsJson;
+        private string _convarsSentJson;
+        private HashSet<string> _panelConvars;
+
+        private void RefreshConvars()
+        {
+            try
+            {
+                if (_panelConvars == null) _panelConvars = new HashSet<string>(ReadData<List<string>>(PanelConvarsFile) ?? new List<string>(), StringComparer.OrdinalIgnoreCase);
+                var rows = new SortedDictionary<string, JObject>(StringComparer.Ordinal);
+                foreach (var command in ConsoleSystem.Index.All)
+                {
+                    if (command == null || !command.Variable || string.IsNullOrEmpty(command.FullName)) continue;
+                    var name = command.FullName.ToLowerInvariant();
+                    var panel = _panelConvars.Contains(name);
+                    if ((!command.ShowInAdminUI && !panel) || SecretConvarName.IsMatch(name) || MovingConvars.Contains(name)) continue;
+                    string value;
+                    try { value = command.String; } catch { continue; }
+                    var row = new JObject { ["name"] = name, ["value"] = Clip(value ?? "", 512) };
+                    if (command.DefaultValue != null) row["default"] = Clip(command.DefaultValue, 512);
+                    if (panel) row["panel"] = true;
+                    rows[name] = row;
+                    if (rows.Count >= MaxReportedConvars) break;
+                }
+                var list = new JArray();
+                foreach (var row in rows.Values) list.Add(row);
+                var payload = new JObject { ["convars"] = list };
+                payload["convars_hash"] = "sha256:" + Sha256Hex(list.ToString(Formatting.None));
+                _convarsJson = payload.ToString(Formatting.None);
+            }
+            catch (Exception ex)
+            {
+                PrintWarning($"Could not read the convars to report them: {ex.Message}");
+            }
+        }
+
+        private void SendConvars()
+        {
+            var json = _convarsJson;
+            PanelRequest("POST", PanelReportPath, PanelEnvelope("convars", JObject.Parse(json)), response => { _convarsSentJson = json; },
+                () => { _convarsSentJson = json; });
+        }
+
+        // A convar AFKPanel changed is reported from then on, so its page shows what the server holds now.
+        private void RememberPanelConvar(string name)
+        {
+            if (SecretConvarName.IsMatch(name)) return;
+            if (_panelConvars == null) _panelConvars = new HashSet<string>(ReadData<List<string>>(PanelConvarsFile) ?? new List<string>(), StringComparer.OrdinalIgnoreCase);
+            if (_panelConvars.Count >= MaxReportedConvars || !_panelConvars.Add(name.ToLowerInvariant())) return;
+            WriteData(PanelConvarsFile, _panelConvars.ToList());
+            _convarsCheckDue = DateTime.MinValue;
+        }
+
         private DateTime _scheduleCheckDue = DateTime.MinValue;
         private string _scheduleJson;
         private string _scheduleSentJson;
@@ -6570,6 +6647,7 @@ namespace Oxide.Plugins
                         // reading whatever it printed.
                         try { actual = entry.String; }
                         catch { /* readback is best-effort; not every convar echoes */ }
+                        RememberPanelConvar(name);
                         status = "done";
                         result = string.IsNullOrEmpty(actual)
                             ? "set live (value not read back); lasts until the next restart"
@@ -6586,6 +6664,7 @@ namespace Oxide.Plugins
                     var reqPath = Path.Combine(root, "CONVAR.request");
                     try { File.AppendAllText(reqPath, name + " " + value + Environment.NewLine, new UTF8Encoding(false)); }
                     catch (Exception ex) { status = "failed"; result = "could not write the request: " + ex.Message; return; }
+                    RememberPanelConvar(name);
                     status = "done";
                     result = "saved; the launcher makes it permanent on the next restart (needs the Hotwire launcher with convar_persist)";
                     return;

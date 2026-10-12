@@ -24,6 +24,13 @@ sit above a launcher `1.1.7`. Read the label, not the number.
 `hotwire check` prints the plugin's version. Each launcher prints its own
 version as the first line when it starts.
 
+## Plugin 1.1.74 — unreleased
+
+**AFKPanel can show each convar's current value.** The plugin reports the value of every convar Facepunch shows in its
+own admin screen, with Rust's default, read from the running game, so the list follows Rust's updates. A convar
+changed from AFKPanel is reported from then on too. A name containing password, secret, key, token, salt or auth is
+never sent, nor `env.time`, the game's clock. The values are read every 60 seconds and sent when one changes. `Report convars` in the config turns it off.
+
 ## Launchers 1.1.38 (Windows) and 1.1.23-linux — unreleased
 
 **Each step of a start reaches AFKPanel as it happens.** The launchers report the update check and its decision, a
