@@ -15,9 +15,11 @@
 $ErrorActionPreference = 'Stop'
 # Who this launcher is, for the plugin: written to oxide\data\Hotwire\launcher.json before every start. The plugin
 # offers only the features in the capability list; settings_file means the settings come from hotwire.cfg.
-$LauncherVersion = '1.1.38'
-$LauncherCapabilities = 'supervise,update,framework_verify,crash_backstop,log_rotate,convar_persist,wipe,wipe_same_map,wipe_custom_map,backup,settings_file,rcon_optional,wipe_permit,wipe_permit_blueprints,update_mode_set,update_progress,start_steps'
-$root = $PSScriptRoot
+$LauncherVersion = '1.1.39'
+$LauncherCapabilities = 'supervise,update,framework_verify,crash_backstop,log_rotate,convar_persist,wipe,wipe_same_map,wipe_custom_map,backup,settings_file,rcon_optional,wipe_permit,wipe_permit_blueprints,update_mode_set,update_progress,start_steps,self_update'
+# HOTWIRE_ROOT_OVERRIDE is set only by the launcher itself, when it checks a downloaded update against this server's
+# settings before installing it (Invoke-SelfUpdate): the copy runs from hotwire\self-update\stage\.
+$root = $(if ($env:HOTWIRE_ROOT_OVERRIDE) { $env:HOTWIRE_ROOT_OVERRIDE } else { $PSScriptRoot })
 $cfg = Join-Path $root 'hotwire.cfg'
 $secretsCfg = Join-Path $root 'hotwire-secrets.cfg'
 $argsFile = Join-Path $root 'hotwire\launch-args.json'
@@ -70,6 +72,10 @@ $hwSettings = @{
     'hotwire.check_options'            = @('CHECK_OPTIONS', 'bool', '1')
     'hotwire.backups'                  = @('BACKUPS', 'bool', '1')
     'hotwire.hook_timeout_minutes'     = @('HOOK_TIMEOUT_MINUTES', 'int1', '30')
+    'hotwire.self_update'              = @('SELF_UPDATE', 'selfupdate', 'off')
+    'hotwire.self_update_days'         = @('SELF_UPDATE_DAYS', 'int', '3')
+    'hotwire.self_update_channel'      = @('SELF_UPDATE_CHANNEL', 'channel', 'release')
+    'hotwire.self_update_test_key'     = @('SELF_UPDATE_TEST_KEY', 'bool', '0')
 }
 # Rust convars the launcher reads itself: kind, default.
 $cvSettings = @{
@@ -114,6 +120,8 @@ function Test-CfgValue([string]$kind, [string]$v) {
         'int1'      { if ($v -cnotmatch '^[0-9]{1,9}$' -or [long]$v -lt 1) { return 'must be a whole number of 1 or more' } }
         'bool'      { if ($v -cnotmatch '^[01]$') { return 'must be 0 or 1' } }
         'mode'      { if ($v -cnotmatch '^(auto|always|hotwire|off)$') { return 'must be auto, always, hotwire or off' } }
+        'selfupdate' { if ($v -cnotmatch '^(auto|off)$') { return 'must be auto or off' } }
+        'channel'   { if ($v -cnotmatch '^(release|dev)$') { return 'must be release or dev' } }
         'word'      { if ($v -cnotmatch '^[A-Za-z0-9_.-]+$') { return 'letters, digits, _ . - only' } }
         'steamcmd'  { if ($v -cnotmatch '^[A-Za-z]:\\[^"%!^&|<>]*\\steamcmd\.exe$') { return 'must be a full path to steamcmd.exe, with none of " % ! ^ & | < > in it' } }
         'text'      { }
@@ -683,6 +691,310 @@ function Invoke-UpdateModeRequest {
     return $false
 }
 
+# ---- Hotwire's own updates (capability: self_update) ------------------------------------------------------------
+# As in hotwire.sh, step for step: off unless hotwire.cfg says hotwire.self_update auto or AFKPanel's "Update Hotwire"
+# button asks (HOTWIRE_UPDATE.request). Before a start, with the server stopped: the newest release on the channel that
+# is old enough and newer than what is installed; its manifest must be signed by a key below (AFKPanel never holds
+# them); each file must match the manifest; the new hotwire.ps1 must pass check against this server's hotwire.cfg. The
+# current files go to hotwire\previous\, the new ones in, and hotwire\self-update\applied says so. A new hotwire.ps1
+# takes over at once (exit 75). Probation: the new plugin must write loaded.json within $SuProbationSeconds, or the
+# previous plugin goes back while the server runs; a crash before then puts both previous files back; a new hotwire.ps1
+# that fails before the server starts is put back by hotwire.bat. After any of these, automatic updates stop until an
+# admin asks again. Nothing here can stop a start.
+$SuFeed = 'https://api.github.com/repos/xman2000/hotwire/releases?per_page=30'
+$SuDownload = 'https://github.com/xman2000/hotwire/releases/download'
+# For the tests only. Still nothing installs unless a trusted key signed it.
+if ($env:HOTWIRE_SELF_UPDATE_FEED) { $SuFeed = $env:HOTWIRE_SELF_UPDATE_FEED }
+if ($env:HOTWIRE_SELF_UPDATE_DOWNLOAD) { $SuDownload = $env:HOTWIRE_SELF_UPDATE_DOWNLOAD }
+# id = public key, P-256, X then Y in hex. The test key is trusted only where hotwire.cfg says hotwire.self_update_test_key 1.
+$SuKeys = [ordered]@{}
+$SuTestKeyId = 'test-2026-10-12'
+$SuTestKey = 'e21f6da76eae1d3bed968459d952541bf0e38ec238d19e010a8e87f701b8f9ebbe8fcacd624a39db52b46f5ed8dbdbd54f3ff1b2d21ea29df2ce890ed429bb31'
+$SuDir = [IO.Path]::Combine($root, 'hotwire', 'self-update')
+$SuPrevious = [IO.Path]::Combine($root, 'hotwire', 'previous')
+$SuApplied = Join-Path $SuDir 'applied'
+$SuRolledBack = Join-Path $SuDir 'rolled-back'
+$SuState = Join-Path $SuDir 'state'
+$SuPlugin = [IO.Path]::Combine($root, 'oxide', 'plugins', 'Hotwire.cs')
+$SuLoaded = [IO.Path]::Combine($root, 'oxide', 'data', 'Hotwire', 'loaded.json')
+$SuProbationSeconds = 1200
+
+function Get-SuState([string]$key) {
+    try { foreach ($l in [IO.File]::ReadAllLines($SuState)) { if ($l.StartsWith($key + '=')) { return $l.Substring($key.Length + 1) } } } catch { }
+    return ''
+}
+function Set-SuState([hashtable]$values) {
+    try {
+        [void](New-Item -ItemType Directory -Force -Path $SuDir)
+        $lines = New-Object 'System.Collections.Generic.List[string]'
+        if (Test-Path -LiteralPath $SuState) { foreach ($l in [IO.File]::ReadAllLines($SuState)) { if (-not ($values.Keys | Where-Object { $l.StartsWith($_ + '=') })) { $lines.Add($l) } } }
+        foreach ($k in $values.Keys) { $lines.Add($k + '=' + ([string]$values[$k] -replace '[\r\n]', ' ')) }
+        [IO.File]::WriteAllLines($SuState + '.tmp', $lines)
+        Move-Item -LiteralPath ($SuState + '.tmp') -Destination $SuState -Force
+    } catch { }
+}
+function Set-SuBlocked([string]$reason, [string]$tag) {
+    Set-SuState @{ blocked = '1'; reason = $reason; blocked_tag = $tag; blocked_at = (Get-UtcStamp ([DateTimeOffset]::UtcNow)) }
+}
+function Get-PluginVersion {
+    try { $m = [regex]::Match([IO.File]::ReadAllText($SuPlugin), '\[Info\("Hotwire", "[^"]*", "([0-9.]+)"\)\]'); if ($m.Success) { return $m.Groups[1].Value } } catch { }
+    return ''
+}
+# Whether version a is newer than b (dotted numbers).
+function Test-SuNewer([string]$a, [string]$b) {
+    if (-not $a) { return $false }
+    if (-not $b) { return $true }
+    try { return ([version]$a) -gt ([version]$b) } catch { return $false }
+}
+function ConvertFrom-Hex([string]$hex) {
+    $bytes = New-Object byte[] ($hex.Length / 2)
+    for ($i = 0; $i -lt $bytes.Length; $i++) { $bytes[$i] = [Convert]::ToByte($hex.Substring($i * 2, 2), 16) }
+    return , $bytes
+}
+# True when a trusted key signed the manifest. The signature file is "key <id>" and "sig <base64 of r and s>".
+function Test-ReleaseSignature([string]$manifest, [string]$sigFile) {
+    $script:SuWhy = ''
+    $id = ''; $sig = ''
+    try {
+        foreach ($l in [IO.File]::ReadAllLines($sigFile)) {
+            if ($l -cmatch '^key ([A-Za-z0-9._-]{1,64})$') { $id = $Matches[1] }
+            elseif ($l -cmatch '^sig ([A-Za-z0-9+/=]{80,100})$') { $sig = $Matches[1] }
+        }
+    } catch { }
+    if (-not $id -or -not $sig) { $script:SuWhy = 'the signature file is not in the expected form'; return $false }
+    $rs = [Convert]::FromBase64String($sig)
+    if ($rs.Length -ne 64) { $script:SuWhy = 'the signature is not 64 bytes'; return $false }
+    $keys = [ordered]@{}
+    foreach ($k in $SuKeys.Keys) { $keys[$k] = $SuKeys[$k] }
+    if ((Get-Env 'SELF_UPDATE_TEST_KEY') -eq '1') { $keys[$SuTestKeyId] = $SuTestKey }
+    if (-not $keys.Contains($id)) { $script:SuWhy = 'it is not signed by a key this launcher trusts (key ' + $id + ')'; return $false }
+    $pub = ConvertFrom-Hex $keys[$id]
+    $q = New-Object Security.Cryptography.ECPoint
+    $q.X = $pub[0..31]; $q.Y = $pub[32..63]
+    $p = New-Object Security.Cryptography.ECParameters
+    $p.Curve = [Security.Cryptography.ECCurve]::CreateFromValue('1.2.840.10045.3.1.7')
+    $p.Q = $q
+    $ec = [Security.Cryptography.ECDsa]::Create($p)
+    try { $ok = $ec.VerifyData([IO.File]::ReadAllBytes($manifest), $rs, [Security.Cryptography.HashAlgorithmName]::SHA256) } finally { $ec.Dispose() }
+    if (-not $ok) { $script:SuWhy = 'its signature does not match (key ' + $id + ')' }
+    return [bool]$ok
+}
+
+# SELF_UPDATE.request from AFKPanel: "off", "auto <days>", or "retry", written into hotwire.cfg as the update mode is.
+# The channel and the test key stay the admin's, in hotwire.cfg.
+function Invoke-SelfUpdateRequest {
+    $request = Join-Path $root 'SELF_UPDATE.request'
+    if (-not (Test-Path -LiteralPath $request)) { return }
+    $result = Join-Path $root 'SELF_UPDATE.result'
+    Remove-Item -LiteralPath $result -Force -ErrorAction SilentlyContinue
+    if (((Get-Item -LiteralPath $request -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        Remove-Item -LiteralPath $request -Force -ErrorAction SilentlyContinue
+        try { [IO.File]::WriteAllText($result, "reject : not a file`n") } catch { }
+        return
+    }
+    $text = ''
+    try { $text = ([IO.File]::ReadAllText($request)).Trim() } catch { }
+    Remove-Item -LiteralPath $request -Force -ErrorAction SilentlyContinue
+    $parts = @($text -split '\s+')
+    $answer = ''
+    switch -CaseSensitive ($parts[0]) {
+        'off' {
+            if (Set-CfgValues @(, @('hotwire.self_update', 'off'))) { try { [void](Import-Settings -Quiet) } catch { }; $answer = 'applied off'; Say 'Hotwire''s automatic updates turned off from AFKPanel.' }
+            else { $answer = 'reject off : could not write hotwire.cfg' }
+        }
+        'auto' {
+            $days = $(if ($parts.Count -gt 1) { $parts[1] } else { '' })
+            if ($days -cnotmatch '^[0-9]{1,3}$') { $answer = 'reject auto : days must be 0 to 999' }
+            elseif (Set-CfgValues @(@('hotwire.self_update', 'auto'), @('hotwire.self_update_days', $days))) {
+                try { [void](Import-Settings -Quiet) } catch { }
+                Set-SuState @{ blocked = '0'; reason = '' }
+                $answer = 'applied auto ' + $days
+                Say ('Hotwire''s automatic updates turned on from AFKPanel: releases at least ' + $days + ' days old.')
+            } else { $answer = 'reject auto : could not write hotwire.cfg' }
+        }
+        'retry' { Set-SuState @{ blocked = '0'; reason = '' }; $answer = 'applied retry'; Say 'Hotwire''s automatic updates resume: AFKPanel asked to try again.' }
+        default { $answer = 'reject : not off, auto or retry' }
+    }
+    try { [IO.File]::WriteAllText($result, $answer + "`n") } catch { }
+}
+
+# The files an update replaced go back, and automatic updates stop. $launcherToo when hotwire.ps1 was replaced as well.
+function Undo-SelfUpdate([string]$reason, [string]$from) {
+    $tag = ''
+    try { foreach ($l in [IO.File]::ReadAllLines($from)) { if ($l.StartsWith('tag ')) { $tag = $l.Substring(4) } } } catch { }
+    $launcherToo = $false
+    try { $launcherToo = @([IO.File]::ReadAllLines($from) | Where-Object { $_.StartsWith('launcher ') }).Count -gt 0 } catch { }
+    try { if (Test-Path -LiteralPath (Join-Path $SuPrevious 'Hotwire.cs')) { Copy-Item -LiteralPath (Join-Path $SuPrevious 'Hotwire.cs') -Destination $SuPlugin -Force } } catch { }
+    if ($launcherToo -and $reason -ne 'launcher_failed') {
+        try { if (Test-Path -LiteralPath (Join-Path $SuPrevious 'hotwire.ps1')) { Copy-Item -LiteralPath (Join-Path $SuPrevious 'hotwire.ps1') -Destination (Join-Path $root 'hotwire.ps1') -Force } } catch { }
+    }
+    Remove-Item -LiteralPath $SuApplied, $SuRolledBack -Force -ErrorAction SilentlyContinue
+    Set-SuBlocked $reason $tag
+    Set-SuState @{ last_tag = $tag; last_result = 'rolled_back'; last_at = (Get-UtcStamp ([DateTimeOffset]::UtcNow)) }
+    Say ('The update to Hotwire ' + $tag + ' was rolled back (' + $reason + '). Automatic updates are off until you retry in AFKPanel.')
+    Send-Step 'hotwire_update' 'failed' ([ordered]@{ tag = $tag; reason = $reason; rolled_back = $true })
+}
+
+# The newest release on the channel this server may take, or '' with $script:SuWhy.
+function Get-SuRelease([bool]$now) {
+    $feed = Join-Path $SuDir 'feed.json'
+    [void](New-Item -ItemType Directory -Force -Path $SuDir)
+    $stale = $true
+    try { $stale = ((Get-Date) - (Get-Item -LiteralPath $feed).LastWriteTime).TotalHours -ge 1 } catch { }
+    if ($now -or $stale) {
+        try { Invoke-WebRequest -UseBasicParsing -Uri $SuFeed -Headers @{ Accept = 'application/vnd.github+json' } -TimeoutSec 15 -OutFile ($feed + '.tmp'); Move-Item -LiteralPath ($feed + '.tmp') -Destination $feed -Force }
+        catch { $script:SuWhy = 'GitHub''s release list did not answer'; return '' }
+    }
+    $channel = Get-Env 'SELF_UPDATE_CHANNEL'
+    $days = Get-Num 'SELF_UPDATE_DAYS' 3
+    try {
+        foreach ($r in @(ConvertFrom-Json ([IO.File]::ReadAllText($feed)))) {
+            $tag = [string]$r.tag_name
+            if ($channel -eq 'dev') { if ($tag -cnotmatch '^(release|dev)-[0-9A-Za-z.-]+$') { continue } }
+            elseif ($tag -cnotmatch '^release-[0-9A-Za-z.-]+$' -or $r.prerelease) { continue }
+            # Windows PowerShell 5.1 leaves the date as text; PowerShell 7 has already made it a date.
+            $published = $r.published_at
+            if ($published -is [DateTime]) { $publishedUtc = $published.ToUniversalTime() }
+            else { $publishedUtc = [DateTimeOffset]::Parse([string]$published, [Globalization.CultureInfo]::InvariantCulture).UtcDateTime }
+            $age = ((Get-Date).ToUniversalTime() - $publishedUtc).TotalDays
+            if (-not $now -and $age -lt $days) { continue }
+            return $tag
+        }
+    } catch { }
+    $script:SuWhy = 'no release is old enough yet'
+    return ''
+}
+
+# The update. Returns $true when hotwire.ps1 was replaced: the caller exits 75 so hotwire.bat runs the new one.
+function Invoke-SelfUpdate {
+    if ($script:CheckOnly) { return $false }
+    Invoke-SelfUpdateRequest
+    if (Test-Path -LiteralPath $SuRolledBack) { Undo-SelfUpdate 'launcher_failed' $SuRolledBack }
+    $nowRequest = Join-Path $root 'HOTWIRE_UPDATE.request'
+    $now = Test-Path -LiteralPath $nowRequest
+    Remove-Item -LiteralPath $nowRequest -Force -ErrorAction SilentlyContinue
+    if ($now) { Set-SuState @{ blocked = '0'; reason = '' } }
+    if ((Get-Env 'SELF_UPDATE') -ne 'auto' -and -not $now) { return $false }
+    if ((Get-SuState 'blocked') -eq '1') { Say ('Hotwire''s automatic updates are paused after a rolled-back update (' + (Get-SuState 'reason') + '). Retry in AFKPanel.'); return $false }
+    if (Test-Path -LiteralPath (Join-Path $root $WipeFlag)) { Say 'A wipe is waiting, so Hotwire''s own update waits for the next start.'; return $false }
+    $tag = Get-SuRelease $now
+    if (-not $tag) { if ($now) { Say ('Update Hotwire: ' + $script:SuWhy + '.') }; return $false }
+    $stage = Join-Path $SuDir 'stage'
+    Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction SilentlyContinue
+    [void](New-Item -ItemType Directory -Force -Path $stage)
+    $mPath = Join-Path $stage 'manifest.json'; $sPath = Join-Path $stage 'manifest.sig'
+    try {
+        Invoke-WebRequest -UseBasicParsing -Uri ($SuDownload + '/' + $tag + '/manifest.json') -TimeoutSec 30 -OutFile $mPath
+        Invoke-WebRequest -UseBasicParsing -Uri ($SuDownload + '/' + $tag + '/manifest.sig') -TimeoutSec 30 -OutFile $sPath
+    } catch { if ($now) { Say ('Update Hotwire: ' + $tag + ' has no signed manifest to download.') }; return $false }
+    if (-not (Test-ReleaseSignature $mPath $sPath)) {
+        Say ('Hotwire ' + $tag + ' was not installed: ' + $script:SuWhy + '.')
+        Send-Step 'hotwire_update' 'failed' ([ordered]@{ tag = $tag; reason = 'signature' })
+        return $false
+    }
+    $m = ConvertFrom-Json ([IO.File]::ReadAllText($mPath))
+    if ([string]$m.tag -cne $tag) { Say ('Hotwire ' + $tag + ' was not installed: its manifest names another release.'); return $false }
+    $pluginNow = Get-PluginVersion; $pluginNew = [string]$m.plugin; $launcherNew = [string]$m.launcher_windows
+    $wantPlugin = Test-SuNewer $pluginNew $pluginNow
+    $wantLauncher = Test-SuNewer $launcherNew $LauncherVersion
+    if (-not $wantPlugin -and -not $wantLauncher) { if ($now) { Say ('Update Hotwire: this server already runs ' + $tag + ' or newer.') }; return $false }
+    Say ('Updating Hotwire to ' + $tag + ' (plugin ' + $pluginNow + ' -> ' + $pluginNew + ', launcher ' + $LauncherVersion + ' -> ' + $launcherNew + ')...')
+    Send-Step 'hotwire_update' 'begun' ([ordered]@{ tag = $tag })
+    $files = @(); if ($wantPlugin) { $files += 'Hotwire.cs' }; if ($wantLauncher) { $files += 'hotwire.ps1' }
+    foreach ($f in $files) {
+        $sha = [string]$m.files.$f
+        $ok = $false
+        try {
+            Invoke-WebRequest -UseBasicParsing -Uri ($SuDownload + '/' + $tag + '/' + $f) -TimeoutSec 120 -OutFile (Join-Path $stage $f)
+            $ok = $sha -cmatch '^[0-9a-f]{64}$' -and (Get-FileSha256 (Join-Path $stage $f)) -ceq $sha
+        } catch { }
+        if (-not $ok) {
+            Say ('Hotwire ' + $tag + ' was not installed: ' + $f + ' did not download, or is not the file the signed manifest names.')
+            Send-Step 'hotwire_update' 'failed' ([ordered]@{ tag = $tag; reason = 'download' })
+            return $false
+        }
+    }
+    # The new launcher checks this server's own settings before it is trusted with them.
+    if ($wantLauncher) {
+        $env:HOTWIRE_ROOT_OVERRIDE = $root
+        try { & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File (Join-Path $stage 'hotwire.ps1') check *> (Join-Path $stage 'check.log'); $checked = $LASTEXITCODE -eq 0 } catch { $checked = $false }
+        finally { $env:HOTWIRE_ROOT_OVERRIDE = '' }
+        if (-not $checked) {
+            Say ('Hotwire ' + $tag + ' was not installed: its launcher refused this server''s settings. See hotwire\self-update\stage\check.log.')
+            Send-Step 'hotwire_update' 'failed' ([ordered]@{ tag = $tag; reason = 'check' })
+            Set-SuBlocked 'check_failed' $tag
+            return $false
+        }
+    }
+    try {
+        [void](New-Item -ItemType Directory -Force -Path $SuPrevious)
+        $note = @(('tag ' + $tag), ('at ' + (Get-UtcStamp ([DateTimeOffset]::UtcNow))))
+        if ($wantPlugin) { $note += ('plugin ' + $(if ($pluginNow) { $pluginNow } else { 'none' }) + ' ' + $pluginNew) }
+        if ($wantLauncher) { $note += ('launcher ' + $LauncherVersion + ' ' + $launcherNew) }
+        [IO.File]::WriteAllLines($SuApplied + '.tmp', [string[]]$note)
+        if ($wantPlugin) {
+            if (Test-Path -LiteralPath $SuPlugin) { Copy-Item -LiteralPath $SuPlugin -Destination (Join-Path $SuPrevious 'Hotwire.cs') -Force }
+            Copy-Item -LiteralPath (Join-Path $stage 'Hotwire.cs') -Destination $SuPlugin -Force
+        }
+        if ($wantLauncher) {
+            Copy-Item -LiteralPath (Join-Path $root 'hotwire.ps1') -Destination (Join-Path $SuPrevious 'hotwire.ps1') -Force
+            Copy-Item -LiteralPath (Join-Path $stage 'hotwire.ps1') -Destination (Join-Path $root 'hotwire.ps1') -Force
+        }
+        Move-Item -LiteralPath ($SuApplied + '.tmp') -Destination $SuApplied -Force
+    } catch {
+        Say ('Hotwire ' + $tag + ' could not be put in place: ' + $_.Exception.Message + '. The previous files go back.')
+        if (Test-Path -LiteralPath ($SuApplied + '.tmp')) { Move-Item -LiteralPath ($SuApplied + '.tmp') -Destination $SuApplied -Force -ErrorAction SilentlyContinue; Undo-SelfUpdate 'install_failed' $SuApplied }
+        return $false
+    }
+    Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction SilentlyContinue
+    Set-SuState @{ last_tag = $tag; last_result = 'installed'; last_at = (Get-UtcStamp ([DateTimeOffset]::UtcNow)) }
+    Say ('Hotwire ' + $tag + ' is installed. It is on probation until the plugin says it loaded.')
+    Send-Step 'hotwire_update' 'done' ([ordered]@{ tag = $tag; plugin = $pluginNew; launcher = $launcherNew })
+    if ($wantLauncher) { Say 'The new launcher takes over now.'; Send-Now; return $true }
+    return $false
+}
+
+# Probation while the server runs, called every 2 seconds by Invoke-Launch. The new plugin must write loaded.json with
+# its version; a launcher-only update passes once the server has run hotwire.crash_seconds.
+function Test-SuProbation([long]$since) {
+    if (-not (Test-Path -LiteralPath $SuApplied)) { return }
+    $lines = @(); try { $lines = [IO.File]::ReadAllLines($SuApplied) } catch { return }
+    $want = ''; $tag = ''
+    foreach ($l in $lines) { if ($l.StartsWith('plugin ')) { $want = ($l -split ' ')[2] } elseif ($l.StartsWith('tag ')) { $tag = $l.Substring(4) } }
+    $nowS = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+    if (-not $want) {
+        if ($nowS - $since -ge (Get-Num 'CRASH_SECONDS' 60)) {
+            Remove-Item -LiteralPath $SuApplied -Force -ErrorAction SilentlyContinue
+            Set-SuState @{ last_result = 'loaded'; last_at = (Get-UtcStamp ([DateTimeOffset]::UtcNow)) }
+            Say ('Hotwire ' + $tag + ' passed probation: the server is running on the new launcher.')
+            Send-Step 'hotwire_update' 'loaded' ([ordered]@{ tag = $tag })
+        }
+        return
+    }
+    try {
+        $info = Get-Item -LiteralPath $SuLoaded -ErrorAction Stop
+        if (([DateTimeOffset]$info.LastWriteTimeUtc).ToUnixTimeSeconds() -ge $since -and [IO.File]::ReadAllText($SuLoaded) -match ('"version":\s*"' + [regex]::Escape($want) + '"')) {
+            Remove-Item -LiteralPath $SuApplied -Force -ErrorAction SilentlyContinue
+            Set-SuState @{ last_result = 'loaded'; last_at = (Get-UtcStamp ([DateTimeOffset]::UtcNow)) }
+            Say ('Hotwire ' + $tag + ' passed probation: plugin ' + $want + ' loaded.')
+            Send-Step 'hotwire_update' 'loaded' ([ordered]@{ tag = $tag; plugin = $want })
+            return
+        }
+    } catch { }
+    if ($nowS - $since -ge $SuProbationSeconds) { Undo-SelfUpdate 'plugin_not_loaded' $SuApplied }
+}
+
+# What launcher.json says about Hotwire's own updates, for the plugin to pass to AFKPanel.
+function Get-SelfUpdateState {
+    $probation = ''
+    try { foreach ($l in [IO.File]::ReadAllLines($SuApplied)) { if ($l.StartsWith('tag ')) { $probation = $l.Substring(4) } } } catch { }
+    return [ordered]@{
+        mode = (Get-Env 'SELF_UPDATE'); days = (Get-Num 'SELF_UPDATE_DAYS' 3); channel = (Get-Env 'SELF_UPDATE_CHANNEL')
+        blocked = ((Get-SuState 'blocked') -eq '1'); reason = (Get-SuState 'reason'); blocked_tag = (Get-SuState 'blocked_tag')
+        last_tag = (Get-SuState 'last_tag'); last_result = (Get-SuState 'last_result'); last_at = (Get-SuState 'last_at'); probation = $probation
+    }
+}
+
 # An update report while the update runs (capability: update_progress): which step, and for SteamCMD which try. Between
 # server runs the plugin is not running, so without it AFKPanel hears nothing until the server starts, however long
 # SteamCMD retries. Sent in the background like every report; the update never waits on it.
@@ -812,11 +1124,13 @@ function Invoke-Launch {
     # Clear a claim left by a backup that was cut short; the next backup clears the staging folder it names.
     Remove-Item -LiteralPath ($backupFlag + '.work') -Force -ErrorAction SilentlyContinue
     $p = [Diagnostics.Process]::Start($psi)
+    $suSince = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
     Start-BootWatch
     # While the server runs, pick up the backups Hotwire asks for and run them at the lowest priority. A backup in
     # progress finishes before the server's exit is handled. Rust's boot is read from its log between those checks.
     while (-not $p.WaitForExit(2000)) {
         Read-BootLines ([string]$env:LOGFILE)
+        Test-SuProbation $suSince
         if ($env:BACKUPS -ne '0' -and (Test-Path -LiteralPath $backupFlag)) {
             try { Invoke-BackupFromFlag } catch { Say ('Backup: ' + $_.Exception.Message) }
         }
@@ -1980,7 +2294,7 @@ function Write-LauncherState {
         # problem. The setting's name and what is wrong, never its value. At most 20.
         $problems = @()
         try { $problems = @((Read-Config).Report | Select-Object -First 20) } catch { }
-        $o = [ordered]@{ version = $LauncherVersion; capabilities = $LauncherCapabilities; platform = 'windows'; path = $LauncherBat; update_mode = (Get-Env 'UPDATE_MODE'); config_problems = $problems }
+        $o = [ordered]@{ version = $LauncherVersion; capabilities = $LauncherCapabilities; platform = 'windows'; path = $LauncherBat; update_mode = (Get-Env 'UPDATE_MODE'); config_problems = $problems; self_update = (Get-SelfUpdateState) }
         [IO.File]::WriteAllText($state, (ConvertTo-Json -InputObject $o -Depth 4))
     } catch { }
 }
@@ -2038,7 +2352,8 @@ function Invoke-Main([string[]]$argv) {
             Say ('  ' + $root)
             Say 'Close that one first. Two launchers in one folder would update and wipe under a running server.'
             Rule
-            Wait-Key; $script:LauncherExit = 2; return
+            # 3, not 2: a second launcher refused is not a broken one, so hotwire.bat never rolls back over it.
+            Wait-Key; $script:LauncherExit = 3; return
         }
     }
     Set-Location -LiteralPath $root
@@ -2073,6 +2388,8 @@ function Invoke-Main([string[]]$argv) {
         $script:UpdateLog.Clear(); $script:UpdateReason = ''; $script:UpdateEffective = ''
         $script:StartId = Get-UtcStamp ([DateTimeOffset]::UtcNow); $script:CheckOnly = [bool]$checkOnly
         Send-Step 'check' 'begun'
+        # Hotwire's own update goes first, while nothing else has changed: a new hotwire.ps1 takes over at once (exit 75).
+        if (Invoke-SelfUpdate) { $script:LauncherExit = 75; return }
         $branchName = Get-Env 'STEAM_BRANCH'; if (-not $branchName) { $branchName = 'public' }
         $mode = Get-Env 'UPDATE_MODE'
 
@@ -2307,6 +2624,8 @@ function Invoke-Main([string[]]$argv) {
 
         $crashed = $runSeconds -lt (Get-Num 'CRASH_SECONDS' 60)
         if ($crashed) { $crashStreak++ } else { $crashStreak = 0 }
+        # A crash while an update of Hotwire is still on probation puts the previous files back before the next start.
+        if ($crashed -and (Test-Path -LiteralPath $SuApplied)) { Undo-SelfUpdate 'crashed' $SuApplied }
 
         # The session report: how this run ended and what its update did, written to the spool and sent in the
         # background.

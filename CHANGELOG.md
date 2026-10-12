@@ -24,6 +24,26 @@ sit above a launcher `1.1.7`. Read the label, not the number.
 `hotwire check` prints the plugin's version. Each launcher prints its own
 version as the first line when it starts.
 
+## Plugin 1.1.75, launchers 1.1.39 (Windows) and 1.1.24-linux, setup 0.2.31 (Linux) — unreleased
+
+**Hotwire can update itself.** Off unless you turn it on: `hotwire.self_update auto` in `hotwire.cfg`, or from
+AFKPanel, which also has an **Update Hotwire** button for one update. Before a start, the launcher installs the newest
+release that is at least `hotwire.self_update_days` days old (3 unless you change it; 0 is early release), only when its
+manifest is signed by a key built into the launcher and every file matches it, and only when the new launcher accepts
+this server's `hotwire.cfg`. The files it replaces are kept in `hotwire/previous/`. If the new plugin does not load, the
+server crashes, or the new launcher fails before the server starts, the previous files go back and automatic updates
+stop until you retry. AFKPanel never holds the signing keys.
+
+**The Linux launcher is two files**, like Windows: `hotwire.sh` starts `hotwire-launcher.sh`, which does the work and
+can be replaced while the server runs. Moving to it is one manual update: put both files in place with the server
+stopped. Setup installs both.
+
+**The plugin** writes `oxide/data/Hotwire/loaded.json` when it loads, which is how the launcher knows an update worked,
+and passes AFKPanel's two update commands to the launcher on every plan.
+
+**Releases** carry `manifest.json` and each file an update installs; `dev-*` tags publish test builds as pre-releases,
+which only launchers on the `dev` channel take.
+
 ## Plugin 1.1.74 — unreleased
 
 **AFKPanel can show each convar's current value.** The plugin reports the value of every convar Facepunch shows in its

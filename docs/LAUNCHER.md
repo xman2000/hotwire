@@ -5,7 +5,7 @@ The launcher starts the Rust server and relaunches it whenever it exits. It upda
 | Platform | File | Runs under |
 | --- | --- | --- |
 | Windows | `hotwire.bat` and `hotwire.ps1` | Windows PowerShell 5.1 and curl, which ship with Windows 10 and later. `hotwire.bat` only starts `hotwire.ps1`. |
-| Linux | `hotwire.sh` | bash, on Ubuntu 22.04 or later |
+| Linux | `hotwire.sh` and `hotwire-launcher.sh` | bash and openssl, on Ubuntu 22.04 or later. `hotwire.sh` only starts `hotwire-launcher.sh`. |
 
 The launcher's own folder is the server folder: the one that holds `RustDedicated` and `oxide/`. A copied server folder runs its own server, never the original's.
 
@@ -260,6 +260,33 @@ Every setting is one line. A setting that is off starts with `#` and shows the g
 
 Your own commands, such as a backup before every start, go in `hotwire-before` (before every start) and `hotwire-after` (after an update), beside the launcher. See [Run your own commands](HOOKS.md).
 
+## Hotwire updates itself
+
+Off unless `hotwire.self_update` is `auto` in `hotwire.cfg`, or AFKPanel's **Update Hotwire** asks for one update. It
+updates the plugin and the launcher's logic file (`hotwire.ps1`, or `hotwire-launcher.sh`), never `hotwire.bat`,
+`hotwire.sh`, `hotwire.cfg` or `hotwire-secrets.cfg`.
+
+Before a start, with the server stopped:
+
+1. The newest release on the channel that is at least `hotwire.self_update_days` days old and newer than what is
+   installed. **Update Hotwire** does not wait for the days. Where releases come from is fixed in the launcher.
+2. Its `manifest.json` must be signed by a key built into the launcher. AFKPanel does not hold these keys.
+3. Each file must match the SHA-256 the signed manifest names.
+4. The new launcher checks this server's `hotwire.cfg` (as `check` does). If it refuses it, nothing is installed.
+5. The current files are kept in `hotwire/previous/`, and the new ones go in. A new launcher takes over at once.
+
+Then the update is on probation until the new plugin says it loaded, or, for a launcher alone, until the server has
+run `hotwire.crash_seconds`. It is undone, and automatic updates stop until AFKPanel's **Retry** or **Update Hotwire**,
+when:
+
+| What happens | What the launcher does |
+| --- | --- |
+| The new plugin has not loaded 20 minutes after the start | Puts the previous plugin back while the server runs. Oxide loads it. |
+| The server crashes on probation | Puts the previous plugin and launcher back before the next start |
+| The new launcher stops with an error before it proves itself | `hotwire.bat` or `hotwire.sh` puts the previous launcher back and runs it |
+
+A wipe waiting for this start goes first; Hotwire updates at the next start. No failure here stops the server starting.
+
 ## Update the launcher
 
 On Windows, from 1.1.25:
@@ -269,7 +296,7 @@ On Windows, from 1.1.25:
 
 Moving to 1.1.25 from an older launcher replaces `hotwire.bat` too, so close the window first, replace both files, run `.\hotwire.bat check`, then `.\hotwire.bat`.
 
-On Linux, bash reads `hotwire.sh` while it runs: stop the server, replace `hotwire.sh`, run `./hotwire.sh check`, then start it. From 1.1.13-linux, a stop under systemd saves the world first. The steps are in [Install on Linux](INSTALL-LINUX.md#update-the-launcher).
+On Linux from 1.1.24-linux, `hotwire-launcher.sh` can be replaced while the launcher runs: it takes over at the next restart. Replace `hotwire.sh` only with the server stopped. Moving to 1.1.24-linux from an older launcher replaces `hotwire.sh` and adds `hotwire-launcher.sh`: stop the server, put both in place, run `./hotwire.sh check`, then start it. From 1.1.13-linux, a stop under systemd saves the world first. The steps are in [Install on Linux](INSTALL-LINUX.md#update-the-launcher).
 
 `hotwire.bat` refuses to start when `hotwire.ps1` is missing. AFKPanel shows whether a server runs a released launcher by comparing the plugin's hash of both files with the released ones'; it never refuses anything on that.
 

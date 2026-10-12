@@ -4,11 +4,15 @@
 # from this repository, never from the panel's server. tools/build-release.sh refuses to build until AFKPanel's list of
 # released files holds this commit's files, because setup checks every download against that list. The tests run first,
 # on the tagged commit: a tag on a commit that fails them publishes nothing.
+#
+# A dev-* tag publishes a pre-release, never marked latest, so afkpanel.com's download links and every launcher on the
+# release channel keep the last release-*. Launchers install an update only once tools/sign-release.sh has added
+# manifest.sig, which no workflow can make: the signing keys are not in GitHub.
 name: Release
 
 on:
   push:
-    tags: ['release-*']
+    tags: ['release-*', 'dev-*']
 
 permissions:
   contents: write
@@ -57,5 +61,10 @@ jobs:
             cat dist/SHA256SUMS
             echo '```'
           } > dist/notes.md
-          gh release create "$TAG" dist/hotwire-windows.zip dist/hotwire-linux.zip dist/hotwire-setup.sh dist/Hotwire.cs dist/SHA256SUMS \
-            --title "$TAG" --notes-file dist/notes.md --latest
+          files="dist/hotwire-windows.zip dist/hotwire-linux.zip dist/hotwire-setup.sh dist/Hotwire.cs dist/hotwire.ps1 dist/hotwire.bat
+                 dist/hotwire.sh dist/hotwire-launcher.sh dist/manifest.json dist/SHA256SUMS"
+          if [[ "$TAG" == dev-* ]]; then
+            gh release create "$TAG" $files --title "$TAG" --notes-file dist/notes.md --prerelease --latest=false
+          else
+            gh release create "$TAG" $files --title "$TAG" --notes-file dist/notes.md --latest
+          fi

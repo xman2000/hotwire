@@ -54,7 +54,7 @@ settings from its last start.
 | --- | --- |
 | 1. Your server | Name, description, tags, player slots, save folder, map |
 | 2. Ports | `server.port`, `server.queryport`, `rcon.port` |
-| 3. Updates | `hotwire.update_mode` |
+| 3. Updates | `hotwire.update_mode`, and Hotwire's own updates |
 | 4. More server settings | Rust's other settings, each off, with its default |
 | 5. Launcher settings | How the launcher behaves |
 | Other convars | Settings you add that are not in the list above |
@@ -97,6 +97,18 @@ is deleted once the update succeeds.
 
 AFKPanel Pro can set this line to `auto` or `always` (launchers 1.1.37 and 1.1.22-linux). The launcher writes it at the
 next start, before that start decides whether to update. `off` and `hotwire` are set only here.
+
+## Hotwire's own updates
+
+| Setting | Default | What it does |
+| --- | --- | --- |
+| `hotwire.self_update` | `off` | `auto`: before a start, install the newest Hotwire release that is old enough. `off`: only when you replace the files, or AFKPanel's **Update Hotwire** asks. |
+| `hotwire.self_update_days` | 3 | Days a release must be public before `auto` installs it. 0 = early release. |
+| `hotwire.self_update_channel` | `release` | `dev` also takes Hotwire's test builds. For test servers. |
+| `hotwire.self_update_test_key` | 0 | 1 also trusts the test signing key. Only for AFKPanel's own test servers. |
+
+AFKPanel can set `hotwire.self_update` and `hotwire.self_update_days`. The channel and the test key are set only here.
+See [The launcher](LAUNCHER.md#hotwire-updates-itself).
 
 ## Launcher settings
 

@@ -126,8 +126,8 @@ The download is about 6 GB. When it finishes, `/home/rust/server/RustDedicated` 
 
 ## 7. Install Hotwire
 
-Hotwire has two parts: the launcher, `hotwire.sh`, which runs the server, and the plugin, `Hotwire.cs`, which runs
-inside it. The launcher installs Oxide (uMod), which plugins need, on the first start.
+Hotwire has two parts: the launcher, `hotwire.sh` with `hotwire-launcher.sh`, which runs the server, and the plugin,
+`Hotwire.cs`, which runs inside it. The launcher installs Oxide (uMod), which plugins need, on the first start.
 
 As the `rust` user:
 
@@ -136,11 +136,11 @@ As the `rust` user:
    ```bash
    cd /home/rust/server
    curl -fsSL https://afkpanel.com/get/linux -o hotwire-linux.zip
-   unzip -o hotwire-linux.zip && rm hotwire-linux.zip && chmod +x hotwire.sh
+   unzip -o hotwire-linux.zip && rm hotwire-linux.zip && chmod +x hotwire.sh hotwire-launcher.sh
    mkdir -p oxide/plugins && mv plugin/Hotwire.cs oxide/plugins/ && rmdir plugin
    ```
 
-   The download holds `hotwire.sh`, `README.txt`, the plugin in `plugin/` and the example settings and hooks in
+   The download holds `hotwire.sh`, `hotwire-launcher.sh`, `README.txt`, the plugin in `plugin/` and the example settings and hooks in
    `examples/`, which stays in the server folder.
 
 2. Copy the settings file and open it:
@@ -263,8 +263,8 @@ AFKPanel within a minute. The launcher picks up the connection by itself at its 
 
 ## Update the launcher
 
-bash reads `hotwire.sh` while it runs, so stop the server before replacing it. The download has the plugin too, and
-both are replaced together.
+Hotwire can do this itself: see [The launcher](LAUNCHER.md#hotwire-updates-itself). By hand, stop the server first. The
+download has the plugin too, and they are replaced together.
 
 1. Stop the server, as your admin user:
 
@@ -281,8 +281,8 @@ both are replaced together.
    ```bash
    cd /home/rust/server
    curl -fsSL https://afkpanel.com/get/linux -o hotwire-linux.zip
-   unzip -o hotwire-linux.zip hotwire.sh plugin/Hotwire.cs && rm hotwire-linux.zip
-   chmod +x hotwire.sh && mv plugin/Hotwire.cs oxide/plugins/ && rmdir plugin
+   unzip -o hotwire-linux.zip hotwire.sh hotwire-launcher.sh plugin/Hotwire.cs && rm hotwire-linux.zip
+   chmod +x hotwire.sh hotwire-launcher.sh && mv plugin/Hotwire.cs oxide/plugins/ && rmdir plugin
    ```
 
    `hotwire.cfg`, `hotwire-secrets.cfg` and your hook files are not in the download, so they stay as they are.

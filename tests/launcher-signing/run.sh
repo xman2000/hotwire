@@ -16,7 +16,7 @@ secret="$(get secret)"; ts="$(get timestamp)"; nonce="$(get nonce)"; body="$(get
 
 # hotwire.sh: its functions, without its main part.
 lib="$(mktemp)"; trap 'rm -f "$lib"' EXIT
-sed '/^# Main\.$/,$d' launcher/hotwire.sh > "$lib"
+sed '/^# Main\.$/,$d' launcher/hotwire-launcher.sh > "$lib"
 got="$( ( source "$lib" >/dev/null 2>&1; _report_sig "$secret" "$ts" "$nonce" "$body" ) )"
 check "hotwire.sh signs the conformance vector" "$got" "$want"
 for s in 'plain' 'a "quote" and \back' $'two\nlines\tand a tab'; do

@@ -28,7 +28,7 @@
 #
 set -uo pipefail
 
-VERSION="0.2.30"
+VERSION="0.2.31"
 DEFAULT_PANEL="https://afkpanel.com"
 
 # ---------------------------------------------------------------- output ----
@@ -1518,9 +1518,12 @@ has_saves() { find "$IROOT/server" -type f \( -name '*.sav' -o -name '*.sav.*' -
 
 # Whether the launcher here reads its settings from hotwire.cfg (1.1.2-linux and later) rather than
 # keeping them inside itself.
-reads_cfg() { grep -q '^HOTWIRE_LAUNCHER_CAPABILITIES=.*settings_file' "$IROOT/hotwire.sh" 2>/dev/null; }
+# The file that says what the launcher can do: hotwire-launcher.sh beside a starter (1.1.24-linux and later), or
+# hotwire.sh itself before that.
+launcher_logic() { [ -f "$IROOT/hotwire-launcher.sh" ] && printf '%s' "$IROOT/hotwire-launcher.sh" || printf '%s' "$IROOT/hotwire.sh"; }
+reads_cfg() { grep -q '^HOTWIRE_LAUNCHER_CAPABILITIES=.*settings_file' "$(launcher_logic)" 2>/dev/null; }
 # Launchers from 1.1.12-linux start Rust with RCON off when no password is set; older ones refuse to start.
-rcon_optional() { grep -q '^HOTWIRE_LAUNCHER_CAPABILITIES=.*rcon_optional' "$IROOT/hotwire.sh" 2>/dev/null; }
+rcon_optional() { grep -q '^HOTWIRE_LAUNCHER_CAPABILITIES=.*rcon_optional' "$(launcher_logic)" 2>/dev/null; }
 # True when hotwire-secrets.cfg sets no password at all (no file, or no rcon.password line).
 rcon_unset() {
     local f="$IROOT/hotwire-secrets.cfg"
@@ -1602,9 +1605,18 @@ step_launcher() {
 
     local tmp
     if [ ! -f "$l" ]; then
+        # The launcher is two files: hotwire.sh starts hotwire-launcher.sh, which does the work and is what an update of
+        # Hotwire replaces. The logic goes in first, so hotwire.sh never exists without it.
+        local logic="$IROOT/hotwire-launcher.sh"
+        tmp="$logic.hotwire-tmp"
+        fetch "$(source_url launcher/hotwire-launcher.sh)" "$tmp" "the Hotwire launcher"
+        check_released "$tmp" hotwire-launcher.sh "the Hotwire launcher"
+        as_user chmod 755 "$tmp" && as_user mv -f "$tmp" "$logic" || die "writing $logic" "the write failed" "check free space, then run install again"
+        rec_add created "$logic"
+        change "created $logic" "delete $logic"
         tmp="$l.hotwire-tmp"
-        fetch "$(source_url launcher/hotwire.sh)" "$tmp" "the Hotwire launcher"
-        check_released "$tmp" hotwire.sh "the Hotwire launcher"
+        fetch "$(source_url launcher/hotwire.sh)" "$tmp" "the Hotwire launcher's starter"
+        check_released "$tmp" hotwire.sh "the Hotwire launcher's starter"
         as_user chmod 755 "$tmp" && as_user mv -f "$tmp" "$l" || die "writing $l" "the write failed" "check free space, then run install again"
         rec_add created "$l"
         change "created $l" "delete $l"

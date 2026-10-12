@@ -16,7 +16,7 @@ testkey="$(cat "$dir/test-public.pem")"
 
 # hotwire.sh: its functions, without its main part.
 lib="$(mktemp)"; trap 'rm -f "$lib"' EXIT
-sed '/^# Main\.$/,$d' launcher/hotwire.sh > "$lib"
+sed '/^# Main\.$/,$d' launcher/hotwire-launcher.sh > "$lib"
 # The launcher reads its own arguments when it loads, so the check's arguments are kept aside first.
 sh_ok() { local args=("$@"); ( set --; source "$lib" >/dev/null 2>&1; wipe_permit_ok "${args[@]}" && echo yes || echo no ); }
 for i in $(seq 0 $((count - 1))); do
@@ -43,7 +43,7 @@ for i in $(seq 0 $((count2 - 1))); do
 done
 s="$(field 0 server)"; c="$(field 0 cycle)"; seed="$(field 0 seed)"; size="$(field 0 size)"; url="$(field 0 levelurl)"; e="$(field 0 expires)"; p="$(field 0 permit)"
 check "hotwire.sh still verifies a version 1 permission when the flag names blueprints" "$(sh_ok "$testkey" "$s" "$c" "$seed" "$size" "$url" "$e" "$p" delete)" yes
-grep -q 'wipe_permit_blueprints' launcher/hotwire.sh && grep -q 'wipe_permit_blueprints' launcher/hotwire.ps1; check "both launchers advertise wipe_permit_blueprints" "$?" 0
+grep -q 'wipe_permit_blueprints' launcher/hotwire-launcher.sh && grep -q 'wipe_permit_blueprints' launcher/hotwire.ps1; check "both launchers advertise wipe_permit_blueprints" "$?" 0
 
 # Both launchers carry the same public key.
 sh_mod="$( ( source "$lib" >/dev/null 2>&1; printf '%s\n' "$WIPE_PERMIT_PUBKEY" | openssl rsa -pubin -noout -modulus 2>/dev/null | cut -d= -f2 ) )"

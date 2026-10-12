@@ -14,7 +14,7 @@ json() { python3 -c 'import json,sys; d=json.loads(sys.argv[1]); print(eval(sys.
 
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
-sed '/^# Main\.$/,$d' launcher/hotwire.sh > "$work/lib.sh"
+sed '/^# Main\.$/,$d' launcher/hotwire-launcher.sh > "$work/lib.sh"
 
 # SteamCMD's stand-in: Steam's public build from STEAM_PUBLIC, and an update that exits with STEAM_RC and, when it
 # succeeds, installs that build.

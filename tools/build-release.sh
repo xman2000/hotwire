@@ -18,6 +18,13 @@
 #   dist/hotwire-setup.sh      the Linux setup script
 #   dist/Hotwire.cs            the plugin
 #   dist/SHA256SUMS            sha256 of each of the above
+#   dist/manifest.json         what a launcher's update of Hotwire installs: the release's tag and versions, and the
+#                              SHA-256 of each file it may install, which are published beside it as they are installed
+#                              (Hotwire.cs, hotwire.ps1 and hotwire.bat with CRLF, hotwire.sh, hotwire-launcher.sh).
+#                              A launcher installs nothing until manifest.sig, made with tools/sign-release.sh by the
+#                              key's holder, is beside it.
+#
+# A dev-* tag builds a pre-release for testing; its files are checked against dev.afkpanel.com's list.
 #
 # Files are taken from the commit (git show HEAD:path), not the working tree, so they are the bytes raw GitHub serves
 # and the published list describes. The Windows scripts go into the zip with CRLF, which cmd needs; the plugin keeps its bytes.
@@ -32,13 +39,15 @@ crlf() { sed 's/\r$//; s/$/\r/'; }
 
 TAG="${TAG:-}"
 if [ -n "$TAG" ]; then
-    [[ "$TAG" =~ ^release-[0-9A-Za-z.-]+$ ]] || { echo "Not building: '$TAG' is not a release tag." >&2; exit 1; }
+    [[ "$TAG" =~ ^(release|dev)-[0-9A-Za-z.-]+$ ]] || { echo "Not building: '$TAG' is not a release or dev tag." >&2; exit 1; }
+    [[ "$TAG" == dev-* ]] && : "${HOTWIRE_RELEASED_FILES_URL:=https://dev.afkpanel.com/hotwire/released-files.json}"
     if [ "${HOTWIRE_SKIP_LIST_CHECK:-0}" != 1 ]; then
         list="$(curl -fsS --retry 3 --max-time 30 "${HOTWIRE_RELEASED_FILES_URL:-https://afkpanel.com/hotwire/released-files.json}")" \
             || { echo "Not building: AFKPanel's list of released files did not answer. Try again." >&2; exit 1; }
         missing=0
         for pair in Hotwire.cs:plugin/Hotwire.cs hotwire.bat:launcher/hotwire.bat hotwire.ps1:launcher/hotwire.ps1 \
-                    hotwire.sh:launcher/hotwire.sh hotwire.example.cfg:examples/hotwire.example.cfg; do
+                    hotwire.sh:launcher/hotwire.sh hotwire-launcher.sh:launcher/hotwire-launcher.sh \
+                    hotwire.example.cfg:examples/hotwire.example.cfg; do
             name="${pair%%:*}"; got=$(blob "${pair#*:}" | sha)
             if ! printf '%s' "$list" | HW_NAME="$name" HW_SHA="$got" python3 -c 'import json,os,sys; f=json.load(sys.stdin).get("files",{}); sys.exit(0 if os.environ["HW_SHA"] in f.get(os.environ["HW_NAME"],{}) else 1)'; then
                 echo "NOT ON THE LIST: $name ($got) is not on AFKPanel's list of released files." >&2; missing=1
@@ -91,6 +100,7 @@ rm -rf dist/windows
 # The Linux launcher with its examples. zip keeps each file's mode, so hotwire.sh unzips runnable.
 mkdir -p dist/linux/plugin dist/linux/examples
 blob launcher/hotwire.sh > dist/linux/hotwire.sh
+blob launcher/hotwire-launcher.sh > dist/linux/hotwire-launcher.sh
 blob examples/hotwire.example.cfg > dist/linux/examples/hotwire.example.cfg
 blob examples/hotwire-secrets.example.cfg > dist/linux/examples/hotwire-secrets.example.cfg
 blob examples/hotwire-before.example.sh > dist/linux/examples/hotwire-before.example.sh
@@ -99,31 +109,57 @@ blob plugin/Hotwire.cs > dist/linux/plugin/Hotwire.cs
 cat > dist/linux/README.txt <<'TXT'
 Hotwire for Linux, for a Rust server you already run
 
-  hotwire.sh          the launcher
-  plugin/Hotwire.cs   the plugin
+  hotwire.sh               the launcher: starts hotwire-launcher.sh
+  hotwire-launcher.sh      what the launcher does; an update of Hotwire replaces it
+  plugin/Hotwire.cs        the plugin
   examples/           the settings file and your own commands
 
-Put hotwire.sh beside RustDedicated, and plugin/Hotwire.cs in oxide/plugins. Your settings
+Put hotwire.sh and hotwire-launcher.sh beside RustDedicated, and plugin/Hotwire.cs in oxide/plugins. Your settings
 go in hotwire.cfg: make it from your old start script at https://afkpanel.com/get-started,
 or copy examples/hotwire.example.cfg. Only if you use an RCON tool, set its password in
 hotwire-secrets.cfg (copy examples/hotwire-secrets.example.cfg, then chmod 600 it); without
 one RCON is off. Run ./hotwire.sh check, then ./hotwire.sh.
 
-To update: stop the server, replace hotwire.sh, and Hotwire.cs in oxide/plugins with
-plugin/Hotwire.cs, run ./hotwire.sh check, then start it again.
+To update: stop the server, replace hotwire.sh and hotwire-launcher.sh, and Hotwire.cs in
+oxide/plugins with plugin/Hotwire.cs, run ./hotwire.sh check, then start it again. Or let
+Hotwire update itself: see https://afkpanel.com/docs/update-hotwire#let-hotwire-update-itself
 
 To install a server from nothing, use hotwire-setup.sh instead.
 The guide: https://afkpanel.com/docs/install-linux
 TXT
-chmod 755 dist/linux/hotwire.sh
+chmod 755 dist/linux/hotwire.sh dist/linux/hotwire-launcher.sh
 chmod 644 dist/linux/examples/* dist/linux/plugin/Hotwire.cs dist/linux/README.txt
 chmod 755 dist/linux/plugin dist/linux/examples
 touch -d "$(git log -1 --format=%cI HEAD)" dist/linux/* dist/linux/plugin/* dist/linux/examples/*
-(cd dist/linux && zip -qX ../hotwire-linux.zip hotwire.sh README.txt plugin/Hotwire.cs examples/hotwire.example.cfg \
+(cd dist/linux && zip -qX ../hotwire-linux.zip hotwire.sh hotwire-launcher.sh README.txt plugin/Hotwire.cs examples/hotwire.example.cfg \
     examples/hotwire-secrets.example.cfg examples/hotwire-before.example.sh examples/hotwire-after.example.sh)
 rm -rf dist/linux
 
 blob setup/hotwire-setup.sh | stamp_sh > dist/hotwire-setup.sh
 blob plugin/Hotwire.cs > dist/Hotwire.cs
-(cd dist && sha256sum hotwire-windows.zip hotwire-linux.zip hotwire-setup.sh Hotwire.cs > SHA256SUMS)
+
+# What an update of Hotwire installs, each file as it is installed, and the manifest that names them.
+blob launcher/hotwire.ps1 | crlf > dist/hotwire.ps1
+blob launcher/hotwire.bat | crlf > dist/hotwire.bat
+blob launcher/hotwire.sh > dist/hotwire.sh
+blob launcher/hotwire-launcher.sh > dist/hotwire-launcher.sh
+plugin_version=$(blob plugin/Hotwire.cs | sed -n -E 's/.*\[Info\("Hotwire", "[^"]*", "([0-9.]+)"\)\].*/\1/p' | head -1)
+windows_version=$(blob launcher/hotwire.ps1 | sed -n -E "s/^\\\$LauncherVersion = '([0-9.]+)'.*/\1/p" | head -1)
+linux_version=$(blob launcher/hotwire-launcher.sh | sed -n -E 's/^HOTWIRE_LAUNCHER_VERSION="([0-9.a-z-]+)"$/\1/p' | head -1)
+[ -n "$plugin_version" ] && [ -n "$windows_version" ] && [ -n "$linux_version" ] \
+    || { echo "Not building: could not read the plugin's and both launchers' versions." >&2; exit 1; }
+{
+    printf '{\n  "format": 1,\n  "tag": "%s",\n  "commit": "%s",\n' "${TAG:-untagged}" "$(git rev-parse HEAD)"
+    printf '  "plugin": "%s",\n  "launcher_windows": "%s",\n  "launcher_linux": "%s",\n' "$plugin_version" "$windows_version" "$linux_version"
+    printf '  "files": {\n'
+    first=1
+    for f in Hotwire.cs hotwire.ps1 hotwire.bat hotwire.sh hotwire-launcher.sh; do
+        [ "$first" = 1 ] || printf ',\n'; first=0
+        printf '    "%s": "%s"' "$f" "$(sha < "dist/$f")"
+    done
+    printf '\n  }\n}\n'
+} > dist/manifest.json
+
+(cd dist && sha256sum hotwire-windows.zip hotwire-linux.zip hotwire-setup.sh Hotwire.cs hotwire.ps1 hotwire.bat hotwire.sh \
+    hotwire-launcher.sh manifest.json > SHA256SUMS)
 cat dist/SHA256SUMS

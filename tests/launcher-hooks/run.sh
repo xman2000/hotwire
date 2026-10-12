@@ -13,7 +13,7 @@ json() { python3 -c 'import json,sys; d=json.loads(sys.argv[1]); print(eval(sys.
 
 work="$(mktemp -d)"; lib="$work/lib.sh"
 trap 'c="$(cat "$work/child.pid" 2>/dev/null)"; [ -n "$c" ] && kill -KILL "$c" 2>/dev/null; rm -rf "$work"' EXIT
-sed '/^# Main\.$/,$d' launcher/hotwire.sh > "$lib"
+sed '/^# Main\.$/,$d' launcher/hotwire-launcher.sh > "$lib"
 
 # A hook that runs too long, and starts a child of its own that would outlive it.
 cat > "$work/slow.sh" <<'H'

@@ -43,9 +43,12 @@ jobs:
       - name: "What a start's update did, as the session report says it"
         run: bash tests/launcher-update/run.sh
 
+      - name: Hotwire updating itself
+        run: bash tests/self-update/run.sh
+
       - name: Shell scripts parse
         run: |
-          bash -n launcher/hotwire.sh
+          bash -n launcher/hotwire.sh && bash -n launcher/hotwire-launcher.sh
           bash -n setup/hotwire-setup.sh
           for f in launcher/hotwire.ps1 setup/hotwire-setup.ps1; do
             pwsh -NoProfile -Command "\$e=\$null; [System.Management.Automation.Language.Parser]::ParseFile('$f',[ref]\$null,[ref]\$e) | Out-Null; if (\$e) { \$e; exit 1 } else { 'ok $f' }"

@@ -17,7 +17,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Hotwire", "xman2000", "1.1.74")]
+    [Info("Hotwire", "xman2000", "1.1.75")]
     [Description("Scheduled restarts and updates. Announces, counts down, writes a flag, quits.")]
     internal class Hotwire : CovalencePlugin
     {
@@ -923,6 +923,11 @@ namespace Oxide.Plugins
 
             AddCovalenceCommand(new[] { "hotwire", "hw" }, nameof(CmdHotwire));
             AddCovalenceCommand("hotwire.ui", nameof(CmdMenuAction));   // goes with the menu
+
+            // The proof the launcher waits for after it updated Hotwire: this version compiled and loaded. Written on
+            // every load; read only by the launcher, while an update is on probation.
+            try { Interface.Oxide.DataFileSystem.WriteObject(LoadedFile, new JObject { ["version"] = Version.ToString(), ["at"] = DateTime.UtcNow.ToString("yyyy'-'MM'-'dd'T'HH':'mm':'ss'Z'", CultureInfo.InvariantCulture) }); }
+            catch { /* the launcher then puts the previous plugin back, which is the safe answer */ }
 
             try
             {
@@ -3624,7 +3629,7 @@ namespace Oxide.Plugins
                 if (SendNextBackupResult()) return;
             }
 
-            if (_config.Panel.AcceptCommands && PolicyAllowsCommands() && now >= _commandsDue) { PollCommands(); return; }
+            if (_config.Panel.AcceptCommands && (PolicyAllowsCommands() || (_policy != null && _policy.SelfUpdateCommands)) && now >= _commandsDue) { PollCommands(); return; }
             if (_config.Panel.SendPlayers && now >= _playersCheckDue) { _playersCheckDue = now.AddSeconds(30); RefreshPlayers(); }
             if (_playersJson != null && _playersJson != _playersSentJson && now >= _playersSendNotBefore && PolicyAllowsKind("players")) { SendPlayers(); return; }
             if (_config.Panel.SendPositions && now >= _positionsDue && SendPositions()) return;
@@ -4530,6 +4535,22 @@ namespace Oxide.Plugins
             // update whether this server's launcher will install anything. Left out when the launcher does not say.
             var mode = (string)declared["update_mode"] ?? "";
             if (Regex.IsMatch(mode, "^[a-z]{1,16}$")) identity["update_mode"] = mode;
+            // Hotwire's own updates as the launcher holds them (launchers 1.1.39 / 1.1.24-linux): the setting, a pause after
+            // a rolled-back update and why, and the last update's tag, result and time. Bounded words only.
+            var su = declared["self_update"] as JObject;
+            if (su != null)
+            {
+                var o = new JObject();
+                foreach (var key in new[] { "mode", "channel", "reason", "blocked_tag", "last_tag", "last_result", "last_at", "probation" })
+                {
+                    var v = (string)su[key] ?? "";
+                    if (Regex.IsMatch(v, "^[A-Za-z0-9_.:-]{0,64}$")) o[key] = v;
+                }
+                var days = su["days"];
+                if (days != null && days.Type == JTokenType.Integer && (long)days >= 0 && (long)days <= 999) o["days"] = (long)days;
+                o["blocked"] = su["blocked"] != null && su["blocked"].Type == JTokenType.Boolean && (bool)su["blocked"];
+                identity["self_update"] = o;
+            }
             return identity;
         }
 
@@ -4559,6 +4580,12 @@ namespace Oxide.Plugins
         }
 
         private const string UpdateModeRequestName = "UPDATE_MODE.request";
+        private const string SelfUpdateRequestName = "SELF_UPDATE.request";
+        private const string UpdateNowRequestName = "HOTWIRE_UPDATE.request";
+        private const string LoadedFile = "Hotwire/loaded";
+        // Updating Hotwire itself is free (the owner, 2026-10-12): these two are carried out on a plan that sends no other
+        // command, and nothing else is.
+        private static readonly HashSet<string> SelfUpdateVerbs = new HashSet<string>(StringComparer.Ordinal) { "launcher.self_update", "hotwire.update" };
 
         // The update mode the panel asked for and the launcher has not applied yet, or "".
         private string PendingUpdateMode()
@@ -6425,6 +6452,9 @@ namespace Oxide.Plugins
 
         private void RunCommand(string verb, JObject args, out string status, out string result)
         {
+            // A plan that sends no commands still updates Hotwire: only those two verbs, and only because the panel said so.
+            if (!PolicyAllowsCommands() && !SelfUpdateVerbs.Contains(verb))
+            { status = "refused"; result = "this account's plan does not send commands to its servers"; return; }
             switch (verb)
             {
                 case "message":
@@ -6698,6 +6728,41 @@ namespace Oxide.Plugins
                     var current = LauncherUpdateMode();
                     result = "update mode " + mode + " saved; the launcher writes it into hotwire.cfg at the next start"
                         + (current.Length > 0 ? " (it was " + current + " at the last start)" : "");
+                    return;
+                }
+                case "launcher.self_update":
+                {
+                    // Hotwire's own updates, from the panel: off, auto with a number of days (0 is early release), or retry
+                    // after a rolled-back update. The launcher checks it again and writes it into hotwire.cfg at the next start.
+                    // Where updates come from, the channel and which keys are trusted stay the admin's, in hotwire.cfg.
+                    var mode = ((string)args["mode"] ?? "").Trim();
+                    string line;
+                    if (mode == "off" || mode == "retry") line = mode;
+                    else if (mode == "auto")
+                    {
+                        var daysToken = args["days"];
+                        if (daysToken == null || daysToken.Type != JTokenType.Integer || (long)daysToken < 0 || (long)daysToken > 999)
+                        { status = "refused"; result = "days must be a whole number from 0 to 999"; return; }
+                        line = "auto " + (long)daysToken;
+                    }
+                    else { status = "refused"; result = "mode must be off, auto or retry"; return; }
+                    if (!LauncherCan("self_update"))
+                    { status = "refused"; result = "this server's launcher cannot update Hotwire (Hotwire launcher 1.1.39 on Windows, 1.1.24-linux on Linux)"; return; }
+                    if (!WriteRequestFile(SelfUpdateRequestName, line, out result)) { status = "failed"; return; }
+                    status = "done";
+                    result = "saved; the launcher applies it at the next start";
+                    return;
+                }
+                case "hotwire.update":
+                {
+                    // "Update Hotwire" from the panel: at the next start the launcher installs the newest signed release on its
+                    // channel, whatever its age, and clears a pause left by a rolled-back update. It checks everything it
+                    // would check for an automatic update; the panel only asks.
+                    if (!LauncherCan("self_update"))
+                    { status = "refused"; result = "this server's launcher cannot update Hotwire (Hotwire launcher 1.1.39 on Windows, 1.1.24-linux on Linux)"; return; }
+                    if (!WriteRequestFile(UpdateNowRequestName, "now", out result)) { status = "failed"; return; }
+                    status = "done";
+                    result = "saved; the launcher updates Hotwire at the next start";
                     return;
                 }
                 case "preset.run":
@@ -10134,6 +10199,24 @@ namespace Oxide.Plugins
 
         // No game or Oxide types: checked outside the game, like the regions below.
 
+        // A request file in the server root for the launcher, replaced in one step so it reads the old one or this one.
+        private bool WriteRequestFile(string name, string line, out string error)
+        {
+            error = null;
+            var root = ServerRoot();
+            if (root == null) { error = "cannot find the server root to write the request"; return false; }
+            var path = Path.Combine(root, name);
+            try
+            {
+                var tmp = path + ".tmp";
+                File.WriteAllText(tmp, line + Environment.NewLine, new UTF8Encoding(false));
+                if (File.Exists(path)) File.Delete(path);
+                File.Move(tmp, path);
+                return true;
+            }
+            catch (Exception ex) { error = "could not write the request: " + ex.Message; return false; }
+        }
+
         private sealed class ReportPolicy
         {
             public string Name;
@@ -10155,6 +10238,7 @@ namespace Oxide.Plugins
             public bool Backups;              // the plan includes backups; false unless the panel says true
             public bool Chat;                 // send chat lines; false unless the panel says true (chat is part of Pro)
             public bool Wipes;                // the plan includes wipes; false unless the panel says true
+            public bool SelfUpdateCommands;   // poll for Hotwire's own update commands even when Commands is false
             public DateTime ReceivedUtc;
         }
 
@@ -10211,6 +10295,8 @@ namespace Oxide.Plugins
                     Chat = data["chat"] != null && data["chat"].Type == JTokenType.Boolean && (bool)data["chat"],
                     // Wipes likewise: only true means the plan includes them (wipes are part of Pro, like backups).
                     Wipes = data["wipes"] != null && data["wipes"].Type == JTokenType.Boolean && (bool)data["wipes"],
+                    // Updating Hotwire is free: only true means the panel hands this plan Hotwire's own update commands.
+                    SelfUpdateCommands = data["self_update_commands"] != null && data["self_update_commands"].Type == JTokenType.Boolean && (bool)data["self_update_commands"],
                     ReceivedUtc = DateTime.UtcNow
                 };
 
