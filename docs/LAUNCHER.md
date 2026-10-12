@@ -84,6 +84,7 @@ Fixed in the launcher, never settings: where Oxide is downloaded from and checke
 | The backstop | After `hotwire.max_days_without_update` without a successful update, one happens and the console says so. A missing stamp counts as forever, so a fresh install updates on its first start. |
 | Oxide | Installed with the server and put back after every update, unless `hotwire.install_framework` is `0`. With `hotwire.skip_unchanged_framework` it is not re-extracted when neither changed: the game's build is the one from before the update, and Oxide's version is the newest release on GitHub, the file that is downloaded and checked. An update that changed the build, or a validate, always puts Oxide back. |
 | A failure in any of it | Reported, and the server starts under the ordinary rules |
+| Set from AFKPanel | Launchers 1.1.37 (Windows) and 1.1.22-linux, with plugin 1.1.72. AFKPanel Pro can set `auto` or `always`, never `off` or `hotwire`. The plugin leaves `UPDATE_MODE.request` in the server folder; the next start writes the mode into `hotwire.cfg` before it decides whether to update, so an update asked for at the same time installs. `UPDATE_MODE.result` says `applied`, `unchanged` or `reject` and why. Check mode leaves the request for a real start. |
 
 ### Fast Rust updates
 
@@ -205,6 +206,7 @@ Requires launcher 1.1.25 on Windows; every Linux launcher that reads `hotwire.cf
 | --- | --- |
 | How a run ended: when, the exit code, whether it was a crash, and what its update did | After every run |
 | The launcher stopped after a crash streak, and the crash log it kept | When it stops |
+| Which update step is running: each SteamCMD try, then Oxide | As each begins (launchers 1.1.37 and 1.1.22-linux) |
 
 | Rule | Value |
 | --- | --- |

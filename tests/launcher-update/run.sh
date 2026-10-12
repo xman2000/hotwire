@@ -104,6 +104,112 @@ r="$( set +u; set --; source "$root/lib.sh" >/dev/null 2>&1
 check "the reason is this start's" "$(json "$r" '"reason" in d["update"]')" "False"
 check "the lines are this start's" "$(json "$r" 'any("is off" in l for l in d["update"]["log"])')" "False"
 
+# An update mode AFKPanel asked for: <request text> <mode in hotwire.cfg> [check] [broken|link]. Prints the update block, then the
+# receipt, the hotwire.cfg line and whether the request is still there, each on its own line.
+mode_request() {
+    local root="$work/mode-$RANDOM$RANDOM"
+    mkdir -p "$root/steamapps" "$root/logs"
+    cp "$work/lib.sh" "$root/lib.sh"
+    printf '"AppState"\n{\n"buildid"\t\t"25670169"\n"StateFlags"\t\t"4"\n}\n' > "$root/steamapps/appmanifest_258550.acf"
+    printf 'Last update: today\n' > "$root/logs/last_update.txt"
+    touch "$root/UPDATE.flag"
+    printf 'server.hostname "Test"\nhotwire.update_mode         %s\n' "$2" > "$root/hotwire.cfg"
+    printf '%s\n' "$1" > "$root/UPDATE_MODE.request"
+    local cfg_mode="$2" check_only="${3:-}" how="${4:-}"
+    if [ "$how" = link ]; then mv "$root/UPDATE_MODE.request" "$root/secret.txt"; ln -s "$root/secret.txt" "$root/UPDATE_MODE.request"; fi
+    ( set +u; set --; source "$root/lib.sh" >/dev/null 2>&1
+      export STEAM_PUBLIC=25823813 STEAM_RC=0 HW_ROOT="$root"
+      set_defaults; CFG="$root/hotwire.cfg"; UPDATE_MODE="$cfg_mode"; STEAMCMD="$work/steamcmd"; MAX_STEAM_TRIES=1; STEAM_RETRY_SECONDS=0
+      INSTALL_FRAMEWORK=0; BUILD_CHECK_HOURS=6; STEAM_LOCK="$root/steamcmd.lock"; CRASH_STREAK=0; CHECK_ONLY="$check_only"
+      # The reader, as far as this setting goes: the last line that sets it.
+      # "broken": hotwire.cfg cannot be used after the write, so the reader keeps the last start's settings.
+      if [ "$how" = broken ]; then load_config() { return 1; }
+      else load_config() { UPDATE_MODE="$(awk '$1=="hotwire.update_mode"{v=$2} END{print v}' "$CFG")"; }; fi
+      config_reload() { :; }; load_secrets() { :; }; init_reporting() { :; }; check_ionice() { :; }; check_stop_unit() { :; }
+      backup_before_launch() { :; }; run_hook() { :; }; apply_wipe() { :; }; apply_convar_requests() { :; }
+      build_args() { :; }; check_options() { :; }
+      per_launch_prep >/dev/null 2>&1
+      printf '{"x":0%s}\n' "$(update_json)"
+      cat "$root/UPDATE_MODE.result" 2>/dev/null || echo "no receipt"
+      grep '^hotwire.update_mode' "$CFG"
+      [ -e "$root/UPDATE_MODE.request" ] && echo "request kept" || echo "request removed" )
+}
+
+echo "hotwire.sh: AFKPanel sets updates to auto on a server that had them off"
+out="$(mode_request auto off)"; r="$(sed -n 1p <<< "$out")"
+check "the waiting update installs on this same start" "$(json "$r" 'd["update"]["attempted"]')" "True"
+check "the start follows the new mode" "$(json "$r" 'd["update"]["mode"]')" "auto"
+check "the lines say what changed" "$(json "$r" 'any("Update mode set to auto from AFKPanel (was off)" in l for l in d["update"]["log"])')" "True"
+check "the receipt" "$(sed -n 2p <<< "$out")" "applied auto (was off)"
+check "hotwire.cfg says auto" "$(sed -n 3p <<< "$out" | tr -s ' ')" "hotwire.update_mode auto"
+check "the request is used up" "$(sed -n 4p <<< "$out")" "request removed"
+
+echo "hotwire.sh: a request for off is refused"
+out="$(mode_request off auto)"; r="$(sed -n 1p <<< "$out")"
+check "the mode stays" "$(json "$r" 'd["update"]["mode"]')" "auto"
+check "the receipt says why" "$(sed -n 2p <<< "$out")" "reject off : the panel sets auto or always only"
+check "hotwire.cfg is unchanged" "$(sed -n 3p <<< "$out" | tr -s ' ')" "hotwire.update_mode auto"
+check "the lines say it was refused" "$(json "$r" 'any("which is not auto or always" in l for l in d["update"]["log"])')" "True"
+
+echo "hotwire.sh: a request that is not a mode is refused"
+out="$(mode_request 'always; rm -rf /' off)"
+check "the receipt" "$(sed -n 2p <<< "$out")" "reject always;rm-rf/ : the panel sets auto or always only"
+check "hotwire.cfg is unchanged" "$(sed -n 3p <<< "$out" | tr -s ' ')" "hotwire.update_mode off"
+
+echo "hotwire.sh: a request with Windows line ends is read"
+out="$(mode_request $'always\r' off)"
+check "the receipt" "$(sed -n 2p <<< "$out")" "applied always (was off)"
+
+echo "hotwire.sh: hotwire.cfg cannot be used after the write"
+out="$(mode_request auto off "" broken)"; r="$(sed -n 1p <<< "$out")"
+check "the receipt does not claim it was applied" "$(sed -n 2p <<< "$out")" "reject auto : hotwire.cfg was written but cannot be used now, so the last start's settings stay"
+check "the start keeps the last mode" "$(json "$r" 'd["update"]["mode"]')" "off"
+check "the lines say so" "$(json "$r" 'any("cannot be used now" in l for l in d["update"]["log"])')" "True"
+
+echo "hotwire.sh: a request that is a link is not followed"
+out="$(mode_request auto off "" link)"; r="$(sed -n 1p <<< "$out")"
+check "the receipt" "$(sed -n 2p <<< "$out")" "reject : UPDATE_MODE.request is a link, not a file"
+check "hotwire.cfg is unchanged" "$(sed -n 3p <<< "$out" | tr -s ' ')" "hotwire.update_mode off"
+check "the linked file's text is not echoed" "$(json "$r" 'any("auto" in l and "link" in l for l in d["update"]["log"])')" "False"
+
+echo "hotwire.sh: check mode leaves the request for a real start"
+out="$(mode_request auto off 1)"
+check "no receipt" "$(sed -n 2p <<< "$out")" "no receipt"
+check "hotwire.cfg is unchanged" "$(sed -n 3p <<< "$out" | tr -s ' ')" "hotwire.update_mode off"
+check "the request waits" "$(sed -n 4p <<< "$out")" "request kept"
+
+echo "hotwire.sh: the update reports each SteamCMD try while it runs"
+root="$work/progress"; mkdir -p "$root/steamapps" "$root/logs"; cp "$work/lib.sh" "$root/lib.sh"
+printf '"AppState"\n{\n"buildid"\t\t"25670169"\n}\n' > "$root/steamapps/appmanifest_258550.acf"
+sent="$( set +u; set --; source "$root/lib.sh" >/dev/null 2>&1
+      export STEAM_PUBLIC=25823813 STEAM_RC=8 HW_ROOT="$root"
+      set_defaults; STEAMCMD="$work/steamcmd"; UPDATE_MODE=always; MAX_STEAM_TRIES=2; STEAM_RETRY_SECONDS=0
+      INSTALL_FRAMEWORK=0; BUILD_CHECK_HOURS=6; STEAM_LOCK="$root/steamcmd.lock"; CRASH_STREAK=0; CHECK_ONLY=""
+      config_reload() { :; }; load_secrets() { :; }; init_reporting() { REPORT_ENABLED=1; }; check_ionice() { :; }; check_stop_unit() { :; }
+      backup_before_launch() { :; }; run_hook() { :; }; apply_wipe() { :; }; apply_convar_requests() { :; }
+      build_args() { :; }; check_options() { :; }
+      hw_send() { printf '%s %s\n' "$1" "$2" >> "$root/sent"; }; spool_kick() { :; }
+      per_launch_prep >/dev/null 2>&1
+      cat "$root/sent" )"
+check "one report per try" "$(grep -c '^update ' <<< "$sent")" "2"
+r="$(sed -n 2p <<< "$sent" | cut -d' ' -f2-)"
+check "names the step and the try" "$(json "$r" '(d["step"], d["attempt"], d["of"])')" "('steamcmd', 2, 2)"
+check "carries the mode and the builds" "$(json "$r" '(d["mode"], d["effective_mode"], d["rust_build_id"], d["rust_build_public"])')" "('always', 'always', '25670169', '25823813')"
+echo "$r" > "$work/update-progress.json"
+
+echo "hotwire.sh: a report written while the spool is being sent goes with that sender"
+root="$work/spool"; mkdir -p "$root/hotwire/launcher-spool"; cp "$work/lib.sh" "$root/lib.sh"
+got="$( set +u; set --; source "$root/lib.sh" >/dev/null 2>&1
+      set_defaults; ROOT="$root"; SPOOL_DIR="$root/hotwire/launcher-spool"; REPORT_ENABLED=1; SPOOL_ORIGIN=""
+      log() { :; }
+      # The panel accepts everything; the first send is the last SteamCMD try's, and the start report is written meanwhile.
+      _hw_post() { echo "$1" >> "$root/posted"; [ "$1" = update ] && _spool_write session '{"started_at":"x"}' rid-2 now; printf 200; }
+      _spool_write update '{"step":"steamcmd"}' rid-1 now
+      spool_drain_all
+      cat "$root/posted"; ls -1 "$SPOOL_DIR" | wc -l )"
+check "both reports sent" "$(head -2 <<< "$got" | tr '\n' ' ')" "update session "
+check "nothing left in the spool" "$(tail -1 <<< "$got" | tr -d ' ')" "0"
+
 # hotwire.ps1: the same reporting, read out of the file by the PowerShell parser.
 ps="$(command -v pwsh || true)"
 if [ -n "$ps" ]; then
@@ -115,6 +221,6 @@ else
 fi
 
 # The payloads, for the panel's tests: what the launcher built, not a fixture written to agree with the panel.
-if [ -n "${HOTWIRE_KEEP_PAYLOADS:-}" ]; then cp "$work/mode-off.json" "$work/steam-failed.json" "$HOTWIRE_KEEP_PAYLOADS/"; fi
+if [ -n "${HOTWIRE_KEEP_PAYLOADS:-}" ]; then cp "$work/mode-off.json" "$work/steam-failed.json" "$work/update-progress.json" "$HOTWIRE_KEEP_PAYLOADS/"; fi
 
 exit $fail

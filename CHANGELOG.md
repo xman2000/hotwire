@@ -24,6 +24,21 @@ sit above a launcher `1.1.7`. Read the label, not the number.
 `hotwire check` prints the plugin's version. Each launcher prints its own
 version as the first line when it starts.
 
+## Plugin 1.1.72, launchers 1.1.37 (Windows) and 1.1.22-linux — unreleased
+
+**AFKPanel can set the update mode.** AFKPanel Pro can set `hotwire.update_mode` to `auto` or `always`. The plugin
+leaves `UPDATE_MODE.request`, and the next start writes the mode into `hotwire.cfg` before it decides whether to update,
+so an update sent at the same time installs. `UPDATE_MODE.result` and the console say what was done. `off` and
+`hotwire` are set only in `hotwire.cfg`; a request for anything else is refused and `hotwire.cfg` is left alone. An
+update sent while the mode is `off` and a change is waiting is answered with that.
+
+**An update says where it is while it runs.** The launchers report each SteamCMD try and the start of the Oxide step,
+so AFKPanel can show that a server is updating and which try it is on. Before, it heard nothing until the server started.
+
+**A report written while others are being sent goes with them.** The start report could wait in the launcher's spool
+until the server next stopped when it was written during another send. A sender now waits for the running one and
+sends what was added meanwhile.
+
 ## Plugin 1.1.71, launchers 1.1.36 (Windows) and 1.1.21-linux — unreleased
 
 **A start says what its update did.** The session report sent to AFKPanel now carries `hotwire.update_mode` as written

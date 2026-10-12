@@ -21,8 +21,8 @@
 #     hotwire.cfg. The plugin works out this file's code hash itself, and
 #     AFKPanel compares it with the released launchers'; nothing waits on that
 #     answer.
-HOTWIRE_LAUNCHER_VERSION="1.1.21-linux"
-HOTWIRE_LAUNCHER_CAPABILITIES="supervise,update,framework_verify,crash_backstop,log_rotate,convar_persist,wipe,wipe_same_map,wipe_custom_map,backup,settings_file,rcon_optional,stop_saves,wipe_permit,wipe_permit_blueprints"
+HOTWIRE_LAUNCHER_VERSION="1.1.22-linux"
+HOTWIRE_LAUNCHER_CAPABILITIES="supervise,update,framework_verify,crash_backstop,log_rotate,convar_persist,wipe,wipe_same_map,wipe_custom_map,backup,settings_file,rcon_optional,stop_saves,wipe_permit,wipe_permit_blueprints,update_mode_set,update_progress"
 
 # ======================================================================
 #  HOW THIS LAUNCHER WORKS
@@ -160,6 +160,8 @@ BUILD_CACHE="$LOGDIR/build_check.txt"
 OXIDE_STAMP="$LOGDIR/oxide_installed.txt"
 CONVAR_REQUEST="$ROOT/CONVAR.request"
 CONVAR_RESULT="$ROOT/CONVAR.result"
+UPDATE_MODE_REQUEST="$ROOT/UPDATE_MODE.request"
+UPDATE_MODE_RESULT="$ROOT/UPDATE_MODE.result"
 WIPE_STATE="$ROOT/hotwire/wipe-cycle"
 WIPE_RESULT="$ROOT/WIPE.result"
 BACKUP_FLAG="$ROOT/BACKUP.flag"
@@ -782,8 +784,10 @@ steam_update_attempts() {
         tries=$((tries+1))
         if [ "$deadline" -gt 0 ] && [ "$tries" -gt "$MAX_STEAM_TRIES" ]; then
             log "steamcmd update, attempt $tries (a forced wipe waits: trying until $(date -d "@$deadline" +%H:%M))..."
+            report_update_progress steamcmd "$tries"
         else
             log "steamcmd update, attempt $tries of $MAX_STEAM_TRIES..."
+            report_update_progress steamcmd "$tries" "$MAX_STEAM_TRIES"
         fi
         # Blocking lock, but bounded by STEAMCMD_WAIT_MINUTES so a stuck sibling
         # never holds this server down: past the deadline we start what we have.
@@ -848,6 +852,7 @@ have_json() { command -v jq >/dev/null 2>&1; }
 framework_update() {
     FRAMEWORK_OK=0
     if [ "$INSTALL_FRAMEWORK" = "0" ]; then log "Vanilla: Oxide is not managed here."; FRAMEWORK_OK=1; return 0; fi
+    report_update_progress oxide
 
     local build_after; read_installed_build; build_after="$INSTALLED_BUILD"
 
@@ -1159,6 +1164,7 @@ SPOOL_DAYS=7
 # later); drop any other refusal, which the same bytes would get again; drop what
 # is older than SPOOL_DAYS or was made for another connection.
 spool_drain() {
+    SPOOL_STOPPED=0
     [ "$REPORT_ENABLED" = "1" ] || return 0
     [ -d "$SPOOL_DIR" ] || return 0
     local sent=0 dropped=0 expired=0 elsewhere=0 f p kind rid sent_at payload origin code made now
@@ -1179,7 +1185,7 @@ spool_drain() {
         code="$(_hw_post "$kind" "$payload" "$rid" "$sent_at")"
         case "$code" in
             2*) rm -f "$p"; sent=$((sent + 1)) ;;
-            429|5*|000) break ;;
+            429|5*|000) SPOOL_STOPPED=1; break ;;
             *) rm -f "$p"; dropped=$((dropped + 1)); log "Spool: a held $kind report was refused (HTTP $code) and is dropped: sent again it would be refused again." ;;
         esac
     done
@@ -1192,12 +1198,28 @@ spool_drain() {
 # One sender at a time, in the background: the start never waits for it. A
 # sender that hangs or dies costs nothing but the reports it had not sent yet,
 # which stay in the spool for the next.
+#
+# A report written while another sender runs must not wait for the next stop: a
+# new sender waits up to 30 s for the running one, and a sender goes round again
+# (at most 5 passes) while reports remain and the panel is answering. Without
+# that, the start report written as the last SteamCMD try's report was being
+# sent stayed in the spool until the server next stopped.
 spool_kick() {
     [ "$REPORT_ENABLED" = "1" ] || return 0
     [ -d "$SPOOL_DIR" ] || return 0
     # Its own descriptor (6), and none of the launcher's locks (7 backup, 8 and 9
     # SteamCMD) kept open in it: a sender still running must not hold them.
-    ( exec 7>&- 8>&- 9>&- 6>"$SPOOL_DIR/.sending"; flock -n 6 || exit 0; spool_drain ) </dev/null &
+    ( exec 7>&- 8>&- 9>&- 6>"$SPOOL_DIR/.sending"; flock -w 30 6 || exit 0; spool_drain_all ) </dev/null &
+}
+
+spool_drain_all() {
+    local pass
+    for pass in 1 2 3 4 5; do
+        spool_drain
+        [ "$SPOOL_STOPPED" = "1" ] && return 0
+        [ -n "$(ls -1 "$SPOOL_DIR" 2>/dev/null)" ] || return 0
+    done
+    return 0
 }
 
 # Before the launcher stops for good: the last reports go now, while there is a
@@ -1205,7 +1227,7 @@ spool_kick() {
 spool_flush() {
     [ "$REPORT_ENABLED" = "1" ] || return 0
     [ -d "$SPOOL_DIR" ] || return 0
-    ( exec 7>&- 8>&- 9>&- 6>"$SPOOL_DIR/.sending"; flock -w 60 6 || exit 0; spool_drain ) </dev/null
+    ( exec 7>&- 8>&- 9>&- 6>"$SPOOL_DIR/.sending"; flock -w 60 6 || exit 0; spool_drain_all ) </dev/null
 }
 
 # One session report per run, sent after the server exits: what only the script
@@ -1247,7 +1269,7 @@ update_json() {
     local days=""
     if [ -f "$UPDATE_STAMP" ]; then days=$(( ( $(date +%s) - $(stat -c %Y "$UPDATE_STAMP" 2>/dev/null || date +%s) ) / 86400 )); fi
     local extra="" line sep=""
-    extra=",\"mode\":$(json_text "$UPDATE_MODE"),\"effective_mode\":$(json_text "$UPDATE_EFFECTIVE")"
+    extra=",\"mode\":$(json_text "$UPDATE_MODE"),\"effective_mode\":$(json_text "${UPDATE_EFFECTIVE:-}")"
     [ -n "$UPDATE_REASON" ] && extra="$extra,\"reason\":$(json_text "$UPDATE_REASON")"
     if [ "${#UPDATE_LOG[@]}" -gt 0 ]; then
         extra="$extra,\"log\":["
@@ -1265,6 +1287,21 @@ update_json() {
 report_session_start() {
     [ "$REPORT_ENABLED" = "1" ] || return 0
     hw_send session "{\"started_at\":\"$STARTED_AT\"$(update_json)$(launcher_hooks_json)}"
+}
+
+# An update report while the update runs (capability: update_progress): which step,
+# and for SteamCMD which try. Between server runs the plugin is not running, so
+# without it AFKPanel hears nothing until the server starts, however long SteamCMD
+# retries. Sent in the background like every report; the update never waits on it.
+report_update_progress() {  # <step steamcmd|oxide> [attempt] [of]
+    [ "$REPORT_ENABLED" = "1" ] || return 0
+    local p="{\"step\":$(json_text "$1"),\"mode\":$(json_text "$UPDATE_MODE"),\"effective_mode\":$(json_text "${UPDATE_EFFECTIVE:-}")"
+    [[ "${2:-}" =~ ^[0-9]+$ ]] && p="$p,\"attempt\":$2"
+    [[ "${3:-}" =~ ^[0-9]+$ ]] && p="$p,\"of\":$3"
+    [[ "${INSTALLED_BUILD:-}" =~ ^[0-9]+$ ]] && p="$p,\"rust_build_id\":\"$INSTALLED_BUILD\""
+    [[ "${PUBLIC_BUILD:-}" =~ ^[0-9]+$ ]] && p="$p,\"rust_build_public\":\"$PUBLIC_BUILD\""
+    hw_send update "$p}"
+    spool_kick
 }
 
 # The launcher report: sent when the crash-streak backstop stops the server for
@@ -1536,6 +1573,54 @@ apply_wipe() {
     fi
     WIPE_APPLIED=1
     ok "Wipe applied: $mapwords, blueprints $bpmsg. A new world starts on this boot; $set_aside old world file(s) were renamed *.wiped-* and left on disk."
+}
+
+# ======================================================================
+# Update mode from AFKPanel (capability: update_mode_set). The plugin writes
+# UPDATE_MODE.request holding one word. Only auto and always are taken: off and
+# hotwire stay something the admin writes into hotwire.cfg. It is applied before
+# the update decision, so a waiting UPDATE.flag installs on this same start.
+# The receipt is UPDATE_MODE.result; the request is removed either way.
+# ======================================================================
+apply_update_mode_request() {
+    [ -e "$UPDATE_MODE_REQUEST" ] || [ -L "$UPDATE_MODE_REQUEST" ] || return 0
+    local want was="$UPDATE_MODE"
+    rm -f "$UPDATE_MODE_RESULT"
+    # The plugin writes a plain file; a link is not followed.
+    if [ -L "$UPDATE_MODE_REQUEST" ] || [ ! -f "$UPDATE_MODE_REQUEST" ]; then
+        rm -f "$UPDATE_MODE_REQUEST"
+        printf 'reject : UPDATE_MODE.request is a link, not a file\n' > "$UPDATE_MODE_RESULT" 2>/dev/null || true
+        warn "UPDATE_MODE.request is a link, not a file, so it was not read. hotwire.update_mode stays $was."
+        return 0
+    fi
+    want="$(head -c 64 "$UPDATE_MODE_REQUEST" 2>/dev/null | tr -d '\r\n[:space:]')"
+    rm -f "$UPDATE_MODE_REQUEST"
+    case "$want" in
+        auto|always) ;;
+        *)
+            printf 'reject %s : the panel sets auto or always only\n' "${want:0:16}" > "$UPDATE_MODE_RESULT" 2>/dev/null || true
+            warn "AFKPanel asked for update mode '${want:0:16}', which is not auto or always. hotwire.update_mode stays $was."
+            return 0 ;;
+    esac
+    if [ "$want" = "$was" ]; then
+        printf 'unchanged %s\n' "$want" > "$UPDATE_MODE_RESULT" 2>/dev/null || true
+        log "AFKPanel asked for update mode $want; hotwire.update_mode is already $want."
+        return 0
+    fi
+    if cfg_set hotwire.update_mode "$want"; then
+        load_config || config_reload
+        # Read back: a hotwire.cfg the launcher cannot use keeps the last start's settings, and then the mode did not change.
+        if [ "$UPDATE_MODE" != "$want" ]; then
+            printf "reject %s : hotwire.cfg was written but cannot be used now, so the last start's settings stay\n" "$want" > "$UPDATE_MODE_RESULT" 2>/dev/null || true
+            bad "hotwire.update_mode $want was written into hotwire.cfg, but the file cannot be used now, so this start keeps $UPDATE_MODE. Run ./hotwire.sh check."
+            return 0
+        fi
+        printf 'applied %s (was %s)\n' "$want" "$was" > "$UPDATE_MODE_RESULT" 2>/dev/null || true
+        ok "Update mode set to $want from AFKPanel (was $was); hotwire.cfg now says hotwire.update_mode $want."
+    else
+        printf 'reject %s : could not write hotwire.cfg\n' "$want" > "$UPDATE_MODE_RESULT" 2>/dev/null || true
+        bad "AFKPanel asked for update mode $want, but hotwire.cfg could not be written. hotwire.update_mode stays $was."
+    fi
 }
 
 # ======================================================================
@@ -2104,6 +2189,8 @@ per_launch_prep() {
     check_ionice
     check_stop_unit
     UPDATE_CAPTURE=1
+    # An update mode AFKPanel asked for is written first, so this start's update decision already follows it.
+    [ -z "$CHECK_ONLY" ] && apply_update_mode_request
     decide_update_mode
     build_check
     # The installed build before any update this pass: framework_update compares with it (Oxide goes back over a new build).

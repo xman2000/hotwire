@@ -95,6 +95,9 @@ Set with `hotwire.update_mode`.
 To ask for one update in `hotwire` mode, create `UPDATE.flag` in the server's folder and restart the server. The flag
 is deleted once the update succeeds.
 
+AFKPanel Pro can set this line to `auto` or `always` (launchers 1.1.37 and 1.1.22-linux). The launcher writes it at the
+next start, before that start decides whether to update. `off` and `hotwire` are set only here.
+
 ## Launcher settings
 
 Each is off in the file and shows the value used.

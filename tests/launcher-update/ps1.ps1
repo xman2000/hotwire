@@ -5,7 +5,7 @@
 $t = $null; $e = $null
 $ast = [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path 'launcher/hotwire.ps1'), [ref]$t, [ref]$e)
 if ($e.Count -gt 0) { "hotwire.ps1 parses|$($e.Count) errors|0 errors"; exit }
-$want = @('Say', 'Set-UpdateReason', 'Get-UpdateJson', 'Get-Env', 'Get-Num', 'Update-Rust', 'Invoke-SteamUpdate', 'Get-ForcedWipeDeadline', 'Test-FilesCorrupt', 'Move-RefusedRecord', 'Restore-RefusedRecord', 'Get-InstalledBuild', 'Set-FastRustMark')
+$want = @('Say', 'Set-UpdateReason', 'Get-UpdateJson', 'Get-Env', 'Get-Num', 'Update-Rust', 'Invoke-UpdateModeRequest', 'Set-CfgValues', 'Send-UpdateProgress', 'Invoke-Report', 'Invoke-SteamUpdate', 'Get-ForcedWipeDeadline', 'Test-FilesCorrupt', 'Move-RefusedRecord', 'Restore-RefusedRecord', 'Get-InstalledBuild', 'Set-FastRustMark')
 foreach ($f in $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $want -contains $n.Name }, $true)) { . ([scriptblock]::Create($f.Extent.Text)) }
 
 $work = $env:HOTWIRE_TEST_WORK
@@ -18,6 +18,17 @@ $script:UpdateCapture = $false
 $script:UpdateLog = New-Object System.Collections.ArrayList
 $script:UpdateReason = ''
 $script:UpdateEffective = ''
+# The reports this run would send, kept here instead of in the spool.
+$script:Sent = New-Object System.Collections.ArrayList
+function Add-SpoolReport([string]$kind, [string]$payload) { [void]$script:Sent.Add($kind + ' ' + $payload) }
+function Start-BackgroundSend { }
+# The settings reader, as far as this setting goes: the last line that sets it, unless the test says the file is unusable.
+function Import-Settings([switch]$Quiet) {
+    if ($script:CfgBroken) { return 'kept' }
+    $m = Select-String -LiteralPath $cfg -Pattern '^hotwire\.update_mode\s+(\S+)' | Select-Object -Last 1
+    if ($m) { $env:UPDATE_MODE = $m.Matches[0].Groups[1].Value }
+    return 'ok'
+}
 
 Say 'before the decision'
 $script:UpdateCapture = $true
@@ -56,3 +67,34 @@ $env:STEAMCMD = Join-Path $work 'steamcmd'; $env:MAX_STEAM_TRIES = '1'; $env:STE
 $ok = Update-Rust $false '' ''
 "hotwire.ps1 reports SteamCMD's failure|$($ok)|False"
 "hotwire.ps1 says SteamCMD failed|$($script:UpdateReason)|steamcmd_failed"
+
+"hotwire.ps1 reports each SteamCMD try while it runs|$(@($script:Sent | Where-Object { $_.StartsWith('update ') }).Count)|1"
+$p = ConvertFrom-Json ($script:Sent[0].Substring(7))
+"hotwire.ps1 names the step and the try|$($p.step) $($p.attempt) $($p.of)|steamcmd 1 1"
+
+# An update mode AFKPanel asked for.
+$cfg = Join-Path $work 'hotwire.cfg'
+$request = Join-Path $work 'UPDATE_MODE.request'
+[IO.File]::WriteAllText($cfg, "server.hostname ""Test""`nhotwire.update_mode         off`n")
+[IO.File]::WriteAllText($request, "auto`n")
+$env:UPDATE_MODE = 'off'
+"hotwire.ps1 applies auto|$(Invoke-UpdateModeRequest)|True"
+"hotwire.ps1 writes it into hotwire.cfg|$((Select-String -LiteralPath $cfg -Pattern '^hotwire\.update_mode\s+auto$').Count)|1"
+"hotwire.ps1 leaves a receipt|$([IO.File]::ReadAllText((Join-Path $work 'UPDATE_MODE.result')).Trim())|applied auto (was off)"
+"hotwire.ps1 uses the request up|$(Test-Path -LiteralPath $request)|False"
+
+$env:UPDATE_MODE = 'auto'
+[IO.File]::WriteAllText($request, "off`n")
+"hotwire.ps1 refuses off|$(Invoke-UpdateModeRequest)|False"
+"hotwire.ps1 leaves hotwire.cfg alone|$((Select-String -LiteralPath $cfg -Pattern '^hotwire\.update_mode\s+auto$').Count)|1"
+"hotwire.ps1 says why|$([IO.File]::ReadAllText((Join-Path $work 'UPDATE_MODE.result')).Trim())|reject off : the panel sets auto or always only"
+
+$env:UPDATE_MODE = 'off'
+[IO.File]::WriteAllText($cfg, "hotwire.update_mode         off`n")
+[IO.File]::WriteAllText($request, "auto`n")
+$script:CfgBroken = $true
+[void](Invoke-UpdateModeRequest)
+$script:CfgBroken = $false
+"hotwire.ps1 does not claim a mode an unusable hotwire.cfg kept from|$([IO.File]::ReadAllText((Join-Path $work 'UPDATE_MODE.result')).Trim())|reject auto : hotwire.cfg was written but cannot be used now, so the last start's settings stay"
+"hotwire.ps1 keeps the last start's mode then|$($env:UPDATE_MODE)|off"
+

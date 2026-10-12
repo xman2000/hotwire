@@ -15,8 +15,8 @@
 $ErrorActionPreference = 'Stop'
 # Who this launcher is, for the plugin: written to oxide\data\Hotwire\launcher.json before every start. The plugin
 # offers only the features in the capability list; settings_file means the settings come from hotwire.cfg.
-$LauncherVersion = '1.1.36'
-$LauncherCapabilities = 'supervise,update,framework_verify,crash_backstop,log_rotate,convar_persist,wipe,wipe_same_map,wipe_custom_map,backup,settings_file,rcon_optional,wipe_permit,wipe_permit_blueprints'
+$LauncherVersion = '1.1.37'
+$LauncherCapabilities = 'supervise,update,framework_verify,crash_backstop,log_rotate,convar_persist,wipe,wipe_same_map,wipe_custom_map,backup,settings_file,rcon_optional,wipe_permit,wipe_permit_blueprints,update_mode_set,update_progress'
 $root = $PSScriptRoot
 $cfg = Join-Path $root 'hotwire.cfg'
 $secretsCfg = Join-Path $root 'hotwire-secrets.cfg'
@@ -635,6 +635,66 @@ function Invoke-Edits {
     }
 }
 
+# ---- Update mode from AFKPanel (capability: update_mode_set) ---------------------------------------------------
+# The plugin leaves UPDATE_MODE.request holding one word. Only auto and always are taken: off and hotwire stay something
+# the admin writes into hotwire.cfg. It is applied before the update decision, so a waiting UPDATE.flag installs on this
+# same start. The receipt is UPDATE_MODE.result; the request is removed either way. True when hotwire.cfg changed.
+function Invoke-UpdateModeRequest {
+    $request = Join-Path $root 'UPDATE_MODE.request'
+    if (-not (Test-Path -LiteralPath $request)) { return $false }
+    $result = Join-Path $root 'UPDATE_MODE.result'
+    Remove-Item -LiteralPath $result -Force -ErrorAction SilentlyContinue
+    $was = Get-Env 'UPDATE_MODE'
+    $want = ''
+    # The plugin writes a plain file; a link is not followed.
+    if (((Get-Item -LiteralPath $request -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        Remove-Item -LiteralPath $request -Force -ErrorAction SilentlyContinue
+        try { [IO.File]::WriteAllText($result, "reject : UPDATE_MODE.request is a link, not a file`n") } catch { }
+        Say ('UPDATE_MODE.request is a link, not a file, so it was not read. hotwire.update_mode stays ' + $was + '.')
+        return $false
+    }
+    try { $want = ([IO.File]::ReadAllText($request)) -replace '\s', '' } catch { }
+    if ($want.Length -gt 16) { $want = $want.Substring(0, 16) }
+    Remove-Item -LiteralPath $request -Force -ErrorAction SilentlyContinue
+    if ($want -cne 'auto' -and $want -cne 'always') {
+        try { [IO.File]::WriteAllText($result, 'reject ' + $want + " : the panel sets auto or always only`n") } catch { }
+        Say ('AFKPanel asked for update mode ''' + $want + ''', which is not auto or always. hotwire.update_mode stays ' + $was + '.')
+        return $false
+    }
+    if ($want -ceq $was) {
+        try { [IO.File]::WriteAllText($result, 'unchanged ' + $want + "`n") } catch { }
+        Say ('AFKPanel asked for update mode ' + $want + '; hotwire.update_mode is already ' + $want + '.')
+        return $false
+    }
+    if (Set-CfgValues @(, @('hotwire.update_mode', $want))) {
+        # Read back: a hotwire.cfg the launcher cannot use keeps the last start's settings, and then the mode did not change.
+        try { [void](Import-Settings -Quiet) } catch { Say ('Could not read the settings: ' + $_.Exception.Message) }
+        if ((Get-Env 'UPDATE_MODE') -cne $want) {
+            try { [IO.File]::WriteAllText($result, 'reject ' + $want + " : hotwire.cfg was written but cannot be used now, so the last start's settings stay`n") } catch { }
+            Say ('hotwire.update_mode ' + $want + ' was written into hotwire.cfg, but the file cannot be used now, so this start keeps ' + $was + '. Run hotwire.bat check.')
+            return $true
+        }
+        try { [IO.File]::WriteAllText($result, 'applied ' + $want + ' (was ' + $was + ")`n") } catch { }
+        Say ('Update mode set to ' + $want + ' from AFKPanel (was ' + $was + '); hotwire.cfg now says hotwire.update_mode ' + $want + '.')
+        return $true
+    }
+    try { [IO.File]::WriteAllText($result, 'reject ' + $want + " : could not write hotwire.cfg`n") } catch { }
+    Say ('AFKPanel asked for update mode ' + $want + ', but hotwire.cfg could not be written. hotwire.update_mode stays ' + $was + '.')
+    return $false
+}
+
+# An update report while the update runs (capability: update_progress): which step, and for SteamCMD which try. Between
+# server runs the plugin is not running, so without it AFKPanel hears nothing until the server starts, however long
+# SteamCMD retries. Sent in the background like every report; the update never waits on it.
+function Send-UpdateProgress([string]$step, [int]$attempt = 0, [int]$of = 0) {
+    try {
+        $env:HOTWIRE_REPORT = 'update'; $env:HOTWIRE_UPDATE_STEP = $step
+        $env:HOTWIRE_UPDATE_TRY = [string]$attempt; $env:HOTWIRE_UPDATE_OF = [string]$of
+        Invoke-Report
+    } catch { } finally { $env:HOTWIRE_REPORT = ''; $env:HOTWIRE_UPDATE_STEP = ''; $env:HOTWIRE_UPDATE_TRY = ''; $env:HOTWIRE_UPDATE_OF = '' }
+    Start-BackgroundSend
+}
+
 # ---- launch --------------------------------------------------------------------------------------------------
 # The arguments reach RustDedicated.exe as one command line built here, never through cmd, so no character in a
 # value can run as a command.
@@ -1174,8 +1234,14 @@ function Invoke-Send {
         try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 } catch { }
         $sent = 0; $dropped = 0; $expired = 0; $elsewhere = 0
         $now = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
-        foreach ($f in @(Get-ChildItem -LiteralPath $spoolDir -File | Where-Object { -not $_.Name.StartsWith('.') -and -not $_.Name.EndsWith('.tmp') } | Sort-Object LastWriteTime)) {
-            if ($sent -ge 50) { break }
+        # A report written while this sender runs is sent by it too: another pass, at most 5, while reports remain and
+        # AFKPanel answers. A start report written during the last SteamCMD try's send otherwise waited for the next stop.
+        $stopped = $false
+        for ($pass = 0; $pass -lt 5 -and -not $stopped; $pass++) {
+        $files = @(Get-ChildItem -LiteralPath $spoolDir -File | Where-Object { -not $_.Name.StartsWith('.') -and -not $_.Name.EndsWith('.tmp') } | Sort-Object LastWriteTime)
+        if ($files.Count -eq 0) { break }
+        foreach ($f in $files) {
+            if ($sent -ge 50 * ($pass + 1)) { break }
             $lines = [IO.File]::ReadAllLines($f.FullName)
             if ($lines.Count -lt 4 -or -not $lines[0]) { Remove-Item -LiteralPath $f.FullName -Force; continue }
             $made = 0L
@@ -1185,8 +1251,9 @@ function Invoke-Send {
             if ($lines.Count -ge 5 -and $lines[4] -and $lines[4] -ne $r.Origin) { Remove-Item -LiteralPath $f.FullName -Force; $elsewhere++; continue }
             $code = Send-Report $r $lines[0] $lines[1] $lines[2] $lines[3]
             if ($code -ge 200 -and $code -lt 300) { Remove-Item -LiteralPath $f.FullName -Force; $sent++ }
-            elseif ($code -eq 0 -or $code -eq 429 -or $code -ge 500) { break }
+            elseif ($code -eq 0 -or $code -eq 429 -or $code -ge 500) { $stopped = $true; break }
             else { Remove-Item -LiteralPath $f.FullName -Force; $dropped++; Say ('A held ' + $lines[0] + ' report was refused (HTTP ' + $code + ') and dropped, because it would be refused again.') }
+        }
         }
         if ($sent -gt 0) { Say ('Sent ' + $sent + ' held report(s) to AFKPanel.') }
         if ($expired -gt 0) { Say ('Dropped ' + $expired + ' report(s) held more than ' + $spoolDays + ' days.') }
@@ -1252,6 +1319,13 @@ function Invoke-Report {
         $started = [string]$env:HOTWIRE_STARTED_AT
         if ($started -notmatch '\A\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ\z') { return }
         Add-SpoolReport 'session' ('{"started_at":"' + $started + '"' + (Get-UpdateJson) + (Get-LauncherHooksJson) + '}')
+    } elseif ($env:HOTWIRE_REPORT -eq 'update') {
+        $p = '{"step":' + (ConvertTo-Json -InputObject ([string]$env:HOTWIRE_UPDATE_STEP) -Compress) + ',"mode":' + (ConvertTo-Json -InputObject ([string](Get-Env 'UPDATE_MODE')) -Compress) + ',"effective_mode":' + (ConvertTo-Json -InputObject ([string]$script:UpdateEffective) -Compress)
+        if ([string]$env:HOTWIRE_UPDATE_TRY -match '\A[1-9][0-9]{0,3}\z') { $p += ',"attempt":' + $env:HOTWIRE_UPDATE_TRY }
+        if ([string]$env:HOTWIRE_UPDATE_OF -match '\A[1-9][0-9]{0,3}\z') { $p += ',"of":' + $env:HOTWIRE_UPDATE_OF }
+        if ([string]$env:HOTWIRE_INSTALLED_BUILD -match '\A\d+\z') { $p += ',"rust_build_id":"' + $env:HOTWIRE_INSTALLED_BUILD + '"' }
+        if ([string]$env:HOTWIRE_PUBLIC_BUILD -match '\A\d+\z') { $p += ',"rust_build_public":"' + $env:HOTWIRE_PUBLIC_BUILD + '"' }
+        Add-SpoolReport 'update' ($p + '}')
     } elseif ($env:HOTWIRE_REPORT -eq 'launcher') {
         $streak = 0; [void][int]::TryParse([string]$env:CRASH_STREAK, [ref]$streak)
         $log = @(Get-ChildItem -LiteralPath (Join-Path $root 'logs') -Filter 'server_crash_*.txt' -File -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1)
@@ -1529,6 +1603,7 @@ function Update-Rust([bool]$validate, [string]$installed, [string]$public) {
     $tries = 0; $quickUsed = $false; $recoveryUsed = $false
     while ($true) {
         $tries++
+        Send-UpdateProgress 'steamcmd' $tries $(if ($tries -le $maxTries) { $maxTries } else { 0 })
         $code = Invoke-SteamUpdate $validate
         if ($code -eq 0) {
             if ($recoveryUsed) { Say 'The update finished without the old file list. The old install record is kept in hotwire\appmanifest-refused.acf.' }
@@ -1567,6 +1642,7 @@ function Update-Oxide([string]$buildBefore, [bool]$validated = $false) {
         Say 'Vanilla server: hotwire.install_framework is 0, so Oxide is not installed.'
         return $true
     }
+    Send-UpdateProgress 'oxide'
     $from = $FrameworkUrl; $sha = ''; $tag = ''
     try {
         try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 } catch { }
@@ -1736,7 +1812,8 @@ function Write-LauncherState {
 # Sends held reports in a separate process, so the server starts without waiting for AFKPanel.
 function Start-BackgroundSend {
     try {
-        $env:HOTWIRE_MODE = 'send'; $env:HOTWIRE_SEND_WAIT = '0'
+        # Waits up to 30 s for a sender already running, so this report is not left for the next stop.
+        $env:HOTWIRE_MODE = 'send'; $env:HOTWIRE_SEND_WAIT = '30'
         $q = [char]34
         [void](Start-Process -FilePath 'powershell.exe' -ArgumentList ('-NoProfile -NonInteractive -ExecutionPolicy Bypass -File ' + $q + $PSCommandPath + $q) -NoNewWindow)
     } catch { } finally { $env:HOTWIRE_MODE = ''; $env:HOTWIRE_SEND_WAIT = '' }
@@ -1817,7 +1894,7 @@ function Invoke-Main([string[]]$argv) {
         $env:HOTWIRE_FIRST = ''
 
         $updateAttempted = $false; $steamOk = $false; $frameworkOk = $false
-        $script:UpdateLog.Clear(); $script:UpdateReason = ''; $script:UpdateEffective = 
+        $script:UpdateLog.Clear(); $script:UpdateReason = ''; $script:UpdateEffective = ''
         $branchName = Get-Env 'STEAM_BRANCH'; if (-not $branchName) { $branchName = 'public' }
         $mode = Get-Env 'UPDATE_MODE'
 
@@ -1827,6 +1904,8 @@ function Invoke-Main([string[]]$argv) {
             # an update scheduled. If that file is missing, over two hours old or unreadable, nothing is scheduling
             # updates, so this start updates as in always mode, which keeps the server joinable.
             $script:UpdateCapture = $true
+            # An update mode AFKPanel asked for is written first, so this start's update decision already follows it.
+            if (-not $checkOnly -and (Invoke-UpdateModeRequest)) { $mode = Get-Env 'UPDATE_MODE' }
             $effective = $mode
             if ($mode -eq 'auto') {
                 $effective = 'always'
@@ -1846,6 +1925,7 @@ function Invoke-Main([string[]]$argv) {
                 $hours = $checkHours
                 if ($effective -ne 'always' -and $effective -ne 'off' -and $crashStreak -eq 0) { $hours = 0 }
                 $installed = Get-InstalledBuild
+                $env:HOTWIRE_INSTALLED_BUILD = [string]$installed
                 $public = Get-PublicBuild $branchName $hours
                 $env:HOTWIRE_PUBLIC_BUILD = [string]$public
                 # An answer not believed (older than the install on public, below) is not sent to AFKPanel as Steam's build.

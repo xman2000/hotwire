@@ -17,7 +17,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Hotwire", "xman2000", "1.1.71")]
+    [Info("Hotwire", "xman2000", "1.1.72")]
     [Description("Scheduled restarts and updates. Announces, counts down, writes a flag, quits.")]
     internal class Hotwire : CovalencePlugin
     {
@@ -4525,8 +4525,33 @@ namespace Oxide.Plugins
         }
 
         // Said with an update the panel asked for when the launcher will not install it, so the answer is true at the click.
-        private static string UpdateModeNote(bool update) =>
-            update && LauncherUpdateMode() == "off" ? "; hotwire.update_mode was off at the server's last start, so the launcher installs nothing unless hotwire.cfg has changed since" : "";
+        // A mode the panel asked for that waits for the next start (UPDATE_MODE.request) is applied before that start's
+        // update decision, so the update installs.
+        private string UpdateModeNote(bool update)
+        {
+            if (!update || LauncherUpdateMode() != "off") return "";
+            var pending = PendingUpdateMode();
+            return pending.Length > 0
+                ? "; hotwire.update_mode was off at the server's last start and is set to " + pending + " from the next one, so the launcher installs this update"
+                : "; hotwire.update_mode was off at the server's last start, so the launcher installs nothing unless hotwire.cfg has changed since";
+        }
+
+        private const string UpdateModeRequestName = "UPDATE_MODE.request";
+
+        // The update mode the panel asked for and the launcher has not applied yet, or "".
+        private string PendingUpdateMode()
+        {
+            try
+            {
+                var root = ServerRoot();
+                if (root == null) return "";
+                var file = Path.Combine(root, UpdateModeRequestName);
+                if (!File.Exists(file)) return "";
+                var mode = File.ReadAllText(file).Trim();
+                return mode == "auto" || mode == "always" ? mode : "";
+            }
+            catch { return ""; }
+        }
 
         private static string Clip(string text, int max) => text.Length > max ? text.Substring(0, max) : text;
 
@@ -6555,6 +6580,37 @@ namespace Oxide.Plugins
                     catch (Exception ex) { status = "failed"; result = "could not write the request: " + ex.Message; return; }
                     status = "done";
                     result = "saved; the launcher makes it permanent on the next restart (needs the Hotwire launcher with convar_persist)";
+                    return;
+                }
+                case "launcher.update_mode":
+                {
+                    // Sets hotwire.update_mode from the panel. The launcher's own settings are otherwise never set from the
+                    // panel (convar.persist refuses hotwire.*), so this is one setting with two values and nothing else:
+                    // auto or always. "off" and "hotwire" stay something only the admin writes into hotwire.cfg.
+                    // The plugin leaves UPDATE_MODE.request; the launcher checks it again and writes it into hotwire.cfg
+                    // before the next start decides whether to update, so an update sent after this one installs.
+                    var mode = ((string)args["mode"] ?? "").Trim();
+                    if (mode != "auto" && mode != "always")
+                    { status = "refused"; result = "update mode must be auto or always"; return; }
+                    // A launcher that cannot apply it would leave the request unread, and the answer below would be untrue.
+                    if (!LauncherCan("update_mode_set"))
+                    { status = "refused"; result = "this server's launcher cannot set the update mode (Hotwire launcher 1.1.37 on Windows, 1.1.22-linux on Linux); set hotwire.update_mode in hotwire.cfg"; return; }
+                    var root = ServerRoot();
+                    if (root == null) { status = "failed"; result = "cannot find the server root to write the request"; return; }
+                    var reqPath = Path.Combine(root, UpdateModeRequestName);
+                    try
+                    {
+                        // Whole file, replaced in one step: the launcher reads either the old request or this one.
+                        var tmp = reqPath + ".tmp";
+                        File.WriteAllText(tmp, mode + Environment.NewLine, new UTF8Encoding(false));
+                        if (File.Exists(reqPath)) File.Delete(reqPath);
+                        File.Move(tmp, reqPath);
+                    }
+                    catch (Exception ex) { status = "failed"; result = "could not write the request: " + ex.Message; return; }
+                    status = "done";
+                    var current = LauncherUpdateMode();
+                    result = "update mode " + mode + " saved; the launcher writes it into hotwire.cfg at the next start"
+                        + (current.Length > 0 ? " (it was " + current + " at the last start)" : "");
                     return;
                 }
                 case "preset.run":
