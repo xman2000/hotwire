@@ -40,6 +40,9 @@ jobs:
       - name: "The launchers' hooks, their time limit and the start report"
         run: bash tests/launcher-hooks/run.sh
 
+      - name: "What a start's update did, as the session report says it"
+        run: bash tests/launcher-update/run.sh
+
       - name: Shell scripts parse
         run: |
           bash -n launcher/hotwire.sh

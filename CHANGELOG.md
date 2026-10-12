@@ -24,6 +24,16 @@ sit above a launcher `1.1.7`. Read the label, not the number.
 `hotwire check` prints the plugin's version. Each launcher prints its own
 version as the first line when it starts.
 
+## Plugin 1.1.71, launchers 1.1.36 (Windows) and 1.1.21-linux — unreleased
+
+**A start says what its update did.** The session report sent to AFKPanel now carries `hotwire.update_mode` as written
+and as followed, why the start did not update (updates off, nothing due) or what failed first (SteamCMD missing, busy,
+timed out or failing; Oxide's download, check or unpacking), and the launcher's own lines about the update. A flag left
+waiting because updates are off is reported as kept.
+
+**The plugin passes on the update mode.** The heartbeat carries `hotwire.update_mode` from `launcher.json`, and an update
+sent while it is `off` is answered with that, so the panel can say before and after an update that nothing will install.
+
 ## Plugin 1.1.70, launcher 1.1.35 (Windows) — unreleased
 
 **Cancelling a forced wipe's retry calls the wipe off.** When the update a forced wipe waits for had not installed, the

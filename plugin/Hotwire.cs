@@ -17,7 +17,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Hotwire", "xman2000", "1.1.70")]
+    [Info("Hotwire", "xman2000", "1.1.71")]
     [Description("Scheduled restarts and updates. Announces, counts down, writes a flag, quits.")]
     internal class Hotwire : CovalencePlugin
     {
@@ -4504,8 +4504,29 @@ namespace Oxide.Plugins
                 }
                 identity["notices"] = list;
             }
+            // hotwire.update_mode as the launcher read it (auto, always, hotwire or off), so AFKPanel can say before an
+            // update whether this server's launcher will install anything. Left out when the launcher does not say.
+            var mode = (string)declared["update_mode"] ?? "";
+            if (Regex.IsMatch(mode, "^[a-z]{1,16}$")) identity["update_mode"] = mode;
             return identity;
         }
+
+        // The launcher's hotwire.update_mode from launcher.json, or "" when it cannot be read.
+        private static string LauncherUpdateMode()
+        {
+            try
+            {
+                var file = Path.Combine(Interface.Oxide.DataDirectory, "Hotwire", "launcher.json");
+                if (!File.Exists(file)) return "";
+                var mode = (string)JObject.Parse(File.ReadAllText(file))["update_mode"] ?? "";
+                return Regex.IsMatch(mode, "^[a-z]{1,16}$") ? mode : "";
+            }
+            catch { return ""; }
+        }
+
+        // Said with an update the panel asked for when the launcher will not install it, so the answer is true at the click.
+        private static string UpdateModeNote(bool update) =>
+            update && LauncherUpdateMode() == "off" ? "; hotwire.update_mode was off at the server's last start, so the launcher installs nothing unless hotwire.cfg has changed since" : "";
 
         private static string Clip(string text, int max) => text.Length > max ? text.Substring(0, max) : text;
 
@@ -6376,16 +6397,16 @@ namespace Oxide.Plugins
                         if (!update) { status = "refused"; result = $"a countdown is already running ({FormatRemaining(RemainingSeconds())} left)"; return; }
                         JoinCountdown(seconds, validate);
                         status = "done";
-                        result = $"{(validate ? "validate" : "update")} joined the running countdown: {RemainingSeconds()}s left";
+                        result = $"{(validate ? "validate" : "update")} joined the running countdown: {RemainingSeconds()}s left{UpdateModeNote(true)}";
                         return;
                     }
                     BeginCountdown(DateTime.Now.AddSeconds(seconds), update, validate, null, "");
                     _scheduleCheckDue = DateTime.MinValue;
                     var what = validate ? "validate" : update ? "update" : "restart";
                     status = "done";
-                    result = asked < minimum
+                    result = (asked < minimum
                         ? $"{what} countdown started: {seconds}s (raised from {asked}s so players are warned)"
-                        : $"{what} countdown started: {seconds}s";
+                        : $"{what} countdown started: {seconds}s") + UpdateModeNote(update);
                     return;
                 }
                 case "countdown.cancel":

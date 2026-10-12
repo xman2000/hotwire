@@ -21,7 +21,7 @@
 #     hotwire.cfg. The plugin works out this file's code hash itself, and
 #     AFKPanel compares it with the released launchers'; nothing waits on that
 #     answer.
-HOTWIRE_LAUNCHER_VERSION="1.1.20-linux"
+HOTWIRE_LAUNCHER_VERSION="1.1.21-linux"
 HOTWIRE_LAUNCHER_CAPABILITIES="supervise,update,framework_verify,crash_backstop,log_rotate,convar_persist,wipe,wipe_same_map,wipe_custom_map,backup,settings_file,rcon_optional,stop_saves,wipe_permit,wipe_permit_blueprints"
 
 # ======================================================================
@@ -116,10 +116,20 @@ else
 fi
 
 # Every runtime line carries a timestamp, as the .bat's "[%date% %time%]" does.
-log()  { printf '%s[%s]%s %s\n' "$C_DIM" "$(date '+%Y-%m-%d %H:%M:%S')" "$C_OFF" "$*"; }
-ok()   { printf '%s[%s]%s %s[ ok ]%s %s\n'  "$C_DIM" "$(date '+%H:%M:%S')" "$C_OFF" "$C_GRN" "$C_OFF" "$*"; }
-warn() { printf '%s[%s]%s %s[warn]%s %s\n'  "$C_DIM" "$(date '+%H:%M:%S')" "$C_OFF" "$C_YEL" "$C_OFF" "$*"; }
-bad()  { printf '%s[%s]%s %s[fail]%s %s\n'  "$C_DIM" "$(date '+%H:%M:%S')" "$C_OFF" "$C_RED" "$C_OFF" "$*"; }
+log()  { printf '%s[%s]%s %s\n' "$C_DIM" "$(date '+%Y-%m-%d %H:%M:%S')" "$C_OFF" "$*"; update_line "$*"; }
+ok()   { printf '%s[%s]%s %s[ ok ]%s %s\n'  "$C_DIM" "$(date '+%H:%M:%S')" "$C_OFF" "$C_GRN" "$C_OFF" "$*"; update_line "$*"; }
+warn() { printf '%s[%s]%s %s[warn]%s %s\n'  "$C_DIM" "$(date '+%H:%M:%S')" "$C_OFF" "$C_YEL" "$C_OFF" "$*"; update_line "$*"; }
+bad()  { printf '%s[%s]%s %s[fail]%s %s\n'  "$C_DIM" "$(date '+%H:%M:%S')" "$C_OFF" "$C_RED" "$C_OFF" "$*"; update_line "$*"; }
+# What this start said about its update, for the session report, so AFKPanel can show why a start did or did not update.
+# Only the launcher's own lines between the update decision and the end of the update; SteamCMD's output is not kept.
+UPDATE_CAPTURE=0; UPDATE_LOG=(); UPDATE_REASON=""
+update_line() {
+    [ "$UPDATE_CAPTURE" = "1" ] && [ "${#UPDATE_LOG[@]}" -lt 40 ] || return 0
+    local line; line="$(printf '%s' "$1" | LC_ALL=C sed 's/\x1b\[[0-9;]*m//g')"
+    UPDATE_LOG+=( "$(printf '[%s] %s' "$(date '+%H:%M:%S')" "${line:0:300}")" )
+}
+# Why this start did not update, or the first thing that failed. The panel shows its own words for each code.
+update_reason() { [ -z "$UPDATE_REASON" ] && UPDATE_REASON="$1"; return 0; }
 rule() { printf '%s========================================================%s\n' "$C_BLD" "$C_OFF"; }
 
 # A fatal stop. Under a service there is no keypress to wait for, so we do not
@@ -596,6 +606,7 @@ update_decision() {
     DO_UPDATE=0; DO_VALIDATE=0
     if [ "$UPDATE_EFFECTIVE" = "off" ]; then
         [ -e "$ROOT/$UPDATE_FLAG" ] && log "hotwire.update_mode is off; leaving $UPDATE_FLAG in place, not acting on it."
+        update_reason mode_off
         return 0
     fi
     # A validate asked for (VALIDATE.flag) is carried out in every mode that updates.
@@ -632,6 +643,7 @@ update_decision() {
             DO_UPDATE=1
         fi
     fi
+    [ "$DO_UPDATE" = "1" ] || update_reason not_needed
 }
 
 # ======================================================================
@@ -748,6 +760,7 @@ steam_update_attempts() {
     STEAM_OK=0
     if [ ! -x "$STEAMCMD" ]; then
         bad "SteamCMD is not at $STEAMCMD. Set hotwire.steamcmd in hotwire.cfg. Starting what is on disk."
+        update_reason steamcmd_missing
         return 0
     fi
     mark_manifest_for_check
@@ -774,7 +787,7 @@ steam_update_attempts() {
         fi
         # Blocking lock, but bounded by STEAMCMD_WAIT_MINUTES so a stuck sibling
         # never holds this server down: past the deadline we start what we have.
-        exec 8>"$STEAM_LOCK" || { warn "Could not open the steamcmd lock."; return 0; }
+        exec 8>"$STEAM_LOCK" || { warn "Could not open the steamcmd lock."; update_reason steamcmd_lock; return 0; }
         if flock -w $(( STEAMCMD_WAIT_MINUTES * 60 )) 8; then
             note_steam_logs
             # Bounded by hotwire.steamcmd_update_minutes (0: no limit): a SteamCMD that hangs would otherwise keep this
@@ -792,6 +805,7 @@ steam_update_attempts() {
                 exec 8>&-
                 bad "SteamCMD did not finish within $STEAMCMD_UPDATE_MINUTES min (hotwire.steamcmd_update_minutes) and was stopped."
                 warn "Starting what is on disk. The next update carries on from what was downloaded."
+                update_reason steamcmd_timeout
                 return 0
             fi
             refused=0; [ "$rc" != "0" ] && update_refused_installed && refused=1
@@ -801,6 +815,7 @@ steam_update_attempts() {
         else
             exec 8>&-
             warn "Waited $STEAMCMD_WAIT_MINUTES min for another server's steamcmd; starting with what is on disk."
+            update_reason steamcmd_busy
             return 0
         fi
         # Once per update, a refusal of the installed build's file list is mended at once, whatever the try count:
@@ -811,6 +826,7 @@ steam_update_attempts() {
         fi
         if [ "$tries" -ge "$MAX_STEAM_TRIES" ] && [ "$(date +%s)" -ge "$deadline" ]; then
             warn "steamcmd gave up after $tries attempts; starting what is on disk."
+            update_reason steamcmd_failed
             return 0
         fi
         # Once per update, a try that left the install marked Files Corrupt is retried at once: Steam checks every
@@ -881,12 +897,13 @@ framework_update() {
     # all, so a connection that trickles can never hold the start.
     if ! curl -fSL -A "Mozilla/5.0" --connect-timeout 30 --speed-limit 1 --speed-time 120 --max-time 1800 "$from" --output "$zip" 2>/dev/null; then
         warn "Oxide download failed; keeping the current install."
+        update_reason oxide_download_failed
         rm -f "$zip"; return 0
     fi
     if [ -n "$sha" ]; then
         local got; got="$(sha256sum "$zip" | cut -d' ' -f1)"
         if [ "${got,,}" != "${sha,,}" ]; then
-            bad "Oxide SHA-256 does not match; NOT extracting."; rm -f "$zip"; return 0
+            bad "Oxide SHA-256 does not match; NOT extracting."; update_reason oxide_hash_mismatch; rm -f "$zip"; return 0
         fi
         ok "Oxide SHA-256 matches."
     fi
@@ -894,7 +911,8 @@ framework_update() {
     # changed zip could otherwise write anywhere the server's user can.
     local strays; strays="$(unzip -Z1 "$zip" 2>/dev/null | grep -vE '^RustDedicated_Data/'; unzip -Z1 "$zip" 2>/dev/null | grep -E '(^|/)\.\.(/|$)|^/|\\')"
     if [ -n "$strays" ] || [ -z "$(unzip -Z1 "$zip" 2>/dev/null)" ]; then
-        bad "The Oxide download is not a zip of files under RustDedicated_Data/; NOT extracting."; rm -f "$zip"; return 0
+        bad "The Oxide download is not a zip of files under RustDedicated_Data/; NOT extracting."; update_reason oxide_not_a_zip
+        rm -f "$zip"; return 0
     fi
     if unzip -o "$zip" -d "$ROOT" >/dev/null 2>&1; then
         FRAMEWORK_OK=1
@@ -904,6 +922,7 @@ framework_update() {
         ok "Oxide extracted."
     else
         warn "Could not extract Oxide; keeping the current install."
+        update_reason oxide_extract_failed
     fi
     rm -f "$zip"
 }
@@ -1227,8 +1246,18 @@ report_session() {  # <exit_code> <crashed true|false>
 update_json() {
     local days=""
     if [ -f "$UPDATE_STAMP" ]; then days=$(( ( $(date +%s) - $(stat -c %Y "$UPDATE_STAMP" 2>/dev/null || date +%s) ) / 86400 )); fi
-    printf ',"update":{"attempted":%s,"steam_ok":%s,"framework_ok":%s,"flag_kept":%s%s}' \
-        "$(_bool "$UPDATE_ATTEMPTED")" "$(_bool "$STEAM_OK")" "$(_bool "$FRAMEWORK_OK")" "$(_bool "$UPDATE_FLAG_KEPT")" "${days:+,\"days_since_success\":$days}"
+    local extra="" line sep=""
+    extra=",\"mode\":$(json_text "$UPDATE_MODE"),\"effective_mode\":$(json_text "$UPDATE_EFFECTIVE")"
+    [ -n "$UPDATE_REASON" ] && extra="$extra,\"reason\":$(json_text "$UPDATE_REASON")"
+    if [ "${#UPDATE_LOG[@]}" -gt 0 ]; then
+        extra="$extra,\"log\":["
+        for line in "${UPDATE_LOG[@]}"; do
+            extra="$extra$sep$(json_text "$(printf '%s' "$line" | tr -d '\000-\010\013\014\016-\037')")"; sep=","
+        done
+        extra="$extra]"
+    fi
+    printf ',"update":{"attempted":%s,"steam_ok":%s,"framework_ok":%s,"flag_kept":%s%s%s}' \
+        "$(_bool "$UPDATE_ATTEMPTED")" "$(_bool "$STEAM_OK")" "$(_bool "$FRAMEWORK_OK")" "$(_bool "$UPDATE_FLAG_KEPT")" "${days:+,\"days_since_success\":$days}" "$extra"
 }
 
 # A session report as the server starts, keyed by the same started_at as the one
@@ -2066,7 +2095,7 @@ check_stop_unit() {
 }
 
 per_launch_prep() {
-    UPDATE_ATTEMPTED=0
+    UPDATE_ATTEMPTED=0; UPDATE_FLAG_KEPT=0; UPDATE_LOG=(); UPDATE_REASON=""; STEAM_OK=0; FRAMEWORK_OK=0
     # hotwire.cfg is read again before every start, so an edit takes effect on
     # the next restart without restarting the launcher.
     [ -n "${CONFIG_LOADED:-}" ] && { config_reload; load_secrets; }
@@ -2074,6 +2103,7 @@ per_launch_prep() {
     init_reporting
     check_ionice
     check_stop_unit
+    UPDATE_CAPTURE=1
     decide_update_mode
     build_check
     # The installed build before any update this pass: framework_update compares with it (Oxide goes back over a new build).
@@ -2083,8 +2113,11 @@ per_launch_prep() {
     if [ -n "$CHECK_ONLY" ]; then
         if [ "$DO_UPDATE" = "1" ]; then log "Check mode: a normal start would update here. Nothing is installed."
         else log "Check mode: a normal start would launch without updating."; fi
+        [ "$DO_UPDATE" = "1" ] && update_reason check_only
         DO_UPDATE=0
     fi
+    # The backup and the before-start hook speak for themselves; their lines are not the update's.
+    UPDATE_CAPTURE=0
     # A backup of the stopped server, before an update or a wipe changes it.
     [ -z "$CHECK_ONLY" ] && backup_before_launch
     # hotwire-before.sh runs on every real start (not in check mode), before any update.
@@ -2092,13 +2125,17 @@ per_launch_prep() {
     [ -z "$CHECK_ONLY" ] && run_hook "$HOOK_BEFORE" "the before-start hook" before
     if [ "$DO_UPDATE" = "1" ]; then
         UPDATE_ATTEMPTED=1
+        UPDATE_CAPTURE=1
         steam_update
         framework_update
         finalize_update
+        UPDATE_CAPTURE=0
         # hotwire-after.sh runs after an update attempt (success or not), like the .bat.
         run_hook "$HOOK_AFTER" "the after-update hook" after
     elif [ -z "$CHECK_ONLY" ]; then
-        log "Plain restart: no update this pass."
+        UPDATE_CAPTURE=1; log "Plain restart: no update this pass."; UPDATE_CAPTURE=0
+        # A flag left on disk by a start that does not update (hotwire.update_mode off) is reported as kept.
+        { [ -e "$ROOT/$UPDATE_FLAG" ] || [ -e "$ROOT/$VALIDATE_FLAG" ]; } && UPDATE_FLAG_KEPT=1
     fi
     # Check mode changes nothing on your behalf (as hotwire.bat's does): a wipe or a
     # convar persist is a real mutation, so it is only carried out on a real start.

@@ -15,7 +15,7 @@
 $ErrorActionPreference = 'Stop'
 # Who this launcher is, for the plugin: written to oxide\data\Hotwire\launcher.json before every start. The plugin
 # offers only the features in the capability list; settings_file means the settings come from hotwire.cfg.
-$LauncherVersion = '1.1.35'
+$LauncherVersion = '1.1.36'
 $LauncherCapabilities = 'supervise,update,framework_verify,crash_backstop,log_rotate,convar_persist,wipe,wipe_same_map,wipe_custom_map,backup,settings_file,rcon_optional,wipe_permit,wipe_permit_blueprints'
 $root = $PSScriptRoot
 $cfg = Join-Path $root 'hotwire.cfg'
@@ -23,7 +23,21 @@ $secretsCfg = Join-Path $root 'hotwire-secrets.cfg'
 $argsFile = Join-Path $root 'hotwire\launch-args.json'
 
 # Messages go straight to the window (stderr), because the settings step hands its settings over on stdout.
-function Say([string]$message) { [Console]::Error.WriteLine('[' + (Get-Date -Format 'yyyy-MM-dd HH:mm:ss') + '] ' + $message) }
+function Say([string]$message) {
+    [Console]::Error.WriteLine('[' + (Get-Date -Format 'yyyy-MM-dd HH:mm:ss') + '] ' + $message)
+    # What this start said about its update, for the session report, so AFKPanel can show why a start did or did not
+    # update. Only the launcher's own lines between the update decision and the end of the update.
+    if ($script:UpdateCapture -and $script:UpdateLog.Count -lt 40) {
+        $line = $message; if ($line.Length -gt 300) { $line = $line.Substring(0, 300) }
+        [void]$script:UpdateLog.Add('[' + (Get-Date -Format 'HH:mm:ss') + '] ' + $line)
+    }
+}
+$script:UpdateCapture = $false
+$script:UpdateLog = New-Object System.Collections.ArrayList
+$script:UpdateReason = ''
+$script:UpdateEffective = ''
+# Why this start did not update, or the first thing that failed. AFKPanel shows its own words for each code.
+function Set-UpdateReason([string]$code) { if (-not $script:UpdateReason) { $script:UpdateReason = $code } }
 function Rule { [Console]::Error.WriteLine('========================================================') }
 
 # hotwire.<name>: environment variable, kind, default. Some reach SteamCMD's command line, so each kind is checked to
@@ -1186,7 +1200,13 @@ function Get-UpdateJson {
     $kept = (Test-Path -LiteralPath (Join-Path $root 'UPDATE.flag')) -or (Test-Path -LiteralPath (Join-Path $root 'VALIDATE.flag'))
     $since = ''
     try { if (Test-Path -LiteralPath $UpdateStamp) { $since = ',"days_since_success":' + [long][math]::Floor(((Get-Date) - (Get-Item -LiteralPath $UpdateStamp).LastWriteTime).TotalDays) } } catch { }
-    return ',"update":{"attempted":' + (& $bool $env:HOTWIRE_UPDATE_ATTEMPTED) + ',"steam_ok":' + (& $bool $env:STEAM_OK) + ',"framework_ok":' + (& $bool $env:FRAMEWORK_OK) + ',"flag_kept":' + $(if ($kept) { 'true' } else { 'false' }) + $since + '}'
+    $extra = ',"mode":' + (ConvertTo-Json -InputObject ([string](Get-Env 'UPDATE_MODE')) -Compress) + ',"effective_mode":' + (ConvertTo-Json -InputObject ([string]$script:UpdateEffective) -Compress)
+    if ($script:UpdateReason) { $extra = $extra + ',"reason":' + (ConvertTo-Json -InputObject ([string]$script:UpdateReason) -Compress) }
+    if ($script:UpdateLog.Count -gt 0) {
+        $lines = @(); foreach ($l in $script:UpdateLog) { $lines += (ConvertTo-Json -InputObject (([string]$l) -replace '[\x00-\x08\x0B\x0C\x0E-\x1F]', '') -Compress) }
+        $extra = $extra + ',"log":[' + ($lines -join ',') + ']'
+    }
+    return ',"update":{"attempted":' + (& $bool $env:HOTWIRE_UPDATE_ATTEMPTED) + ',"steam_ok":' + (& $bool $env:STEAM_OK) + ',"framework_ok":' + (& $bool $env:FRAMEWORK_OK) + ',"flag_kept":' + $(if ($kept) { 'true' } else { 'false' }) + $since + $extra + '}'
 }
 
 # Writes the report HOTWIRE_REPORT names: session (after a run), session_start (as the server starts) or launcher.
@@ -1502,6 +1522,7 @@ function Update-Rust([bool]$validate, [string]$installed, [string]$public) {
     if ($forced) { Say ('A forced wipe needs this update: if SteamCMD fails, it is retried until ' + $forced.Until + '.') }
     if (-not (Test-Path -LiteralPath $sc)) {
         Say ('SteamCMD is not at ' + $sc + '. Set hotwire.steamcmd in hotwire.cfg. Starting without updating.')
+        Set-UpdateReason 'steamcmd_missing'
         return $false
     }
     $maxTries = Get-Num 'MAX_STEAM_TRIES' 5
@@ -1513,8 +1534,8 @@ function Update-Rust([bool]$validate, [string]$installed, [string]$public) {
             if ($recoveryUsed) { Say 'The update finished without the old file list. The old install record is kept in hotwire\appmanifest-refused.acf.' }
             return $true
         }
-        if ($code -eq 97) { break }
-        if ($code -eq 95) { Say 'Starting what is on disk. The next update carries on from what was downloaded.'; break }
+        if ($code -eq 97) { Set-UpdateReason 'steamcmd_busy'; break }
+        if ($code -eq 95) { Say 'Starting what is on disk. The next update carries on from what was downloaded.'; Set-UpdateReason 'steamcmd_timeout'; break }
         Say ('SteamCMD failed (attempt ' + $tries + ' of ' + $maxTries + ').')
         if ($code -eq 96 -and -not $recoveryUsed -and (Move-RefusedRecord)) { $recoveryUsed = $true; continue }
         if ($tries -ge $maxTries) {
@@ -1531,6 +1552,7 @@ function Update-Rust([bool]$validate, [string]$installed, [string]$public) {
         Start-Sleep -Seconds (Get-Num 'STEAM_RETRY_SECONDS' 60)
     }
     Say 'SteamCMD failed. Starting without the update.'
+    Set-UpdateReason 'steamcmd_failed'
     if ($recoveryUsed) { Restore-RefusedRecord }
     return $false
 }
@@ -1606,25 +1628,26 @@ function Update-Oxide([string]$buildBefore, [bool]$validated = $false) {
         $q = [char]34
         if (Get-Command 'curl.exe' -CommandType Application -ErrorAction SilentlyContinue) {
             $c = Start-Process -FilePath 'curl.exe' -ArgumentList ('-fSL -A Mozilla/5.0 --connect-timeout 30 --speed-limit 1 --speed-time 120 --max-time 1800 ' + $q + $from + $q + ' --output ' + $q + $zip + $q) -NoNewWindow -Wait -PassThru
-            if ($c.ExitCode -ne 0) { Say 'Oxide download failed. Starting with the Oxide already installed.'; return $false }
+            if ($c.ExitCode -ne 0) { Say 'Oxide download failed. Starting with the Oxide already installed.'; Set-UpdateReason 'oxide_download_failed'; return $false }
         } else {
             try { Invoke-WebRequest -Uri $from -OutFile $zip -UseBasicParsing -UserAgent 'Mozilla/5.0' -TimeoutSec 1800 }
-            catch { Say 'Oxide download failed. Starting with the Oxide already installed.'; return $false }
+            catch { Say 'Oxide download failed. Starting with the Oxide already installed.'; Set-UpdateReason 'oxide_download_failed'; return $false }
         }
         # Every entry under RustDedicated_Data/ and none climbing out of it, as setup checks: on the unverified path a
         # changed zip could otherwise write anywhere this account can.
-        if (-not (Test-OxideZipEntries $zip)) { Say 'The Oxide download is not a zip of files under RustDedicated_Data/. It is not installed.'; return $false }
+        if (-not (Test-OxideZipEntries $zip)) { Say 'The Oxide download is not a zip of files under RustDedicated_Data/. It is not installed.'; Set-UpdateReason 'oxide_not_a_zip'; return $false }
         if ($sha) {
             $got = (Get-FileHash -Algorithm SHA256 -LiteralPath $zip).Hash.ToLower()
             if ($got -ne $sha) {
                 Say ('Downloaded SHA-256: ' + $got)
                 Say ('The download does not match GitHub''s SHA-256 for Oxide ' + $tag + ' (' + $sha + '). It is not installed: the')
                 Say 'server starts with the Oxide it has, and the next restart tries again.'
+                Set-UpdateReason 'oxide_hash_mismatch'
                 return $false
             }
             Say ('SHA-256 matches GitHub''s for Oxide ' + $tag + '.')
         }
-        try { Expand-Archive -Force -LiteralPath $zip -DestinationPath $root } catch { Say 'Oxide could not be extracted.'; return $false }
+        try { Expand-Archive -Force -LiteralPath $zip -DestinationPath $root } catch { Say 'Oxide could not be extracted.'; Set-UpdateReason 'oxide_extract_failed'; return $false }
         return $true
     } finally {
         Remove-Item -LiteralPath $zip -Force -ErrorAction SilentlyContinue
@@ -1794,6 +1817,7 @@ function Invoke-Main([string[]]$argv) {
         $env:HOTWIRE_FIRST = ''
 
         $updateAttempted = $false; $steamOk = $false; $frameworkOk = $false
+        $script:UpdateLog.Clear(); $script:UpdateReason = ''; $script:UpdateEffective = 
         $branchName = Get-Env 'STEAM_BRANCH'; if (-not $branchName) { $branchName = 'public' }
         $mode = Get-Env 'UPDATE_MODE'
 
@@ -1802,6 +1826,7 @@ function Invoke-Main([string[]]$argv) {
             # In auto mode the Hotwire plugin rewrites UPDATE.schedule in the server folder every 15 minutes while it has
             # an update scheduled. If that file is missing, over two hours old or unreadable, nothing is scheduling
             # updates, so this start updates as in always mode, which keeps the server joinable.
+            $script:UpdateCapture = $true
             $effective = $mode
             if ($mode -eq 'auto') {
                 $effective = 'always'
@@ -1857,10 +1882,12 @@ function Invoke-Main([string[]]$argv) {
             # ---- update or plain restart ------------------------------------------------------------------------------
             # UPDATE.flag updates Rust with SteamCMD, then Oxide, then starts; VALIDATE.flag does the same and has
             # SteamCMD check every file of the install. You, a scheduled task, or the plugin can create either flag.
+            $script:UpdateEffective = $effective
             $doUpdate = $false; $doValidate = $false
             $updateFlagPath = Join-Path $root $UpdateFlag; $validateFlagPath = Join-Path $root $ValidateFlag
             if ($effective -eq 'off') {
                 Say 'hotwire.update_mode is off: not updating.'
+                Set-UpdateReason 'mode_off'
                 if (Test-Path -LiteralPath $updateFlagPath) { Say ($UpdateFlag + ' is left in place and ignored.') }
                 if (Test-Path -LiteralPath $validateFlagPath) { Say ($ValidateFlag + ' is left in place and ignored.') }
             } else {
@@ -1904,11 +1931,14 @@ function Invoke-Main([string[]]$argv) {
                 }
             }
 
+            if (-not $doUpdate -and $effective -ne 'off') { Set-UpdateReason 'not_needed' }
             if ($checkOnly) {
-                if ($doUpdate) { Say 'Check mode: a normal start would update here. Nothing is installed.' }
+                if ($doUpdate) { Say 'Check mode: a normal start would update here. Nothing is installed.'; Set-UpdateReason 'check_only' }
                 else { Say 'Check mode: a normal start would not update.' }
                 $doUpdate = $false
             }
+            # The backup and the before-start hook speak for themselves; their lines are not the update's.
+            $script:UpdateCapture = $false
             $env:DO_UPDATE = $(if ($doUpdate) { '1' } else { '0' })
             $script:HookRuns = @{}
 
@@ -1925,6 +1955,7 @@ function Invoke-Main([string[]]$argv) {
 
             if ($doUpdate) {
                 $updateAttempted = $true
+                $script:UpdateCapture = $true
                 $steamOk = Update-Rust $doValidate $installed $public
                 $frameworkOk = Update-Oxide $installed $doValidate
 
@@ -1957,15 +1988,17 @@ function Invoke-Main([string[]]$argv) {
                     Rule
                 }
 
+                $script:UpdateCapture = $false
                 # hotwire-after.bat runs after every update attempt, successful or not.
                 if (Test-Path -LiteralPath $HookAfter) {
                     Say 'Running hotwire-after.bat...'
                     if ((Invoke-Hook $HookAfter 'after') -eq 'failed') { Say 'hotwire-after.bat failed; starting anyway.' }
                 }
             } elseif (-not $checkOnly) {
-                Say 'Restarting without updating Rust or Oxide.'
+                $script:UpdateCapture = $true; Say 'Restarting without updating Rust or Oxide.'; $script:UpdateCapture = $false
             }
         } catch {
+            $script:UpdateCapture = $false
             # Nothing before the start may keep the server from starting.
             Say ('Before the start: ' + $_.Exception.Message + ' Starting anyway.')
         }
