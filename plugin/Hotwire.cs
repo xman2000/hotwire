@@ -6450,6 +6450,24 @@ namespace Oxide.Plugins
             return expires <= DateTime.UtcNow ? "it expired before it arrived (" + expires.ToString("yyyy-MM-dd HH:mm:ss") + " UTC)" : null;
         }
 
+        // A request file in the server root for the launcher, replaced in one step so it reads the old one or this one.
+        private bool WriteRequestFile(string name, string line, out string error)
+        {
+            error = null;
+            var root = ServerRoot();
+            if (root == null) { error = "cannot find the server root to write the request"; return false; }
+            var path = Path.Combine(root, name);
+            try
+            {
+                var tmp = path + ".tmp";
+                File.WriteAllText(tmp, line + Environment.NewLine, new UTF8Encoding(false));
+                if (File.Exists(path)) File.Delete(path);
+                File.Move(tmp, path);
+                return true;
+            }
+            catch (Exception ex) { error = "could not write the request: " + ex.Message; return false; }
+        }
+
         private void RunCommand(string verb, JObject args, out string status, out string result)
         {
             // A plan that sends no commands still updates Hotwire: only those two verbs, and only because the panel said so.
@@ -10198,24 +10216,6 @@ namespace Oxide.Plugins
         #region Report policy
 
         // No game or Oxide types: checked outside the game, like the regions below.
-
-        // A request file in the server root for the launcher, replaced in one step so it reads the old one or this one.
-        private bool WriteRequestFile(string name, string line, out string error)
-        {
-            error = null;
-            var root = ServerRoot();
-            if (root == null) { error = "cannot find the server root to write the request"; return false; }
-            var path = Path.Combine(root, name);
-            try
-            {
-                var tmp = path + ".tmp";
-                File.WriteAllText(tmp, line + Environment.NewLine, new UTF8Encoding(false));
-                if (File.Exists(path)) File.Delete(path);
-                File.Move(tmp, path);
-                return true;
-            }
-            catch (Exception ex) { error = "could not write the request: " + ex.Message; return false; }
-        }
 
         private sealed class ReportPolicy
         {
