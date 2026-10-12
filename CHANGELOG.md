@@ -24,6 +24,13 @@ sit above a launcher `1.1.7`. Read the label, not the number.
 `hotwire check` prints the plugin's version. Each launcher prints its own
 version as the first line when it starts.
 
+## Plugin 1.1.73 — unreleased
+
+**Each heartbeat carries the server's Steam ID** (`steam_id`), the one this run logged on to Steam with. The game's own
+query reply carries the same ID, so AFKPanel can tell this server's reply from another server's behind the same public
+address: a stopped server whose port another server answers now reads as down. Rust gets a new ID at every start, and
+the field is left out until the server is logged on.
+
 ## Plugin 1.1.72, launchers 1.1.37 (Windows) and 1.1.22-linux — unreleased
 
 **AFKPanel can set the update mode.** AFKPanel Pro can set `hotwire.update_mode` to `auto` or `always`. The plugin

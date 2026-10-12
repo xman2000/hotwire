@@ -17,7 +17,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Hotwire", "xman2000", "1.1.72")]
+    [Info("Hotwire", "xman2000", "1.1.73")]
     [Description("Scheduled restarts and updates. Announces, counts down, writes a flag, quits.")]
     internal class Hotwire : CovalencePlugin
     {
@@ -4367,6 +4367,14 @@ namespace Oxide.Plugins
             {
                 var g = ConVar.Server.port;
                 if (g > 0 && g <= 65535) payload["game_port"] = g;
+            }
+            catch { }
+            // The Steam ID this run logged on with. The game's own query reply carries it too, so AFKPanel can tell this
+            // server's reply from another server's behind the same address. New at every start; 0 until logged on.
+            try
+            {
+                var id = Steamworks.SteamServer.SteamId.Value;
+                if (id != 0) payload["steam_id"] = id.ToString(CultureInfo.InvariantCulture);
             }
             catch { }
             if (_inventoryHash != null) payload["inventory_hash"] = _inventoryHash;
