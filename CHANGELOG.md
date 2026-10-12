@@ -24,6 +24,22 @@ sit above a launcher `1.1.7`. Read the label, not the number.
 `hotwire check` prints the plugin's version. Each launcher prints its own
 version as the first line when it starts.
 
+## Launchers 1.1.38 (Windows) and 1.1.23-linux — unreleased
+
+**Each step of a start reaches AFKPanel as it happens.** The launchers report the update check and its decision, a
+backup before an update or a wipe, your before-start and after-update scripts, each SteamCMD try and how it ended, the
+wait before the next try, Oxide, a wipe, and the launch. AFKPanel shows them step by step on the start's own page.
+
+**SteamCMD's progress.** SteamCMD's own progress line, such as `downloading, progress: 45.12`, is reported at most every
+15 seconds, with the bytes downloaded. SteamCMD's output still reaches the window as before. On Windows it now goes
+through a file in `hotwire\` that the launcher shows in the window as it is written.
+
+**Rust's boot, from its own log.** While Rust starts, the launcher reads the log file it already keeps
+(`logs/server_log.txt`) and reports each point of the boot once: the game files opened, Oxide and Hotwire loading, the
+assets, the map, the entities from the save, AI navigation, "Server startup complete" and "SteamServer Connected". It
+stops reading at Steam's connection, when Rust exits, or after an hour. A point a Rust build no longer prints is not
+reported. Check mode sends none of this.
+
 ## Plugin 1.1.73 — unreleased
 
 **Each heartbeat carries the server's Steam ID** (`steam_id`), the one this run logged on to Steam with. The game's own

@@ -21,8 +21,8 @@
 #     hotwire.cfg. The plugin works out this file's code hash itself, and
 #     AFKPanel compares it with the released launchers'; nothing waits on that
 #     answer.
-HOTWIRE_LAUNCHER_VERSION="1.1.22-linux"
-HOTWIRE_LAUNCHER_CAPABILITIES="supervise,update,framework_verify,crash_backstop,log_rotate,convar_persist,wipe,wipe_same_map,wipe_custom_map,backup,settings_file,rcon_optional,stop_saves,wipe_permit,wipe_permit_blueprints,update_mode_set,update_progress"
+HOTWIRE_LAUNCHER_VERSION="1.1.23-linux"
+HOTWIRE_LAUNCHER_CAPABILITIES="supervise,update,framework_verify,crash_backstop,log_rotate,convar_persist,wipe,wipe_same_map,wipe_custom_map,backup,settings_file,rcon_optional,stop_saves,wipe_permit,wipe_permit_blueprints,update_mode_set,update_progress,start_steps"
 
 # ======================================================================
 #  HOW THIS LAUNCHER WORKS
@@ -763,6 +763,7 @@ steam_update_attempts() {
     if [ ! -x "$STEAMCMD" ]; then
         bad "SteamCMD is not at $STEAMCMD. Set hotwire.steamcmd in hotwire.cfg. Starting what is on disk."
         update_reason steamcmd_missing
+        report_step steamcmd failed ",\"detail\":$(json_text "SteamCMD is not where hotwire.steamcmd says; the server starts on what is installed.")"
         return 0
     fi
     mark_manifest_for_check
@@ -779,16 +780,19 @@ steam_update_attempts() {
     [ "$DO_VALIDATE" = "1" ] && args+=( validate )
     args+=( +quit )
 
-    local tries=0
+    local tries=0 of=""
     while :; do
         tries=$((tries+1))
         if [ "$deadline" -gt 0 ] && [ "$tries" -gt "$MAX_STEAM_TRIES" ]; then
             log "steamcmd update, attempt $tries (a forced wipe waits: trying until $(date -d "@$deadline" +%H:%M))..."
             report_update_progress steamcmd "$tries"
+            of=""
         else
             log "steamcmd update, attempt $tries of $MAX_STEAM_TRIES..."
             report_update_progress steamcmd "$tries" "$MAX_STEAM_TRIES"
+            of="$MAX_STEAM_TRIES"
         fi
+        report_step steamcmd begun ",\"attempt\":$tries${of:+,\"of\":$of}"
         # Blocking lock, but bounded by STEAMCMD_WAIT_MINUTES so a stuck sibling
         # never holds this server down: past the deadline we start what we have.
         exec 8>"$STEAM_LOCK" || { warn "Could not open the steamcmd lock."; update_reason steamcmd_lock; return 0; }
@@ -800,9 +804,9 @@ steam_update_attempts() {
             local rc limited=0
             if [ "${STEAMCMD_UPDATE_MINUTES:-0}" -gt 0 ] 2>/dev/null && command -v timeout >/dev/null 2>&1; then
                 limited=1
-                timeout --kill-after=30 $(( STEAMCMD_UPDATE_MINUTES * 60 )) "$STEAMCMD" "${args[@]}"; rc=$?
+                timeout --kill-after=30 $(( STEAMCMD_UPDATE_MINUTES * 60 )) "$STEAMCMD" "${args[@]}" | steam_progress "$tries" "$of"; rc=${PIPESTATUS[0]}
             else
-                "$STEAMCMD" "${args[@]}"; rc=$?
+                "$STEAMCMD" "${args[@]}" | steam_progress "$tries" "$of"; rc=${PIPESTATUS[0]}
             fi
             # timeout answers 124 when it stopped SteamCMD, 137 when SteamCMD needed killing after that.
             if [ "$limited" = 1 ] && { [ "$rc" = "124" ] || [ "$rc" = "137" ]; }; then
@@ -810,27 +814,32 @@ steam_update_attempts() {
                 bad "SteamCMD did not finish within $STEAMCMD_UPDATE_MINUTES min (hotwire.steamcmd_update_minutes) and was stopped."
                 warn "Starting what is on disk. The next update carries on from what was downloaded."
                 update_reason steamcmd_timeout
+                report_step steamcmd failed ",\"attempt\":$tries${of:+,\"of\":$of},\"detail\":$(json_text "SteamCMD did not finish within $STEAMCMD_UPDATE_MINUTES min and was stopped; the server starts on what is installed.")"
                 return 0
             fi
             refused=0; [ "$rc" != "0" ] && update_refused_installed && refused=1
             exec 8>&-
-            if [ "$rc" = "0" ]; then STEAM_OK=1; ok "steamcmd finished."; return 0; fi
+            if [ "$rc" = "0" ]; then STEAM_OK=1; ok "steamcmd finished."; report_step steamcmd done ",\"attempt\":$tries${of:+,\"of\":$of}"; return 0; fi
             bad "steamcmd exited $rc."
+            report_step steamcmd failed ",\"attempt\":$tries${of:+,\"of\":$of},\"exit_code\":$rc$( [ "$refused" = 1 ] && printf ',"detail":%s' "$(json_text "Steam no longer serves the installed Rust build's file list.")")"
         else
             exec 8>&-
             warn "Waited $STEAMCMD_WAIT_MINUTES min for another server's steamcmd; starting with what is on disk."
             update_reason steamcmd_busy
+            report_step steamcmd failed ",\"attempt\":$tries${of:+,\"of\":$of},\"detail\":$(json_text "Another server on this machine used SteamCMD for $STEAMCMD_WAIT_MINUTES min; the server starts on what is installed.")"
             return 0
         fi
         # Once per update, a refusal of the installed build's file list is mended at once, whatever the try count:
         # every further try would be refused the same way.
         if [ "$refused" = "1" ] && [ "$recovery_used" = "0" ] && set_record_aside; then
             recovery_used=1
+            report_step steamcmd progress ",\"attempt\":$tries${of:+,\"of\":$of},\"detail\":$(json_text "Steam's install record set aside: the next try checks the files on disk and downloads what changed.")"
             continue
         fi
         if [ "$tries" -ge "$MAX_STEAM_TRIES" ] && [ "$(date +%s)" -ge "$deadline" ]; then
             warn "steamcmd gave up after $tries attempts; starting what is on disk."
             update_reason steamcmd_failed
+            report_step steamcmd failed ",\"attempt\":$tries${of:+,\"of\":$of},\"detail\":$(json_text "SteamCMD failed on every try; the server starts on what is installed.")"
             return 0
         fi
         # Once per update, a try that left the install marked Files Corrupt is retried at once: Steam checks every
@@ -838,9 +847,12 @@ steam_update_attempts() {
         if [ "$quick_retry_used" = "0" ] && manifest_marked_corrupt; then
             quick_retry_used=1
             log "Steam marked the game files for a full check; trying again now."
+            report_step steamcmd progress ",\"attempt\":$tries${of:+,\"of\":$of},\"detail\":$(json_text "Steam marked the game files for a full check; trying again now.")"
             continue
         fi
-        log "Retrying in $STEAM_RETRY_SECONDS s..."; sleep "$STEAM_RETRY_SECONDS"
+        log "Retrying in $STEAM_RETRY_SECONDS s..."
+        report_step steamcmd waiting ",\"attempt\":$tries${of:+,\"of\":$of},\"seconds\":$STEAM_RETRY_SECONDS"
+        sleep "$STEAM_RETRY_SECONDS"
     done
 }
 # ======================================================================
@@ -853,6 +865,7 @@ framework_update() {
     FRAMEWORK_OK=0
     if [ "$INSTALL_FRAMEWORK" = "0" ]; then log "Vanilla: Oxide is not managed here."; FRAMEWORK_OK=1; return 0; fi
     report_update_progress oxide
+    report_step oxide begun
 
     local build_after; read_installed_build; build_after="$INSTALLED_BUILD"
 
@@ -892,6 +905,7 @@ framework_update() {
             log "The game moved from $BUILD_BEFORE to $build_after, so Oxide goes back over it."
         elif [ -n "$tag" ] && [ "$tag" = "$have" ] && [ -n "$build_after" ]; then
             log "Oxide $have and the game ($build_after) are unchanged; skipping the framework refresh."
+            report_step oxide done ",\"version\":$(json_text "$have"),\"detail\":$(json_text "Oxide and the game are unchanged, so nothing was downloaded.")"
             FRAMEWORK_OK=1; return 0
         fi
     fi
@@ -903,12 +917,15 @@ framework_update() {
     if ! curl -fSL -A "Mozilla/5.0" --connect-timeout 30 --speed-limit 1 --speed-time 120 --max-time 1800 "$from" --output "$zip" 2>/dev/null; then
         warn "Oxide download failed; keeping the current install."
         update_reason oxide_download_failed
+        report_step oxide failed ",\"detail\":$(json_text "The download from GitHub failed; the installed Oxide is kept.")"
         rm -f "$zip"; return 0
     fi
     if [ -n "$sha" ]; then
         local got; got="$(sha256sum "$zip" | cut -d' ' -f1)"
         if [ "${got,,}" != "${sha,,}" ]; then
-            bad "Oxide SHA-256 does not match; NOT extracting."; update_reason oxide_hash_mismatch; rm -f "$zip"; return 0
+            bad "Oxide SHA-256 does not match; NOT extracting."; update_reason oxide_hash_mismatch
+            report_step oxide failed ",\"detail\":$(json_text "The download did not match the SHA-256 GitHub lists, so it was not installed.")"
+            rm -f "$zip"; return 0
         fi
         ok "Oxide SHA-256 matches."
     fi
@@ -917,6 +934,7 @@ framework_update() {
     local strays; strays="$(unzip -Z1 "$zip" 2>/dev/null | grep -vE '^RustDedicated_Data/'; unzip -Z1 "$zip" 2>/dev/null | grep -E '(^|/)\.\.(/|$)|^/|\\')"
     if [ -n "$strays" ] || [ -z "$(unzip -Z1 "$zip" 2>/dev/null)" ]; then
         bad "The Oxide download is not a zip of files under RustDedicated_Data/; NOT extracting."; update_reason oxide_not_a_zip
+        report_step oxide failed ",\"detail\":$(json_text "The download was not the expected zip, so it was not installed.")"
         rm -f "$zip"; return 0
     fi
     if unzip -o "$zip" -d "$ROOT" >/dev/null 2>&1; then
@@ -925,9 +943,11 @@ framework_update() {
         # could not be read (the next update then extracts again, the safe direction).
         if [ -n "$tag" ]; then printf '%s' "$tag" > "$OXIDE_STAMP" 2>/dev/null || true; else rm -f "$OXIDE_STAMP"; fi
         ok "Oxide extracted."
+        report_step oxide done "${tag:+,\"version\":$(json_text "$tag")},\"detail\":$(json_text "$( [ -n "$sha" ] && echo "SHA-256 matches GitHub's." || echo "Installed without a SHA-256 check.")")"
     else
         warn "Could not extract Oxide; keeping the current install."
         update_reason oxide_extract_failed
+        report_step oxide failed ",\"detail\":$(json_text "Oxide could not be unpacked into the server folder; the installed one is kept.")"
     fi
     rm -f "$zip"
 }
@@ -1286,7 +1306,7 @@ update_json() {
 # after it exits, so AFKPanel shows where a slow start went while the server runs.
 report_session_start() {
     [ "$REPORT_ENABLED" = "1" ] || return 0
-    hw_send session "{\"started_at\":\"$STARTED_AT\"$(update_json)$(launcher_hooks_json)}"
+    hw_send session "{\"started_at\":\"$STARTED_AT\"${START_ID:+,\"start_id\":\"$START_ID\"}$(update_json)$(launcher_hooks_json)}"
 }
 
 # An update report while the update runs (capability: update_progress): which step,
@@ -1302,6 +1322,98 @@ report_update_progress() {  # <step steamcmd|oxide> [attempt] [of]
     [[ "${PUBLIC_BUILD:-}" =~ ^[0-9]+$ ]] && p="$p,\"rust_build_public\":\"$PUBLIC_BUILD\""
     hw_send update "$p}"
     spool_kick
+}
+
+# Each step of this start for AFKPanel's run page (start_step, capability: start_steps): the update check, the backup,
+# the hooks, each SteamCMD try and how far it has got, Oxide, a wipe, the launch and Rust's boot. START_ID is the time
+# this start began preparing, the same on every step of it. Sent in the background like every report; no step waits on
+# it, and nothing is sent in check mode.
+START_ID=""
+report_step() {  # <step> <state> [more fields, each ,"key":value]
+    [ "$REPORT_ENABLED" = "1" ] && [ -n "$START_ID" ] && [ -z "$CHECK_ONLY" ] || return 0
+    hw_send start_step "{\"start_id\":\"$START_ID\",\"step\":$(json_text "$1"),\"state\":$(json_text "$2")${3:-}}"
+    spool_kick
+}
+
+# The update decision: whether this start updates, and why not when it does not.
+report_check_step() {
+    local p=",\"update\":$( [ "$DO_UPDATE" = "1" ] && echo true || echo false ),\"mode\":$(json_text "$UPDATE_MODE")"
+    [ -n "${UPDATE_EFFECTIVE:-}" ] && p="$p,\"effective_mode\":$(json_text "$UPDATE_EFFECTIVE")"
+    [[ "${INSTALLED_BUILD:-}" =~ ^[0-9]+$ ]] && p="$p,\"rust_build_id\":\"$INSTALLED_BUILD\""
+    [[ "${PUBLIC_BUILD:-}" =~ ^[0-9]+$ ]] && p="$p,\"rust_build_public\":\"$PUBLIC_BUILD\""
+    [ "$DO_UPDATE" != "1" ] && [ -n "$UPDATE_REASON" ] && p="$p,\"reason\":$(json_text "$UPDATE_REASON")"
+    report_step check done "$p"
+}
+
+# SteamCMD's output passes through unchanged; its progress line ("Update state (0x61) downloading, progress: 45.12
+# (2758000000 / 6111760987)") is reported at most every 15 seconds. It reads to the end whatever happens, so SteamCMD
+# never meets a closed pipe.
+steam_progress() {  # <try> [of]
+    local line last=-15 phase pct bytes total
+    while IFS= read -r line || [ -n "$line" ]; do
+        printf '%s\n' "$line"
+        line="${line//$'\r'/}"
+        if [[ "$line" =~ Update\ state\ \(0x[0-9a-fA-F]+\)\ ([a-z]+)[a-z\ ]*,\ progress:\ ([0-9]+(\.[0-9]+)?)\ \(([0-9]+)\ /\ ([0-9]+)\) ]] \
+            && [ $(( SECONDS - last )) -ge 15 ] && [ "${BASH_REMATCH[5]}" != "0" ]; then
+            last=$SECONDS
+            phase="${BASH_REMATCH[1]}"; pct="${BASH_REMATCH[2]}"; bytes="${BASH_REMATCH[4]}"; total="${BASH_REMATCH[5]}"
+            report_step steamcmd progress ",\"attempt\":$1${2:+,\"of\":$2},\"phase\":$(json_text "$phase"),\"percent\":$pct,\"bytes\":$bytes,\"total\":$total" || true
+        fi
+    done
+    return 0
+}
+
+# Rust's boot, read from its own log file while it runs: each milestone once, then "Server startup complete" and
+# "SteamServer Connected". A separate process: the server never waits on it, and it stops when Rust exits, at Steam's
+# connection, or after an hour. A line a Rust build no longer prints is simply not reported.
+BOOT_WATCH_PID=""
+boot_watch_start() {
+    BOOT_WATCH_PID=""
+    [ "$REPORT_ENABLED" = "1" ] && [ -n "$START_ID" ] && [ -z "$CHECK_ONLY" ] || return 0
+    boot_watch "$LOGFILE" "$(date +%s)" & BOOT_WATCH_PID=$!
+}
+boot_watch_stop() {
+    [ -n "$BOOT_WATCH_PID" ] || return 0
+    kill -TERM "$BOOT_WATCH_PID" 2>/dev/null; wait "$BOOT_WATCH_PID" 2>/dev/null
+    BOOT_WATCH_PID=""
+}
+boot_watch() {  # <logfile> <launch epoch>
+    local file="$1" since="$2" line seen=" " m tailpid=""
+    local deadline=$(( SECONDS + 3600 ))
+    trap '[ -n "$tailpid" ] && kill "$tailpid" 2>/dev/null; exit 0' TERM
+    # Rust writes its log from the start; an older file left in place (hotwire.rotate_logs 0) is not this boot's.
+    while [ ! -f "$file" ] || [ "$(stat -c %Y "$file" 2>/dev/null || echo 0)" -lt "$since" ]; do
+        [ "$SECONDS" -ge "$deadline" ] && return 0
+        sleep 1
+    done
+    exec 3< <(exec tail -n +1 -F "$file" 2>/dev/null); tailpid=$!
+    while [ "$SECONDS" -lt "$deadline" ]; do
+        IFS= read -r -t 5 line <&3 || { [ $? -gt 128 ] && continue; break; }
+        line="${line//$'\r'/}"
+        m=""; local extra=""
+        case "$line" in
+            *"[Bootstrap] Opening Bundles done"*) m=bundles ;;
+            *"Loading Oxide Core"*) m=oxide ;;
+            *"Loaded plugin Hotwire "*) m=hotwire ;;
+            *"Generating procedural map"*) m=map ;;
+            *"Spawning World"*) m=world ;;
+            *"is now fully built"*) m=navmesh ;;
+            *"Server startup complete"*)
+                case "$seen" in *" startup "*) ;; *) seen="$seen startup "; report_step boot done ;; esac; continue ;;
+            *"SteamServer Connected"*)
+                report_step steam done; break ;;
+            *)
+                if [[ "$line" =~ Asset\ Warmup\ \(([0-9]+)/([0-9]+)\) ]] && [ "${BASH_REMATCH[1]}" = "${BASH_REMATCH[2]}" ]; then m=warmup
+                elif [[ "$line" =~ Spawning\ ([0-9]+)\ entities\ from\ save ]]; then m=entities; extra=",\"count\":${BASH_REMATCH[1]}"
+                fi ;;
+        esac
+        [ -n "$m" ] || continue
+        case "$seen" in *" $m "*) continue ;; esac
+        seen="$seen$m "
+        report_step boot progress ",\"milestone\":\"$m\"$extra"
+    done
+    [ -n "$tailpid" ] && kill "$tailpid" 2>/dev/null
+    return 0
 }
 
 # The launcher report: sent when the crash-streak backstop stops the server for
@@ -2028,7 +2140,12 @@ backup_before_launch() {
     fi
     [ -n "$trigger" ] || return 0
     log "Backing up the stopped server before the $( [ "$trigger" = before_wipe ] && echo wipe || echo update)..."
-    backup_archive "$trigger" "$(date -u +%Y%m%dT%H%M%SZ)-$trigger" "" "" "" "" "" || true
+    report_step backup begun ",\"detail\":$(json_text "Before the $( [ "$trigger" = before_wipe ] && echo wipe || echo update)")"
+    if backup_archive "$trigger" "$(date -u +%Y%m%dT%H%M%SZ)-$trigger" "" "" "" "" ""; then
+        report_step backup done
+    else
+        report_step backup failed ",\"detail\":$(json_text "The backup did not finish; the start carried on. The Backups tab says why once the server reports it.")"
+    fi
 }
 
 # ======================================================================
@@ -2049,6 +2166,7 @@ run_hook() {  # run_hook <file> <label> <before|after>
     [ -f "$1" ] || return 0
     local name; name="$(basename "$1")"
     log "Running $2 ($name)..."
+    report_step "hook_$3" begun ",\"detail\":$(json_text "$name")"
     # HOOK_LIMIT_SECONDS is for the launcher's own tests (tests/launcher-hooks), which cannot wait a minute.
     local limit="${HOOK_LIMIT_SECONDS:-$(( HOOK_TIMEOUT_MINUTES * 60 ))}" t0 t1 pid rc timed_out=0 tenths
     t0="${EPOCHREALTIME/[.,]/}"
@@ -2080,6 +2198,11 @@ run_hook() {  # run_hook <file> <label> <before|after>
         [ "$rc" = 0 ] || warn "$name exited non-zero; carrying on."
     fi
     if [ "$3" = "before" ]; then HOOK_RUN_BEFORE="$run"; else HOOK_RUN_AFTER="$run"; fi
+    if [ "$timed_out" = 1 ]; then
+        report_step "hook_$3" failed ",\"seconds\":$((tenths / 10)).$((tenths % 10)),\"detail\":$(json_text "$name was stopped after $HOOK_TIMEOUT_MINUTES min; the start carried on.")"
+    else
+        report_step "hook_$3" "$( [ "$rc" = 0 ] && echo done || echo failed )" ",\"seconds\":$((tenths / 10)).$((tenths % 10)),\"exit_code\":$rc,\"detail\":$(json_text "$name")"
+    fi
 }
 
 # The hooks this start ran, as the session report's "launcher_hooks" field, or
@@ -2185,7 +2308,9 @@ per_launch_prep() {
     # the next restart without restarting the launcher.
     [ -n "${CONFIG_LOADED:-}" ] && { config_reload; load_secrets; }
     CONFIG_LOADED=1
+    START_ID="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     init_reporting
+    report_step check begun
     check_ionice
     check_stop_unit
     UPDATE_CAPTURE=1
@@ -2196,6 +2321,7 @@ per_launch_prep() {
     # The installed build before any update this pass: framework_update compares with it (Oxide goes back over a new build).
     BUILD_BEFORE="$INSTALLED_BUILD"
     update_decision
+    report_check_step
     # Check mode says what a normal start would do, rather than "Plain restart".
     if [ -n "$CHECK_ONLY" ]; then
         if [ "$DO_UPDATE" = "1" ]; then log "Check mode: a normal start would update here. Nothing is installed."
@@ -2229,6 +2355,7 @@ per_launch_prep() {
     if [ -z "$CHECK_ONLY" ]; then
         WIPE_APPLIED=0
         apply_wipe
+        [ "$WIPE_APPLIED" = 1 ] && report_step wipe done ",\"detail\":$(json_text "$(head -1 "$WIPE_RESULT" 2>/dev/null | sed 's/^applied: //')")"
         apply_convar_requests
         # Both write hotwire.cfg; read it again so this start uses what they wrote.
         if [ "$WIPE_APPLIED" = 1 ] || [ "$CONVAR_CHANGED" = 1 ]; then load_config || config_reload; fi
@@ -2250,11 +2377,14 @@ run_loop() {
         # Held reports go in the background, this start's among them; the server starts without waiting.
         spool_kick
         log "Starting server..."
+        report_step launch done
         local start_ts end_ts run_secs rc crashed
         start_ts="$(date +%s)"
         backup_watch_start
+        boot_watch_start
         run_server; rc=$RUST_RC
         end_ts="$(date +%s)"
+        boot_watch_stop
         backup_watch_stop
         run_secs=$(( end_ts - start_ts )); [ "$run_secs" -lt 0 ] && run_secs=99999
 

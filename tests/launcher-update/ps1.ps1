@@ -5,7 +5,7 @@
 $t = $null; $e = $null
 $ast = [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path 'launcher/hotwire.ps1'), [ref]$t, [ref]$e)
 if ($e.Count -gt 0) { "hotwire.ps1 parses|$($e.Count) errors|0 errors"; exit }
-$want = @('Say', 'Set-UpdateReason', 'Get-UpdateJson', 'Get-Env', 'Get-Num', 'Update-Rust', 'Invoke-UpdateModeRequest', 'Set-CfgValues', 'Send-UpdateProgress', 'Invoke-Report', 'Invoke-SteamUpdate', 'Get-ForcedWipeDeadline', 'Test-FilesCorrupt', 'Move-RefusedRecord', 'Restore-RefusedRecord', 'Get-InstalledBuild', 'Set-FastRustMark')
+$want = @('Say', 'Set-UpdateReason', 'Get-UpdateJson', 'Get-Env', 'Get-Num', 'Update-Rust', 'Invoke-UpdateModeRequest', 'Set-CfgValues', 'Send-UpdateProgress', 'Invoke-Report', 'Invoke-SteamUpdate', 'Get-ForcedWipeDeadline', 'Test-FilesCorrupt', 'Move-RefusedRecord', 'Restore-RefusedRecord', 'Get-InstalledBuild', 'Set-FastRustMark', 'Send-Step', 'Copy-Fields', 'Read-SteamProgress', 'Show-SteamOutput', 'Start-BootWatch', 'Read-BootLines', 'Read-BootLine', 'Get-UtcStamp')
 foreach ($f in $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $want -contains $n.Name }, $true)) { . ([scriptblock]::Create($f.Extent.Text)) }
 
 $work = $env:HOTWIRE_TEST_WORK
@@ -18,6 +18,9 @@ $script:UpdateCapture = $false
 $script:UpdateLog = New-Object System.Collections.ArrayList
 $script:UpdateReason = ''
 $script:UpdateEffective = ''
+$script:StartId = ''; $script:CheckOnly = $false
+$script:SteamProgressAt = [DateTime]::MinValue
+[void](New-Item -ItemType Directory -Force -Path (Join-Path $work 'hotwire'))
 # The reports this run would send, kept here instead of in the spool.
 $script:Sent = New-Object System.Collections.ArrayList
 function Add-SpoolReport([string]$kind, [string]$payload) { [void]$script:Sent.Add($kind + ' ' + $payload) }
@@ -98,3 +101,52 @@ $script:CfgBroken = $false
 "hotwire.ps1 does not claim a mode an unusable hotwire.cfg kept from|$([IO.File]::ReadAllText((Join-Path $work 'UPDATE_MODE.result')).Trim())|reject auto : hotwire.cfg was written but cannot be used now, so the last start's settings stay"
 "hotwire.ps1 keeps the last start's mode then|$($env:UPDATE_MODE)|off"
 
+
+# Each step of a start (start_step): SteamCMD's tries and its progress, through Update-Rust with a stand-in that prints
+# the lines SteamCMD printed on rust2 on 2026-10-12.
+$script:Sent.Clear(); $script:UpdateReason = ''
+$script:StartId = '2026-10-12T13:44:43Z'
+$steps = Join-Path $work 'steamcmd-steps'
+[IO.File]::WriteAllText($steps, "#!/usr/bin/env bash`nprintf ' Update state (0x61) downloading, progress: 12.50 (763970123 / 6111760987)\r\n'`nprintf ' Update state (0x81) verifying update, progress: 30.02 (1834950507 / 6111760987)\n'`nprintf ' Update state (0x0) unknown, progress: 0.00 (0 / 0)\n'`nexit 0`n")
+& chmod +x $steps
+$env:STEAMCMD = $steps; $env:MAX_STEAM_TRIES = '5'
+$shown = & { Update-Rust $false '25670169' '25877464' } 6>&1 | Out-String
+$st = @($script:Sent | Where-Object { $_.StartsWith('start_step ') } | ForEach-Object { ConvertFrom-Json $_.Substring(11) })
+"hotwire.ps1 reports the try, its progress and its end|$(($st | ForEach-Object { $_.step + ':' + $_.state }) -join ' ')|steamcmd:begun steamcmd:progress steamcmd:done"
+"hotwire.ps1 sends SteamCMD's own numbers, the first line only|$($st[1].phase) $($st[1].percent) $($st[1].bytes) $($st[1].total) $($st[1].attempt) $($st[1].of)|downloading 12.5 763970123 6111760987 1 5"
+# Compared as sent: PowerShell 7's ConvertFrom-Json turns the time into a date.
+"hotwire.ps1 carries the start_id on every step|$(@($script:Sent | Where-Object { $_.StartsWith('start_step ') -and $_.Contains('"start_id":"2026-10-12T13:44:43Z"') }).Count)|3"
+
+# A try that fails, then the wait before the next.
+$script:Sent.Clear(); $script:UpdateReason = ''
+$env:STEAMCMD = Join-Path $work 'steamcmd'; $env:MAX_STEAM_TRIES = '2'
+[void](Update-Rust $false '' '')
+$st = @($script:Sent | Where-Object { $_.StartsWith('start_step ') } | ForEach-Object { ConvertFrom-Json $_.Substring(11) })
+"hotwire.ps1 reports a failed try, the wait and the end|$(($st | ForEach-Object { $_.step + ':' + $_.state }) -join ' ')|steamcmd:begun steamcmd:failed steamcmd:waiting steamcmd:begun steamcmd:failed steamcmd:failed"
+"hotwire.ps1 names the exit code|$($st[1].exit_code) $($st[1].attempt) $($st[1].of)|8 1 2"
+
+# Nothing in check mode.
+$script:Sent.Clear(); $script:CheckOnly = $true
+Send-Step 'check' 'begun'
+"hotwire.ps1 sends no steps in check mode|$($script:Sent.Count)|0"
+$script:CheckOnly = $false
+
+# Rust's boot, read from its log as it is written: lines Rust printed on this boot (release 167398, 2026-10-12).
+$script:Sent.Clear()
+$log = Join-Path $work 'server_log.txt'
+$lines = @('[Bootstrap] Opening Bundles', '[Bootstrap] Opening Bundles done in 0.64s', 'Loading Oxide Core v2.0.4143...', 'Loaded plugin Hotwire v1.1.72 by xman2000',
+    'Asset Warmup (1/8996)', 'Asset Warmup (8996/8996)', 'Generating procedural map of size 1000 with seed 12345', '[1.4s] Spawning World',
+    'Spawning 1027 entities from save', "[RustNav] Navmesh 'unnamed' is now fully built in 15.61 seconds (8836 tiles).",
+    "[RustNav] Navmesh 'oilrig_2' is now fully built in 5.04 seconds (289 tiles).", 'Server startup complete', 'SteamServer Connected', 'Saving complete')
+Start-BootWatch
+[IO.File]::WriteAllText($log, (($lines[0..3] -join "`r`n") + "`r`nAsset Warm"))
+Read-BootLines $log
+[IO.File]::AppendAllText($log, ('up (1/8996)' + "`r`n" + ($lines[5..13] -join "`r`n") + "`r`n"))
+Read-BootLines $log
+$st = @($script:Sent | ForEach-Object { ConvertFrom-Json $_.Substring(11) })
+"hotwire.ps1 reports each boot milestone once, in Rust's order|$(($st | ForEach-Object { $_.step + ':' + $(if ($_.milestone) { $_.milestone } else { $_.state }) }) -join ' ')|boot:bundles boot:oxide boot:hotwire boot:warmup boot:map boot:world boot:entities boot:navmesh boot:done steam:done"
+"hotwire.ps1 sends the entities count|$(($st | Where-Object { $_.milestone -eq 'entities' }).count)|1027"
+$read = $script:BootOffset
+[IO.File]::AppendAllText($log, "Server startup complete`r`n")
+Read-BootLines $log
+"hotwire.ps1 stops reading at Steam's connection|$($script:Sent.Count) $($script:BootOffset -eq $read)|10 True"

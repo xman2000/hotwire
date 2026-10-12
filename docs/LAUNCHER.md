@@ -207,6 +207,7 @@ Requires launcher 1.1.25 on Windows; every Linux launcher that reads `hotwire.cf
 | How a run ended: when, the exit code, whether it was a crash, and what its update did | After every run |
 | The launcher stopped after a crash streak, and the crash log it kept | When it stops |
 | Which update step is running: each SteamCMD try, then Oxide | As each begins (launchers 1.1.37 and 1.1.22-linux) |
+| Each step of a start: the update check, a backup, your scripts, each SteamCMD try with its progress, Oxide, a wipe, the launch, and Rust's boot from its log | As each happens (launchers 1.1.38 and 1.1.23-linux). SteamCMD's progress at most every 15 seconds; the boot is read until Steam connects, Rust exits, or an hour has passed |
 
 | Rule | Value |
 | --- | --- |

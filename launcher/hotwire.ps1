@@ -15,8 +15,8 @@
 $ErrorActionPreference = 'Stop'
 # Who this launcher is, for the plugin: written to oxide\data\Hotwire\launcher.json before every start. The plugin
 # offers only the features in the capability list; settings_file means the settings come from hotwire.cfg.
-$LauncherVersion = '1.1.37'
-$LauncherCapabilities = 'supervise,update,framework_verify,crash_backstop,log_rotate,convar_persist,wipe,wipe_same_map,wipe_custom_map,backup,settings_file,rcon_optional,wipe_permit,wipe_permit_blueprints,update_mode_set,update_progress'
+$LauncherVersion = '1.1.38'
+$LauncherCapabilities = 'supervise,update,framework_verify,crash_backstop,log_rotate,convar_persist,wipe,wipe_same_map,wipe_custom_map,backup,settings_file,rcon_optional,wipe_permit,wipe_permit_blueprints,update_mode_set,update_progress,start_steps'
 $root = $PSScriptRoot
 $cfg = Join-Path $root 'hotwire.cfg'
 $secretsCfg = Join-Path $root 'hotwire-secrets.cfg'
@@ -695,6 +695,103 @@ function Send-UpdateProgress([string]$step, [int]$attempt = 0, [int]$of = 0) {
     Start-BackgroundSend
 }
 
+# Each step of this start for AFKPanel's run page (start_step, capability: start_steps): the update check, the backup,
+# the hooks, each SteamCMD try and how far it has got, Oxide, a wipe, the launch and Rust's boot. StartId is the time
+# this start began preparing, the same on every step of it. Sent in the background like every report; no step waits on
+# it, and nothing is sent in check mode. $more holds the step's other fields: a number, a boolean or text.
+$script:StartId = ''
+$script:CheckOnly = $false
+function Send-Step([string]$step, [string]$state, [Collections.IDictionary]$more = $null) {
+    if (-not $script:StartId -or $script:CheckOnly) { return }
+    try {
+        $p = '{"start_id":"' + $script:StartId + '","step":' + (ConvertTo-Json -InputObject $step -Compress) + ',"state":' + (ConvertTo-Json -InputObject $state -Compress)
+        if ($more) {
+            foreach ($k in $more.Keys) {
+                $v = $more[$k]
+                if ($null -eq $v -or [string]$v -eq '') { continue }
+                if ($v -is [bool]) { $j = $(if ($v) { 'true' } else { 'false' }) }
+                elseif ($v -is [int] -or $v -is [long] -or $v -is [double] -or $v -is [decimal]) { $j = ([double]$v).ToString([Globalization.CultureInfo]::InvariantCulture) }
+                else { $j = ConvertTo-Json -InputObject ([string]$v) -Compress }
+                $p += ',"' + $k + '":' + $j
+            }
+        }
+        Add-SpoolReport 'start_step' ($p + '}')
+    } catch { }
+    Start-BackgroundSend
+}
+
+# A step's fields with more to add: a copy, so the try's own fields are not changed.
+function Copy-Fields([Collections.IDictionary]$fields) {
+    $copy = [ordered]@{}
+    foreach ($k in $fields.Keys) { $copy[$k] = $fields[$k] }
+    return $copy
+}
+
+# SteamCMD's progress line, "Update state (0x61) downloading, progress: 45.12 (2758000000 / 6111760987)", reported at
+# most every 15 seconds. Null for a line that is not one.
+$script:SteamProgressAt = [DateTime]::MinValue
+function Read-SteamProgress([string]$line, [int]$attempt, [int]$of) {
+    $m = [regex]::Match($line, 'Update state \(0x[0-9a-fA-F]+\) ([a-z]+)[a-z ]*, progress: ([0-9]+(\.[0-9]+)?) \(([0-9]+) / ([0-9]+)\)')
+    if (-not $m.Success -or $m.Groups[5].Value -eq '0') { return }
+    if (((Get-Date) - $script:SteamProgressAt).TotalSeconds -lt 15) { return }
+    $script:SteamProgressAt = Get-Date
+    $more = [ordered]@{ attempt = $attempt; phase = $m.Groups[1].Value; percent = [double]::Parse($m.Groups[2].Value, [Globalization.CultureInfo]::InvariantCulture); bytes = [long]$m.Groups[4].Value; total = [long]$m.Groups[5].Value }
+    if ($of -gt 0) { $more.of = $of }
+    Send-Step 'steamcmd' 'progress' $more
+}
+
+# Rust's boot, read from its own log file while it runs: each milestone once, then "Server startup complete" and
+# "SteamServer Connected". Read between the launcher's other checks while the server runs; it stops at Steam's connection
+# or after an hour. A line a Rust build no longer prints is simply not reported.
+$script:BootSeen = @{}
+$script:BootOffset = 0L
+$script:BootUntil = [DateTime]::MinValue
+$script:BootRest = ''
+function Start-BootWatch { $script:BootSeen = @{}; $script:BootOffset = 0L; $script:BootRest = ''; $script:BootUntil = (Get-Date).AddHours(1) }
+function Read-BootLines([string]$path) {
+    if ((Get-Date) -gt $script:BootUntil -or $script:BootSeen.ContainsKey('steam')) { return }
+    try {
+        if (-not (Test-Path -LiteralPath $path)) { return }
+        $fs = [IO.File]::Open($path, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete)
+        try {
+            if ($fs.Length -lt $script:BootOffset) { $script:BootOffset = 0L; $script:BootRest = '' }
+            if ($fs.Length -eq $script:BootOffset) { return }
+            [void]$fs.Seek($script:BootOffset, [IO.SeekOrigin]::Begin)
+            $n = [int][Math]::Min($fs.Length - $script:BootOffset, 8388608)
+            $buf = New-Object byte[] $n; $got = $fs.Read($buf, 0, $n); $script:BootOffset += $got
+        } finally { $fs.Dispose() }
+        $text = $script:BootRest + [Text.Encoding]::UTF8.GetString($buf, 0, $got)
+        $lines = $text -split "\n"
+        $script:BootRest = $lines[-1]
+        foreach ($line in $lines[0..($lines.Count - 2)]) { Read-BootLine $line.TrimEnd([char]13) }
+    } catch { }
+}
+function Read-BootLine([string]$line) {
+    $m = ''; $more = [ordered]@{}
+    if ($line.Contains('[Bootstrap] Opening Bundles done')) { $m = 'bundles' }
+    elseif ($line.Contains('Loading Oxide Core')) { $m = 'oxide' }
+    elseif ($line.Contains('Loaded plugin Hotwire ')) { $m = 'hotwire' }
+    elseif ($line.Contains('Generating procedural map')) { $m = 'map' }
+    elseif ($line.Contains('Spawning World')) { $m = 'world' }
+    elseif ($line.Contains('is now fully built')) { $m = 'navmesh' }
+    elseif ($line.Contains('Server startup complete')) {
+        if (-not $script:BootSeen.ContainsKey('startup')) { $script:BootSeen['startup'] = $true; Send-Step 'boot' 'done' }
+        return
+    } elseif ($line.Contains('SteamServer Connected')) {
+        if (-not $script:BootSeen.ContainsKey('steam')) { $script:BootSeen['steam'] = $true; Send-Step 'steam' 'done' }
+        return
+    } else {
+        $w = [regex]::Match($line, 'Asset Warmup \(([0-9]+)/([0-9]+)\)')
+        $e = [regex]::Match($line, 'Spawning ([0-9]+) entities from save')
+        if ($w.Success -and $w.Groups[1].Value -eq $w.Groups[2].Value) { $m = 'warmup' }
+        elseif ($e.Success) { $m = 'entities'; $more.count = [long]$e.Groups[1].Value }
+    }
+    if (-not $m -or $script:BootSeen.ContainsKey($m)) { return }
+    $script:BootSeen[$m] = $true
+    $more.milestone = $m
+    Send-Step 'boot' 'progress' $more
+}
+
 # ---- launch --------------------------------------------------------------------------------------------------
 # The arguments reach RustDedicated.exe as one command line built here, never through cmd, so no character in a
 # value can run as a command.
@@ -715,9 +812,11 @@ function Invoke-Launch {
     # Clear a claim left by a backup that was cut short; the next backup clears the staging folder it names.
     Remove-Item -LiteralPath ($backupFlag + '.work') -Force -ErrorAction SilentlyContinue
     $p = [Diagnostics.Process]::Start($psi)
+    Start-BootWatch
     # While the server runs, pick up the backups Hotwire asks for and run them at the lowest priority. A backup in
-    # progress finishes before the server's exit is handled.
-    while (-not $p.WaitForExit(5000)) {
+    # progress finishes before the server's exit is handled. Rust's boot is read from its log between those checks.
+    while (-not $p.WaitForExit(2000)) {
+        Read-BootLines ([string]$env:LOGFILE)
         if ($env:BACKUPS -ne '0' -and (Test-Path -LiteralPath $backupFlag)) {
             try { Invoke-BackupFromFlag } catch { Say ('Backup: ' + $_.Exception.Message) }
         }
@@ -1133,7 +1232,12 @@ function Invoke-BackupBeforeLaunch {
     }
     if (-not $trigger) { return }
     Say ('Backing up the stopped server before the ' + $(if ($trigger -eq 'before_wipe') { 'wipe' } else { 'update' }) + '...')
-    [void](Invoke-BackupArchive $trigger ([DateTime]::UtcNow.ToString("yyyyMMdd'T'HHmmss'Z'") + '-' + $trigger) '' '' '' '' '')
+    Send-Step 'backup' 'begun' @{ detail = 'Before the ' + $(if ($trigger -eq 'before_wipe') { 'wipe' } else { 'update' }) }
+    $ok = $false
+    try { $ok = [bool](Invoke-BackupArchive $trigger ([DateTime]::UtcNow.ToString("yyyyMMdd'T'HHmmss'Z'") + '-' + $trigger) '' '' '' '' '') }
+    finally {
+        if ($ok) { Send-Step 'backup' 'done' } else { Send-Step 'backup' 'failed' @{ detail = 'The backup did not finish; the start carried on. The Backups tab says why once the server reports it.' } }
+    }
 }
 
 # ---- reports to AFKPanel -------------------------------------------------------------------------------------
@@ -1318,7 +1422,8 @@ function Invoke-Report {
         # slow start went while the server runs.
         $started = [string]$env:HOTWIRE_STARTED_AT
         if ($started -notmatch '\A\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ\z') { return }
-        Add-SpoolReport 'session' ('{"started_at":"' + $started + '"' + (Get-UpdateJson) + (Get-LauncherHooksJson) + '}')
+        $id = $(if ([string]$env:HOTWIRE_START_ID -match '\A\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ\z') { ',"start_id":"' + $env:HOTWIRE_START_ID + '"' } else { '' })
+        Add-SpoolReport 'session' ('{"started_at":"' + $started + '"' + $id + (Get-UpdateJson) + (Get-LauncherHooksJson) + '}')
     } elseif ($env:HOTWIRE_REPORT -eq 'update') {
         $p = '{"step":' + (ConvertTo-Json -InputObject ([string]$env:HOTWIRE_UPDATE_STEP) -Compress) + ',"mode":' + (ConvertTo-Json -InputObject ([string](Get-Env 'UPDATE_MODE')) -Compress) + ',"effective_mode":' + (ConvertTo-Json -InputObject ([string]$script:UpdateEffective) -Compress)
         if ([string]$env:HOTWIRE_UPDATE_TRY -match '\A[1-9][0-9]{0,3}\z') { $p += ',"attempt":' + $env:HOTWIRE_UPDATE_TRY }
@@ -1485,7 +1590,30 @@ function Test-FilesCorrupt {
 # code, 97 after waiting hotwire.steamcmd_wait_minutes for another server, or 96 when Steam refused a file list of
 # the installed build: SteamCMD reads those from a cache every server using it shares, asks Steam only when they are
 # missing, and Steam refuses an old Rust build's lists to an anonymous login.
-function Invoke-SteamUpdate([bool]$validate) {
+# The part of SteamCMD's output file not shown yet: written to this window line by line, each line read for progress.
+# Returns how far the file has been read.
+function Show-SteamOutput([string]$path, [long]$from, [ref]$rest, [int]$attempt, [int]$of) {
+    try {
+        if (-not (Test-Path -LiteralPath $path)) { return $from }
+        $fs = [IO.File]::Open($path, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete)
+        try {
+            if ($fs.Length -le $from) { return $from }
+            [void]$fs.Seek($from, [IO.SeekOrigin]::Begin)
+            $n = [int][Math]::Min($fs.Length - $from, 8388608)
+            $buf = New-Object byte[] $n; $got = $fs.Read($buf, 0, $n)
+        } finally { $fs.Dispose() }
+        $lines = ($rest.Value + [Text.Encoding]::UTF8.GetString($buf, 0, $got)) -split "\n"
+        $rest.Value = $lines[-1]
+        foreach ($line in $lines[0..($lines.Count - 2)]) {
+            $line = $line.TrimEnd([char]13)
+            [Console]::Out.WriteLine($line)
+            Read-SteamProgress $line $attempt $of
+        }
+        return $from + $got
+    } catch { return $from }
+}
+
+function Invoke-SteamUpdate([bool]$validate, [int]$attempt = 0, [int]$of = 0) {
     $sc = Get-Env 'STEAMCMD'; $q = [char]34
     $a = '+force_install_dir ' + $q + $root + $q + ' +login anonymous +app_update ' + $AppId
     $branch = Get-Env 'STEAM_BRANCH'
@@ -1510,12 +1638,18 @@ function Invoke-SteamUpdate([bool]$validate) {
         if (Test-Path -LiteralPath $Acf) { foreach ($x in [regex]::Matches([IO.File]::ReadAllText($Acf), $q + 'manifest' + $q + '\s+' + $q + '([0-9]+)' + $q)) { $inst += $x.Groups[1].Value } }
         # Bounded by hotwire.steamcmd_update_minutes (0: no limit): a SteamCMD that hangs would otherwise keep this server
         # down and hold the lock every other server on the machine waits for. Returns 95 when it was stopped.
-        $p = Start-Process -FilePath $sc -ArgumentList $a -NoNewWindow -PassThru
+        # SteamCMD's output goes to a file that is shown in this window as it is written and read for its progress line.
+        $out = Join-Path $root 'hotwire\steamcmd-output.txt'
+        Remove-Item -LiteralPath $out -Force -ErrorAction SilentlyContinue
+        $p = Start-Process -FilePath $sc -ArgumentList $a -NoNewWindow -PassThru -RedirectStandardOutput $out
         # Reading the handle now keeps the exit code: Windows PowerShell 5.1 can lose it for a process started this way.
         [void]$p.Handle
         $limit = Get-Num 'STEAMCMD_UPDATE_MINUTES' 60
-        if ($limit -gt 0) {
-            if (-not $p.WaitForExit([int]([Math]::Min([long]$limit * 60000, [int]::MaxValue)))) {
+        $clock = [Diagnostics.Stopwatch]::StartNew(); $read = 0L; $rest = ''
+        $script:SteamProgressAt = [DateTime]::MinValue
+        while (-not $p.WaitForExit(1000)) {
+            $read = Show-SteamOutput $out $read ([ref]$rest) $attempt $of
+            if ($limit -gt 0 -and $clock.Elapsed.TotalMinutes -ge $limit) {
                 # SteamCMD and anything it started, so the next update does not meet a SteamCMD still running.
                 try { [void](& taskkill.exe /T /F /PID $p.Id 2>&1) } catch { }
                 try { if (-not $p.HasExited) { $p.Kill() } } catch { }
@@ -1524,6 +1658,8 @@ function Invoke-SteamUpdate([bool]$validate) {
             }
         }
         $p.WaitForExit()
+        $read = Show-SteamOutput $out $read ([ref]$rest) $attempt $of
+        if ($rest) { [Console]::Out.WriteLine($rest) }
         $code = $p.ExitCode
         if ($code -ne 0 -and (Get-Env 'RECOVER_REFUSED_UPDATE') -eq '1' -and $inst.Count -gt 0 -and (Test-Path -LiteralPath $lg)) {
             $len = (Get-Item -LiteralPath $lg).Length
@@ -1597,22 +1733,45 @@ function Update-Rust([bool]$validate, [string]$installed, [string]$public) {
     if (-not (Test-Path -LiteralPath $sc)) {
         Say ('SteamCMD is not at ' + $sc + '. Set hotwire.steamcmd in hotwire.cfg. Starting without updating.')
         Set-UpdateReason 'steamcmd_missing'
+        Send-Step 'steamcmd' 'failed' @{ detail = 'SteamCMD is not where hotwire.steamcmd says; the server starts on what is installed.' }
         return $false
     }
     $maxTries = Get-Num 'MAX_STEAM_TRIES' 5
     $tries = 0; $quickUsed = $false; $recoveryUsed = $false
     while ($true) {
         $tries++
-        Send-UpdateProgress 'steamcmd' $tries $(if ($tries -le $maxTries) { $maxTries } else { 0 })
-        $code = Invoke-SteamUpdate $validate
+        $of = $(if ($tries -le $maxTries) { $maxTries } else { 0 })
+        Send-UpdateProgress 'steamcmd' $tries $of
+        $try = [ordered]@{ attempt = $tries }; if ($of -gt 0) { $try.of = $of }
+        Send-Step 'steamcmd' 'begun' $try
+        $code = Invoke-SteamUpdate $validate $tries $of
         if ($code -eq 0) {
             if ($recoveryUsed) { Say 'The update finished without the old file list. The old install record is kept in hotwire\appmanifest-refused.acf.' }
+            Send-Step 'steamcmd' 'done' $try
             return $true
         }
-        if ($code -eq 97) { Set-UpdateReason 'steamcmd_busy'; break }
-        if ($code -eq 95) { Say 'Starting what is on disk. The next update carries on from what was downloaded.'; Set-UpdateReason 'steamcmd_timeout'; break }
+        if ($code -eq 97) {
+            Set-UpdateReason 'steamcmd_busy'
+            $try.detail = 'Another server on this machine used SteamCMD for ' + (Get-Num 'STEAMCMD_WAIT_MINUTES' 60) + ' min; the server starts on what is installed.'
+            Send-Step 'steamcmd' 'failed' $try
+            break
+        }
+        if ($code -eq 95) {
+            Say 'Starting what is on disk. The next update carries on from what was downloaded.'; Set-UpdateReason 'steamcmd_timeout'
+            $try.detail = 'SteamCMD did not finish within ' + (Get-Num 'STEAMCMD_UPDATE_MINUTES' 60) + ' min and was stopped; the server starts on what is installed.'
+            Send-Step 'steamcmd' 'failed' $try
+            break
+        }
         Say ('SteamCMD failed (attempt ' + $tries + ' of ' + $maxTries + ').')
-        if ($code -eq 96 -and -not $recoveryUsed -and (Move-RefusedRecord)) { $recoveryUsed = $true; continue }
+        $failed = (Copy-Fields $try); $failed.exit_code = $code
+        if ($code -eq 96) { $failed.exit_code = $null; $failed.detail = 'Steam no longer serves the installed Rust build''s file list.' }
+        Send-Step 'steamcmd' 'failed' $failed
+        if ($code -eq 96 -and -not $recoveryUsed -and (Move-RefusedRecord)) {
+            $recoveryUsed = $true
+            $note = (Copy-Fields $try); $note.detail = 'Steam''s install record set aside: the next try checks the files on disk and downloads what changed.'
+            Send-Step 'steamcmd' 'progress' $note
+            continue
+        }
         if ($tries -ge $maxTries) {
             if (-not $forced -or [DateTimeOffset]::UtcNow.ToUnixTimeSeconds() -ge $forced.Deadline) { break }
             Say ('A forced wipe needs this update: trying SteamCMD again until ' + $forced.Until + '.')
@@ -1622,11 +1781,18 @@ function Update-Rust([bool]$validate, [string]$installed, [string]$public) {
         if (-not $quickUsed -and (Test-Path -LiteralPath $Acf) -and (Test-FilesCorrupt)) {
             $quickUsed = $true
             Say 'Steam marked the game files for a full check; trying again now.'
+            $note = (Copy-Fields $try); $note.detail = 'Steam marked the game files for a full check; trying again now.'
+            Send-Step 'steamcmd' 'progress' $note
             continue
         }
+        $wait = (Copy-Fields $try); $wait.seconds = (Get-Num 'STEAM_RETRY_SECONDS' 60)
+        Send-Step 'steamcmd' 'waiting' $wait
         Start-Sleep -Seconds (Get-Num 'STEAM_RETRY_SECONDS' 60)
     }
     Say 'SteamCMD failed. Starting without the update.'
+    if ((Get-Env 'STEAMCMD') -and $script:UpdateReason -notin @('steamcmd_busy', 'steamcmd_timeout')) {
+        Send-Step 'steamcmd' 'failed' ([ordered]@{ attempt = $tries; detail = 'SteamCMD failed on every try; the server starts on what is installed.' })
+    }
     Set-UpdateReason 'steamcmd_failed'
     if ($recoveryUsed) { Restore-RefusedRecord }
     return $false
@@ -1637,12 +1803,15 @@ function Update-Rust([bool]$validate, [string]$installed, [string]$public) {
 # an hour after GitHub had the new one. Oxide is third-party and changes with every Rust release, so Hotwire has no
 # hash of its own to pin it to; the SHA-256 proves the file is the one GitHub holds for the release, not who built
 # it. True when Oxide is in place afterwards.
+function Send-OxideFailed([string]$why) { Send-Step 'oxide' 'failed' @{ detail = $why } }
+
 function Update-Oxide([string]$buildBefore, [bool]$validated = $false) {
     if ((Get-Env 'INSTALL_FRAMEWORK') -eq '0') {
         Say 'Vanilla server: hotwire.install_framework is 0, so Oxide is not installed.'
         return $true
     }
     Send-UpdateProgress 'oxide'
+    Send-Step 'oxide' 'begun'
     $from = $FrameworkUrl; $sha = ''; $tag = ''
     try {
         try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 } catch { }
@@ -1684,6 +1853,7 @@ function Update-Oxide([string]$buildBefore, [bool]$validated = $false) {
                 Say ('Oxide: installed ' + $vn + ', GitHub ' + $ln)
                 if ($vn -eq $ln) {
                     Say 'Rust and Oxide are both unchanged, so Oxide is not installed again.'
+                    Send-Step 'oxide' 'done' ([ordered]@{ version = $vn; detail = 'Oxide and the game are unchanged, so nothing was downloaded.' })
                     $extract = $false
                 }
             }
@@ -1704,14 +1874,14 @@ function Update-Oxide([string]$buildBefore, [bool]$validated = $false) {
         $q = [char]34
         if (Get-Command 'curl.exe' -CommandType Application -ErrorAction SilentlyContinue) {
             $c = Start-Process -FilePath 'curl.exe' -ArgumentList ('-fSL -A Mozilla/5.0 --connect-timeout 30 --speed-limit 1 --speed-time 120 --max-time 1800 ' + $q + $from + $q + ' --output ' + $q + $zip + $q) -NoNewWindow -Wait -PassThru
-            if ($c.ExitCode -ne 0) { Say 'Oxide download failed. Starting with the Oxide already installed.'; Set-UpdateReason 'oxide_download_failed'; return $false }
+            if ($c.ExitCode -ne 0) { Say 'Oxide download failed. Starting with the Oxide already installed.'; Set-UpdateReason 'oxide_download_failed'; Send-OxideFailed 'The download from GitHub failed; the installed Oxide is kept.'; return $false }
         } else {
             try { Invoke-WebRequest -Uri $from -OutFile $zip -UseBasicParsing -UserAgent 'Mozilla/5.0' -TimeoutSec 1800 }
-            catch { Say 'Oxide download failed. Starting with the Oxide already installed.'; Set-UpdateReason 'oxide_download_failed'; return $false }
+            catch { Say 'Oxide download failed. Starting with the Oxide already installed.'; Set-UpdateReason 'oxide_download_failed'; Send-OxideFailed 'The download from GitHub failed; the installed Oxide is kept.'; return $false }
         }
         # Every entry under RustDedicated_Data/ and none climbing out of it, as setup checks: on the unverified path a
         # changed zip could otherwise write anywhere this account can.
-        if (-not (Test-OxideZipEntries $zip)) { Say 'The Oxide download is not a zip of files under RustDedicated_Data/. It is not installed.'; Set-UpdateReason 'oxide_not_a_zip'; return $false }
+        if (-not (Test-OxideZipEntries $zip)) { Say 'The Oxide download is not a zip of files under RustDedicated_Data/. It is not installed.'; Set-UpdateReason 'oxide_not_a_zip'; Send-OxideFailed 'The download was not the expected zip, so it was not installed.'; return $false }
         if ($sha) {
             $got = (Get-FileHash -Algorithm SHA256 -LiteralPath $zip).Hash.ToLower()
             if ($got -ne $sha) {
@@ -1719,11 +1889,13 @@ function Update-Oxide([string]$buildBefore, [bool]$validated = $false) {
                 Say ('The download does not match GitHub''s SHA-256 for Oxide ' + $tag + ' (' + $sha + '). It is not installed: the')
                 Say 'server starts with the Oxide it has, and the next restart tries again.'
                 Set-UpdateReason 'oxide_hash_mismatch'
+                Send-OxideFailed 'The download did not match the SHA-256 GitHub lists, so it was not installed.'
                 return $false
             }
             Say ('SHA-256 matches GitHub''s for Oxide ' + $tag + '.')
         }
-        try { Expand-Archive -Force -LiteralPath $zip -DestinationPath $root } catch { Say 'Oxide could not be extracted.'; Set-UpdateReason 'oxide_extract_failed'; return $false }
+        try { Expand-Archive -Force -LiteralPath $zip -DestinationPath $root } catch { Say 'Oxide could not be extracted.'; Set-UpdateReason 'oxide_extract_failed'; Send-OxideFailed 'Oxide could not be unpacked into the server folder; the installed one is kept.'; return $false }
+        Send-Step 'oxide' 'done' ([ordered]@{ version = $tag; detail = $(if ($sha) { 'SHA-256 matches GitHub''s.' } else { 'Installed without a SHA-256 check.' }) })
         return $true
     } finally {
         Remove-Item -LiteralPath $zip -Force -ErrorAction SilentlyContinue
@@ -1737,6 +1909,8 @@ $script:HookRuns = @{}
 $script:HookLimitSeconds = $null   # the launcher's own tests set it; they cannot wait a minute
 $script:HookShellForTests = $null  # and run the hook with this instead of cmd.exe, off Windows
 function Invoke-Hook([string]$path, [string]$slot) {
+    $name = Split-Path -Leaf $path
+    Send-Step ('hook_' + $slot) 'begun' @{ detail = $name }
     $limit = if ($script:HookLimitSeconds) { [double]$script:HookLimitSeconds } else { 60.0 * (Get-Num 'HOOK_TIMEOUT_MINUTES' 30) }
     $clock = [Diagnostics.Stopwatch]::StartNew()
     if ($script:HookShellForTests) {
@@ -1760,10 +1934,12 @@ function Invoke-Hook([string]$path, [string]$slot) {
     $seconds = ([math]::Round($clock.Elapsed.TotalSeconds, 1)).ToString('0.0', [Globalization.CultureInfo]::InvariantCulture)
     if ($stopped) {
         $script:HookRuns[$slot] = '{"seconds":' + $seconds + ',"exit_code":null,"timed_out":true}'
+        Send-Step ('hook_' + $slot) 'failed' ([ordered]@{ seconds = [double]$clock.Elapsed.TotalSeconds; detail = $name + ' was stopped after ' + (Get-Num 'HOOK_TIMEOUT_MINUTES' 30) + ' min; the start carried on.' })
         return 'stopped'
     }
     $code = [int]$p.ExitCode
     $script:HookRuns[$slot] = '{"seconds":' + $seconds + ',"exit_code":' + $code + ',"timed_out":false}'
+    Send-Step ('hook_' + $slot) $(if ($code -eq 0) { 'done' } else { 'failed' }) ([ordered]@{ seconds = [math]::Round($clock.Elapsed.TotalSeconds, 1); exit_code = $code; detail = $name })
     if ($code -eq 0) { return 'ok' } else { return 'failed' }
 }
 
@@ -1895,6 +2071,8 @@ function Invoke-Main([string[]]$argv) {
 
         $updateAttempted = $false; $steamOk = $false; $frameworkOk = $false
         $script:UpdateLog.Clear(); $script:UpdateReason = ''; $script:UpdateEffective = ''
+        $script:StartId = Get-UtcStamp ([DateTimeOffset]::UtcNow); $script:CheckOnly = [bool]$checkOnly
+        Send-Step 'check' 'begun'
         $branchName = Get-Env 'STEAM_BRANCH'; if (-not $branchName) { $branchName = 'public' }
         $mode = Get-Env 'UPDATE_MODE'
 
@@ -2020,6 +2198,11 @@ function Invoke-Main([string[]]$argv) {
             # The backup and the before-start hook speak for themselves; their lines are not the update's.
             $script:UpdateCapture = $false
             $env:DO_UPDATE = $(if ($doUpdate) { '1' } else { '0' })
+            $check = [ordered]@{ update = [bool]$doUpdate; mode = $mode; effective_mode = $effective }
+            if ($installed -match '\A\d+\z') { $check.rust_build_id = [string]$installed }
+            if ([string]$env:HOTWIRE_PUBLIC_BUILD -match '\A\d+\z') { $check.rust_build_public = [string]$env:HOTWIRE_PUBLIC_BUILD }
+            if (-not $doUpdate -and $script:UpdateReason) { $check.reason = $script:UpdateReason }
+            Send-Step 'check' 'done' $check
             $script:HookRuns = @{}
 
             if (-not $checkOnly) {
@@ -2093,7 +2276,14 @@ function Invoke-Main([string[]]$argv) {
         }
         if ((Test-Path -LiteralPath (Join-Path $root $WipeFlag)) -or (Test-Path -LiteralPath (Join-Path $root 'CONVAR.request'))) {
             $env:HOTWIRE_LOAD_STATE = $load
+            $wipeResult = Join-Path $root 'WIPE.result'; $wipeBefore = $(if (Test-Path -LiteralPath $wipeResult) { (Get-Item -LiteralPath $wipeResult).LastWriteTimeUtc } else { [DateTime]::MinValue })
             try { Invoke-Edits } catch { Say ('Wipe or convar: ' + $_.Exception.Message) }
+            try {
+                if ((Test-Path -LiteralPath $wipeResult) -and (Get-Item -LiteralPath $wipeResult).LastWriteTimeUtc -gt $wipeBefore) {
+                    $said = ([IO.File]::ReadAllText($wipeResult)).Trim()
+                    if ($said.StartsWith('applied: ')) { Send-Step 'wipe' 'done' @{ detail = $said.Substring(9) } }
+                }
+            } catch { }
             try { [void](Import-Settings -Quiet) } catch { Say ('Could not read the settings: ' + $_.Exception.Message) }
         }
 
@@ -2101,7 +2291,7 @@ function Invoke-Main([string[]]$argv) {
         Move-ServerLog $crashStreak
         Write-LauncherState
         $startedAt = Get-UtcStamp ([DateTimeOffset]::UtcNow)
-        $env:HOTWIRE_REPORT = 'session_start'; $env:HOTWIRE_STARTED_AT = $startedAt
+        $env:HOTWIRE_REPORT = 'session_start'; $env:HOTWIRE_STARTED_AT = $startedAt; $env:HOTWIRE_START_ID = $script:StartId
         $env:HOTWIRE_UPDATE_ATTEMPTED = $(if ($updateAttempted) { '1' } else { '0' })
         $env:STEAM_OK = $(if ($steamOk) { '1' } else { '0' }); $env:FRAMEWORK_OK = $(if ($frameworkOk) { '1' } else { '0' })
         try { Invoke-Report } catch { }
@@ -2109,6 +2299,7 @@ function Invoke-Main([string[]]$argv) {
         # Held reports go in the background, this start's among them; the server starts without waiting.
         Start-BackgroundSend
         Say 'Starting the server...'
+        Send-Step 'launch' 'done'
         $runStart = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
         $rustExit = 0
         try { $rustExit = Invoke-Launch } catch { Say ('Could not start the server: ' + $_.Exception.Message); $rustExit = -1 }
