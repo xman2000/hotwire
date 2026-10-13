@@ -15,7 +15,7 @@
 $ErrorActionPreference = 'Stop'
 # Who this launcher is, for the plugin: written to oxide\data\Hotwire\launcher.json before every start. The plugin
 # offers only the features in the capability list; settings_file means the settings come from hotwire.cfg.
-$LauncherVersion = '1.1.39'
+$LauncherVersion = '1.1.40'
 $LauncherCapabilities = 'supervise,update,framework_verify,crash_backstop,log_rotate,convar_persist,wipe,wipe_same_map,wipe_custom_map,backup,settings_file,rcon_optional,wipe_permit,wipe_permit_blueprints,update_mode_set,update_progress,start_steps,self_update'
 # HOTWIRE_ROOT_OVERRIDE is set only by the launcher itself, when it checks a downloaded update against this server's
 # settings before installing it (Invoke-SelfUpdate): the copy runs from hotwire\self-update\stage\.

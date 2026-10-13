@@ -24,6 +24,11 @@ sit above a launcher `1.1.7`. Read the label, not the number.
 `hotwire check` prints the plugin's version. Each launcher prints its own
 version as the first line when it starts.
 
+## Plugin 1.1.79, launchers 1.1.40 (Windows) and 1.1.25-linux — test pre-release
+
+**No changes.** Only the version numbers moved, so that a server on the previous release has something newer to update
+itself to, which tests Hotwire updating itself, the new launcher taking over included.
+
 ## Plugin 1.1.78 — unreleased
 
 **Clearer `/link` messages.** A wrong or expired code, a server without linking and AFKPanel being unreachable each say

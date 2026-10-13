@@ -21,7 +21,7 @@
 #     hotwire.cfg. The plugin works out this file's code hash itself, and
 #     AFKPanel compares it with the released launchers'; nothing waits on that
 #     answer.
-HOTWIRE_LAUNCHER_VERSION="1.1.24-linux"
+HOTWIRE_LAUNCHER_VERSION="1.1.25-linux"
 HOTWIRE_LAUNCHER_CAPABILITIES="supervise,update,framework_verify,crash_backstop,log_rotate,convar_persist,wipe,wipe_same_map,wipe_custom_map,backup,settings_file,rcon_optional,stop_saves,wipe_permit,wipe_permit_blueprints,update_mode_set,update_progress,start_steps,self_update"
 
 # ======================================================================
