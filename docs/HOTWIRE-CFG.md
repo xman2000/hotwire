@@ -34,11 +34,12 @@ A line that breaks a rule is ignored, and `check` names it. See [Check your sett
 
 | Problem | What happens |
 | --- | --- |
-| A line breaks a rule, such as `server.identity my world` without quotes | The line is ignored and the default is used. For the settings marked **Stops the start** below, that is a different save, map or port. |
-| A setting on two lines | The later line is used. A wipe or a convar saved from AFKPanel changes the first. |
+| A line breaks a rule, such as `server.identity my world` without quotes | The line is ignored and the default is used. For the settings marked Stops the start below, that is a different save, map or port. |
+| A setting on two lines | The later line is used, and a wipe or a convar saved from AFKPanel changes that line. |
 
-AFKPanel shows these lines as a problem on the server's page, with the line number and the setting. It never receives
-the value.
+AFKPanel shows these lines as an alert on the server, with the line number and the setting, and links
+[hotwire.cfg has lines that are not used as written](https://afkpanel.com/docs/fix-launcher-settings). It never
+receives the value.
 
 ## When a change takes effect
 
@@ -63,7 +64,7 @@ Each setting has a comment above it that says what it does and gives its default
 
 ## Settings the launcher checks
 
-A value that fails its check is ignored and the default is used. For the settings marked **Stops the start**, a bad
+A value that fails its check is ignored and the default is used. For the settings marked Stops the start, a bad
 value stops the launcher instead, because the default would open a different save or map.
 
 | Setting | Rule | Stops the start |
@@ -95,20 +96,22 @@ Set with `hotwire.update_mode`.
 To ask for one update in `hotwire` mode, create `UPDATE.flag` in the server's folder and restart the server. The flag
 is deleted once the update succeeds.
 
-AFKPanel Pro can set this line to `auto` or `always`. The launcher writes it at the next start, before that start decides
-whether to update. `off` and `hotwire` are set only here.
+With AFKPanel Pro, **Set update mode** on the server's **Schedule** tab sets this line to `auto` or `always`. The
+launcher writes it at the next start, before that start decides whether to update. `off` and `hotwire` are set only
+here.
 
 ## Hotwire's own updates
 
 | Setting | Default | What it does |
 | --- | --- | --- |
 | `hotwire.self_update` | `off` | `auto`: before a start, install the newest Hotwire release that is old enough. `off`: only when you replace the files, or AFKPanel's **Update Hotwire** asks. |
-| `hotwire.self_update_days` | 3 | Days a release must be public before `auto` installs it. 0 = early release. |
+| `hotwire.self_update_days` | 3 | Days a release must be public before `auto` installs it. 0 installs a release the day it comes out. |
 | `hotwire.self_update_channel` | `release` | `dev` also takes Hotwire's test builds. For test servers. |
 | `hotwire.self_update_test_key` | 0 | 1 also trusts the test signing key. Only for AFKPanel's own test servers. |
 
-AFKPanel can set `hotwire.self_update` and `hotwire.self_update_days`. The channel and the test key are set only here.
-See [The launcher](LAUNCHER.md#hotwire-updates-itself).
+On every plan, **Change** beside **Hotwire updates** on the server's **Info** tab sets `hotwire.self_update` and
+`hotwire.self_update_days`. The channel and the test key are set only here. See
+[Let Hotwire update itself](https://afkpanel.com/docs/update-hotwire#let-hotwire-update-itself).
 
 ## Launcher settings
 
@@ -124,7 +127,7 @@ Each is off in the file and shows the value used.
 | `hotwire.fast_rust_updates` | 0 | 1 = a Rust update on a server with Oxide finishes in one try |
 | `hotwire.recover_refused_update` | 1 | When Steam no longer serves the installed build's file list, update without it. 0 = start the installed build. |
 | `hotwire.build_check_hours` | 6 | Hours to trust a Steam build check. 0 turns the check off. |
-| `hotwire.steam_tries` | 5 | SteamCMD attempts before starting what is on disk |
+| `hotwire.steam_tries` | 5 | SteamCMD attempts before starting what is on disk. Cannot be 0. |
 | `hotwire.steam_retry_seconds` | 60 | Seconds between SteamCMD attempts |
 | `hotwire.steamcmd_wait_minutes` | 60 | Minutes to wait for another server's SteamCMD run |
 | `hotwire.steamcmd_update_minutes` | 60 | The longest one SteamCMD update may run. Past it SteamCMD is stopped and the installed build starts; the next update carries on from what was downloaded. 0 = no limit. |

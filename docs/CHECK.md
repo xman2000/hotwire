@@ -1,7 +1,8 @@
 # Check your settings
 
 `check` reads `hotwire.cfg` and `hotwire-secrets.cfg`, lists every problem, and says whether a normal start would
-update. It does not start or update the server, run a hook, or change a file.
+update. It does not start or update the server, run a hook, or change a settings file. It asks Steam for the newest
+Rust build.
 
 ## Run it
 
@@ -33,7 +34,16 @@ Fix each problem it lists, then run it again until it lists none.
 | Message | Fix |
 | --- | --- |
 | `No hotwire.cfg beside the launcher` | Convert your start script at https://afkpanel.com/get-started, or copy `hotwire.example.cfg` to `hotwire.cfg` |
-| `hotwire.cfg has settings that would change which server this is` | Fix the lines it lists. A bad save folder, seed, world size, port or map address would open a different save. |
+| On Windows: `The server was not started. These settings in hotwire.cfg would change which server this is:` | Fix the lines it lists. A bad save folder, seed, world size, port or map address would open a different save. |
+| On Linux: `hotwire.cfg has settings that would change which server this is, so it does not start:` | Fix the lines it lists. A bad save folder, seed, world size, port or map address would open a different save. |
+
+When `hotwire.cfg` becomes unusable while the launcher runs, a restart does not stop. It lists the lines to fix and
+starts the server with the settings from its last start:
+
+| Platform | Message |
+| --- | --- |
+| Windows | `hotwire.cfg changed and cannot be used. Starting with the settings from the last start:` |
+| Linux | `hotwire.cfg changed and is not usable now; starting with the settings from the last start:` |
 
 ## RCON messages
 
@@ -49,7 +59,8 @@ None of these stops the server; Hotwire does not need RCON. See
 
 ## Lines that are ignored
 
-Each is listed as `line <number>: <reason>`. The rest of the file is used.
+Each is listed as `line <number>: <setting>: <reason>`. A line with no setting name has no `<setting>`. The rest of the
+file is used.
 
 | Reason | Fix |
 | --- | --- |
@@ -58,9 +69,10 @@ Each is listed as `line <number>: <reason>`. The rest of the file is used.
 | `a quoted value must start and end with a double quote, and hold none inside` | Remove the double quote inside the value |
 | `a control character in the value` | Remove it |
 | `longer than 1024 characters` | Shorten the value |
-| `rcon.password: belongs in hotwire-secrets.cfg, never here; ignored` | Move the password to `hotwire-secrets.cfg` |
-| `<name>: not a launcher setting; ignored` | Correct the `hotwire.` name. See [hotwire.cfg](https://afkpanel.com/docs/hotwire-cfg). |
-| `<name>: <rule>; the default is used` | Correct the value, or remove it to use the default |
+| `belongs in hotwire-secrets.cfg, never here; ignored` | Move `rcon.password` to `hotwire-secrets.cfg` |
+| `not a launcher setting; ignored` | Correct the `hotwire.` name. See [hotwire.cfg](https://afkpanel.com/docs/hotwire-cfg). |
+| `<rule>; the default is used` | Correct the value, or remove it to use the default |
+| `also set on line <number>; line <number> is used` | Delete one of the two lines |
 
 ## Warnings
 

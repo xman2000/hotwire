@@ -41,8 +41,6 @@ Hotwire never creates or changes these files.
 | Timing | How long each hook took, its exit code, and whether it was stopped go to AFKPanel with the server's start |
 | `check` | Never runs a hook |
 
-The time limit and the timing need launcher 1.1.33 (Windows) or 1.1.19-linux.
-
 ## Change the time limit
 
 A hook that makes a backup of a large server can need longer than 30 minutes. In `hotwire.cfg`, set the minutes:
@@ -53,7 +51,7 @@ hotwire.hook_timeout_minutes 60
 
 It applies to both hooks. The smallest value is 1.
 
-## Tell an update from a restart (Windows)
+## Tell an update from a restart
 
 `hotwire-before` can read `DO_UPDATE`: `1` when this start will update Rust and Oxide, `0` when it
 will not. This runs one backup before an update and a lighter one on a plain restart:
@@ -68,7 +66,7 @@ if "%DO_UPDATE%"=="1" (
 exit /b 0
 ```
 
-On Linux, `hotwire-before.sh` reads it as `$DO_UPDATE`. Requires launcher 1.1.9-linux or later.
+On Linux, `hotwire-before.sh` reads it as `$DO_UPDATE`.
 
 ## Examples
 
@@ -88,6 +86,12 @@ Record when each update happened, in `hotwire-after.bat`:
 
 ```bat
 echo %date% %time% >> updates.txt
+```
+
+The same in `hotwire-after.sh`:
+
+```bash
+date >> updates.txt
 ```
 
 ## Moving from your own start script

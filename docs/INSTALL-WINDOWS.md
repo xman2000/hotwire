@@ -12,15 +12,15 @@ no Rust experience.
 
 The disk and memory figures are Facepunch's, from [Creating a server](https://wiki.facepunch.com/rust/Creating-a-server).
 
-Run every command in **PowerShell as Administrator** unless the step says otherwise.
+Run every command in PowerShell as Administrator unless the step says otherwise.
 
 Steps 1 to 6 give you a working server. Steps 7 to 9 connect it to AFKPanel and are optional.
 
 ## Let the setup script do steps 1 to 6
 
 `hotwire-setup.bat` runs steps 1 to 6 for you and asks before each one: the clock, SteamCMD, Rust on the branch you
-choose, Oxide, the start script with its ports and the firewall, then the Hotwire plugin. It can also
-connect the server to AFKPanel.
+choose, Oxide, the start script with its ports, the Hotwire plugin, the RCON password if yours needs fixing, then the
+firewall. It can also connect the server to AFKPanel.
 
 1. Download https://afkpanel.com/get/windows and unzip it. `hotwire-setup.bat` and `hotwire-setup.ps1` are in it,
    side by side; keep them together.
@@ -45,8 +45,7 @@ connect the server to AFKPanel.
 For a second server on the same machine, use the setup script. It gives each server its own ports and firewall rules.
 To do it by hand, see [Run a second server](#run-a-second-server).
 
-Nothing in this guide, and nothing Hotwire does later, can stop your server starting. If AFKPanel is slow, unreachable
-or gone, the server still boots, restarts and updates.
+If AFKPanel is unreachable, the server still starts, restarts and updates.
 
 ## 1. Open the ports
 
@@ -106,7 +105,7 @@ SteamCMD is Valve's command-line downloader. Rust's server files come through it
    Remove-Item C:\steamcmd\steamcmd.zip
    ```
 
-Run it once so it updates itself. It ends at a `Steam>` prompt.
+Run it once so it updates itself. It exits when it finishes.
 
 ```powershell
 C:\steamcmd\steamcmd.exe +quit
@@ -157,7 +156,8 @@ RustAdmin or BattleMetrics, set a password: see [The RCON password file](https:/
 
 ## 6. Install Hotwire and start the server
 
-Hotwire has two parts. The plugin schedules announced restarts. The launcher starts the server again when it exits,
+Hotwire has two parts. The plugin runs inside the server: it reports to AFKPanel and announces scheduled restarts,
+updates and wipes to players. The launcher starts the server again when it exits,
 tells a restart apart from an update, and stops a crash loop from filling the disk with logs.
 
 1. Download https://afkpanel.com/get/windows and unzip it. It holds `hotwire.bat` and `hotwire.ps1`, the plugin in the
@@ -180,10 +180,12 @@ tells a restart apart from an update, and stops a crash loop from filling the di
    | `server.port`, `server.queryport`, `rcon.port` | The three ports from step 1 |
    | `hotwire.update_mode` | When Rust and Oxide update |
 
-   If you used the setup script, it wrote `hotwire.cfg` for you and picked a random `server.seed`. To play a
-   particular map, change the seed now: after the server has been played, a new seed is a new map. Leave
-   `hotwire.update_mode` on `auto`: the server updates on every start until you turn on an update schedule in the
-   plugin, and then follows that schedule. Each setting is explained above it in the file, and an empty one uses
+   Choose a map seed before the first start. Rust's default seed is 1337, so without one your server has the same map
+   as every other server left at the default. If you used the setup script, it wrote `hotwire.cfg` for you and picked
+   a random `server.seed`. To play a particular map, change the seed now: after the server has been played, a new seed
+   is a new map. Leave `hotwire.update_mode` on `auto`: the server updates on every start until you turn on an update
+   schedule in the plugin, and then follows that schedule. With AFKPanel Pro, you can change it later with
+   **Set update mode** on the server's **Schedule** tab. Each setting is explained above it in the file, and an empty one uses
    the game's default. The plugin's schedules are all off when it is installed, so it cannot restart anything until
    you turn one on.
 
@@ -231,8 +233,8 @@ This is a complete server, and everything so far is free. The next steps connect
 
    ![PowerShell after hotwire-setup.bat doctor, every check passed, ending in Everything needed is in place](https://afkpanel.com/images/docs/win-doctor-clean.webp)
 
-`doctor` checks that the machine signs requests correctly, that it can reach AFKPanel, that its clock is accurate
-enough, and that it can find your server. It changes nothing, so you can run it at any time.
+`doctor` checks the machine's tools, that the machine can reach AFKPanel, that its clock is accurate enough, and that
+it can find your server. It changes nothing.
 
 If `doctor` reports the clock, fix it before you continue. A wrong clock makes every later request fail with an error
 that does not mention the clock.
@@ -269,9 +271,9 @@ AFKPanel within a minute. The launcher picks up the connection by itself.
 | `doctor` says the clock is too far out | The clock has drifted | Run `w32tm /resync`, then run `doctor` again |
 | `connect` says the code is invalid or expired | A code works for 60 minutes, once | Make a new code |
 | The server never appears in the server browser | Port 28017/UDP is closed, or your host blocks it | Open the port, or ask your host |
-| The server stops after "consecutive crashes", on a machine with another server | Both servers use the same ports | Give one of them different ports in its `hotwire.cfg` |
+| The launcher says `STOPPED` after crashes in a row, on a machine with another server | Both servers use the same ports | Give one of them different ports in its `hotwire.cfg` |
 | The server is in AFKPanel but shows no player counts | The plugin is not loaded | Look in `oxide\logs\` for a compile error |
-| The console says Steam no longer serves the installed Rust build's file list | The server was on an old build, and the machine's SteamCMD no longer has that build's file list | Nothing: the launcher updates without it. Launcher 1.1.19 or later. |
+| The console says Steam no longer serves the installed Rust build's file list | The server was on an old build, and the machine's SteamCMD no longer has that build's file list | Nothing: the launcher updates without it. |
 
 ## Disconnect the server
 
@@ -286,9 +288,9 @@ The server keeps running.
 The setup script does this for you. By hand, the second server needs:
 
 1. Its own folder, for example `C:\rust-dev`, with its own `hotwire.bat`, `hotwire.ps1`, `hotwire.cfg` and
-   `hotwire-secrets.cfg`. You can copy the first server's folder: the launcher follows its own folder, so the copy runs the copy. If you plan to connect the
-   copy, do not copy `hotwire\connect.json` and the keys, or run `connect` in the copy and choose to connect it as a
-   new server.
+   `hotwire-secrets.cfg`. You can copy the first server's folder: the launcher follows its own folder, so the copy
+   runs the copy. If you plan to connect the copy, do not copy `hotwire\connect.json` and the keys, or run `connect`
+   in the copy and choose to connect it as a new server.
 2. Its own ports. In the second `hotwire.cfg`, set `server.port`, `server.queryport` and `rcon.port`, for example to
    28115, 28117 and 28116. Open UDP 28115 and 28117 as in step 1.
 3. Its own branch, if it differs: `hotwire.steam_branch`.
@@ -308,4 +310,4 @@ it runs:
 2. Replace `hotwire.bat` and `hotwire.ps1`. Keep your `hotwire.cfg`, `hotwire-secrets.cfg` and hook files.
 3. Run `.\hotwire.bat check`, then `.\hotwire.bat`.
 
-Moving to launcher 1.1.25 from an older one changes both files.
+To update the plugin too, see [Update on Windows](https://afkpanel.com/docs/update-hotwire#update-on-windows).

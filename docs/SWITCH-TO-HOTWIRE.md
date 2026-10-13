@@ -12,9 +12,11 @@ and players stay as they are.
 ## 1. Convert your start script
 
 1. Open https://afkpanel.com/get-started and choose your start script. A file that holds a password, a Discord webhook,
-   a Steam login or a key is refused in your browser and not sent.
-2. Read the report. A problem listed under **Fix in your script** stops the conversion: fix it in your script and choose the
-   file again.
+   a Steam login or a key is refused in your browser and not sent. To check it anyway, select
+   **Remove them and check the rest**: only a copy with each secret replaced by a name, such as `%RCON_PASSWORD%`, is
+   sent. Your file is not changed.
+2. Read the report. A problem listed under **Fix in your script** stops the conversion: fix it in your script and
+   choose the file again.
 3. Select **Download hotwire-settings.zip**. It holds `hotwire.cfg`, with your settings, and `hotwire-secrets.cfg`.
 4. Note the rows under **Not carried**. Each one names the line in your script and what to do with it.
 
@@ -67,11 +69,13 @@ Fix each problem it lists and run it again. See [Check your settings](https://af
 | Linux | `./hotwire.sh` |
 
 Leave the window or terminal open: the launcher starts the server again whenever it stops. On Linux, a systemd service
-keeps it running after you log out; see [Install a Rust server on Ubuntu](https://afkpanel.com/docs/install-linux).
+keeps it running after you log out; see
+[Run the server under systemd](https://afkpanel.com/docs/install-linux#run-the-server-under-systemd).
 
 ## 9. Add the plugin
 
-Optional. See [Add or update the Hotwire plugin](https://afkpanel.com/docs/hotwire-plugin).
+Optional. See [Add or update the Hotwire plugin](https://afkpanel.com/docs/hotwire-plugin). Then connect the server to
+AFKPanel: see [Connect a server](https://afkpanel.com/docs/connect-a-server).
 
 ## Go back to your old script
 

@@ -40,8 +40,7 @@ For a second server, add `--root /home/rust/server2`. It gets its own ports and 
 
 The rest of this guide is the same install by hand.
 
-Nothing in this guide, and nothing Hotwire does later, can stop your server starting. If AFKPanel is slow, unreachable
-or gone, the server still boots and restarts.
+If AFKPanel is unreachable, the server still starts, restarts and updates.
 
 The server runs under Hotwire's Linux launcher, `hotwire.sh`. It starts the server and starts it again when it exits,
 installs and updates Rust and Oxide, stops a crash loop, and links `steamclient.so` (see step 7).
@@ -108,7 +107,7 @@ Rust's server needs 32-bit libraries, so enable the i386 architecture.
 sudo add-apt-repository -y multiverse
 sudo dpkg --add-architecture i386
 sudo apt update
-sudo apt install -y steamcmd lib32gcc-s1 curl jq unzip zstd
+sudo apt install -y steamcmd lib32gcc-s1 curl jq unzip zstd ca-certificates
 ```
 
 Accept the license prompt when the installer shows it.
@@ -119,8 +118,12 @@ The dedicated server is Steam app 258550. It is free, and `anonymous` is a real 
 
 ```bash
 sudo -iu rust
-/usr/games/steamcmd +force_install_dir /home/rust/server +login anonymous +app_update 258550 validate +quit
+/usr/games/steamcmd +force_install_dir /home/rust/server +login anonymous +app_update 258550 -beta public validate +quit
 ```
+
+`-beta public` selects the normal game. Steam keeps an install on the branch the machine used last, so name it if the
+machine has ever run a test branch. For Facepunch's test build, use `-beta staging` instead, and set
+`hotwire.steam_branch staging` in `hotwire.cfg` in step 7.
 
 The download is about 6 GB. When it finishes, `/home/rust/server/RustDedicated` exists.
 
@@ -140,8 +143,8 @@ As the `rust` user:
    mkdir -p oxide/plugins && mv plugin/Hotwire.cs oxide/plugins/ && rmdir plugin
    ```
 
-   The download holds `hotwire.sh`, `hotwire-launcher.sh`, `README.txt`, the plugin in `plugin/` and the example settings and hooks in
-   `examples/`, which stays in the server folder.
+   The download holds `hotwire.sh`, `hotwire-launcher.sh`, `README.txt`, the plugin in `plugin/` and the example
+   settings and hooks in `examples/`, which stays in the server folder.
 
 2. Copy the settings file and open it:
 
@@ -157,15 +160,22 @@ As the `rust` user:
    | --- | --- |
    | `server.hostname` | The server's name in the browser |
    | `server.description` | The server's description |
+   | `server.tags` | Browser tags (optional) |
+   | `server.maxplayers` | Player limit, if not the game's |
    | `server.identity` | The save folder's name |
    | `server.seed` | The map |
    | `server.worldsize` | The map's size |
    | `server.port`, `server.queryport`, `rcon.port` | 28015, 28017 and 28016, matching the firewall in step 4 |
+   | `hotwire.update_mode` | When Rust and Oxide update |
 
    Choose a map seed before the first start. Rust's default seed is 1337, so without one your server has the same map
    as every other server left at the default. Generate one with `shuf -i 1-2147483647 -n 1`. Keep it: a new seed on a
    server that has been played is a new map. A second server on the same machine needs its own ports, for example
    28115, 28117 and 28116; open those too.
+
+   Leave `hotwire.update_mode` on `auto`: the server updates on every start until you turn on an update schedule in the
+   plugin, and then follows that schedule. With AFKPanel Pro, you can change it later with **Set update mode** on the
+   server's **Schedule** tab.
 
 3. Hotwire does not need RCON, and without a password the server starts with RCON off. If you use an RCON tool, set
    one: see [The RCON password file](https://afkpanel.com/docs/rcon-password).
@@ -179,7 +189,8 @@ As the `rust` user:
 
    `check` reads every setting and says what it would do, and starts nothing. The first start installs Oxide, links
    Steam's client library and takes several minutes while the server generates the map. When the server appears in
-   Rust's server browser under your name, it is working. Press Ctrl+C to stop it.
+   Rust's server browser under your name, it is working. To stop it, type `quit`: the server saves and
+   exits. Then press Ctrl+C while the launcher says `Restarting in 15s`. Ctrl+C alone stops it without a save.
 
 Your own commands, such as a backup before every start, go in `hotwire-before.sh` and `hotwire-after.sh`, beside
 `hotwire.sh`. The download has an example of each.
@@ -226,7 +237,7 @@ save is lost.
 
 ## 8. Check that the machine can reach AFKPanel
 
-1. Download the setup script. It runs `doctor` and `connect`; the plugin you installed in step 7 is what reports.
+1. Download the setup script. It runs `doctor` and `connect`; the plugin and the launcher do the reporting.
 
    ```bash
    cd /home/rust/server
@@ -239,8 +250,8 @@ save is lost.
    ./hotwire-setup.sh doctor
    ```
 
-`doctor` checks that the machine signs requests correctly, that it can reach AFKPanel, that its clock is accurate
-enough, and that it can find your server. It changes nothing, so you can run it at any time.
+`doctor` checks the machine's tools, that the machine can reach AFKPanel, that its clock is accurate enough, and that
+it can find your server. It changes nothing.
 
 ## 9. Connect the server
 
@@ -263,8 +274,9 @@ AFKPanel within a minute. The launcher picks up the connection by itself at its 
 
 ## Update the launcher
 
-Hotwire can do this itself: see [The launcher](LAUNCHER.md#hotwire-updates-itself). By hand, stop the server first. The
-download has the plugin too, and they are replaced together.
+Hotwire can do this itself: see
+[Let Hotwire update itself](https://afkpanel.com/docs/update-hotwire#let-hotwire-update-itself). By hand, stop the
+server first. The download has the plugin too, and they are replaced together.
 
 1. Stop the server, as your admin user:
 
@@ -272,9 +284,8 @@ download has the plugin too, and they are replaced together.
    sudo systemctl stop rust-server
    ```
 
-   From launcher 1.1.13-linux, with the unit in step 7, a stop saves the world first. An older launcher stops without a
-   save, and the play since the last autosave is lost: stop it when nobody is playing. In a terminal, type `quit`
-   instead; Ctrl+C stops without a save.
+   With the unit in step 7, a stop saves the world first. If the server runs in a terminal instead, type `quit`, then
+   press Ctrl+C while the launcher says `Restarting in 15s`. Ctrl+C alone stops it without a save.
 
 2. Replace the launcher and the plugin, as the `rust` user:
 
@@ -308,7 +319,7 @@ download has the plugin too, and they are replaced together.
 | The server fails with "not found", but `RustDedicated` exists | The i386 architecture or `lib32gcc-s1` is missing | Repeat step 5 |
 | The server never appears in the server browser | Port 28017/UDP is closed, or your provider blocks it | Open the port, or ask your provider |
 | The server is in AFKPanel but shows no player counts | The plugin is not loaded | Look in `oxide/logs/` for a compile error |
-| The console says Steam no longer serves the installed Rust build's file list | The server was on an old build, and the machine's SteamCMD no longer has that build's file list | Nothing: the launcher updates without it. Launcher 1.1.7-linux or later. |
+| The console says Steam no longer serves the installed Rust build's file list | The server was on an old build, and the machine's SteamCMD no longer has that build's file list | Nothing: the launcher updates without it. |
 
 ## Disconnect the server
 

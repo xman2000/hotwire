@@ -18,13 +18,11 @@ This page uses these terms:
 | Host panel | Pterodactyl or Pelican, with the Rust egg |
 | Access in the host panel | Console, Files and Startup |
 | Modding framework | Oxide |
-| Hotwire | 1.1.55 or later |
 
 Tested on Pterodactyl 1.15.1 with Wings 1.13.3 and the Rust egg that ships with Pterodactyl. Pelican uses the same
 Wings and the same environment, so Hotwire sees no difference; Pelican has not been tested.
 
-Nothing Hotwire does can stop your Rust server starting. If AFKPanel is slow, unreachable or gone, the Rust server still
-boots and restarts.
+If AFKPanel is unreachable, the Rust server still starts and restarts.
 
 ## 1. Turn on Oxide
 
@@ -67,13 +65,20 @@ changes:
 
 | Feature | On Pterodactyl or Pelican |
 | --- | --- |
-| Monitoring, alerts, logs, players, plugins, map | Yes |
+| Monitoring | Yes |
+| Alerts | Yes |
+| Logs | Yes |
+| Players | Yes |
+| Plugins | Yes |
+| Map | Yes |
 | Restarts and the restart schedule | Yes. Every start also updates Rust and Oxide. |
 | Plugin updates from AFKPanel | Yes |
 | Memory limit check | Yes: a warning at 90% of the memory limit the host set |
 | Backups | No. Use **Backups** in the host panel. |
 | Wipes from AFKPanel | No |
 | Permanent convar changes | No. Use **Startup** in the host panel. |
+| Hotwire updates itself | No. Replace `Hotwire.cs` in **Files**. |
+| Set update mode | No. Every start is an update. |
 
 ### Every start is an update
 
@@ -122,6 +127,6 @@ two: Hotwire's schedule warns players in game before a restart and waits for Oxi
 ## Remove Hotwire
 
 1. In the host panel, open **Files**, then `oxide`, then `plugins`, and delete `Hotwire.cs`.
-2. In AFKPanel, open the Rust server's **Server settings** and retire it.
+2. In AFKPanel, open the Rust server's **Server settings**, select **Remove server**, then **Retire server**.
 
 The Rust server keeps running.

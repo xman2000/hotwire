@@ -3,9 +3,6 @@
 RCON is remote control of a Rust server: an RCON tool, such as RustAdmin or BattleMetrics, sends console commands with
 a password. Hotwire does not use RCON. Without a password, Rust starts with RCON off, and nothing can connect to it.
 
-Requires launcher 1.1.27 or later on Windows, and 1.1.12-linux or later on Linux. Older launchers do not start without
-a password.
-
 ## Turn RCON on
 
 Only if you use an RCON tool.
@@ -25,8 +22,8 @@ Only if you use an RCON tool.
    openssl rand -base64 24
    ```
 2. Save the password in your password manager.
-3. Copy `hotwire-secrets.example.cfg`, from the `examples` folder of the Hotwire download, to `hotwire-secrets.cfg`, beside `hotwire.bat` or
-   `hotwire.sh`. The start-script converter's `hotwire-settings.zip` also holds one.
+3. Copy `hotwire-secrets.example.cfg`, from the `examples` folder of the Hotwire download, to `hotwire-secrets.cfg`,
+   beside `hotwire.bat` or `hotwire.sh`. The start-script converter's `hotwire-settings.zip` also holds one.
 4. Open `hotwire-secrets.cfg`, remove the `#` before `rcon.password`, and replace `change_me` with the password,
    keeping the double quotes:
 
@@ -56,7 +53,8 @@ computer, then cannot connect.
 
 2. Restart the server.
 
-To undo it, remove the line and restart. `hotwire-setup` offers this when it finds an RCON password.
+To undo it, remove the line and restart. Setup (`hotwire-setup.bat` or `hotwire-setup.sh`) offers this when it finds
+an RCON password.
 
 ## Turn RCON off
 
@@ -81,3 +79,5 @@ password, or with RCON off if there was none.
 - RCON never has to face the internet. Keep its port, 28016/TCP by default, closed, unless a tool outside the machine
   needs it.
 - On Linux, the launcher warns when the file can be read by every user on the machine.
+- AFKPanel warns when RCON answers from the internet. See
+  [RCON answers from the internet](https://afkpanel.com/docs/fix-rcon-open).
