@@ -17,7 +17,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Hotwire", "xman2000", "1.1.77")]
+    [Info("Hotwire", "xman2000", "1.1.78")]
     [Description("Scheduled restarts and updates. Announces, counts down, writes a flag, quits.")]
     internal class Hotwire : CovalencePlugin
     {
@@ -8346,7 +8346,7 @@ namespace Oxide.Plugins
             if (player == null || player.IsServer) return;
             if (_panel == null)
             {
-                player.Reply("Discord linking is not available: this server is not connected to AFKPanel.");
+                player.Reply("Discord linking is not available on this server.");
                 return;
             }
             if (args == null || args.Length != 1 || args[0].Length < 4 || args[0].Length > 16)
@@ -8368,9 +8368,9 @@ namespace Oxide.Plugins
                     Timer pending;
                     if (_linkTimers.TryGetValue(id, out pending)) { pending?.Destroy(); _linkTimers.Remove(id); }
                 }
-                if (player.IsConnected) player.Reply(string.IsNullOrEmpty(message) ? (linked ? "Linked." : "That code did not work.") : Clip(message, 200));
-            }, () => { if (player.IsConnected) player.Reply("That code did not work. Type /link in Discord for a new one."); },
-            signedResponse: true, onFailed: code => { if (player.IsConnected && code != 400 && code != 413 && code != 422) player.Reply("AFKPanel could not be reached. Try again in a minute."); });
+                if (player.IsConnected) player.Reply(string.IsNullOrEmpty(message) ? (linked ? "Linked." : "That code is wrong or has expired.") : Clip(message, 200));
+            }, () => { if (player.IsConnected) player.Reply("That code is wrong or has expired. Type /link in Discord to get a new one."); },
+            signedResponse: true, onFailed: code => { if (player.IsConnected && code != 400 && code != 413 && code != 422) player.Reply("Linking is not available right now. Try again in a minute."); });
         }
 
         // ---------------------------------------------------------- ban list

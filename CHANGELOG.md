@@ -24,6 +24,11 @@ sit above a launcher `1.1.7`. Read the label, not the number.
 `hotwire check` prints the plugin's version. Each launcher prints its own
 version as the first line when it starts.
 
+## Plugin 1.1.78 — unreleased
+
+**Clearer `/link` messages.** A wrong or expired code, a server without linking and AFKPanel being unreachable each say
+what happened and what to do.
+
 ## Plugin 1.1.77 — unreleased
 
 **Players can link their Discord account.** A player types `/link` in your Discord server, where AFKPanel's bot gives
