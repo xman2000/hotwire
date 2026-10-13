@@ -37,8 +37,8 @@ A line that breaks a rule is ignored, and `check` names it. See [Check your sett
 | A line breaks a rule, such as `server.identity my world` without quotes | The line is ignored and the default is used. For the settings marked **Stops the start** below, that is a different save, map or port. |
 | A setting on two lines | The later line is used. A wipe or a convar saved from AFKPanel changes the first. |
 
-From launchers 1.1.27 (Windows) and 1.1.12-linux, with Hotwire 1.1.62, AFKPanel shows these lines as a problem on the
-server's page, with the line number and the setting. It never receives the value.
+AFKPanel shows these lines as a problem on the server's page, with the line number and the setting. It never receives
+the value.
 
 ## When a change takes effect
 
@@ -95,8 +95,8 @@ Set with `hotwire.update_mode`.
 To ask for one update in `hotwire` mode, create `UPDATE.flag` in the server's folder and restart the server. The flag
 is deleted once the update succeeds.
 
-AFKPanel Pro can set this line to `auto` or `always` (launchers 1.1.37 and 1.1.22-linux). The launcher writes it at the
-next start, before that start decides whether to update. `off` and `hotwire` are set only here.
+AFKPanel Pro can set this line to `auto` or `always`. The launcher writes it at the next start, before that start decides
+whether to update. `off` and `hotwire` are set only here.
 
 ## Hotwire's own updates
 
@@ -120,15 +120,15 @@ Each is off in the file and shows the value used.
 | `hotwire.steamcmd` on Linux | `/usr/games/steamcmd` | The SteamCMD program |
 | `hotwire.steam_branch` | `public` | The Steam branch. Empty lets Steam keep the last one. |
 | `hotwire.max_days_without_update` | 14 | `hotwire` mode: update after this many days without one. 0 = never. |
-| `hotwire.update_on_new_build` | 1 | Update when Steam has a newer build. With `hotwire.steam_branch` `public`, also when Steam answers with an older build than the installed one (launchers 1.1.29, 1.1.15-linux). |
-| `hotwire.fast_rust_updates` | 0 | 1 = a Rust update on a server with Oxide finishes in one try (launchers 1.1.19, 1.1.7-linux) |
-| `hotwire.recover_refused_update` | 1 | When Steam no longer serves the installed build's file list, update without it (launchers 1.1.19, 1.1.7-linux). 0 = start the installed build. |
+| `hotwire.update_on_new_build` | 1 | Update when Steam has a newer build. With `hotwire.steam_branch` `public`, also when Steam answers with an older build than the installed one. |
+| `hotwire.fast_rust_updates` | 0 | 1 = a Rust update on a server with Oxide finishes in one try |
+| `hotwire.recover_refused_update` | 1 | When Steam no longer serves the installed build's file list, update without it. 0 = start the installed build. |
 | `hotwire.build_check_hours` | 6 | Hours to trust a Steam build check. 0 turns the check off. |
 | `hotwire.steam_tries` | 5 | SteamCMD attempts before starting what is on disk |
 | `hotwire.steam_retry_seconds` | 60 | Seconds between SteamCMD attempts |
 | `hotwire.steamcmd_wait_minutes` | 60 | Minutes to wait for another server's SteamCMD run |
-| `hotwire.steamcmd_update_minutes` | 60 | Launchers 1.1.27 (Windows) and 1.1.12-linux or later: the longest one SteamCMD update may run. Past it SteamCMD is stopped and the installed build starts; the next update carries on from what was downloaded. 0 = no limit. |
-| `hotwire.forced_wipe_steam_minutes` | 15 | Launchers 1.1.20 (Windows) and 1.1.6-linux or later: when a forced wipe waits on the update, keep trying SteamCMD this many minutes. 0 = only `hotwire.steam_tries`. |
+| `hotwire.steamcmd_update_minutes` | 60 | The longest one SteamCMD update may run. Past it SteamCMD is stopped and the installed build starts; the next update carries on from what was downloaded. 0 = no limit. |
+| `hotwire.forced_wipe_steam_minutes` | 15 | When a forced wipe waits on the update, keep trying SteamCMD this many minutes. 0 = only `hotwire.steam_tries`. |
 | `hotwire.install_framework` | 1 | Install and refresh Oxide with the server. 0 = never touch it. |
 | `hotwire.skip_unchanged_framework` | 1 | Skip re-extracting Oxide when neither it nor the game changed |
 | `hotwire.verify_framework` | 1 | Check Oxide against the SHA-256 GitHub publishes |
@@ -137,14 +137,14 @@ Each is off in the file and shows the value used.
 | `hotwire.crash_seconds` | 60 | A run shorter than this counts as a crash |
 | `hotwire.max_crash_streak` | 10 | Crashes in a row before the launcher stops. 0 = never stop. |
 | `hotwire.crash_backoff` | 1 | Wait 30, 60, 120, then 300 seconds after repeated crashes |
-| `hotwire.stop_ask_seconds` | 5 | Linux, launcher 1.1.13-linux or later: when the server is stopped, seconds Hotwire has to answer the request to save and quit |
-| `hotwire.stop_save_seconds` | 90 | Linux, launcher 1.1.13-linux or later: seconds the save and quit may take before Rust is stopped anyway |
+| `hotwire.stop_ask_seconds` | 5 | Linux only. When the server is stopped, seconds Hotwire has to answer the request to save and quit |
+| `hotwire.stop_save_seconds` | 90 | Linux only. Seconds the save and quit may take before Rust is stopped anyway |
 | `hotwire.rotate_logs` | 1 | Keep each run's log |
 | `hotwire.log_keep` | 14 | How many logs to keep. Cannot be 0. |
 | `hotwire.rcon_password_min` | 8 | Shortest RCON password allowed. Cannot be 0. |
 | `hotwire.check_options` | 1 | Warn about a setting name the launcher does not know |
 | `hotwire.backups` | 1 | Carry out the backups Hotwire asks for. 0 = never back up here. |
-| `hotwire.hook_timeout_minutes` | 30 | Launchers 1.1.33 (Windows) and 1.1.19-linux or later: minutes `hotwire-before` and `hotwire-after` may run. A hook still running is stopped and the server starts. Cannot be 0. |
+| `hotwire.hook_timeout_minutes` | 30 | Minutes `hotwire-before` and `hotwire-after` may run. A hook still running is stopped and the server starts. Cannot be 0. |
 
 A `hotwire.` name that is not in this table is ignored, and `check` names it.
 
