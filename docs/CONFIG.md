@@ -235,6 +235,7 @@ Reporting to AFKPanel. Nothing is sent until the Rust server has been connected 
   "Shortest restart countdown from the panel (seconds)": 60,
   "Enforce the panel's ban list": true,
   "Check the ban list every this many seconds": 120,
+  "Discord account linking": true,
   "Report the map and its markers": true,
   "Send map markers at most every this many seconds": 60,
   "Send the map image": true,
@@ -269,6 +270,7 @@ Reporting to AFKPanel. Nothing is sent until the Rust server has been connected 
 | `Shortest restart countdown from the panel (seconds)` | A restart from AFKPanel never has less warning than this, whatever was asked | 10 or more |
 | `Enforce the panel's ban list` | Writes the account's bans into this server's own ban list, so they hold when AFKPanel is unreachable. A ban AFKPanel lifts is lifted here only if AFKPanel added it; a ban made on this server stays. Mutes are not enforced. What AFKPanel added is recorded in `oxide/data/Hotwire/panel_bans.json`. | |
 | `Check the ban list every this many seconds` | How often the ban list is fetched | |
+| `Discord account linking` | The `/link` command, with which a player links the Discord account AFKPanel's bot gave a code to in your Discord server, and, when AFKPanel says this server requires a linked account, removing an unlinked player after the time the admin chose. Server admins are never removed. If AFKPanel cannot be reached, unlinked players can play unless the admin chose otherwise. Checked as often as the ban list. Off: no `/link` and nothing enforced. | |
 | `Report the map and its markers` | The seed, size, custom map address and when the current save was created, when they change; and the markers other plugins place (radius circles and labels, such as a PVP zone), when they change. Never players, shops or bases. | |
 | `Send map markers at most every this many seconds` | | 30 or more |
 | `Send the map image` | The picture Rust draws for Rust+, once per map, a few MB. AFKPanel is asked first, so a restart on the same map sends nothing. | |

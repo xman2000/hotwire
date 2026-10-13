@@ -17,7 +17,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Hotwire", "xman2000", "1.1.76")]
+    [Info("Hotwire", "xman2000", "1.1.77")]
     [Description("Scheduled restarts and updates. Announces, counts down, writes a flag, quits.")]
     internal class Hotwire : CovalencePlugin
     {
@@ -147,6 +147,15 @@ namespace Oxide.Plugins
 
             [JsonProperty("Check the ban list every this many seconds")]
             public int BanSeconds = 120;
+
+            // Players linking their Discord account: /link with the code
+            // AFKPanel gave them in your Discord server. When AFKPanel says this
+            // server requires a linked account, an unlinked player is told how
+            // and removed after the time AFKPanel set, unless AFKPanel cannot be
+            // reached and its admin chose to let them play. Checked as often as
+            // the ban list. Off: no /link and nothing enforced here.
+            [JsonProperty("Discord account linking")]
+            public bool DiscordLinking = true;
 
             // The map's seed, size, custom map address and last wipe, so the
             // panel can show the map, and the map markers other plugins placed
@@ -932,6 +941,7 @@ namespace Oxide.Plugins
 
             AddCovalenceCommand(new[] { "hotwire", "hw" }, nameof(CmdHotwire));
             AddCovalenceCommand("hotwire.ui", nameof(CmdMenuAction));   // goes with the menu
+            if (_config.Panel.DiscordLinking) AddCovalenceCommand("link", nameof(CmdLink));
 
             // The proof the launcher waits for after it updated Hotwire: this version compiled and loaded. Written on
             // every load; read only by the launcher, while an update is on probation.
@@ -3663,6 +3673,7 @@ namespace Oxide.Plugins
             // or, when the policy holds, leaves the cursor where it is.
             if ((_config.Panel.SendLog || _config.Panel.SendConsole) && now >= _logDue && SendLog()) return;
             if (_config.Panel.EnforceBans && PolicyAllowsBans() && now >= _bansDue) { PollBans(); return; }
+            if (_config.Panel.DiscordLinking && now >= _linksDue) { PollLinks(); return; }
 
             // Nothing live is due: one held report, if there are any.
             DrainSpool();
@@ -4455,6 +4466,7 @@ namespace Oxide.Plugins
                 ["schedule"] = _config.Panel.ReportSchedule,
                 ["convars"] = _config.Panel.ReportConvars,
                 ["permissions"] = _config.Panel.ReportPermissions,
+                ["discord_linking"] = _config.Panel.DiscordLinking,
                 ["plugin_time"] = _config.Panel.ReportPluginTime,
                 ["reports"] = _config.Panel.SendReports,
                 ["log"] = _config.Panel.SendLog,
@@ -8030,6 +8042,7 @@ namespace Oxide.Plugins
         private void OnPlayerConnected(BasePlayer player)
         {
             if (player == null) return;
+            CheckDiscordLink(player);
             QueueEvent(_config.Panel.SendPlayers, "join", player.UserIDString, new JObject { ["name"] = MaskSourceGates(player.displayName ?? "") });
             _playersCheckDue = DateTime.MinValue;
         }
@@ -8263,6 +8276,101 @@ namespace Oxide.Plugins
                 _pluginTimeState = $"{list.Count} plugin{(list.Count == 1 ? "" : "s")} over {windowSeconds}s, sent {DateTime.Now:HH:mm:ss}";
             });
             return true;
+        }
+
+        // ---------------------------------------------------------- Discord links
+
+        // A player's Discord account linked to their Steam ID in this community: /link <code>, the code coming from /link in
+        // the community's Discord. When AFKPanel says this server requires one, an unlinked player is told how and, after the
+        // grace AFKPanel set, removed: only if the latest list came through, or AFKPanel cannot be reached and its admin chose
+        // to remove them anyway. Server admins are never removed. Nothing here is on the boot path, and the list is never
+        // fetched while a player waits.
+        private const string PanelLinkPath = "/api/v1/discord-link";
+        private const string PanelLinksPath = "/api/v1/discord-links";
+        private DateTime _linksDue = DateTime.MinValue;
+        private bool _linksRequired;
+        private bool _linksLastOk;
+        private bool _linksRefuseUnchecked;
+        private int _linksGraceMinutes = 10;
+        private string _linksDiscord = "this community's Discord server";
+        private HashSet<string> _linkedIds = new HashSet<string>(StringComparer.Ordinal);
+        private readonly Dictionary<string, Timer> _linkTimers = new Dictionary<string, Timer>(StringComparer.Ordinal);
+
+        private void PollLinks()
+        {
+            _linksDue = DateTime.UtcNow.AddSeconds(BanInterval());
+            PanelRequest("GET", PanelLinksPath, null, response =>
+            {
+                var data = PanelData(response);
+                _linksRequired = data["required"] != null && data["required"].Type == JTokenType.Boolean && (bool)data["required"];
+                _linksRefuseUnchecked = (string)data["when_unchecked"] == "refuse";
+                int grace;
+                _linksGraceMinutes = data["grace_minutes"] != null && int.TryParse(data["grace_minutes"].ToString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out grace) && grace > 0 && grace <= 240 ? grace : 10;
+                var names = (data["discord"] as JArray)?.Select(t => (string)t).Where(n => !string.IsNullOrEmpty(n)).ToList();
+                _linksDiscord = names != null && names.Count > 0 ? Clip(string.Join(" or ", names), 120) : "this community's Discord server";
+                var ids = new HashSet<string>(StringComparer.Ordinal);
+                foreach (var t in (data["steam_ids"] as JArray) ?? new JArray())
+                {
+                    var id = (string)t;
+                    if (id != null && SteamId64.IsMatch(id)) ids.Add(id);
+                }
+                _linkedIds = ids;
+                _linksLastOk = true;
+            }, () => { _linksLastOk = false; }, signedResponse: true, onFailed: code => { _linksLastOk = false; });
+        }
+
+        private void CheckDiscordLink(BasePlayer player)
+        {
+            if (!_config.Panel.DiscordLinking || !_linksRequired || player == null || player.IsAdmin) return;
+            var id = player.UserIDString;
+            if (id == null || _linkedIds.Contains(id)) return;
+
+            var grace = _linksGraceMinutes;
+            player.ChatMessage($"This server requires a linked Discord account. In {_linksDiscord}, type /link, then type /link and the code here within {grace} minutes.");
+            Timer existing;
+            if (_linkTimers.TryGetValue(id, out existing)) existing?.Destroy();
+            _linkTimers[id] = timer.Once(grace * 60f, () =>
+            {
+                _linkTimers.Remove(id);
+                var current = BasePlayer.FindByID(player.userID);
+                if (current == null || current.IsDestroyed || !current.IsConnected || current.IsAdmin) return;
+                if (!_linksRequired || _linkedIds.Contains(id)) return;
+                // Fail open: remove only when the latest list came through, or the admin chose to remove anyway.
+                if (!_linksLastOk && !_linksRefuseUnchecked) return;
+                current.Kick($"Link your Discord account to play here: type /link in {_linksDiscord}, then /link and the code in game.");
+            });
+        }
+
+        private void CmdLink(IPlayer player, string command, string[] args)
+        {
+            if (player == null || player.IsServer) return;
+            if (_panel == null)
+            {
+                player.Reply("Discord linking is not available: this server is not connected to AFKPanel.");
+                return;
+            }
+            if (args == null || args.Length != 1 || args[0].Length < 4 || args[0].Length > 16)
+            {
+                player.Reply($"Type /link in {_linksDiscord} for a code, then type /link and the code here.");
+                return;
+            }
+
+            var id = player.Id;
+            var body = new JObject { ["steam_id"] = id, ["code"] = args[0] }.ToString(Formatting.None);
+            PanelRequest("POST", PanelLinkPath, body, response =>
+            {
+                var data = PanelData(response);
+                var linked = data["linked"] != null && data["linked"].Type == JTokenType.Boolean && (bool)data["linked"];
+                var message = PanelMessage(response);
+                if (linked)
+                {
+                    _linkedIds.Add(id);
+                    Timer pending;
+                    if (_linkTimers.TryGetValue(id, out pending)) { pending?.Destroy(); _linkTimers.Remove(id); }
+                }
+                if (player.IsConnected) player.Reply(string.IsNullOrEmpty(message) ? (linked ? "Linked." : "That code did not work.") : Clip(message, 200));
+            }, () => { if (player.IsConnected) player.Reply("That code did not work. Type /link in Discord for a new one."); },
+            signedResponse: true, onFailed: code => { if (player.IsConnected && code != 400 && code != 413 && code != 422) player.Reply("AFKPanel could not be reached. Try again in a minute."); });
         }
 
         // ---------------------------------------------------------- ban list

@@ -24,6 +24,16 @@ sit above a launcher `1.1.7`. Read the label, not the number.
 `hotwire check` prints the plugin's version. Each launcher prints its own
 version as the first line when it starts.
 
+## Plugin 1.1.77 — unreleased
+
+**Players can link their Discord account.** A player types `/link` in your Discord server, where AFKPanel's bot gives
+them a code only they see, then types `/link` and the code in game. AFKPanel keeps the link for your community only.
+
+**A server can require a linked account to join.** When AFKPanel says so (a Pro account's setting), a player who has not
+linked is told how when they join, and removed after the time the admin chose if they still have not. Server admins are
+never removed. If AFKPanel cannot be reached, unlinked players can play, unless the admin chose to remove them anyway.
+The list of linked players is checked as often as the ban list. `Discord account linking` in the config turns both off.
+
 ## Plugin 1.1.76 — unreleased
 
 **AFKPanel can show Oxide's permission groups.** The plugin reports each group's title, rank and parent, its own
