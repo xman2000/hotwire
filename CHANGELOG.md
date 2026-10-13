@@ -24,6 +24,17 @@ sit above a launcher `1.1.7`. Read the label, not the number.
 `hotwire check` prints the plugin's version. Each launcher prints its own
 version as the first line when it starts.
 
+## Plugin 1.1.80
+
+**AFKPanel can give players items.** An admin picks items, or a saved kit, and gives them to one player who is online
+or to everyone online. The plugin gives each item in the game's own stacks, as `inventory.giveto` does, until the player
+has it all or has no room; nothing is dropped on the ground, and AFKPanel is told how much of each item arrived. An
+unknown item or an amount over 1,000,000 refuses the whole command. `Accept commands from the panel` turns it off with
+every other command.
+
+**The plugin reports the game's item list** once after each start: each item's short name, English name, category and
+stack size, so AFKPanel can offer items by name. Items the game hides are left out. `Report the item list` turns it off.
+
 ## Plugin 1.1.79, launchers 1.1.40 (Windows) and 1.1.25-linux — test pre-release
 
 **No changes.** Only the version numbers moved, so that a server on the previous release has something newer to update

@@ -244,6 +244,7 @@ Reporting to AFKPanel. Nothing is sent until the Rust server has been connected 
   "Report the schedule": true,
   "Report convars": true,
   "Report permissions": true,
+  "Report the item list": true,
   "Accept schedule changes from the panel": true,
   "Accept plugin updates from the panel": true,
   "Send the Oxide log": true,
@@ -265,7 +266,7 @@ Reporting to AFKPanel. Nothing is sent until the Rust server has been connected 
 | --- | --- | --- |
 | `Report to the panel when connected` | `false` stops reporting and keeps the connection | |
 | `Heartbeat every this many seconds` | How often the server says it is up. AFKPanel counts a server as silent after 10 minutes without one. | 10 or more |
-| `Accept commands from the panel` | `false` means AFKPanel's buttons do nothing on this server; what is queued there expires unanswered. Commands: a message to players, a save, a plugin reload or unload, a kick, an announced restart, update or wipe, and schedule changes. Hotwire never unloads itself. | |
+| `Accept commands from the panel` | `false` means AFKPanel's buttons do nothing on this server; what is queued there expires unanswered. Commands: a message to players, a save, a plugin reload or unload, a kick, giving items to a player or to everyone online, an announced restart, update or wipe, and schedule changes. Hotwire never unloads itself. | |
 | `Check for commands every this many seconds` | How often queued commands are fetched | |
 | `Shortest restart countdown from the panel (seconds)` | A restart from AFKPanel never has less warning than this, whatever was asked | 10 or more |
 | `Enforce the panel's ban list` | Writes the account's bans into this server's own ban list, so they hold when AFKPanel is unreachable. A ban AFKPanel lifts is lifted here only if AFKPanel added it; a ban made on this server stays. Mutes are not enforced. What AFKPanel added is recorded in `oxide/data/Hotwire/panel_bans.json`. | |
@@ -291,6 +292,7 @@ Reporting to AFKPanel. Nothing is sent until the Rust server has been connected 
 | `Report the schedule` | Every restart, update and wipe entry, its next time and any problem, the countdown settings, and the running countdown; sent when any of it changes | |
 | `Report convars` | The current value of each convar Facepunch shows in its own admin screen, read from the running game so the list follows Rust's updates, and of any convar AFKPanel changed, with Rust's default. A name containing password, secret, key, token, salt or auth is never sent, nor `env.time`, the game's clock. Read every 60 seconds; sent when a value changes. AFKPanel changed: `oxide/data/Hotwire/panel_convars.json`. | |
 | `Report permissions` | Oxide's permission groups: each group's title, rank, parent, its own permissions and member count, and which plugin registered each permission. At the Identified sharing level, also each group's members by Steam ID and name, except the players group (`DefaultGroups.Players`, usually `default`), which is sent as a count. Read only; nothing changes a group. Read every 60 seconds and after a group change Oxide announces; sent when one changes. | |
+| `Report the item list` | The game's item list: each item's short name, English name, category and stack size, so AFKPanel can offer items by name when an admin gives a player items. The same for every server on a Rust build; read once the game has loaded it and sent once after each start. Items the game hides are left out. | |
 | `Accept schedule changes from the panel` | Lets AFKPanel add, edit, enable, disable and remove entries. Each change is checked as a chat command is, and refused if the schedule changed in game since AFKPanel last saw it. `false` keeps the schedule editable in game only; a restart, update or wipe now, and cancelling a countdown, follow `Accept commands from the panel`. | |
 | `Accept plugin updates from the panel` | Lets AFKPanel update a plugin to uMod's current file, and undo that update. Hotwire downloads the file from umod.org by the plugin's file name and installs it only if its SHA-256 is the one AFKPanel named. It first copies the plugin's file, its config (`oxide/config/<name>.json`) and its data (`oxide/data/<name>.json` and `oxide/data/<name>/`) to `oxide/data/Hotwire/plugin-backups/<name>/`, replacing the previous copy, and puts them back if the new file has not loaded within 3 minutes. Refused while a restart is counting down, while another plugin is being changed, for Hotwire itself, and when the copy would be larger than 50 MB. `false` means plugin files change only by hand. | |
 

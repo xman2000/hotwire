@@ -17,7 +17,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Hotwire", "xman2000", "1.1.79")]
+    [Info("Hotwire", "xman2000", "1.1.80")]
     [Description("Scheduled restarts and updates. Announces, counts down, writes a flag, quits.")]
     internal class Hotwire : CovalencePlugin
     {
@@ -208,6 +208,13 @@ namespace Oxide.Plugins
             // a group. Sent when a group changes.
             [JsonProperty("Report permissions")]
             public bool ReportPermissions = true;
+
+            // The game's item list: each item's short name, English name,
+            // category and stack size, so AFKPanel can offer them by name when
+            // an admin gives a player items. The same for every server on a
+            // Rust build; sent once after each start.
+            [JsonProperty("Report the item list")]
+            public bool ReportItems = true;
 
             // Adding, editing, enabling, disabling and removing schedule entries
             // from the panel. They are checked exactly as the chat commands check
@@ -3386,6 +3393,7 @@ namespace Oxide.Plugins
         {
             public string Status;
             public string Result;
+            public JObject Detail;
             public DateTime HandledUtc;
         }
 
@@ -3637,6 +3645,12 @@ namespace Oxide.Plugins
             {
                 if (now >= _permissionsCheckDue) { _permissionsCheckDue = now.AddSeconds(60); RefreshPermissions(); }
                 if (_permissionsJson != null && _permissionsKey != _permissionsSentKey && PolicyAllowsKind("permissions")) { SendPermissions(); return; }
+            }
+
+            if (_config.Panel.ReportItems)
+            {
+                if (_itemsJson == null && now >= _itemsCheckDue) { _itemsCheckDue = now.AddSeconds(60); RefreshItems(); }
+                if (_itemsJson != null && _itemsJson != _itemsSentJson && PolicyAllowsKind("items")) { SendItems(); return; }
             }
 
             if (_config.Panel.ReportSchedule)
@@ -4466,6 +4480,7 @@ namespace Oxide.Plugins
                 ["schedule"] = _config.Panel.ReportSchedule,
                 ["convars"] = _config.Panel.ReportConvars,
                 ["permissions"] = _config.Panel.ReportPermissions,
+                ["items"] = _config.Panel.ReportItems,
                 ["discord_linking"] = _config.Panel.DiscordLinking,
                 ["plugin_time"] = _config.Panel.ReportPluginTime,
                 ["reports"] = _config.Panel.SendReports,
@@ -6088,6 +6103,158 @@ namespace Oxide.Plugins
                 () => { _permissionsSentKey = key; });
         }
 
+        // ---------------------------------------------------------- items
+
+        // The game's item list, for AFKPanel to offer by name when an admin gives items (`give`). It is fixed for a Rust
+        // build, so it is read once, when the game has loaded it, and sent once after each start.
+        private const int MaxReportedItems = 3000;
+        private DateTime _itemsCheckDue = DateTime.MinValue;
+        private string _itemsJson;
+        private string _itemsSentJson;
+
+        private void RefreshItems()
+        {
+            try
+            {
+                var defs = ItemManager.itemList;
+                if (defs == null || defs.Count == 0) return;
+                var rows = new SortedDictionary<string, JObject>(StringComparer.Ordinal);
+                foreach (var def in defs)
+                {
+                    if (def == null || def.Hidden() || string.IsNullOrEmpty(def.shortname) || !GiveShortName.IsMatch(def.shortname)) continue;
+                    var name = def.displayName != null ? def.displayName.english : null;
+                    rows[def.shortname] = new JObject
+                    {
+                        ["shortname"] = def.shortname,
+                        ["name"] = Clip(string.IsNullOrEmpty(name) ? def.shortname : name, 128),
+                        ["category"] = def.category.ToString(),
+                        ["stack"] = Math.Max(1, def.stackable),
+                    };
+                    if (rows.Count >= MaxReportedItems) break;
+                }
+                var list = new JArray();
+                foreach (var row in rows.Values) list.Add(row);
+                var payload = new JObject { ["items"] = list };
+                payload["items_hash"] = "sha256:" + Sha256Hex(list.ToString(Formatting.None));
+                _itemsJson = payload.ToString(Formatting.None);
+            }
+            catch (Exception ex)
+            {
+                PrintWarning($"Could not read the game's item list to report it: {ex.Message}");
+            }
+        }
+
+        private void SendItems()
+        {
+            var json = _itemsJson;
+            PanelRequest("POST", PanelReportPath, PanelEnvelope("items", JObject.Parse(json)), response => { _itemsSentJson = json; },
+                () => { _itemsSentJson = json; });
+        }
+
+        private const int MaxGiveLines = 30;
+        private const int MaxGiveAmount = 1000000;
+        private static readonly Regex GiveShortName = new Regex("^[a-z0-9._-]{1,64}$");
+
+        // `give`: the items in `items` to the player `steamid`, or to everyone connected when `everyone` is true. Checked
+        // whole before anything is given: an unknown item or a bad amount refuses the command. Each item is given in the
+        // game's own stacks, as `inventory.giveto` gives one, until the player has it all or has no room; what found no
+        // room is not dropped on the ground, and the result says how much each item reached.
+        private void RunGive(JObject args, out string status, out string result)
+        {
+            _commandDetail = null;
+            var everyone = args["everyone"] != null && args["everyone"].Type == JTokenType.Boolean && (bool)args["everyone"];
+            var steamId = ((string)args["steamid"] ?? "").Trim();
+            if (everyone && steamId.Length > 0) { status = "refused"; result = "it names a player and everyone"; return; }
+            if (!everyone && !Regex.IsMatch(steamId, "^[0-9]{17}$")) { status = "refused"; result = "not a SteamID64"; return; }
+
+            var lines = args["items"] as JArray;
+            if (lines == null || lines.Count == 0 || lines.Count > MaxGiveLines) { status = "refused"; result = $"it needs between 1 and {MaxGiveLines} items"; return; }
+            var wanted = new List<KeyValuePair<ItemDefinition, int>>();
+            foreach (var token in lines)
+            {
+                var line = token as JObject;
+                var shortname = line == null ? "" : ((string)line["shortname"] ?? "").Trim();
+                var amount = line == null ? null : line["amount"];
+                if (amount == null || amount.Type != JTokenType.Integer || (long)amount < 1 || (long)amount > MaxGiveAmount)
+                {
+                    status = "refused"; result = $"each amount must be a whole number from 1 to {MaxGiveAmount:N0}"; return;
+                }
+                var def = GiveShortName.IsMatch(shortname) ? ItemManager.FindItemDefinition(shortname) : null;
+                if (def == null) { status = "refused"; result = $"this server has no item '{Clip(shortname, 64)}'"; return; }
+                wanted.Add(new KeyValuePair<ItemDefinition, int>(def, (int)(long)amount));
+            }
+
+            var targets = new List<BasePlayer>();
+            if (everyone)
+            {
+                foreach (var p in players.Connected.ToArray())
+                {
+                    var bp = p == null ? null : p.Object as BasePlayer;
+                    if (bp != null && p.IsConnected) targets.Add(bp);
+                }
+            }
+            else
+            {
+                var p = players.FindPlayerById(steamId);
+                var bp = p == null ? null : p.Object as BasePlayer;
+                if (bp != null && p.IsConnected) targets.Add(bp);
+            }
+
+            var totals = new int[wanted.Count];
+            var shortPlayers = 0;
+            foreach (var player in targets)
+            {
+                var missed = false;
+                for (var i = 0; i < wanted.Count; i++)
+                {
+                    var got = GiveItems(player, wanted[i].Key, wanted[i].Value);
+                    totals[i] += got;
+                    if (got < wanted[i].Value) missed = true;
+                }
+                if (missed) shortPlayers++;
+            }
+
+            var given = new JArray();
+            for (var i = 0; i < wanted.Count; i++) given.Add(new JObject { ["shortname"] = wanted[i].Key.shortname, ["amount"] = totals[i] });
+            _commandDetail = new JObject { ["players"] = targets.Count, ["short"] = shortPlayers, ["items"] = given };
+
+            status = "done";
+            if (targets.Count == 0) { result = everyone ? "nobody was connected" : "the player was not connected"; return; }
+            if (everyone)
+            {
+                result = $"given to {targets.Count} player(s)" + (shortPlayers > 0 ? $"; {shortPlayers} had no room for everything" : "");
+                return;
+            }
+            var parts = new List<string>();
+            for (var i = 0; i < wanted.Count; i++)
+            {
+                var name = wanted[i].Key.displayName != null ? wanted[i].Key.displayName.english : wanted[i].Key.shortname;
+                parts.Add(totals[i] == wanted[i].Value ? $"{name} x{totals[i]:N0}" : $"{name} {totals[i]:N0} of {wanted[i].Value:N0}");
+            }
+            result = "gave " + string.Join(", ", parts) + (shortPlayers > 0 ? "; the inventory had no room for the rest" : "");
+        }
+
+        // Gives up to `amount` of one item in the game's stacks, and says how many the player received. A stack that
+        // finds no room is removed, never dropped; a stack partly merged into one the player holds counts what merged.
+        private static int GiveItems(BasePlayer player, ItemDefinition def, int amount)
+        {
+            var given = 0;
+            var stack = Math.Max(1, def.stackable);
+            for (var guard = 0; given < amount && guard < 200; guard++)
+            {
+                var item = ItemManager.Create(def, Math.Min(stack, amount - given));
+                if (item == null) break;
+                var before = item.amount;
+                item.OnVirginSpawn();
+                if (player.inventory.GiveItem(item)) { given += before; continue; }
+                given += before - item.amount;
+                item.Remove();
+                break;
+            }
+            if (given > 0) player.Command("note.inv", def.itemid, given);
+            return given;
+        }
+
         // Oxide's own announcements of a group change: read again at the next pass. Declared with object parameters, so a
         // future change of argument type still matches; a player joining the players group is not a change worth a report.
         private void PermissionsChanged() => _permissionsCheckDue = DateTime.MinValue;
@@ -6522,7 +6689,7 @@ namespace Oxide.Plugins
             if (_handledCommands.TryGetValue(key, out done) || _handledCommands.TryGetValue(id, out done))
             {
                 QueueCommandResult(id, "received", null);
-                QueueCommandResult(id, done.Status, done.Result);
+                QueueCommandResult(id, done.Status, done.Result, done.Detail);
                 return;
             }
 
@@ -6571,6 +6738,7 @@ namespace Oxide.Plugins
             }
 
             string status, result;
+            _commandDetail = null;
             try
             {
                 RunCommand(verb, args, out status, out result);
@@ -6583,8 +6751,10 @@ namespace Oxide.Plugins
 
             record.Status = status;
             record.Result = result;
+            record.Detail = _commandDetail;
+            _commandDetail = null;
             WriteData(CommandsDataFile, _handledCommands);
-            QueueCommandResult(id, status, result);
+            QueueCommandResult(id, status, result, record.Detail);
             Puts($"Panel command {id} ({verb}): {status}{(string.IsNullOrEmpty(result) ? "" : " -- " + result)}");
         }
 
@@ -6676,6 +6846,9 @@ namespace Oxide.Plugins
                     status = ok ? "done" : "failed"; result = ok ? "unloaded; it loads again when the server restarts" : "Oxide would not unload it; see the server console";
                     return;
                 }
+                case "give":
+                    RunGive(args, out status, out result);
+                    return;
                 case "kick":
                 {
                     var steamId = ((string)args["steamid"] ?? "").Trim();
@@ -7540,11 +7713,17 @@ namespace Oxide.Plugins
 
         #endregion
 
-        private void QueueCommandResult(string id, string status, string result)
+        // What a command gave back beyond its one line, for the verbs that have more to say (`give`'s `given`); set by the
+        // verb while it runs and kept with the command, so a repeated answer carries it too.
+        private JObject _commandDetail;
+
+        private void QueueCommandResult(string id, string status, string result, JObject detail = null)
         {
             long numeric;
             JToken idToken = long.TryParse(id, NumberStyles.Integer, CultureInfo.InvariantCulture, out numeric) ? (JToken)numeric : id;
-            _commandResults.Enqueue(new JObject { ["id"] = idToken, ["status"] = status, ["result"] = result });
+            var payload = new JObject { ["id"] = idToken, ["status"] = status, ["result"] = result };
+            if (detail != null) payload["given"] = detail.DeepClone();
+            _commandResults.Enqueue(payload);
         }
 
         private void SendCommandResult()
