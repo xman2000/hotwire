@@ -24,6 +24,14 @@ sit above a launcher `1.1.7`. Read the label, not the number.
 `hotwire check` prints the plugin's version. Each launcher prints its own
 version as the first line when it starts.
 
+## Plugin 1.1.81
+
+**Mutes from AFKPanel are enforced.** A player AFKPanel muted cannot use chat or voice on this server until the mute
+ends. They are told they are muted, at most every 30 seconds; chat commands such as `/link` still work, and what they
+type is still reported as before. Mutes come with the ban list, under `Enforce the panel's ban list`: turning that
+off stops them. They are kept in `oxide/data/Hotwire/panel_mutes.json`, so they hold across a restart before
+AFKPanel answers. The message is `Muted` in the plugin's lang file.
+
 ## Plugin 1.1.80
 
 **AFKPanel can give players items.** An admin picks items, or a saved kit, and gives them to one player who is online

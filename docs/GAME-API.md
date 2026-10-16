@@ -240,6 +240,17 @@ shape, and the name of the extension carrying the framework version.
 This file becomes load-bearing the moment something here needs a game type —
 event-aware deferral is the likely first case.
 
+## Chat and voice hooks
+
+Read 2026-10-16 from an Oxide-patched `Assembly-CSharp.dll` (9 October 2026 build) and Oxide.Rust's `RustHooks.cs`:
+
+- **`OnPlayerVoice`** is called from `ServerMgr.OnPlayerVoice(Message)` as `CallHook("OnPlayerVoice", basePlayer,
+  arraySegment)`, where the second argument is an `ArraySegment<byte>`, not a `byte[]`. A non-null return drops the
+  packet. Hotwire takes the second argument as `object`.
+- **`OnPlayerChat`** is called from Oxide's `IOnPlayerChat` as `(BasePlayer, string, Chat.ChatChannel)`, after chat
+  commands have been run and only for a connected player; a non-null return stops the message. Hotwire takes the
+  channel as `object`.
+
 ## How to add an entry
 
 Run the inspection tools in `tools/` against the `Assembly-CSharp.dll` of the

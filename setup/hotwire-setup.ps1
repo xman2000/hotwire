@@ -2630,7 +2630,7 @@ function Invoke-Connect {
         Write-Host "To connect this server you need a code from the panel."
         Write-Host ""
         Write-Host "  1. Open $url and sign in"
-        Write-Host "  2. Go to Servers, and press ""Connect a server"""
+        Write-Host "  2. Press ""Connect a server"" in the sidebar"
         Write-Host "  3. Copy the code it shows you -- it looks like HW-4K2P-9XQR"
         Write-Host ""
         Write-Note "It is good for one hour and one machine. Nothing is written until you confirm."

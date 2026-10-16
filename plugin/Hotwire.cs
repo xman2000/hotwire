@@ -17,7 +17,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Hotwire", "xman2000", "1.1.80")]
+    [Info("Hotwire", "xman2000", "1.1.81")]
     [Description("Scheduled restarts and updates. Announces, counts down, writes a flag, quits.")]
     internal class Hotwire : CovalencePlugin
     {
@@ -3381,6 +3381,7 @@ namespace Oxide.Plugins
         private const string BuildManifest = "appmanifest_258550.acf";
         private const string CommandsDataFile = "Hotwire/panel_commands";
         private const string BansDataFile = "Hotwire/panel_bans";
+        private const string MutesDataFile = "Hotwire/panel_mutes";
 
         private sealed class PanelLink
         {
@@ -3473,6 +3474,9 @@ namespace Oxide.Plugins
         private string _commandsState = "not checked yet";
 
         private Dictionary<string, AppliedBan> _appliedBans = new Dictionary<string, AppliedBan>();
+        // The panel's mutes, kept on disk so they hold across a restart before the panel answers.
+        private Dictionary<string, long> _panelMutes = new Dictionary<string, long>(StringComparer.Ordinal);
+        private readonly Dictionary<string, DateTime> _muteToldAt = new Dictionary<string, DateTime>(StringComparer.Ordinal);
         private string _bansListHash;
         private string _bansState = "not checked yet";
         private string _bansNotice;
@@ -3484,6 +3488,8 @@ namespace Oxide.Plugins
             _handledCommands = ReadData<Dictionary<string, HandledCommand>>(CommandsDataFile) ?? new Dictionary<string, HandledCommand>();
             PruneHandledCommands();
             _appliedBans = ReadData<Dictionary<string, AppliedBan>>(BansDataFile) ?? new Dictionary<string, AppliedBan>();
+            var savedMutes = ReadData<Dictionary<string, long>>(MutesDataFile);
+            _panelMutes = savedMutes == null ? new Dictionary<string, long>(StringComparer.Ordinal) : new Dictionary<string, long>(savedMutes, StringComparer.Ordinal);
 
             if (!_config.Panel.Enabled)
             {
@@ -8229,6 +8235,7 @@ namespace Oxide.Plugins
         private void OnPlayerDisconnected(BasePlayer player, string reason)
         {
             if (player == null) return;
+            _muteToldAt.Remove(player.UserIDString);
             QueueEvent(_config.Panel.SendPlayers, "leave", player.UserIDString, new JObject
             {
                 ["name"] = MaskSourceGates(player.displayName ?? ""),
@@ -8239,15 +8246,44 @@ namespace Oxide.Plugins
 
         // The channel is taken as an object and named by its value, so a Rust
         // update that moves the chat types cannot stop this plugin compiling.
-        // Returns nothing, so it never changes whether a message is delivered.
-        private void OnPlayerChat(BasePlayer player, string message, object channel)
+        // A message is still reported when it is blocked, since it was typed.
+        // Blocks only a player the panel muted; chat commands are run by Oxide
+        // before this hook, so a muted player can still type /link.
+        private object OnPlayerChat(BasePlayer player, string message, object channel)
         {
-            if (player == null || string.IsNullOrEmpty(message)) return;
+            if (player == null || string.IsNullOrEmpty(message)) return null;
             QueueEvent(_config.Panel.SendChat, "chat", player.UserIDString, new JObject
             {
                 ["channel"] = channel == null ? "unknown" : channel.ToString().ToLowerInvariant(),
                 ["text"] = MaskSourceGates(message)
             });
+            return MutedByPanel(player) ? (object)true : null;
+        }
+
+        // Voice arrives as a segment of bytes in this Rust; it is taken as an
+        // object, as the chat channel is, so a change of type cannot stop this
+        // plugin compiling. Called for every voice packet: nothing to look up
+        // when nobody is muted.
+        private object OnPlayerVoice(BasePlayer player, object data)
+        {
+            if (_panelMutes.Count == 0 || player == null) return null;
+            return MutedByPanel(player) ? (object)true : null;
+        }
+
+        // A player the panel muted, while this server enforces the panel's ban
+        // list. Tells them, at most every 30 seconds, so voice cannot flood chat.
+        private bool MutedByPanel(BasePlayer player)
+        {
+            if (!_config.Panel.EnforceBans || _panelMutes.Count == 0) return false;
+            var id = player.UserIDString;
+            if (!MuteActive(_panelMutes, id, (long)(DateTime.UtcNow - UnixEpoch).TotalSeconds)) return false;
+            DateTime told;
+            if (!_muteToldAt.TryGetValue(id, out told) || (DateTime.UtcNow - told).TotalSeconds >= 30)
+            {
+                _muteToldAt[id] = DateTime.UtcNow;
+                if (player.IsConnected) player.ChatMessage(T("Muted", id));
+            }
+            return true;
         }
 
         // An F7 report. The game calls this for every report, whatever its report
@@ -8575,7 +8611,7 @@ namespace Oxide.Plugins
                 var hash = (string)data["list_hash"];
                 if (hash != null && hash == _bansListHash)
                 {
-                    _bansState = $"{_appliedBans.Count} ban(s) from the panel, unchanged (checked {DateTime.Now:HH:mm:ss})";
+                    _bansState = $"{_appliedBans.Count} ban(s) and {_panelMutes.Count} mute(s) from the panel, unchanged (checked {DateTime.Now:HH:mm:ss})";
                     return;
                 }
 
@@ -8593,13 +8629,13 @@ namespace Oxide.Plugins
         {
             var now = (long)(DateTime.UtcNow - UnixEpoch).TotalSeconds;
             var wanted = new Dictionary<string, AppliedBan>();
-            var mutes = 0;
+            var mutes = MutesFromList(bans, now);
 
             foreach (var b in bans.OfType<JObject>())
             {
                 var id = ((string)b["steamid"] ?? "").Trim();
                 if (!Regex.IsMatch(id, "^[0-9]{17}$")) continue;
-                if (b["is_mute"] != null && (bool)b["is_mute"]) { mutes++; continue; }
+                if (b["is_mute"] != null && (bool)b["is_mute"]) continue;
                 long expiry = 0;
                 if (b["expiry"] != null) long.TryParse(b["expiry"].ToString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out expiry);
                 if (expiry != 0 && expiry <= now) continue;
@@ -8636,12 +8672,14 @@ namespace Oxide.Plugins
             }
 
             WriteData(BansDataFile, _appliedBans);
-            _bansState = $"{_appliedBans.Count} ban(s) from the panel (checked {DateTime.Now:HH:mm:ss})";
+            var mutesChanged = mutes.Count != _panelMutes.Count || mutes.Any(m => { long e; return !_panelMutes.TryGetValue(m.Key, out e) || e != m.Value; });
+            _panelMutes = mutes;
+            WriteData(MutesDataFile, _panelMutes);
+            _bansState = $"{_appliedBans.Count} ban(s) and {_panelMutes.Count} mute(s) from the panel (checked {DateTime.Now:HH:mm:ss})";
 
-            if (added + updated + lifted > 0)
-                Puts($"Ban list from the panel: {added} added, {updated} changed, {lifted} lifted." +
-                     (alreadyLocal > 0 ? $" {alreadyLocal} were already banned here and are left as they are." : "") +
-                     (mutes > 0 ? $" {mutes} mute(s) are not enforced by the plugin." : ""));
+            if (added + updated + lifted > 0 || mutesChanged)
+                Puts($"Ban list from the panel: {added} added, {updated} changed, {lifted} lifted, {_panelMutes.Count} mute(s)." +
+                     (alreadyLocal > 0 ? $" {alreadyLocal} were already banned here and are left as they are." : ""));
         }
 
         private void ApplyBan(string id, AppliedBan ban, long now)
@@ -10763,6 +10801,32 @@ namespace Oxide.Plugins
                 return value > 0 && value <= int.MaxValue ? (int)value : 0;
             }
             catch { return 0; }   // larger than a long
+        }
+
+        // The panel's mutes, from its ban list: Steam ID to the Unix time the mute ends, 0 for never. An ended mute or a
+        // malformed Steam ID is left out.
+        private static Dictionary<string, long> MutesFromList(JArray bans, long now)
+        {
+            var mutes = new Dictionary<string, long>(StringComparer.Ordinal);
+            if (bans == null) return mutes;
+            foreach (var b in bans.OfType<JObject>())
+            {
+                if (b["is_mute"] == null || b["is_mute"].Type != JTokenType.Boolean || !(bool)b["is_mute"]) continue;
+                var id = ((string)b["steamid"] ?? "").Trim();
+                if (!System.Text.RegularExpressions.Regex.IsMatch(id, "^[0-9]{17}$")) continue;
+                long expiry = 0;
+                if (b["expiry"] != null) long.TryParse(b["expiry"].ToString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out expiry);
+                if (expiry < 0 || (expiry != 0 && expiry <= now)) continue;
+                mutes[id] = expiry;
+            }
+            return mutes;
+        }
+
+        // Whether a player is muted now: a mute with no end, or one that has not ended yet.
+        private static bool MuteActive(Dictionary<string, long> mutes, string id, long now)
+        {
+            long expiry;
+            return mutes != null && id != null && mutes.TryGetValue(id, out expiry) && (expiry == 0 || expiry > now);
         }
 
         #endregion
@@ -13803,6 +13867,7 @@ namespace Oxide.Plugins
                 ["MenuCountingDown"] = "COUNTING DOWN  --  {0} in {1}",
                 ["MenuCancel"] = "Cancel the restart",
                 ["MenuNothingScheduledRestart"] = "Nothing scheduled. Add a restart below.",
+                ["Muted"] = "You are muted on this server: chat and voice are off for you.",
                 ["MenuEdit"] = "Edit",
                 ["MenuDelete"] = "Delete",
                 ["MenuBack"] = "< Back",

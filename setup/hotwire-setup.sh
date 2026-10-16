@@ -403,7 +403,7 @@ cmd_connect() {
         say "To connect this server you need a code from the panel."
         say ""
         say "  1. Open ${C_BLD}${url}${C_OFF} and sign in"
-        say "  2. Go to Servers, and press \"Connect a server\""
+        say "  2. Press \"Connect a server\" in the sidebar"
         say "  3. Copy the code it shows you -- it looks like HW-4K2P-9XQR"
         say ""
         note "  It is good for one hour and one machine. Nothing is written until you confirm."

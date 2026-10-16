@@ -387,6 +387,24 @@ namespace PluginSigning
             Check("below pseudonymous a Steam ID is still blocked",
                 Extracted.BlockSteamIds((string)psn["log_line"]) == "Kestrel[[blocked:identity]] was killed by [blocked:identity]");
 
+            // The panel's mutes come from its ban list: only mutes, only well-formed Steam IDs, only ones not yet ended.
+            var muteNow = 1_800_000_000L;
+            var banList = JArray.Parse(@"[
+                { ""steamid"": ""76561198000000001"", ""expiry"": 0, ""is_mute"": true },
+                { ""steamid"": ""76561198000000002"", ""expiry"": 1800000600, ""is_mute"": true },
+                { ""steamid"": ""76561198000000003"", ""expiry"": 1799999999, ""is_mute"": true },
+                { ""steamid"": ""76561198000000004"", ""expiry"": 0, ""is_mute"": false },
+                { ""steamid"": ""7656119800000000x"", ""expiry"": 0, ""is_mute"": true },
+                { ""steamid"": ""76561198000000005"", ""expiry"": 0 }
+            ]");
+            var mutes = Extracted.MutesFromList(banList, muteNow);
+            Check("a mute with no end and one still running are kept", mutes.Count == 2 && mutes["76561198000000001"] == 0 && mutes["76561198000000002"] == 1800000600, string.Join(",", mutes.Keys));
+            Check("an ended mute, a ban and a malformed Steam ID are not mutes", !mutes.ContainsKey("76561198000000003") && !mutes.ContainsKey("76561198000000004") && !mutes.ContainsKey("76561198000000005"));
+            Check("a muted player is muted", Extracted.MuteActive(mutes, "76561198000000001", muteNow));
+            Check("a mute ends at its time", Extracted.MuteActive(mutes, "76561198000000002", 1800000599) && !Extracted.MuteActive(mutes, "76561198000000002", 1800000600));
+            Check("nobody else is muted", !Extracted.MuteActive(mutes, "76561198000000004", muteNow) && !Extracted.MuteActive(mutes, null, muteNow) && !Extracted.MuteActive(null, "76561198000000001", muteNow));
+            Check("no list is no mutes", Extracted.MutesFromList(null, muteNow).Count == 0);
+
             Console.WriteLine(_failed == 0 ? "All checks passed." : _failed + " check(s) FAILED.");
             return _failed == 0 ? 0 : 1;
         }
