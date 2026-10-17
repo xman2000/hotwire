@@ -5,11 +5,19 @@
 # A launcher installs an update of Hotwire only when the release's manifest.json is signed by a key it trusts. The
 # private keys never leave their owner: they are not in this repository, not in GitHub, and not on AFKPanel.
 #
-#   tools/sign-release.sh file <manifest.json> <key-id> <private-key.pem>
-#       Sign a manifest with a key in a file (the test key), writing manifest.sig beside it.
-#   tools/sign-release.sh release <tag> <key-id> <private-key.pem>
+#   tools/sign-release.sh file <manifest.json> <key-id> <private-key.pem | yubikey>
+#       Sign a manifest, writing manifest.sig beside it.
+#   tools/sign-release.sh release <tag> <key-id> <private-key.pem | yubikey>
 #       Download the release's manifest and every file it names from GitHub, check each file's SHA-256 against the
 #       manifest, sign it, and upload manifest.sig to the release (gh, logged in).
+#
+# The key is a file (the test key), or the word yubikey: the key in the plugged-in YubiKey's PIV signing slot (9c),
+# used through its PKCS#11 module with pkcs11-tool. The private key never leaves the YubiKey; pkcs11-tool asks for
+# the PIN, and the YubiKey waits for a touch when it was made to. Settings, all optional:
+#   HOTWIRE_PKCS11_MODULE  the PKCS#11 module (default: Yubico's libykcs11)
+#   HOTWIRE_PKCS11_KEY     the key's PKCS#11 id (default 02, which libykcs11 gives slot 9c)
+#   HOTWIRE_PKCS11_TOKEN   a token label, to pick one token when several are present
+#   HOTWIRE_PKCS11_PIN     for tests only: a real key's PIN is typed, never put in the environment
 #
 # The signature is ECDSA P-256 over the manifest's bytes with SHA-256. manifest.sig holds two lines:
 #   key <key-id>
@@ -20,10 +28,39 @@ set -euo pipefail
 
 usage() { sed -n '3,16p' "$0" >&2; exit 2; }
 
-# sign <manifest> <key-id> <key.pem> -> <manifest dir>/manifest.sig
+# sign_pkcs11 <manifest> -> 64 bytes of r and s on stdout, from the key on the PKCS#11 token.
+sign_pkcs11() {
+    local manifest="$1" module="${HOTWIRE_PKCS11_MODULE:-}" keyid="${HOTWIRE_PKCS11_KEY:-02}" tmp args
+    command -v pkcs11-tool >/dev/null || { echo "pkcs11-tool is not installed (Ubuntu: apt install opensc)." >&2; exit 1; }
+    if [ -z "$module" ]; then
+        for module in /usr/lib/x86_64-linux-gnu/libykcs11.so /usr/lib/aarch64-linux-gnu/libykcs11.so /usr/local/lib/libykcs11.so \
+                      /usr/lib/libykcs11.so ''; do [ -f "$module" ] && break; done
+        [ -n "$module" ] || { echo "Yubico's PKCS#11 module is not installed (Ubuntu: apt install ykcs11)." >&2; exit 1; }
+    fi
+    [[ "$keyid" =~ ^[0-9A-Fa-f]{2,64}$ ]] || { echo "Not a PKCS#11 key id: $keyid" >&2; exit 2; }
+    tmp="$(mktemp -d)"
+    args=(--module "$module" --id "$keyid")
+    [ -n "${HOTWIRE_PKCS11_TOKEN:-}" ] && args+=(--token-label "$HOTWIRE_PKCS11_TOKEN")
+    # The token signs the SHA-256 of the manifest (plain ECDSA, which every PKCS#11 module has) and returns r and s.
+    openssl dgst -sha256 -binary -out "$tmp/digest" "$manifest"
+    if [ -n "${HOTWIRE_PKCS11_PIN:-}" ]; then args+=(--pin "$HOTWIRE_PKCS11_PIN"); else args+=(--login); fi
+    echo "Signing with the key on the token. Enter its PIN, then touch it if it blinks." >&2
+    pkcs11-tool "${args[@]}" --sign --mechanism ECDSA --signature-format rs \
+        --input-file "$tmp/digest" --output-file "$tmp/rs" >&2 || { rm -rf "$tmp"; echo "The token did not sign." >&2; exit 1; }
+    [ "$(wc -c < "$tmp/rs")" -eq 64 ] || { rm -rf "$tmp"; echo "The signature did not come out as two 32-byte numbers." >&2; exit 1; }
+    od -An -tx1 "$tmp/rs" | tr -d ' \n'
+    rm -rf "$tmp"
+}
+
+# sign <manifest> <key-id> <key.pem | yubikey> -> <manifest dir>/manifest.sig
 sign() {
     local manifest="$1" id="$2" key="$3" der hex r s out
     [[ "$id" =~ ^[A-Za-z0-9._-]{1,64}$ ]] || { echo "Not a key id: $id" >&2; exit 2; }
+    if [ "$key" = yubikey ]; then
+        hex="$(sign_pkcs11 "$manifest")"
+        write_sig "$manifest" "$id" "${hex:0:64}" "${hex:64:64}"
+        return
+    fi
     der="$(mktemp)"; trap 'rm -f "$der"' RETURN
     openssl dgst -sha256 -sign "$key" -out "$der" "$manifest"
     # The DER signature is two INTEGERs; each becomes exactly 32 bytes.
@@ -31,6 +68,12 @@ sign() {
     r="$(printf '%s' "$hex" | sed -n 1p)"; s="$(printf '%s' "$hex" | sed -n 2p)"
     r="$(printf '%064s' "$r" | tr ' ' 0)"; s="$(printf '%064s' "$s" | tr ' ' 0)"
     [ ${#r} -eq 64 ] && [ ${#s} -eq 64 ] || { echo "The signature did not come out as two 32-byte numbers." >&2; exit 1; }
+    write_sig "$manifest" "$id" "$r" "$s"
+}
+
+# write_sig <manifest> <key-id> <r hex> <s hex> -> <manifest dir>/manifest.sig
+write_sig() {
+    local manifest="$1" id="$2" r="$3" s="$4" out
     out="$(dirname "$manifest")/manifest.sig"
     local esc; esc="$(printf '%s%s' "$r" "$s" | sed 's/../\\x&/g')"
     { printf 'key %s\n' "$id"; printf 'sig %s\n' "$(printf '%b' "$esc" | base64 -w 0)"; } > "$out"

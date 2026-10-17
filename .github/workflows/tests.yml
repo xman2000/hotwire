@@ -46,6 +46,11 @@ jobs:
       - name: Hotwire updating itself
         run: bash tests/self-update/run.sh
 
+      - name: Signing a release with a key on a token
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq softhsm2 opensc >/dev/null
+          bash tests/release-signing/run.sh
+
       - name: Shell scripts parse
         run: |
           bash -n launcher/hotwire.sh && bash -n launcher/hotwire-launcher.sh
