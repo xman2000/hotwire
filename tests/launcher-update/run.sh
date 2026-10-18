@@ -212,7 +212,7 @@ check "nothing left in the spool" "$(tail -1 <<< "$got" | tr -d ' ')" "0"
 
 echo "hotwire.sh: each step of a start is reported, with SteamCMD's progress"
 # SteamCMD's stand-in for this test: Steam's build list, then a first try refused and a second that prints the progress
-# lines SteamCMD printed on rust2 on 2026-10-12 and finishes.
+# lines SteamCMD printed on a test server on 2026-10-12 and finishes.
 cat > "$work/steamcmd-steps" <<'S'
 #!/usr/bin/env bash
 if printf '%s\n' "$@" | grep -q app_info_print; then

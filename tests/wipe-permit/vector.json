@@ -46,5 +46,5 @@
             "permit": "PaHg7drZGizy2wf49Sh6rzFSXF7VFYJMhLQyNesWeHsTIAcub0DCCUCBPWjGspuYHT3PM0CCV3eI90n0H9hvBwdBlK9vix9hasXPywrTeoFxQwrRPJwZXQU0hK7UmRqFBmXgafhQ71Pm19hBgp6ClbVQvwp/sv8tzZv6juff2CskYjV9JSqsUhrXSD+PRxqeePI3yffcP4qD+AXRZ2+vSriWxsy9MzZH5UMXkJhMWxc68nplKw4q+0tOaWbbUUgJ8GtkDRx1gusWa5CbdgjPcmobc8x9KG45E7o+gHu5YXVX4zI4y7c9nb0tqv1BLpScRwDKVs/WnC99HWfbpvTS7w=="
         }
     ],
-    "note_v2": "Version 2 (ADR-0306): version 1 with blueprints after levelurl. Same test key."
+    "note_v2": "Version 2: version 1 with blueprints after levelurl. Same test key."
 }

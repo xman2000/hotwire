@@ -24,6 +24,11 @@ sit above a launcher `1.1.7`. Read the label, not the number.
 `hotwire check` prints the plugin's version. Each launcher prints its own
 version as the first line when it starts.
 
+## Launchers 1.1.42 (Windows) and 1.1.27-linux, plugin 1.1.82, setup 0.2.32 (Linux)
+
+Comments tidied; nothing they do has changed. Release signing now checks a release against this repository before it
+signs it.
+
 ## Launchers 1.1.41 (Windows) and 1.1.26-linux
 
 Implemented more secure key management.

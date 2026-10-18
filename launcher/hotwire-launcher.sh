@@ -21,7 +21,7 @@
 #     hotwire.cfg. The plugin works out this file's code hash itself, and
 #     AFKPanel compares it with the released launchers'; nothing waits on that
 #     answer.
-HOTWIRE_LAUNCHER_VERSION="1.1.26-linux"
+HOTWIRE_LAUNCHER_VERSION="1.1.27-linux"
 HOTWIRE_LAUNCHER_CAPABILITIES="supervise,update,framework_verify,crash_backstop,log_rotate,convar_persist,wipe,wipe_same_map,wipe_custom_map,backup,settings_file,rcon_optional,stop_saves,wipe_permit,wipe_permit_blueprints,update_mode_set,update_progress,start_steps,self_update"
 
 # ======================================================================
@@ -1483,7 +1483,7 @@ _cfg_set_one() {  # <name> <value>: stdin to stdout
         { rows[NR] = $0 }
         {
             # The LAST line that sets it, as the reader takes the last: with a name set twice, changing the first
-            # left the old value in force (LS-5).
+            # left the old value in force.
             s = $0; sub(/\r$/, "", s); sub(/^[ \t]+/, "", s)
             split(s, f, /[ \t]+/)
             if (tolower(f[1]) == ln) { done = NR }

@@ -8,8 +8,11 @@
 #   tools/sign-release.sh file <manifest.json> <key-id> <private-key.pem | yubikey>
 #       Sign a manifest, writing manifest.sig beside it.
 #   tools/sign-release.sh release <tag> <key-id> <private-key.pem | yubikey>
-#       Download the release's manifest and every file it names from GitHub, check each file's SHA-256 against the
-#       manifest, sign it, and upload manifest.sig to the release (gh, logged in).
+#       Download the release's manifest and every file it names from GitHub, refuse unless the manifest is the one this
+#       checkout builds from the commit it names (on this checkout's main), check each file's SHA-256 against it, show
+#       the changes since the last release, sign it, and upload manifest.sig to the release (gh, logged in).
+#   tools/sign-release.sh local-manifest <tag> <commit>
+#       Print the manifest this checkout builds for that tag from that commit.
 #
 # The key is a file, or the word yubikey for a key on a PKCS#11 token (pkcs11-tool). Settings, all optional:
 #   HOTWIRE_PKCS11_MODULE  the PKCS#11 module
@@ -24,7 +27,7 @@
 
 set -euo pipefail
 
-usage() { sed -n '3,19p' "$0" >&2; exit 2; }
+usage() { sed -n '3,26p' "$0" >&2; exit 2; }
 
 # sign_pkcs11 <manifest> -> 64 bytes of r and s on stdout, from the key on the PKCS#11 token.
 sign_pkcs11() {
@@ -78,7 +81,39 @@ write_sig() {
     echo "Signed $manifest with $id: $out"
 }
 
+repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+# local_manifest <tag> <commit>: the manifest tools/build-release.sh makes for that tag from that commit, built here from
+# the commit's own files (git show, as the build reads them), so it needs nothing beyond git. tests/release-signing
+# checks the two agree byte for byte.
+local_manifest() {
+    local tag="$1" commit="$2" f sum first=1 pv wv lv
+    blob() { git -C "$repo" show "$commit:$1"; }
+    crlf() { sed 's/\r$//; s/$/\r/'; }
+    file_sum() {
+        case "$1" in
+            Hotwire.cs) blob plugin/Hotwire.cs ;;
+            hotwire.ps1|hotwire.bat) blob "launcher/$1" | crlf ;;
+            *) blob "launcher/$1" ;;
+        esac | sha256sum | cut -c1-64
+    }
+    pv=$(blob plugin/Hotwire.cs | sed -n -E 's/.*\[Info\("Hotwire", "[^"]*", "([0-9.]+)"\)\].*/\1/p' | head -1)
+    wv=$(blob launcher/hotwire.ps1 | sed -n -E "s/^\\\$LauncherVersion = '([0-9.]+)'.*/\1/p" | head -1)
+    lv=$(blob launcher/hotwire-launcher.sh | sed -n -E 's/^HOTWIRE_LAUNCHER_VERSION="([0-9.a-z-]+)"$/\1/p' | head -1)
+    printf '{\n  "format": 1,\n  "tag": "%s",\n  "commit": "%s",\n' "$tag" "$commit"
+    printf '  "plugin": "%s",\n  "launcher_windows": "%s",\n  "launcher_linux": "%s",\n' "$pv" "$wv" "$lv"
+    printf '  "files": {\n'
+    for f in Hotwire.cs hotwire.ps1 hotwire.bat hotwire.sh hotwire-launcher.sh; do
+        [ "$first" = 1 ] || printf ',\n'; first=0
+        printf '    "%s": "%s"' "$f" "$(file_sum "$f")"
+    done
+    printf '\n  }\n}\n'
+}
+
 case "${1:-}" in
+    local-manifest)
+        [ $# -eq 3 ] || usage
+        local_manifest "$2" "$3" ;;
     file)
         [ $# -eq 4 ] || usage
         sign "$2" "$3" "$4" ;;
@@ -86,6 +121,23 @@ case "${1:-}" in
         [ $# -eq 4 ] || usage
         tag="$2"; work="$(mktemp -d)"; trap 'rm -rf "$work"' EXIT
         gh release download "$tag" --repo xman2000/hotwire --pattern manifest.json --dir "$work"
+        # Only what this checkout builds is signed: the release's manifest must be, byte for byte, the one built here
+        # from the commit it names, and that commit must be on this checkout's main.
+        commit="$(sed -n -E 's/^[[:space:]]*"commit":[[:space:]]*"([0-9a-f]{40})",?[[:space:]]*$/\1/p' "$work/manifest.json" | head -1)"
+        [ -n "$commit" ] || { echo "NOT SIGNED: the release's manifest names no commit." >&2; exit 1; }
+        git -C "$repo" cat-file -e "$commit^{commit}" 2>/dev/null \
+            || { echo "NOT SIGNED: commit $commit is not in this checkout. Run git pull here, then try again." >&2; exit 1; }
+        git -C "$repo" merge-base --is-ancestor "$commit" main \
+            || { echo "NOT SIGNED: commit $commit is not on this checkout's main." >&2; exit 1; }
+        local_manifest "$tag" "$commit" > "$work/manifest.local.json"
+        cmp -s "$work/manifest.json" "$work/manifest.local.json" || {
+            echo "NOT SIGNED: the release's manifest is not the one commit $commit builds here:" >&2
+            diff "$work/manifest.local.json" "$work/manifest.json" >&2 || true
+            exit 1
+        }
+        echo "manifest.json is the one $commit builds here. Signing these changes:"
+        previous="$(git -C "$repo" describe --tags --abbrev=0 --match 'release-*' "$commit^" 2>/dev/null || true)"
+        git -C "$repo" log --oneline ${previous:+"$previous..$commit"} | head -40
         # Every file the manifest names, checked against it, so a signature never vouches for a file nobody looked at.
         names="$(sed -n -E '/"files"/,/\}/s/^[[:space:]]*"([^"]+)":[[:space:]]*"([0-9a-f]{64})",?[[:space:]]*$/\1 \2/p' "$work/manifest.json")"
         [ -n "$names" ] || { echo "The manifest names no files." >&2; exit 1; }

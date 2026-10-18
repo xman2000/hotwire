@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# tools/sign-release.sh signing with a key on a token (the yubikey key): a software token stands in for a hardware one, its
+# tools/sign-release.sh signing with a key on a token: a software token stands in for the real one, its
 # key is made inside the token, and the manifest.sig it produces must pass both launchers' own signature checks
 # (hotwire-launcher.sh's su_verify and hotwire.ps1's Test-ReleaseSignature, the second under PowerShell 7).
 # What this cannot prove: a hardware token's prompts, and Windows PowerShell 5.1.
@@ -80,6 +80,13 @@ windows_keys="$(sed -n "/^\$SuKeys = \[ordered\]@{$/,/^}$/s/^ *'\([^']*\)' = '\(
 check "the Linux launcher trusts only the release keys" "$linux_keys" "$yk"
 check "the Windows launcher trusts only the release keys" "$windows_keys" "$yk"
 check "no launcher still carries the test key" "$(grep -c -E 'test-2026-10-12|SU_TEST_KEY|SuTestKey' launcher/hotwire-launcher.sh launcher/hotwire.ps1 | awk -F: '{s+=$2} END {print s}')" 0
+
+# What the tool compares a release with: the manifest it builds from a commit is the one the release build makes from it.
+git_head="$(git rev-parse HEAD)"
+TAG=release-test HOTWIRE_SKIP_LIST_CHECK=1 bash tools/build-release.sh >/dev/null
+check "the tool's manifest is the release build's, byte for byte" \
+    "$(bash tools/sign-release.sh local-manifest release-test "$git_head" | cmp -s - dist/manifest.json && echo same || echo differs)" same
+rm -rf dist
 
 # Failing safely: a wrong token or a missing key writes no signature.
 rm -f "$work/manifest.sig"

@@ -39,7 +39,7 @@ Downloads: [Windows](https://afkpanel.com/get/windows) · [Linux](https://afkpan
 [AFKPanel](https://afkpanel.com) shows every connected server in one place and tells you when one goes down.
 
 - **Free, for one server:** every health check and every alert, live status, players and performance, restarts and updates on your schedule, a public status page, and warnings and errors from your logs for 7 days, other lines for 1 day.
-- **Pro, coming soon:** restart, update, reload plugins, message players and change settings from the panel; kicks and bans on every server at once; every F7 report in one inbox; every chat, searchable; wiping the map; automatic backups, kept and rotated on your server; every log level with search; and 90 days of player counts and performance. $5 a month for the first server and $2.50 for each one after. See [Pricing](https://afkpanel.com/pricing).
+- **Pro:** restart, update, reload plugins, message players and change settings from the panel; kicks and bans on every server at once; every F7 report in one inbox; every chat, searchable; wiping the map; automatic backups, kept and rotated on your server; every log level with search; and 90 days of player counts and performance. $5 a month for the first server and $2.50 for each one after. See [Pricing](https://afkpanel.com/pricing).
 
 To connect a server, see [Connect a server](https://afkpanel.com/docs/connect-a-server). On a host panel's console, `hotwire connect <code>` does the same.
 

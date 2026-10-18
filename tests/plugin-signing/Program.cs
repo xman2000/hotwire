@@ -366,7 +366,7 @@ namespace PluginSigning
             Check("a log file from 30 days ago is read when 30 days are kept", !Extracted.LogFileTooOld("oxide_2026-08-19.txt", today, 30));
             Check("today's log file is read", !Extracted.LogFileTooOld("oxide_2026-09-18.txt", today, 30));
             Check("a file name that is not a date is never skipped", !Extracted.LogFileTooOld("oxide_latest.txt", today, 30) && !Extracted.LogFileTooOld(null, today, 30));
-            // The default is a week (the owner: "if the server hasn't connected in seven days, they have other issues").
+            // The default is a week.
             Check("a log file from 8 days ago is skipped when a week is kept", Extracted.LogFileTooOld("oxide_2026-09-10.txt", today, 7));
             Check("a log file from 6 days ago is read when a week is kept", !Extracted.LogFileTooOld("oxide_2026-09-12.txt", today, 7));
             var weekOld = new System.Collections.Generic.List<Extracted.SpoolEntry> {

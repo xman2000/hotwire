@@ -17,7 +17,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Hotwire", "xman2000", "1.1.81")]
+    [Info("Hotwire", "xman2000", "1.1.82")]
     [Description("Scheduled restarts and updates. Announces, counts down, writes a flag, quits.")]
     internal class Hotwire : CovalencePlugin
     {
@@ -4632,7 +4632,7 @@ namespace Oxide.Plugins
         private const string SelfUpdateRequestName = "SELF_UPDATE.request";
         private const string UpdateNowRequestName = "HOTWIRE_UPDATE.request";
         private const string LoadedFile = "Hotwire/loaded";
-        // Updating Hotwire itself is free (the owner, 2026-10-12): these two are carried out on a plan that sends no other
+        // Updating Hotwire itself is free: these two are carried out on a plan that sends no other
         // command, and nothing else is.
         private static readonly HashSet<string> SelfUpdateVerbs = new HashSet<string>(StringComparer.Ordinal) { "launcher.self_update", "hotwire.update" };
 
@@ -9819,7 +9819,7 @@ namespace Oxide.Plugins
                 && p.LevelUrl == (levelUrl ?? "") && ((p.Blueprints ?? "") == "" || p.Blueprints == (blueprints ?? "")) && p.Expires > now);
         }
 
-        // The blueprints a permission should sign: only for a launcher that checks version 2 (ADR-0306 on AFKPanel).
+        // The blueprints a permission should sign: only for a launcher that checks version 2.
         private string PermitBlueprints(string blueprints) => LauncherCan("wipe_permit_blueprints") ? (blueprints ?? "keep") : "";
 
         // The next wipe this server needs a permission for and does not hold: the one being counted down to, then any

@@ -103,7 +103,7 @@ $script:CfgBroken = $false
 
 
 # Each step of a start (start_step): SteamCMD's tries and its progress, through Update-Rust with a stand-in that prints
-# the lines SteamCMD printed on rust2 on 2026-10-12.
+# the lines SteamCMD printed on a test server on 2026-10-12.
 $script:Sent.Clear(); $script:UpdateReason = ''
 $script:StartId = '2026-10-12T13:44:43Z'
 $steps = Join-Path $work 'steamcmd-steps'

@@ -28,7 +28,7 @@
 #
 set -uo pipefail
 
-VERSION="0.2.31"
+VERSION="0.2.32"
 DEFAULT_PANEL="https://afkpanel.com"
 
 # ---------------------------------------------------------------- output ----
@@ -1550,7 +1550,7 @@ cfg_set_text() {  # cfg_set_text <name> <value>   stdin -> stdout
         { rows[NR] = $0 }
         {
             # The LAST line that sets it, as the reader takes the last: with a name set twice, changing the first
-            # left the old value in force (LS-5).
+            # left the old value in force.
             s = $0; sub(/\r$/, "", s); sub(/^[ \t]+/, "", s)
             split(s, f, /[ \t]+/)
             if (tolower(f[1]) == ln) { done = NR }
