@@ -24,6 +24,15 @@ sit above a launcher `1.1.7`. Read the label, not the number.
 `hotwire check` prints the plugin's version. Each launcher prints its own
 version as the first line when it starts.
 
+## Launchers 1.1.41 (Windows) and 1.1.26-linux
+
+**Updates of Hotwire are signed with keys that never leave a YubiKey.** Each launcher trusts two keys, each made on its
+own YubiKey and checked against Yubico's attestation that it was; either key's signature is enough, so one key lost is
+not an outage. A release signed by any other key installs nothing, and the server starts as it would have.
+
+The test signing key is gone, and with it `hotwire.self_update_test_key`. A `hotwire.cfg` that still has that line
+starts as before; `check` names it as not a launcher setting, and it can be deleted.
+
 ## Plugin 1.1.81
 
 **Mutes from AFKPanel are enforced.** A player AFKPanel muted cannot use chat or voice on this server until the mute

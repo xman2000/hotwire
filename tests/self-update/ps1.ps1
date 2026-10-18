@@ -17,9 +17,7 @@ $base = $env:HOTWIRE_TEST_URL
 $WipeFlag = 'WIPE.flag'
 $SuFeed = $base + '/feed.json'
 $SuDownload = $base + '/dl'
-$SuKeys = [ordered]@{}
-$SuTestKeyId = 'test-2026-10-12'
-$SuTestKey = $env:HOTWIRE_TEST_PUB
+$SuKeys = [ordered]@{ 'test-2026-10-12' = $env:HOTWIRE_TEST_PUB }
 $SuProbationSeconds = 1200
 $script:StartId = ''; $script:CheckOnly = $false
 $script:Sent = New-Object System.Collections.ArrayList
@@ -29,7 +27,7 @@ function Send-Now { }
 # The settings reader, for the settings this needs.
 function Import-Settings([switch]$Quiet) {
     foreach ($pair in @(@('hotwire.self_update', 'SELF_UPDATE', 'off'), @('hotwire.self_update_days', 'SELF_UPDATE_DAYS', '3'),
-            @('hotwire.self_update_channel', 'SELF_UPDATE_CHANNEL', 'release'), @('hotwire.self_update_test_key', 'SELF_UPDATE_TEST_KEY', '0'))) {
+            @('hotwire.self_update_channel', 'SELF_UPDATE_CHANNEL', 'release'))) {
         $m = Select-String -LiteralPath $cfg -Pattern ('^' + [regex]::Escape($pair[0]) + '\s+(\S+)') | Select-Object -Last 1
         [Environment]::SetEnvironmentVariable($pair[1], $(if ($m) { $m.Matches[0].Groups[1].Value } else { $pair[2] }))
     }
@@ -43,7 +41,7 @@ function New-Server([string]$mode, [string]$days) {
     [IO.File]::WriteAllText([IO.Path]::Combine($root, 'oxide', 'plugins', 'Hotwire.cs'), "[Info(`"Hotwire`", `"xman2000`", `"1.1.74`")]`n")
     [IO.File]::WriteAllText((Join-Path $root 'hotwire.ps1'), "`$LauncherVersion = '1.1.39'`n")
     $script:cfg = Join-Path $root 'hotwire.cfg'
-    [IO.File]::WriteAllText($cfg, "hotwire.self_update $mode`nhotwire.self_update_days $days`nhotwire.self_update_test_key 1`n")
+    [IO.File]::WriteAllText($cfg, "hotwire.self_update $mode`nhotwire.self_update_days $days`n")
     $script:LauncherVersion = '1.1.39'
     $script:SuDir = [IO.Path]::Combine($root, 'hotwire', 'self-update')
     $script:SuPrevious = [IO.Path]::Combine($root, 'hotwire', 'previous')
@@ -77,8 +75,9 @@ New-Server 'auto' '0'
 "hotwire.ps1: early release takes today's|$([void](Invoke-SelfUpdate); Get-Pv)|1.1.76"
 
 New-Server 'auto' '3'
-(Get-Content $cfg) -replace 'self_update_test_key 1', 'self_update_test_key 0' | Set-Content $cfg; [void](Import-Settings)
-"hotwire.ps1: without the test key trusted nothing installs|$(Invoke-SelfUpdate)/$(Get-Pv)|False/1.1.74"
+$trusted = $SuKeys; $SuKeys = [ordered]@{}
+"hotwire.ps1: a launcher that does not list the release's key installs nothing|$(Invoke-SelfUpdate)/$(Get-Pv)|False/1.1.74"
+$SuKeys = $trusted
 
 New-Server 'auto' '3'
 $script:LauncherVersion = '1.1.99'

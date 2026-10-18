@@ -21,7 +21,7 @@
 #     hotwire.cfg. The plugin works out this file's code hash itself, and
 #     AFKPanel compares it with the released launchers'; nothing waits on that
 #     answer.
-HOTWIRE_LAUNCHER_VERSION="1.1.25-linux"
+HOTWIRE_LAUNCHER_VERSION="1.1.26-linux"
 HOTWIRE_LAUNCHER_CAPABILITIES="supervise,update,framework_verify,crash_backstop,log_rotate,convar_persist,wipe,wipe_same_map,wipe_custom_map,backup,settings_file,rcon_optional,stop_saves,wipe_permit,wipe_permit_blueprints,update_mode_set,update_progress,start_steps,self_update"
 
 # ======================================================================
@@ -102,7 +102,7 @@ set_defaults() {
     RESTART_ON_EXIT="1"; RESTART_DELAY="15"; CRASH_SECONDS="60"; MAX_CRASH_STREAK="10"; CRASH_BACKOFF="1"
     ROTATE_LOGS="1"; LOG_KEEP="14"; RCON_PASSWORD_MIN="8"; CHECK_OPTIONS="1"; BACKUPS="1"
     HOOK_TIMEOUT_MINUTES="30"
-    SELF_UPDATE="off"; SELF_UPDATE_DAYS="3"; SELF_UPDATE_CHANNEL="release"; SELF_UPDATE_TEST_KEY="0"
+    SELF_UPDATE="off"; SELF_UPDATE_DAYS="3"; SELF_UPDATE_CHANNEL="release"
     EXTRA_CONVARS=()
 }
 set_defaults
@@ -233,7 +233,6 @@ declare -A HW_SETTINGS=(
     [hotwire.self_update]="SELF_UPDATE selfupdate"
     [hotwire.self_update_days]="SELF_UPDATE_DAYS int"
     [hotwire.self_update_channel]="SELF_UPDATE_CHANNEL channel"
-    [hotwire.self_update_test_key]="SELF_UPDATE_TEST_KEY bool"
 )
 # Rust convars the launcher itself reads -> "<VARIABLE> <kind>". "critical" kinds
 # are never defaulted when a line fails (see above).
@@ -1779,10 +1778,9 @@ SU_DOWNLOAD="https://github.com/xman2000/hotwire/releases/download"
 # For the tests only: a feed and downloads served elsewhere. Still nothing installs unless a trusted key signed it.
 [ -n "${HOTWIRE_SELF_UPDATE_FEED:-}" ] && SU_FEED="$HOTWIRE_SELF_UPDATE_FEED"
 [ -n "${HOTWIRE_SELF_UPDATE_DOWNLOAD:-}" ] && SU_DOWNLOAD="$HOTWIRE_SELF_UPDATE_DOWNLOAD"
-# The keys a release may be signed with: "<id>:<public key, P-256, X then Y in hex>". The test key is trusted only
-# where hotwire.cfg says hotwire.self_update_test_key 1.
-SU_KEYS=()
-SU_TEST_KEY="test-2026-10-12:e21f6da76eae1d3bed968459d952541bf0e38ec238d19e010a8e87f701b8f9ebbe8fcacd624a39db52b46f5ed8dbdbd54f3ff1b2d21ea29df2ce890ed429bb31"
+# The keys a release may be signed with: "<id>:<public key, P-256, X then Y in hex>". Each is made on, and never leaves,
+# one of two YubiKeys; the id is the YubiKey's serial number. Either key's signature is enough.
+SU_KEYS=("yk-38628349:876f79ef6a2a50e64677a099245995cb9f787ca8eb77dde0ebcd615c8af9603a9e2551dfe21759d86be07be8e7627aef9a9f3345fe0fa3c353871b79d7ea147e" "yk-38628153:f1e8fe30f1201bf8ec8d856402f9113cf66a322be8b90907b89f28ff3f24fb005d5a86d99e58117499a561464e6cf96fa3ae4a7b54fdae086dc9e93fdb7357b9")
 SU_DIR="$ROOT/hotwire/self-update"
 SU_PREVIOUS="$ROOT/hotwire/previous"
 SU_APPLIED="$SU_DIR/applied"
@@ -1845,8 +1843,7 @@ su_verify() {
     [ ${#rs} -eq 128 ] || { SU_WHY="the signature is not 64 bytes"; return 1; }
     r="$(su_der_int "${rs:0:64}")"; s="$(su_der_int "${rs:64:64}")"
     der="30$(printf '%02x' $(( (${#r} + ${#s}) / 2 )))$r$s"
-    local keys=("${SU_KEYS[@]}"); [ "${SELF_UPDATE_TEST_KEY:-0}" = "1" ] && keys+=("$SU_TEST_KEY")
-    for key in "${keys[@]}"; do
+    for key in "${SU_KEYS[@]}"; do
         keyid="${key%%:*}"; pub="${key#*:}"
         [ "$keyid" = "$id" ] || continue
         tmp="$(mktemp -d)" || break
@@ -1867,7 +1864,7 @@ su_mf() { sed -n -E "s/^[[:space:]]*\"$2\":[[:space:]]*\"([^\"]*)\",?[[:space:]]
 su_mf_file() { sed -n -E "/\"files\"/,/\}/s/^[[:space:]]*\"$2\":[[:space:]]*\"([0-9a-f]{64})\",?[[:space:]]*$/\1/p" "$1" | head -1; }
 
 # SELF_UPDATE.request from AFKPanel: "off", "auto <days>", or "retry". It is written into hotwire.cfg, as the update
-# mode is. Only these words are taken: the channel and the test key stay the admin's, in hotwire.cfg.
+# mode is. Only these words are taken: the channel stays the admin's, in hotwire.cfg.
 su_apply_request() {
     [ -e "$SU_REQUEST" ] || [ -L "$SU_REQUEST" ] || return 0
     rm -f "$SU_RESULT"

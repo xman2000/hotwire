@@ -46,7 +46,7 @@ sed '/^# Main\.$/,$d' launcher/hotwire-launcher.sh > "$work/lib.sh"
 linux() {  # linux <manifest> <sig>: su_verify's answer
     local manifest="$1" sig="$2"
     ( set +u; set --; HOTWIRE_ROOT_OVERRIDE="$work" source "$work/lib.sh" >/dev/null 2>&1
-      SU_KEYS=("yk-test:$pub"); SELF_UPDATE_TEST_KEY=0; su_verify "$manifest" "$sig"; echo $? )
+      SU_KEYS=("yk-test:$pub"); su_verify "$manifest" "$sig"; echo $? )
 }
 check "Linux launcher accepts it" "$(linux "$work/manifest.json" "$work/good.sig")" 0
 cp "$work/manifest.json" "$work/changed.json"; sed -i 's/release-test/release-tampered/' "$work/changed.json"
@@ -63,7 +63,7 @@ if command -v "$PWSH" >/dev/null 2>&1; then
             $ast = [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path "launcher/hotwire.ps1"), [ref]$t, [ref]$e)
             $want = @("Get-Env", "ConvertFrom-Hex", "Test-ReleaseSignature")
             foreach ($f in $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $want -contains $n.Name }, $true)) { . ([scriptblock]::Create($f.Extent.Text)) }
-            $SuKeys = [ordered]@{ "yk-test" = $env:HW_PUB }; $SuTestKeyId = "none"; $SuTestKey = ""
+            $SuKeys = [ordered]@{ "yk-test" = $env:HW_PUB }
             Test-ReleaseSignature $env:HW_MANIFEST $env:HW_SIG' 2>/dev/null | tail -1
     }
     check "Windows launcher accepts it" "$(HW_PUB="$pub" HW_MANIFEST="$work/manifest.json" HW_SIG="$work/good.sig" win)" True
@@ -71,6 +71,15 @@ if command -v "$PWSH" >/dev/null 2>&1; then
 else
     echo "  FAIL  PowerShell 7 ($PWSH) is needed for the Windows launcher's check"; fail=1
 fi
+
+# The keys the launchers ship with: the two made on the YubiKeys, the same in both launchers, and nothing else.
+yk="yk-38628153:f1e8fe30f1201bf8ec8d856402f9113cf66a322be8b90907b89f28ff3f24fb005d5a86d99e58117499a561464e6cf96fa3ae4a7b54fdae086dc9e93fdb7357b9
+yk-38628349:876f79ef6a2a50e64677a099245995cb9f787ca8eb77dde0ebcd615c8af9603a9e2551dfe21759d86be07be8e7627aef9a9f3345fe0fa3c353871b79d7ea147e"
+linux_keys="$(sed -n 's/^SU_KEYS=(\(.*\))$/\1/p' launcher/hotwire-launcher.sh | tr ' ' '\n' | tr -d '"' | sort)"
+windows_keys="$(sed -n "/^\$SuKeys = \[ordered\]@{$/,/^}$/s/^ *'\([^']*\)' = '\([0-9a-f]*\)'$/\1:\2/p" launcher/hotwire.ps1 | sort)"
+check "the Linux launcher trusts the two YubiKey keys and no other" "$linux_keys" "$yk"
+check "the Windows launcher trusts the two YubiKey keys and no other" "$windows_keys" "$yk"
+check "no launcher still carries the test key" "$(grep -c -E 'test-2026-10-12|SU_TEST_KEY|SuTestKey' launcher/hotwire-launcher.sh launcher/hotwire.ps1 | awk -F: '{s+=$2} END {print s}')" 0
 
 # Failing safely: a wrong token or a missing key writes no signature.
 rm -f "$work/manifest.sig"

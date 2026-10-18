@@ -13,10 +13,10 @@ check() { if [ "$2" = "$3" ]; then echo "  ok    $1"; else echo "  FAIL  $1: got
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
-# A key for the test, and the launcher with its public half as the test key.
+# A key for the test, and the launcher trusting only its public half.
 openssl ecparam -name prime256v1 -genkey -noout -out "$work/key.pem" 2>/dev/null
 pub="$(openssl ec -in "$work/key.pem" -pubout -outform DER 2>/dev/null | tail -c 64 | od -An -tx1 | tr -d ' \n')"
-sed -E -e "s/^SU_TEST_KEY=\"test-2026-10-12:[0-9a-f]{128}\"$/SU_TEST_KEY=\"test-2026-10-12:$pub\"/" -e "s/^HOTWIRE_LAUNCHER_VERSION=\".*\"$/HOTWIRE_LAUNCHER_VERSION=\"1.1.24-linux\"/" launcher/hotwire-launcher.sh > "$work/hotwire-launcher.sh"
+sed -E -e "s/^SU_KEYS=\(.*\)$/SU_KEYS=(\"test-2026-10-12:$pub\")/" -e "s/^HOTWIRE_LAUNCHER_VERSION=\".*\"$/HOTWIRE_LAUNCHER_VERSION=\"1.1.24-linux\"/" launcher/hotwire-launcher.sh > "$work/hotwire-launcher.sh"
 grep -q "$pub" "$work/hotwire-launcher.sh" || { echo "could not put the test key in place"; exit 1; }
 printf '#!/bin/sh\nexit 0\n' > "$work/steamcmd"; chmod +x "$work/steamcmd"
 other="$work/other.pem"; openssl ecparam -name prime256v1 -genkey -noout -out "$other" 2>/dev/null
@@ -47,7 +47,7 @@ server() {
     cp launcher/hotwire.sh "$root/hotwire.sh"
     cp "$work/hotwire-launcher.sh" "$root/hotwire-launcher.sh"
     printf '// plugin\n[Info("Hotwire", "xman2000", "1.1.74")]\nclass Hotwire {}\n' > "$root/oxide/plugins/Hotwire.cs"
-    printf 'hotwire.self_update %s\nhotwire.self_update_days %s\nhotwire.self_update_test_key 1\nhotwire.update_mode off\nhotwire.steamcmd %s\n' "${1:-auto}" "${2:-3}" "$work/steamcmd" > "$root/hotwire.cfg"
+    printf 'hotwire.self_update %s\nhotwire.self_update_days %s\nhotwire.update_mode off\nhotwire.steamcmd %s\n' "${1:-auto}" "${2:-3}" "$work/steamcmd" > "$root/hotwire.cfg"
     printf '%s' "$root"
 }
 
@@ -117,9 +117,10 @@ r="$(server auto 0)"; check "returns 0" "$(step "$r")" 0; check "plugin unchange
 check "says why" "$(grep -c 'is not the file the signed manifest names' "$r/step.log")" 1
 feed_items=("${feed_items[@]:1}"); { printf '['; IFS=,; printf '%s' "${feed_items[*]}"; unset IFS; printf ']\n'; } > "$work/feed.json"
 
-echo "without the test key trusted, nothing installs"
-r="$(server auto 0)"; sed -i 's/^hotwire.self_update_test_key 1$/hotwire.self_update_test_key 0/' "$r/hotwire.cfg"
+echo "a launcher that does not list the release's key installs nothing"
+r="$(server auto 0)"; sed -i 's/^SU_KEYS=(.*)$/SU_KEYS=()/' "$r/hotwire-launcher.sh"
 check "returns 0" "$(step "$r")" 0; check "plugin unchanged" "$(pv "$r")" 1.1.74
+check "says why" "$(grep -c 'not signed by a key this launcher trusts' "$r/step.log")" 1
 
 echo "a new launcher that refuses this server's settings is not installed, and updates stop"
 release release-badcheck 1.1.92 1.1.42-linux 9

@@ -15,7 +15,7 @@
 $ErrorActionPreference = 'Stop'
 # Who this launcher is, for the plugin: written to oxide\data\Hotwire\launcher.json before every start. The plugin
 # offers only the features in the capability list; settings_file means the settings come from hotwire.cfg.
-$LauncherVersion = '1.1.40'
+$LauncherVersion = '1.1.41'
 $LauncherCapabilities = 'supervise,update,framework_verify,crash_backstop,log_rotate,convar_persist,wipe,wipe_same_map,wipe_custom_map,backup,settings_file,rcon_optional,wipe_permit,wipe_permit_blueprints,update_mode_set,update_progress,start_steps,self_update'
 # HOTWIRE_ROOT_OVERRIDE is set only by the launcher itself, when it checks a downloaded update against this server's
 # settings before installing it (Invoke-SelfUpdate): the copy runs from hotwire\self-update\stage\.
@@ -75,7 +75,6 @@ $hwSettings = @{
     'hotwire.self_update'              = @('SELF_UPDATE', 'selfupdate', 'off')
     'hotwire.self_update_days'         = @('SELF_UPDATE_DAYS', 'int', '3')
     'hotwire.self_update_channel'      = @('SELF_UPDATE_CHANNEL', 'channel', 'release')
-    'hotwire.self_update_test_key'     = @('SELF_UPDATE_TEST_KEY', 'bool', '0')
 }
 # Rust convars the launcher reads itself: kind, default.
 $cvSettings = @{
@@ -706,10 +705,12 @@ $SuDownload = 'https://github.com/xman2000/hotwire/releases/download'
 # For the tests only. Still nothing installs unless a trusted key signed it.
 if ($env:HOTWIRE_SELF_UPDATE_FEED) { $SuFeed = $env:HOTWIRE_SELF_UPDATE_FEED }
 if ($env:HOTWIRE_SELF_UPDATE_DOWNLOAD) { $SuDownload = $env:HOTWIRE_SELF_UPDATE_DOWNLOAD }
-# id = public key, P-256, X then Y in hex. The test key is trusted only where hotwire.cfg says hotwire.self_update_test_key 1.
-$SuKeys = [ordered]@{}
-$SuTestKeyId = 'test-2026-10-12'
-$SuTestKey = 'e21f6da76eae1d3bed968459d952541bf0e38ec238d19e010a8e87f701b8f9ebbe8fcacd624a39db52b46f5ed8dbdbd54f3ff1b2d21ea29df2ce890ed429bb31'
+# id = public key, P-256, X then Y in hex. Each is made on, and never leaves, one of two YubiKeys; the id is the YubiKey's
+# serial number. Either key's signature is enough.
+$SuKeys = [ordered]@{
+    'yk-38628349' = '876f79ef6a2a50e64677a099245995cb9f787ca8eb77dde0ebcd615c8af9603a9e2551dfe21759d86be07be8e7627aef9a9f3345fe0fa3c353871b79d7ea147e'
+    'yk-38628153' = 'f1e8fe30f1201bf8ec8d856402f9113cf66a322be8b90907b89f28ff3f24fb005d5a86d99e58117499a561464e6cf96fa3ae4a7b54fdae086dc9e93fdb7357b9'
+}
 $SuDir = [IO.Path]::Combine($root, 'hotwire', 'self-update')
 $SuPrevious = [IO.Path]::Combine($root, 'hotwire', 'previous')
 $SuApplied = Join-Path $SuDir 'applied'
@@ -764,9 +765,7 @@ function Test-ReleaseSignature([string]$manifest, [string]$sigFile) {
     if (-not $id -or -not $sig) { $script:SuWhy = 'the signature file is not in the expected form'; return $false }
     $rs = [Convert]::FromBase64String($sig)
     if ($rs.Length -ne 64) { $script:SuWhy = 'the signature is not 64 bytes'; return $false }
-    $keys = [ordered]@{}
-    foreach ($k in $SuKeys.Keys) { $keys[$k] = $SuKeys[$k] }
-    if ((Get-Env 'SELF_UPDATE_TEST_KEY') -eq '1') { $keys[$SuTestKeyId] = $SuTestKey }
+    $keys = $SuKeys
     if (-not $keys.Contains($id)) { $script:SuWhy = 'it is not signed by a key this launcher trusts (key ' + $id + ')'; return $false }
     $pub = ConvertFrom-Hex $keys[$id]
     $q = New-Object Security.Cryptography.ECPoint
@@ -781,7 +780,7 @@ function Test-ReleaseSignature([string]$manifest, [string]$sigFile) {
 }
 
 # SELF_UPDATE.request from AFKPanel: "off", "auto <days>", or "retry", written into hotwire.cfg as the update mode is.
-# The channel and the test key stay the admin's, in hotwire.cfg.
+# The channel stays the admin's, in hotwire.cfg.
 function Invoke-SelfUpdateRequest {
     $request = Join-Path $root 'SELF_UPDATE.request'
     if (-not (Test-Path -LiteralPath $request)) { return }

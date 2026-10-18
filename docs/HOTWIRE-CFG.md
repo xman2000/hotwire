@@ -107,10 +107,9 @@ here.
 | `hotwire.self_update` | `off` | `auto`: before a start, install the newest Hotwire release that is old enough. `off`: only when you replace the files, or AFKPanel's **Update Hotwire** asks. |
 | `hotwire.self_update_days` | 3 | Days a release must be public before `auto` installs it. 0 installs a release the day it comes out. |
 | `hotwire.self_update_channel` | `release` | `dev` also takes Hotwire's test builds. For test servers. |
-| `hotwire.self_update_test_key` | 0 | 1 also trusts the test signing key. Only for AFKPanel's own test servers. |
 
 On every plan, **Change** beside **Hotwire updates** on the server's **Info** tab sets `hotwire.self_update` and
-`hotwire.self_update_days`. The channel and the test key are set only here. See
+`hotwire.self_update_days`. The channel is set only here. See
 [Let Hotwire update itself](https://afkpanel.com/docs/update-hotwire#let-hotwire-update-itself).
 
 ## Launcher settings
