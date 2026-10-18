@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 #
-# tools/sign-release.sh signing with a key on a token (the yubikey key): a SoftHSM token stands in for the YubiKey, its
+# tools/sign-release.sh signing with a key on a token (the yubikey key): a software token stands in for a hardware one, its
 # key is made inside the token, and the manifest.sig it produces must pass both launchers' own signature checks
 # (hotwire-launcher.sh's su_verify and hotwire.ps1's Test-ReleaseSignature, the second under PowerShell 7).
-# What this cannot prove: a real YubiKey's PIN and touch prompts, and Windows PowerShell 5.1.
+# What this cannot prove: a hardware token's prompts, and Windows PowerShell 5.1.
 #
 #   bash tests/release-signing/run.sh        (needs softhsm2 and opensc; PWSH=<path> if pwsh is not on the PATH)
 set -uo pipefail
@@ -22,7 +22,7 @@ mkdir -p "$work/tokens"
 printf 'directories.tokendir = %s\nobjectstore.backend = file\n' "$work/tokens" > "$work/softhsm2.conf"
 export SOFTHSM2_CONF="$work/softhsm2.conf"
 softhsm2-util --init-token --free --label hwtest --pin 123456 --so-pin 12345678 >/dev/null
-# The key is made inside the token, as it is on the YubiKey, with the id libykcs11 gives slot 9c.
+# The key is made inside the token, with id 02.
 pkcs11-tool --module "$module" --token-label hwtest --login --pin 123456 --keypairgen --key-type EC:prime256v1 \
     --id 02 --label sign >/dev/null 2>&1
 pkcs11-tool --module "$module" --token-label hwtest --read-object --type pubkey --id 02 --output-file "$work/pub.der" >/dev/null 2>&1
@@ -72,13 +72,13 @@ else
     echo "  FAIL  PowerShell 7 ($PWSH) is needed for the Windows launcher's check"; fail=1
 fi
 
-# The keys the launchers ship with: the two made on the YubiKeys, the same in both launchers, and nothing else.
+# Both launchers ship the same release keys, and nothing else.
 yk="yk-38628153:f1e8fe30f1201bf8ec8d856402f9113cf66a322be8b90907b89f28ff3f24fb005d5a86d99e58117499a561464e6cf96fa3ae4a7b54fdae086dc9e93fdb7357b9
 yk-38628349:876f79ef6a2a50e64677a099245995cb9f787ca8eb77dde0ebcd615c8af9603a9e2551dfe21759d86be07be8e7627aef9a9f3345fe0fa3c353871b79d7ea147e"
 linux_keys="$(sed -n 's/^SU_KEYS=(\(.*\))$/\1/p' launcher/hotwire-launcher.sh | tr ' ' '\n' | tr -d '"' | sort)"
 windows_keys="$(sed -n "/^\$SuKeys = \[ordered\]@{$/,/^}$/s/^ *'\([^']*\)' = '\([0-9a-f]*\)'$/\1:\2/p" launcher/hotwire.ps1 | sort)"
-check "the Linux launcher trusts the two YubiKey keys and no other" "$linux_keys" "$yk"
-check "the Windows launcher trusts the two YubiKey keys and no other" "$windows_keys" "$yk"
+check "the Linux launcher trusts only the release keys" "$linux_keys" "$yk"
+check "the Windows launcher trusts only the release keys" "$windows_keys" "$yk"
 check "no launcher still carries the test key" "$(grep -c -E 'test-2026-10-12|SU_TEST_KEY|SuTestKey' launcher/hotwire-launcher.sh launcher/hotwire.ps1 | awk -F: '{s+=$2} END {print s}')" 0
 
 # Failing safely: a wrong token or a missing key writes no signature.

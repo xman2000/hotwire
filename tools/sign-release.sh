@@ -11,13 +11,11 @@
 #       Download the release's manifest and every file it names from GitHub, check each file's SHA-256 against the
 #       manifest, sign it, and upload manifest.sig to the release (gh, logged in).
 #
-# The key is a file (the test key), or the word yubikey: the key in the plugged-in YubiKey's PIV signing slot (9c),
-# used through its PKCS#11 module with pkcs11-tool. The private key never leaves the YubiKey; pkcs11-tool asks for
-# the PIN, and the YubiKey waits for a touch when it was made to. Settings, all optional:
-#   HOTWIRE_PKCS11_MODULE  the PKCS#11 module (default: Yubico's libykcs11)
-#   HOTWIRE_PKCS11_KEY     the key's PKCS#11 id (default 02, which libykcs11 gives slot 9c)
+# The key is a file, or the word yubikey for a key on a PKCS#11 token (pkcs11-tool). Settings, all optional:
+#   HOTWIRE_PKCS11_MODULE  the PKCS#11 module
+#   HOTWIRE_PKCS11_KEY     the key's PKCS#11 id (default 02)
 #   HOTWIRE_PKCS11_TOKEN   a token label, to pick one token when several are present
-#   HOTWIRE_PKCS11_PIN     for tests only: a real key's PIN is typed, never put in the environment
+#   HOTWIRE_PKCS11_PIN     for tests only
 #
 # The signature is ECDSA P-256 over the manifest's bytes with SHA-256. manifest.sig holds two lines:
 #   key <key-id>
@@ -26,7 +24,7 @@
 
 set -euo pipefail
 
-usage() { sed -n '3,16p' "$0" >&2; exit 2; }
+usage() { sed -n '3,19p' "$0" >&2; exit 2; }
 
 # sign_pkcs11 <manifest> -> 64 bytes of r and s on stdout, from the key on the PKCS#11 token.
 sign_pkcs11() {

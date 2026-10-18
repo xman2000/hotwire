@@ -705,8 +705,7 @@ $SuDownload = 'https://github.com/xman2000/hotwire/releases/download'
 # For the tests only. Still nothing installs unless a trusted key signed it.
 if ($env:HOTWIRE_SELF_UPDATE_FEED) { $SuFeed = $env:HOTWIRE_SELF_UPDATE_FEED }
 if ($env:HOTWIRE_SELF_UPDATE_DOWNLOAD) { $SuDownload = $env:HOTWIRE_SELF_UPDATE_DOWNLOAD }
-# id = public key, P-256, X then Y in hex. Each is made on, and never leaves, one of two YubiKeys; the id is the YubiKey's
-# serial number. Either key's signature is enough.
+# The keys a release may be signed with: id = public key, P-256, X then Y in hex.
 $SuKeys = [ordered]@{
     'yk-38628349' = '876f79ef6a2a50e64677a099245995cb9f787ca8eb77dde0ebcd615c8af9603a9e2551dfe21759d86be07be8e7627aef9a9f3345fe0fa3c353871b79d7ea147e'
     'yk-38628153' = 'f1e8fe30f1201bf8ec8d856402f9113cf66a322be8b90907b89f28ff3f24fb005d5a86d99e58117499a561464e6cf96fa3ae4a7b54fdae086dc9e93fdb7357b9'
