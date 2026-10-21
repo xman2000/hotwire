@@ -107,12 +107,12 @@ namespace PluginSigning
             Check("a card number keeps its last four", Extracted.MaskSourceGates("card 4111 1111 1111 1111 end") == "card #### #### #### 1111 end",
                 Extracted.MaskSourceGates("card 4111 1111 1111 1111 end"));
             Check("a failed Luhn check is left alone", Extracted.MaskSourceGates("4111 1111 1111 1112") == "4111 1111 1111 1112");
-            Check("a Steam ID is not a card", Extracted.MaskSourceGates("id 76561198211375245") == "id 76561198211375245");
+            Check("a Steam ID is not a card", Extracted.MaskSourceGates("id 76561198000000000") == "id 76561198000000000");
             Check("a hyphenated SSN is masked", Extracted.MaskSourceGates("ssn 123-45-6789.") == "ssn ###-##-####.");
-            var blocked = Extracted.BlockSteamIds("Bob (76561198211375245) died at (-268.23, 58.57, 841.06); 76561198211375245x ok; 176561198211375245 kept");
-            Check("a Steam ID is removed and the rest of the line kept", blocked == "Bob ([blocked:identity]) died at (-268.23, 58.57, 841.06); [blocked:identity]x ok; 176561198211375245 kept", blocked);
+            var blocked = Extracted.BlockSteamIds("Bob (76561198000000000) died at (-268.23, 58.57, 841.06); 76561198000000000x ok; 176561198000000000 kept");
+            Check("a Steam ID is removed and the rest of the line kept", blocked == "Bob ([blocked:identity]) died at (-268.23, 58.57, 841.06); [blocked:identity]x ok; 176561198000000000 kept", blocked);
             Check("tokens are whitespace-separated", Extracted.CountTokens(" a  b\tc ") == 3);
-            var pii = Extracted.SuspectedPii("Bob (76561198211375245) died at (-268.23, 58.57, 841.06) from 10.0.0.1", "info");
+            var pii = Extracted.SuspectedPii("Bob (76561198000000000) died at (-268.23, 58.57, 841.06) from 10.0.0.1", "info");
             Check("identity, position and network are suspected", string.Join(",", pii) == "identity,position,network", string.Join(",", pii));
             Check("chat is suspected from the level", Extracted.SuspectedPii("hello", "chat").Contains("chat"));
             Check("a version number is not an address", !Extracted.SuspectedPii("v2.1.3.4.5", "info").Contains("network"));
@@ -124,8 +124,8 @@ namespace PluginSigning
             Check("a channel with no ' : ' is not chat", !Extracted.IsChatLine("[Server] started"));
             Check("the Unity log types map to levels", Extracted.ConsoleLevel(0) == "error" && Extracted.ConsoleLevel(1) == "error" && Extracted.ConsoleLevel(2) == "warning" && Extracted.ConsoleLevel(3) == "info" && Extracted.ConsoleLevel(4) == "error");
 
-            var joined = Extracted.MaskIps("203.0.113.9:61234/76561198211375245/Bob joined [windows/76561198211375245]");
-            Check("a player's IPv4 is masked and its port kept", joined == "[blocked:network]:61234/76561198211375245/Bob joined [windows/76561198211375245]", joined);
+            var joined = Extracted.MaskIps("203.0.113.9:61234/76561198000000000/Bob joined [windows/76561198000000000]");
+            Check("a player's IPv4 is masked and its port kept", joined == "[blocked:network]:61234/76561198000000000/Bob joined [windows/76561198000000000]", joined);
             Check("a version number is not an address", Extracted.MaskIps("Oxide 2.0.4149.1 and 1.2.3.4.5") == "Oxide 2.0.4149.1 and 1.2.3.4.5", Extracted.MaskIps("Oxide 2.0.4149.1 and 1.2.3.4.5"));
             Check("an octet over 255 is not an address", Extracted.MaskIps("999.1.1.1") == "999.1.1.1");
             Check("a time is not an IPv6 address", Extracted.MaskIps("at 12:34:56 and 01:02") == "at 12:34:56 and 01:02");
