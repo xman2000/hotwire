@@ -1365,7 +1365,7 @@ the plugin carries its own version.
 - **Map details:** seed, world size, whether it is procedural, the custom map address, the map name, and
   when the current save was created (the last wipe). Sent when they change.
 - **Map markers other plugins place:** radius circles (position, radius, fill and outline colour, opacity)
-  and their text labels, such as Flashpoint's PVP zones. Sent when they change, at most once a minute. A
+  and their text labels, such as a plugin's PVP zones. Sent when they change, at most once a minute. A
   player's vending machine is never sent, since it marks their base, and players are never sent.
 - **Read by name while running.** The game's map types are looked up by reflection instead of being
   named in the code, so a Rust update that moves one cannot stop the plugin compiling. Map reporting
@@ -1831,6 +1831,3 @@ nothing in `launcher/` refers to it and nobody installing this needs Python.
 - Windows only. There is no shell port of the launcher.
 - No crash-loop protection: if the server dies on boot, the launcher relaunches
   it every 15 seconds indefinitely.
-
-`docs/GAME-API.md` lists what has been verified against a real build rather
-than assumed.

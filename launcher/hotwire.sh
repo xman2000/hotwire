@@ -2,8 +2,8 @@
 #
 # ==[ H O T W I R E ]===================================================
 #  Hotwire launcher for Linux. Everything it does is in hotwire-launcher.sh,
-#  beside this file; this file only starts it. Built by xman2000 and
-#  Claude. MIT License. https://github.com/xman2000/hotwire
+#  beside this file; this file only starts it. Built by Searle Street
+#  Technologies and Claude. MIT License. https://github.com/xman2000/hotwire
 #
 #  Usage:
 #    ./hotwire.sh          start the server, and restart it when it exits

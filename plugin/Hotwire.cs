@@ -520,13 +520,9 @@ namespace Oxide.Plugins
         }
 
         // Render the countdown through a status surface players
-        // already read. Verified against AdvancedStatus 0.1.26 by IIIaKa --
-        // see docs/GAME-API.md. Absent that plugin this does nothing at all
-        // and chat carries the countdown, which is the case on most servers.
-        // Settings and conventions here follow a sibling plugin on the same
-        // server that has already been through several rounds of this against
-        // AdvancedStatus. Where its changelog records a reason, that reason is
-        // repeated at the use site rather than rediscovered later.
+        // already read, when AdvancedStatus by IIIaKa is installed. Absent
+        // that plugin this does nothing at all and chat carries the
+        // countdown, which is the case on most servers.
         private class StatusBarSettings
         {
             [JsonProperty("Enabled")]
@@ -2982,11 +2978,9 @@ namespace Oxide.Plugins
         // already read, rather than adding a fifth thing fighting for a screen
         // corner.
         //
-        // Written against AdvancedStatus 0.1.26 by IIIaKa, read out of the
-        // installed plugin -- signatures in docs/GAME-API.md. Everything here
-        // is still wrapped: the plugin is paid and EULA'd, so most servers
-        // will not have it, and a version that changes its API must cost us a
-        // cosmetic bar and never a countdown.
+        // Written against AdvancedStatus 0.1.26 by IIIaKa. Everything here is
+        // still wrapped: most servers will not have it, and a version that
+        // changes its API must cost us a cosmetic bar and never a countdown.
         private const string BarId = "hotwire_countdown";
 
         // Fired by AdvancedStatus when it is ready to take bars. Without this
@@ -4065,8 +4059,8 @@ namespace Oxide.Plugins
         private bool _spoolWarned;
 
         // How long anything waiting for the panel is kept here, from the config,
-        // within reason: at least a day, and never past the panel's own 90-day
-        // retention. A 0 or a negative in the file means the default week.
+        // within reason: at least a day and at most SpoolDaysMax. A 0 or a
+        // negative in the file means the default.
         private const int SpoolDaysDefault = 30;
         private const int SpoolDaysMax = 90;
 
@@ -5814,8 +5808,7 @@ namespace Oxide.Plugins
         // The margin, in pixels of the render, the game draws around the world. MapImageRenderer keeps it fixed at any scale.
         private const int MapOceanMarginPixels = 500;
 
-        // The panel keeps a map image at most this many pixels on a side, then downsizes; render to about this and no larger,
-        // so no detail is wasted and the upload stays small.
+        // Render to about this many pixels on a side and no larger: a bigger image adds no detail and makes the upload larger.
         private const float MapTargetPixels = 4096f;
 
         // The image width MapImageRenderer would produce for this world at our target scale: the world at that scale plus a

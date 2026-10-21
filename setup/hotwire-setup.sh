@@ -971,8 +971,8 @@ fetch() {  # fetch <url> <out> <what>
     as_user curl -fsSL --retry 2 --max-time 300 -o "$2" "$1" 2>/dev/null \
         || { as_user rm -f "$2"; die "downloading $3" "the download from $1 failed" "check this machine can reach github.com, then run install again"; }
 }
-# Where Hotwire's files come from: this copy's release tag, else the latest release, else (GitHub's answer missing) the
-# working branch, said so. Worked out once.
+# Where Hotwire's files come from: this copy's release tag, else the latest release. Without either, setup stops
+# rather than guess. Worked out once, in this shell, so a stop here stops setup.
 SOURCE_REF=""
 source_ref() {
     if [ -z "$SOURCE_REF" ]; then
@@ -981,14 +981,14 @@ source_ref() {
             SOURCE_REF="$(curl -fsS --max-time 20 "https://api.github.com/repos/$HOTWIRE_REPO/releases/latest" 2>/dev/null \
                 | grep -oE '"tag_name"[[:space:]]*:[[:space:]]*"[^"]+"' | head -1 | sed -E 's/.*"([^"]+)"$/\1/')"
         fi
-        if [ -z "$SOURCE_REF" ]; then
-            SOURCE_REF="connect-and-report"
-            warn "GitHub did not say which Hotwire release is the latest; using the connect-and-report branch."
-        fi
+        [ -n "$SOURCE_REF" ] || die "finding the latest Hotwire release" "GitHub did not say which release is the latest" \
+            "wait a few minutes, then run install again"
     fi
-    printf '%s' "$SOURCE_REF"
 }
-source_url() { printf 'https://raw.githubusercontent.com/%s/%s/%s' "$HOTWIRE_REPO" "$(source_ref)" "$1"; }
+fetch_source() {  # fetch_source <path in the repository> <out> <what>
+    source_ref
+    fetch "https://raw.githubusercontent.com/$HOTWIRE_REPO/$SOURCE_REF/$1" "$2" "$3"
+}
 
 # The published list of released files' SHA-256, fetched once. Empty when AFKPanel could not be reached.
 RELEASED_LIST=""; RELEASED_TRIED=0; UNVERIFIED=()
@@ -1609,13 +1609,13 @@ step_launcher() {
         # Hotwire replaces. The logic goes in first, so hotwire.sh never exists without it.
         local logic="$IROOT/hotwire-launcher.sh"
         tmp="$logic.hotwire-tmp"
-        fetch "$(source_url launcher/hotwire-launcher.sh)" "$tmp" "the Hotwire launcher"
+        fetch_source launcher/hotwire-launcher.sh "$tmp" "the Hotwire launcher"
         check_released "$tmp" hotwire-launcher.sh "the Hotwire launcher"
         as_user chmod 755 "$tmp" && as_user mv -f "$tmp" "$logic" || die "writing $logic" "the write failed" "check free space, then run install again"
         rec_add created "$logic"
         change "created $logic" "delete $logic"
         tmp="$l.hotwire-tmp"
-        fetch "$(source_url launcher/hotwire.sh)" "$tmp" "the Hotwire launcher's starter"
+        fetch_source launcher/hotwire.sh "$tmp" "the Hotwire launcher's starter"
         check_released "$tmp" hotwire.sh "the Hotwire launcher's starter"
         as_user chmod 755 "$tmp" && as_user mv -f "$tmp" "$l" || die "writing $l" "the write failed" "check free space, then run install again"
         rec_add created "$l"
@@ -1624,7 +1624,7 @@ step_launcher() {
 
     # The list of settings, kept as hotwire.example.cfg, and this server's copy of it, hotwire.cfg.
     tmp="$IROOT/hotwire.example.cfg.hotwire-tmp"
-    fetch "$(source_url examples/hotwire.example.cfg)" "$tmp" "the settings list"
+    fetch_source examples/hotwire.example.cfg "$tmp" "the settings list"
     check_released "$tmp" hotwire.example.cfg "the settings list"
     local text; text="$(user_read "$tmp")"
     if [ -f "$IROOT/hotwire.example.cfg" ]; then as_user rm -f "$tmp"; else as_user mv -f "$tmp" "$IROOT/hotwire.example.cfg"; fi
@@ -1788,7 +1788,7 @@ step_plugin() {
     [ -f "$IROOT/hotwire.sh" ] || { warn "there is no hotwire.sh: a scheduled restart quits the server, and your own start"; note "        script has to start it again."; }
     offer plugin "Install the Hotwire plugin?" || { note "Skipped. Run install again any time to add it."; return 0; }
     as_user mkdir -p "$dir"
-    fetch "$(source_url plugin/Hotwire.cs)" "$p.hotwire-tmp" "the Hotwire plugin"
+    fetch_source plugin/Hotwire.cs "$p.hotwire-tmp" "the Hotwire plugin"
     check_released "$p.hotwire-tmp" Hotwire.cs "the Hotwire plugin"
     local v; v="$(user_read "$p.hotwire-tmp" | grep -oE '\[Info\("Hotwire", *"[^"]*", *"[^"]+"\)\]' | grep -oE '"[0-9][^"]*"\)' | tr -d '")')"
     [ -n "$v" ] || { as_user rm -f "$p.hotwire-tmp"; die "checking the downloaded Hotwire.cs" "it is not the Hotwire plugin" "nothing was written; please report this"; }

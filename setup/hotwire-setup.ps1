@@ -711,8 +711,8 @@ function Invoke-Download([string]$Url, [string]$OutFile, [string]$What) {
     return $response
 }
 
-# Where Hotwire's files come from: this copy's release tag, else the latest release, else (GitHub's answer missing) the
-# working branch, said so. Worked out once.
+# Where Hotwire's files come from: this copy's release tag, else the latest release. Without either, setup stops
+# rather than guess. Worked out once.
 $script:SourceRef = ''
 function Get-SourceUrl([string]$Path) {
     if (-not $script:SourceRef) {
@@ -721,8 +721,8 @@ function Get-SourceUrl([string]$Path) {
             try { $script:SourceRef = [string](Invoke-RestMethod -Uri "https://api.github.com/repos/$HotwireRepo/releases/latest" -UserAgent 'Mozilla/5.0' -UseBasicParsing -TimeoutSec 20).tag_name } catch { }
         }
         if (-not $script:SourceRef) {
-            $script:SourceRef = 'connect-and-report'
-            Write-Warn 'GitHub did not say which Hotwire release is the latest; using the connect-and-report branch.'
+            Stop-Politely "finding the latest Hotwire release" "GitHub did not say which release is the latest" `
+                "wait a few minutes, then run hotwire-setup.bat again"
         }
     }
     return "https://raw.githubusercontent.com/$HotwireRepo/$($script:SourceRef)/$Path"

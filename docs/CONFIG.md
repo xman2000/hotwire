@@ -377,7 +377,7 @@ Requires [AdvancedStatus](https://codefling.com/plugins/advanced-status), which 
 | --- | --- |
 | `Bar color, hex (blank = inherit)` | Blank takes AdvancedStatus's own frame, so the bar matches every other plugin's. A bare hex value without `#` is accepted. |
 | `Bar fill color, hex` | The fill. The bar reads *Server Restart* on it; the label is a lang string. |
-| `Icon: …` | A built-in sprite, then a file in `oxide/data/AdvancedStatus/Images`, then a URL, the first set winning. A sprite path that does not exist logs `[FileSystem] Not Found` once per draw; [GAME-API.md](GAME-API.md) lists paths known to exist. |
+| `Icon: …` | A built-in sprite, then a file in `oxide/data/AdvancedStatus/Images`, then a URL, the first set winning. A sprite path that does not exist logs `[FileSystem] Not Found` once per draw; Paths that exist include `assets/icons/stopwatch.png`, `warning.png`, `explosion.png`, `grenade.png`, `peace.png`, `radiation.png`, `target.png` and `weapon.png` (all under `assets/icons/`); `assets/icons/clock.png` does not. |
 | `Fill style: Full, Fills or Drains` | `Full` is solid for the whole countdown; `Drains` empties toward the restart; `Fills` fills toward it |
 | `Count seconds in the final minute` | `true` redraws every bar on screen once a second for the last minute |
 

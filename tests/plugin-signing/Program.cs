@@ -218,8 +218,8 @@ namespace PluginSigning
             Check("nonce is 32 lowercase hex characters", Regex.IsMatch(n, "^[0-9a-f]{32}$"), n);
 
             // ---- The panel's signed response. The plugin must verify a wrapped
-            // answer byte-for-byte with the panel (App\Support\HotwireSignature::responseCanonical /
-            // signResponse), and fail closed on anything it cannot verify.
+            // answer byte-for-byte with the panel's reference implementation, and fail closed on
+            // anything it cannot verify.
             var rv = (JObject)v["response"];
             var rSecret = (string)rv["secret"];
             var rStatus = (int)rv["status"];

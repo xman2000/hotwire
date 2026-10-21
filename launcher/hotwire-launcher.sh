@@ -2,7 +2,7 @@
 #
 # ==[ H O T W I R E ]===================================================
 #  Hotwire launcher for Linux. Its version is HOTWIRE_LAUNCHER_VERSION below.
-#  Built by xman2000 and Claude.  MIT License.
+#  Built by Searle Street Technologies and Claude.  MIT License.
 #  https://github.com/xman2000/hotwire
 #
 #  Your settings are in hotwire.cfg, beside this file, and an RCON

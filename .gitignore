@@ -24,16 +24,6 @@ __pycache__/
 .DS_Store
 Thumbs.db
 
-# Working notes, kept on disk and out of the repo.
-HANDOFF.md
-BRIEF.md
-CLAUDE.md
-docs/OPEN-QUESTIONS.md
-docs/RESEARCH.md
-
-# Design notes, kept out of the repo.
-docs/DECISIONS.md
-
 # Test build output
 tests/**/bin/
 tests/**/obj/

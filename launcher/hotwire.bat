@@ -1,8 +1,8 @@
 @echo off
 REM ==[ H O T W I R E ]===================================================
 REM  Hotwire launcher for Windows. Everything it does is in hotwire.ps1,
-REM  beside this file; this file only starts it. Built by xman2000 and
-REM  Claude. MIT License. https://github.com/xman2000/hotwire
+REM  beside this file; this file only starts it. Built by Searle Street
+REM  Technologies and Claude. MIT License. https://github.com/xman2000/hotwire
 REM
 REM  Usage:
 REM    hotwire.bat          start the server, and restart it when it exits

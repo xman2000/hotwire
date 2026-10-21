@@ -33,6 +33,8 @@ jobs:
       - name: Build the release files
         env:
           TAG: ${{ github.ref_name }}
+          # A dev tag is checked against the test site's list, which this repository variable names.
+          HOTWIRE_RELEASED_FILES_URL: ${{ startsWith(github.ref_name, 'dev-') && vars.DEV_RELEASED_FILES_URL || '' }}
         run: tools/build-release.sh
 
       - name: Publish the release

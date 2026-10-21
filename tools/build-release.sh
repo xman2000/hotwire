@@ -24,7 +24,8 @@
 #                              A launcher installs nothing until manifest.sig, made with tools/sign-release.sh by the
 #                              key's holder, is beside it.
 #
-# A dev-* tag builds a pre-release for testing; its files are checked against dev.afkpanel.com's list.
+# A dev-* tag builds a pre-release for testing; its files are checked against the test site's list, which
+# HOTWIRE_RELEASED_FILES_URL must name.
 #
 # Files are taken from the commit (git show HEAD:path), not the working tree, so they are the bytes raw GitHub serves
 # and the published list describes. The Windows scripts go into the zip with CRLF, which cmd needs; the plugin keeps its bytes.
@@ -40,7 +41,9 @@ crlf() { sed 's/\r$//; s/$/\r/'; }
 TAG="${TAG:-}"
 if [ -n "$TAG" ]; then
     [[ "$TAG" =~ ^(release|dev)-[0-9A-Za-z.-]+$ ]] || { echo "Not building: '$TAG' is not a release or dev tag." >&2; exit 1; }
-    [[ "$TAG" == dev-* ]] && : "${HOTWIRE_RELEASED_FILES_URL:=https://dev.afkpanel.com/hotwire/released-files.json}"
+    if [[ "$TAG" == dev-* ]] && [ -z "${HOTWIRE_RELEASED_FILES_URL:-}" ] && [ "${HOTWIRE_SKIP_LIST_CHECK:-0}" != 1 ]; then
+        echo "Not building: a dev tag is checked against the test site's list; set HOTWIRE_RELEASED_FILES_URL to it." >&2; exit 1
+    fi
     if [ "${HOTWIRE_SKIP_LIST_CHECK:-0}" != 1 ]; then
         list="$(curl -fsS --retry 3 --max-time 30 "${HOTWIRE_RELEASED_FILES_URL:-https://afkpanel.com/hotwire/released-files.json}")" \
             || { echo "Not building: AFKPanel's list of released files did not answer. Try again." >&2; exit 1; }
